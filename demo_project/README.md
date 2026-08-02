@@ -67,6 +67,26 @@ an animation speed problem and was not: `ApplyGravity()` now derives the flag
 from `BoxHitsSolid(x, y + 1)`, which is a question about the world rather than
 about what happened this frame.
 
+## Credits and attribution
+
+The demo carries its attribution in the game itself, which is what MSXStudio's
+[license](../LICENSE) asks of anything built with it: a line on the title
+screen, and a full credits screen after you win.
+
+![Credits screen](../docs/images/demo-credits.png)
+
+- **MSXStudio** by P.D. Garaguso, whose license asks to be credited in software
+  made with it, in wording that does not imply endorsement.
+- **MSXgl** and **MSXtk** by Guillaume "Aoineko" Blanchard, licensed
+  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), which also
+  asks for attribution.
+- **ayFX** sound format by Shiru.
+- **SDCC**, the compiler, and **openMSX** / **WebMSX**, the emulators.
+
+None of them endorse this demo, which the credits screen says out loud. Copy
+this pattern in your own game: the title screen line takes five minutes and
+satisfies both licenses.
+
 ## Changing it
 
 Open any of the four `.json` resources from the Resources panel and edit it,

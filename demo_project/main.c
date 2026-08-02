@@ -11,6 +11,12 @@
 //    player.sprites.json -> content/player.h  (g_Player_Patterns / _Colors)
 //    level.map.json      -> content/level.h   (g_Level_Background, 64x24 cells)
 //    sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
+//
+//  Built with MSXStudio by P.D. Garaguso.
+//  Powered by MSXgl and MSXtk by Guillaume "Aoineko" Blanchard (CC BY-SA 4.0),
+//  compiled with SDCC, sound in Shiru's ayFX format.
+//  None of the above endorse this demo. The in-game credits screen says the
+//  same thing, which is what MSXStudio's license asks of anything made with it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "msxgl.h"
@@ -156,20 +162,60 @@ void DrawHUD()
 // Text screens (SCREEN 1, so the BIOS font can use the pattern table freely)
 //──────────────────────────────────────────────────────────────────────────────
 
-void TextScreen(const c8* line1, const c8* line2, const c8* line3)
+// Sets up SCREEN 1 with the BIOS font and clears it, ready to be printed on.
+void BeginTextScreen()
 {
 	VDP_SetMode(VDP_MODE_GRAPHIC1);
 	VDP_ClearVRAM();
 	VDP_SetColor(COLOR_BLACK);
 	Print_SetTextFont(PRINT_DEFAULT_FONT, 1);
 	Print_SetColor(COLOR_WHITE, COLOR_BLACK);
+}
 
-	Print_SetPosition(4, 8);
-	Print_DrawText(line1);
-	Print_SetPosition(4, 11);
-	Print_DrawText(line2);
-	Print_SetPosition(4, 13);
-	Print_DrawText(line3);
+void PrintAt(u8 x, u8 y, const c8* text)
+{
+	Print_SetPosition(x, y);
+	Print_DrawText(text);
+}
+
+void TitleScreen()
+{
+	BeginTextScreen();
+	PrintAt(7,  3, "M S X S T U D I O");
+	PrintAt(4,  5, "A two-screen demo game");
+
+	PrintAt(3,  9, "Arrows move, SPACE jumps");
+	PrintAt(2, 11, "Collect all 8 coins, then");
+	PrintAt(2, 12, "reach the door on the right");
+
+	PrintAt(6, 15, "Press SPACE to play");
+
+	// The attribution MSXStudio's license asks of anything built with it.
+	PrintAt(5, 20, "Built with MSXStudio");
+	PrintAt(8, 21, "by P.D. Garaguso");
+}
+
+// Everything this game stands on. MSXgl is CC BY-SA 4.0 and asks to be
+// credited; MSXStudio asks the same, and both ask not to look like an
+// endorsement, which is what the last line is for.
+void CreditsScreen()
+{
+	BeginTextScreen();
+	PrintAt(9,  2, "C R E D I T S");
+
+	PrintAt(5,  5, "Built with MSXStudio");
+	PrintAt(8,  6, "by P.D. Garaguso");
+
+	PrintAt(4,  9, "Powered by MSXgl + MSXtk");
+	PrintAt(8, 10, "by G. Blanchard");
+	PrintAt(10, 11, "CC BY-SA 4.0");
+
+	PrintAt(3, 14, "Sound: ayFX by Shiru");
+	PrintAt(3, 15, "Compiled with SDCC");
+	PrintAt(3, 16, "Runs on openMSX / WebMSX");
+
+	PrintAt(2, 19, "Not endorsed by the above");
+	PrintAt(6, 22, "SPACE to restart");
 }
 
 void WaitForSpace()
@@ -363,19 +409,22 @@ void main()
 
 	while (1)
 	{
-		TextScreen("   M S X S T U D I O",
-		           "  A two-screen demo game",
-		           "   Press SPACE to play");
+		TitleScreen();
 		WaitForSpace();
 
 		PlayGame();
 
 		ayFX_PlayBank(2, 0);
-		TextScreen("   CONGRATULATIONS!",
-		           " You found every coin and",
-		           "  escaped. SPACE to retry");
+		BeginTextScreen();
+		PrintAt(7,  8, "CONGRATULATIONS!");
+		PrintAt(4, 11, "You found every coin");
+		PrintAt(4, 12, "and escaped.");
+		PrintAt(5, 16, "SPACE for credits");
 		// Let the fanfare finish while the message is up.
 		for (u8 i = 0; i < 120; ++i) { Halt(); ayFX_Update(); PSG_Apply(); }
+		WaitForSpace();
+
+		CreditsScreen();
 		WaitForSpace();
 	}
 }
