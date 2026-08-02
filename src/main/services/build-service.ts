@@ -277,6 +277,8 @@ export class BuildService {
       channel: 'build',
       lines: [
         `Opening ${target}`,
+        // Chrome 141+ gates public-site → localhost fetches behind a permission.
+        `If the browser asks to allow "local network access", allow it — webmsx.org needs it to load the ROM from this machine (Site settings → Local network access if it was denied before).`,
         // webmsx.org needs the network; say what to do when it isn't there.
         `If webmsx.org is unreachable, load ${join(open.root, runnable.artifact.path)} into any MSX emulator.`
       ]
