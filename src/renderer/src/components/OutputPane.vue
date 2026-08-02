@@ -1,11 +1,28 @@
 <script setup lang="ts">
+import { nextTick, ref, watch } from 'vue'
 import { useOutputStore } from '../stores/outputStore'
 
 const outputStore = useOutputStore()
+const pane = ref<HTMLElement | null>(null)
+
+// Follow new output, but don't yank the view away from a user reading scrollback.
+watch(
+  () => outputStore.lines.length,
+  async () => {
+    const el = pane.value
+    if (!el) return
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24
+    await nextTick()
+    if (atBottom) el.scrollTop = el.scrollHeight
+  }
+)
 </script>
 
 <template>
-  <div class="output-pane">
+  <div
+    ref="pane"
+    class="output-pane"
+  >
     <p
       v-if="!outputStore.lines.length"
       class="empty"
