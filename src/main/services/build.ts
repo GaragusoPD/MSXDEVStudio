@@ -9,11 +9,20 @@
  */
 
 import { createServer, type Server } from 'node:http'
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { basename, isAbsolute, join, relative } from 'node:path'
 import type { BuildArtifact, BuildCommand, BuildProblem } from '../../shared/ipc'
 import type { MsxProject } from '../../shared/msxproj'
 import { resolveTarget } from '../../shared/msxgl-consts'
+import { CONFIG_FILE } from './project'
 
 // ── build invocation ────────────────────────────────────────────────────────
 
@@ -21,17 +30,23 @@ export function buildScript(msxglPath: string): string {
   return join(msxglPath, 'engine', 'script', 'js', 'build.js')
 }
 
-/** MSXgl's own step keywords for each IDE command. `run` only adds MSXgl's `run` step for openMSX. */
-export function commandSteps(command: BuildCommand, launchesEmulator: boolean): string[] {
+/** MSXgl's own step keywords for each IDE command. `run` only adds MSXgl's `run` step for openMSX.
+ *  `forceFull` swaps `all` for `rebuild` (= clean + all) when the incremental guard tripped. */
+export function commandSteps(
+  command: BuildCommand,
+  launchesEmulator: boolean,
+  forceFull = false
+): string[] {
+  const all = forceFull ? 'rebuild' : 'all'
   switch (command) {
     case 'build':
-      return ['all']
+      return [all]
     case 'rebuild':
       return ['rebuild']
     case 'clean':
       return ['clean']
     case 'run':
-      return launchesEmulator ? ['all', 'run'] : ['all']
+      return launchesEmulator ? [all, 'run'] : [all]
   }
 }
 
@@ -44,12 +59,85 @@ export function buildArgs(
   msxglPath: string,
   project: MsxProject,
   command: BuildCommand,
-  launchesEmulator: boolean
+  launchesEmulator: boolean,
+  forceFull = false
 ): string[] {
   const defines = Object.entries(project.build.defines ?? {}).map(([name, value]) =>
     value === '' || value === undefined ? `define=${name}` : `define=${name}:${value}`
   )
-  return [buildScript(msxglPath), ...commandSteps(command, launchesEmulator), ...defines]
+  return [buildScript(msxglPath), ...commandSteps(command, launchesEmulator, forceFull), ...defines]
+}
+
+// ── incremental rebuild guard ───────────────────────────────────────────────
+// Generated configs set MSXgl's `CompileSkipOld`, whose check only compares
+// each source file against its own `.rel`. These helpers catch what that
+// check can't see — header/include edits and compile-flag changes — and the
+// build service swaps `all` for MSXgl's `rebuild` step when they trip.
+
+const STAMP_FILE = '.msxstudio-stamp'
+
+/** Root-level output dirs — everything inside is generated, never a compile input. */
+const NON_SOURCE_DIRS = new Set(['out', 'emul', 'node_modules'])
+
+/** The compile-flag inputs the mtime check can't see: config file content + `define=` args. */
+export function buildStamp(root: string, project: MsxProject): string {
+  let config = ''
+  try {
+    config = readFileSync(join(root, CONFIG_FILE), 'utf-8')
+  } catch {
+    /* customConfig project without the file yet — stamp on defines alone */
+  }
+  return `${JSON.stringify(project.build.defines ?? {})}\n${config}`
+}
+
+/** Newest mtime of any include file (.h/.inc) under `dir`, skipping output and hidden dirs. */
+function newestIncludeMtime(dir: string, top: boolean): number {
+  let newest = 0
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith('.') || (top && NON_SOURCE_DIRS.has(entry.name))) continue
+      newest = Math.max(newest, newestIncludeMtime(path, false))
+    } else if (/\.(h|inc)$/i.test(entry.name)) {
+      newest = Math.max(newest, statSync(path).mtimeMs)
+    }
+  }
+  return newest
+}
+
+/**
+ * True when the `.rel` files in `out/` can't be trusted: the compile flags
+ * changed since they were built (stamp mismatch), or an include file is newer
+ * than the oldest of them. False with no `.rel` files at all — a plain `all`
+ * compiles everything anyway.
+ */
+export function needsFullRebuild(root: string, stamp: string): boolean {
+  const outDir = join(root, 'out')
+  let rels: number[]
+  try {
+    rels = readdirSync(outDir)
+      .filter((name) => name.endsWith('.rel'))
+      .map((name) => statSync(join(outDir, name)).mtimeMs)
+  } catch {
+    return false
+  }
+  if (!rels.length) return false
+
+  let previous: string | null = null
+  try {
+    previous = readFileSync(join(outDir, STAMP_FILE), 'utf-8')
+  } catch {
+    return true // .rels exist but no stamp — built before the guard existed
+  }
+  if (previous !== stamp) return true
+
+  return newestIncludeMtime(root, true) > Math.min(...rels)
+}
+
+/** Records what the `.rel`s produced by the upcoming build were compiled with. */
+export function writeBuildStamp(root: string, stamp: string): void {
+  mkdirSync(join(root, 'out'), { recursive: true })
+  writeFileSync(join(root, 'out', STAMP_FILE), stamp)
 }
 
 // ── output ──────────────────────────────────────────────────────────────────

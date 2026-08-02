@@ -29,6 +29,9 @@ describe('generateProjectConfig', () => {
       Machine = "1";
       Target = "ROM_32K";
       CheckVersion = true;
+
+      //-- Build
+      CompileSkipOld = true;
       "
     `)
   })

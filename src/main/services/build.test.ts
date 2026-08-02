@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,8 +7,10 @@ import {
   ArtifactServer,
   artifactCandidates,
   buildArgs,
+  buildStamp,
   commandSteps,
   exitCodeMessage,
+  needsFullRebuild,
   parseProblem,
   parseProblems,
   resolveArtifacts,
@@ -16,7 +18,8 @@ import {
   stripAnsi,
   targetExtension,
   webmsxMachine,
-  webmsxUrl
+  webmsxUrl,
+  writeBuildStamp
 } from './build'
 
 const ROOT = '/projects/mygame'
@@ -56,6 +59,12 @@ describe('build arguments', () => {
     expect(commandSteps('run', false)).toEqual(['all'])
   })
 
+  it('swaps all for rebuild when a full rebuild is forced', () => {
+    expect(commandSteps('build', true, true)).toEqual(['rebuild'])
+    expect(commandSteps('run', true, true)).toEqual(['rebuild', 'run'])
+    expect(commandSteps('clean', true, true)).toEqual(['clean'])
+  })
+
   it('passes build.defines as repeated define= args and points at build.js', () => {
     const args = buildArgs(
       '/opt/MSXgl',
@@ -67,6 +76,73 @@ describe('build arguments', () => {
     expect(args).toContain('all')
     expect(args).toContain('define=DEBUG_MODE')
     expect(args).toContain('define=LEVELS:4')
+  })
+})
+
+describe('incremental rebuild guard', () => {
+  /** A project dir with one compiled `.rel` at time `relTime` and a matching stamp. */
+  function builtProject(stamp: string, relTime: Date): string {
+    const root = makeTmpDir('msxstudio-guard-')
+    mkdirSync(join(root, 'out'))
+    writeFileSync(join(root, 'out', 'main.rel'), '')
+    utimesSync(join(root, 'out', 'main.rel'), relTime, relTime)
+    writeBuildStamp(root, stamp)
+    return root
+  }
+
+  const before = new Date('2026-01-01T00:00:00Z')
+  const after = new Date('2026-01-02T00:00:00Z')
+
+  it('is false with no .rel files — a plain all compiles everything anyway', () => {
+    const root = makeTmpDir('msxstudio-guard-')
+    expect(needsFullRebuild(root, 'stamp')).toBe(false)
+    mkdirSync(join(root, 'out'))
+    expect(needsFullRebuild(root, 'stamp')).toBe(false)
+  })
+
+  it('is true when .rels exist without a stamp (built before the guard existed)', () => {
+    const root = builtProject('stamp', before)
+    rmSync(join(root, 'out', '.msxstudio-stamp'))
+    expect(needsFullRebuild(root, 'stamp')).toBe(true)
+  })
+
+  it('detects compile-flag changes through the stamp', () => {
+    const root = builtProject('old-flags', before)
+    expect(needsFullRebuild(root, 'old-flags')).toBe(false)
+    expect(needsFullRebuild(root, 'new-flags')).toBe(true)
+  })
+
+  it('detects headers newer than the oldest .rel, but not output/hidden dirs', () => {
+    const root = builtProject('stamp', before)
+    expect(needsFullRebuild(root, 'stamp')).toBe(false)
+
+    mkdirSync(join(root, 'emul'))
+    writeFileSync(join(root, 'emul', 'ignored.h'), '')
+    utimesSync(join(root, 'emul', 'ignored.h'), after, after)
+    expect(needsFullRebuild(root, 'stamp')).toBe(false)
+
+    mkdirSync(join(root, 'content'))
+    writeFileSync(join(root, 'content', 'title.h'), '')
+    utimesSync(join(root, 'content', 'title.h'), after, after)
+    expect(needsFullRebuild(root, 'stamp')).toBe(true)
+  })
+
+  it('ignores headers older than every .rel', () => {
+    const root = builtProject('stamp', after)
+    writeFileSync(join(root, 'msxgl_config.h'), '')
+    utimesSync(join(root, 'msxgl_config.h'), before, before)
+    expect(needsFullRebuild(root, 'stamp')).toBe(false)
+  })
+
+  it('buildStamp changes with defines and with project_config.js content', () => {
+    const root = makeTmpDir('msxstudio-stamp-')
+    const base = project()
+    const withDefine = project({ build: { ...base.build, defines: { DEBUG_MODE: '' } } })
+    expect(buildStamp(root, base)).not.toBe(buildStamp(root, withDefine))
+
+    const stampBefore = buildStamp(root, base)
+    writeFileSync(join(root, 'project_config.js'), 'Optim = "Speed";\n')
+    expect(buildStamp(root, base)).not.toBe(stampBefore)
   })
 })
 

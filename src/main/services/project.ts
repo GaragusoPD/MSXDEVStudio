@@ -35,7 +35,7 @@ import type { ProjectTabsState } from '../../shared/tabs'
 
 export const PROJECT_EXT = '.msxproj'
 export const IDE_STATE_DIR = '.msxstudio'
-const CONFIG_FILE = 'project_config.js'
+export const CONFIG_FILE = 'project_config.js'
 
 /** The `.msxproj` in `dir`, if any (root-relative filename). */
 export function findProjectFile(dir: string): string | null {

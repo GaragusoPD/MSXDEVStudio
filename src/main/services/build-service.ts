@@ -29,12 +29,15 @@ import {
   ArtifactServer,
   buildArgs,
   buildScript,
+  buildStamp,
   exitCodeMessage,
+  needsFullRebuild,
   parseProblem,
   resolveArtifacts,
   runnableArtifact,
   stripAnsi,
-  webmsxUrl
+  webmsxUrl,
+  writeBuildStamp
 } from './build'
 
 export interface BuildDeps {
@@ -123,12 +126,26 @@ export class BuildService {
     this.deps.prepare()
 
     const webmsx = command === 'run' && open.project.emulator.preferred === 'webmsx'
-    const args = buildArgs(msxglPath, open.project, command, !webmsx)
     this.deps.emit('build:started', { command })
     this.reportConversions(await this.deps.exportResources())
+
+    // After exportResources — converted resources land as headers and must count.
+    const stamp = buildStamp(open.root, open.project)
+    const forceFull =
+      (command === 'build' || command === 'run') && needsFullRebuild(open.root, stamp)
+    if (forceFull) {
+      this.deps.emit('build:output', {
+        channel: 'build',
+        lines: ['Headers or build settings changed since the last build — rebuilding everything.']
+      })
+    }
+    const args = buildArgs(msxglPath, open.project, command, !webmsx, forceFull)
     this.deps.emit('build:output', { channel: 'build', lines: [`> ${node} ${args.join(' ')}`] })
 
     const result = await this.run(node, args, open.root, open.project)
+    // After the build: a rebuild's clean step wipes out/ (stamp included), so a
+    // stamp written before the spawn would force full rebuilds forever after.
+    if (command !== 'clean') writeBuildStamp(open.root, stamp)
     if (result.ok && webmsx) await this.launchWebmsx(open, result.artifacts)
     return result
   }

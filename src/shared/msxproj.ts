@@ -269,6 +269,10 @@ export function generateProjectConfig(project: MsxProject, projectFileName: stri
   emit('BankedCall', project.rom.bankedCall)
 
   section('Build')
+  // Skip recompiling sources whose .rel is newer. The mtime check is blind to
+  // header/config/define changes — the IDE detects those and forces `rebuild`
+  // (see `needsFullRebuild` in main/services/build.ts).
+  out.push('CompileSkipOld = true;')
   emit('Optim', project.build.optim)
   emit('CompileComplexity', project.build.compileComplexity)
   emit('Debug', project.build.debug)
