@@ -235,20 +235,26 @@ void ApplyGravity()
 	if (g_VelY > MAX_FALL) g_VelY = MAX_FALL;
 
 	i16 dy = g_VelY / SUBPIXEL;
-	g_OnGround = 0;
 
 	while (dy != 0)
 	{
 		i16 step = (dy > 0) ? 1 : -1;
 		if (BoxHitsSolid(g_PlayerX, g_PlayerY + step))
 		{
-			if (step > 0) g_OnGround = 1;   // landed
 			g_VelY = 0;
-			return;
+			break;
 		}
 		g_PlayerY += step;
 		dy -= step;
 	}
+
+	// Standing is a question about the ground, not about whether we just moved.
+	// Velocity is in 1/8th pixels, so at rest it takes four frames to add up to
+	// one whole pixel of fall: deriving this from "did a downward step get
+	// blocked" would report airborne on three frames out of four, and the
+	// sprite would flicker into its jump pose while walking on flat ground.
+	g_OnGround = BoxHitsSolid(g_PlayerX, g_PlayerY + 1);
+	if (g_OnGround && (g_VelY > 0)) g_VelY = 0;
 }
 
 void CollectCoins()

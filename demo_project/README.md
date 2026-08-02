@@ -41,7 +41,7 @@ The game code in `main.c` covers the techniques the
 - **Text screens**, drawn in SCREEN 1 with the BIOS font, so the title and
   ending do not have to share the pattern table with the game's tiles.
 
-## Two things worth knowing
+## Three things worth knowing
 
 **Use the `_16K` VRAM calls on MSX1.** The four-argument `VDP_WriteVRAM(src,
 destLow, destHigh, count)` form is meant for the 17-bit addressing MSX2 uses.
@@ -57,6 +57,15 @@ lose an hour to it.
 that setting the sound goes into PT3's register buffer, which nothing here would
 ever flush. `psg` and `ayfx/ayfx_player` both have to be in **LibModules**, and
 `msxgl.h` does not include their headers for you.
+
+**Ask the ground whether you are standing, not the movement.** Velocity here is
+in 1/8th pixels, so at rest it takes four frames for gravity to add up to one
+whole pixel of fall. Setting `g_OnGround` from "did a downward step get blocked
+this frame" therefore reported airborne on three frames out of four, and the
+sprite flickered into its jump pose while walking on flat ground. It looked like
+an animation speed problem and was not: `ApplyGravity()` now derives the flag
+from `BoxHitsSolid(x, y + 1)`, which is a question about the world rather than
+about what happened this frame.
 
 ## Changing it
 
