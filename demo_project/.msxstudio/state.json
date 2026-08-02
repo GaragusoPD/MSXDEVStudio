@@ -1,9 +1,0 @@
-{
-  "openPaths": [
-    "level.map.json",
-    "sfx.sfx.json",
-    "tiles.tiles.json",
-    "player.sprites.json"
-  ],
-  "activePath": "player.sprites.json"
-}
