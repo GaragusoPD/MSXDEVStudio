@@ -1,0 +1,101 @@
+MSXStudio License
+
+Copyright (c) 2026 Pablo D. Garaguso. All rights reserved.
+
+MSXStudio is free to download and use. In summary: make anything you like with
+it, including commercial products, but do not sell MSXStudio itself, and credit
+the author in what you make.
+
+
+1. PERMISSIONS
+
+You may:
+
+  a) Use MSXStudio to create software of any kind, for any purpose, including
+     commercial products. Whatever you create with MSXStudio is entirely yours.
+     The author claims no rights over your source code, your assets or your
+     finished software, and no share of any revenue it earns.
+
+  b) Copy and redistribute MSXStudio itself, in its original unmodified form,
+     provided you do so free of charge and keep this license and all copyright
+     notices intact.
+
+  c) Modify MSXStudio for your own personal or internal use, and submit
+     modifications back to the project.
+
+
+2. RESTRICTIONS
+
+You may not:
+
+  a) Sell MSXStudio, charge any fee for access to it, or include it in a paid
+     product, paid bundle, paid service or paid distribution. MSXStudio must
+     reach whoever receives it free of charge.
+
+  b) Distribute modified versions of MSXStudio publicly without the author's
+     written permission. This restriction applies to MSXStudio itself, never to
+     software you create with it.
+
+  c) Remove, obscure or alter this license, the copyright notice, or the
+     attribution required by section 3.
+
+
+3. ATTRIBUTION
+
+Software you create using MSXStudio must credit the author. Use the wording:
+
+    Built with MSXStudio by P.D. Garaguso
+
+or any similar wording that names the author. Place it somewhere a user can
+reasonably find it: a title screen, a credits screen, an about box, a README
+file, or accompanying documentation. This mirrors the attribution the MSXgl
+library asks of the games built with it.
+
+The credit must remain factual and neutral. It must not state or imply that
+Pablo D. Garaguso endorses, sponsors, approves of, or is affiliated with your
+software, nor may the author's name be used to promote it.
+
+
+4. THIRD-PARTY COMPONENTS
+
+MSXStudio does not bundle or redistribute the MSX toolchain. MSXgl, the SDCC
+compiler and the MSXtk tools are downloaded to the user's own machine by the
+toolchain setup, and openMSX is installed separately by the user. Those
+components remain under their own licenses, which are not affected by this
+license and which you must comply with independently:
+
+  MSXgl                       CC BY-SA 4.0
+  MSXtk / MSXimg              CC BY-SA
+  SDCC                        GNU General Public License
+  ZX0                         BSD-3-Clause
+  Bitbuster                   MIT-style
+  Pletter                     free, informal terms
+  openMSX                     GNU General Public License v2
+  C-BIOS                      BSD-style
+  WebMSX                      see that project
+
+Components that ARE redistributed inside MSXStudio's installers (Electron, Vue,
+Pinia, Vue Router, the Monaco editor, chokidar and yauzl) are licensed under the
+MIT License by their respective authors.
+
+The tutorials under docs/tutorials/ quote source code from the MSXgl sample
+programs and are therefore licensed under CC BY-SA 4.0, matching MSXgl's own
+license, rather than under the terms above.
+
+
+5. NO WARRANTY
+
+MSXSTUDIO IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH MSXSTUDIO OR THE
+USE OR OTHER DEALINGS IN MSXSTUDIO.
+
+
+6. NOTE ON OPEN SOURCE
+
+These terms are deliberately not an OSI-approved open source license: the
+restriction on selling MSXStudio makes it source-available rather than open
+source. This does not restrict what you may do with the software you create
+with it, which is yours to license and sell as you wish.

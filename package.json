@@ -2,6 +2,7 @@
   "name": "msxstudio",
   "version": "0.1.0",
   "description": "A desktop IDE for MSX game development.",
+  "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "main": "./out/main/index.js",
   "author": "Pablo Garaguso <pablo.garaguso@gmail.com>",

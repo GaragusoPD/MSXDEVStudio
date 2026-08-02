@@ -31,3 +31,12 @@ Settings these tutorials refer to (**LibModules**, **Machine**, **Target**,
 
 For making your own tiles, sprites, maps, screens and sound effects, see
 [the resources guide](../resources.md).
+
+## License
+
+These tutorials quote source code from the MSXgl sample programs, which are
+licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) by
+Guillaume "Aoineko" Blanchard. This folder is therefore licensed CC BY-SA 4.0 as
+well, rather than under MSXStudio's own license: share and adapt it freely,
+including commercially, as long as you credit the source and license what you
+build from it the same way.

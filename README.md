@@ -6,7 +6,8 @@ ROM boot in an emulator. One application, one download.
 
 Targets MSX1, MSX2, MSX2+ and MSX turbo R. Runs on Linux and Windows.
 
-<!-- Add a screenshot here before publishing: ![MSXStudio](docs/images/screenshot.png) -->
+![The MSXStudio map editor: a tile picker, a level being laid out from a SCREEN 2
+tileset, and the export settings that turn it into a C header](docs/images/screenshot.png)
 
 ## Why it exists
 
@@ -148,8 +149,41 @@ docs/           user guides and tutorials
 scripts/        build-time generators (icons, the trimmed Monaco shim)
 ```
 
-Contributions are welcome. Please run `npm run check` and `npm run test` before
-opening a pull request.
+## Contributing
+
+Pull requests are welcome. This is my first project opened to the community, and
+what I care about most is that it stays reliable for the people using it to make
+games, so the bar is quality rather than volume.
+
+**Before opening a pull request:**
+
+- Run `npm run check` (lint plus both type checks) and `npm run test`. Both must
+  pass.
+- Add a test for non-trivial logic. Tests live next to the module they cover, in
+  `src/shared/` and `src/main/`.
+- Keep the change focused. One fix or one feature per pull request is much
+  easier to review than a mixed batch.
+- Describe what you changed and how you verified it. "Built a ROM and ran it in
+  openMSX" tells me far more than "should work".
+
+**On AI-assisted contributions.** They are welcome. Whether a patch was written
+by a person, by an AI, or by the two working together matters far less than
+whether it is correct, and refusing the help would be pretending the tools do
+not exist. There is one firm condition:
+
+> Anything an AI wrote must be reviewed and manually tested by a human before
+> you open the pull request. Read every line, understand why it works, run it in
+> the real application, and confirm it does what you claim.
+
+Please say so in the pull request description if AI was involved, and say what
+you did to verify it. That is not a mark against the contribution, it just tells
+me where to look hardest during review.
+
+What will get a pull request rejected is generated code nobody has run:
+plausible-looking changes, invented API calls, tests that assert what the code
+does rather than what it should do, or a description of behaviour that was never
+observed. This project wraps a compiler and an emulator, so "it builds" is not
+the same as "it works". If you have not seen it run, do not send it yet.
 
 ## Known gaps
 
