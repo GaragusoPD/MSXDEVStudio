@@ -65,6 +65,8 @@ src/renderer/   Vue app: activity bar, panels, editor tabs, stores
 src/shared/     ipc.ts (the IPC contract) + pure logic shared by main/renderer
 specs/          implementation specs, one per feature area
 scripts/        build-time generators (app icons, the trimmed Monaco import shim)
+docs/           user guides — docs/resources.md (editors and their C output),
+                docs/tutorials/ (walkthroughs of the MSXgl graphics samples)
 ```
 
 ## Licensing
