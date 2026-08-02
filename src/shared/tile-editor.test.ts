@@ -14,6 +14,7 @@ import {
   type TilesDoc
 } from './msx/tile'
 import {
+  applyRoleStroke,
   applyStroke,
   canRedo,
   canUndo,
@@ -132,6 +133,48 @@ describe('applyStroke — constraint conflicts', () => {
     const result = applyStroke(sc2(0, 15, 1), 0, [{ x: -3, y: 4 }, { x: 9, y: 0 }], 15)
     expect(result.ok).toBe(true)
     expect((result as { changed: boolean }).changed).toBe(false)
+  })
+})
+
+describe('applyRoleStroke — the left/right mouse buttons', () => {
+  /** Row 0 already holds two colors, which is exactly where applyStroke would conflict. */
+  const twoToneRow = (): TilesDoc => sc2(0b11110000, 15, 1)
+
+  it('sets pattern bits for fg and clears them for bg, without touching colors', () => {
+    const before = twoToneRow()
+    const fg = applyRoleStroke(before, 0, [{ x: 5, y: 0 }], 'fg')
+    expect(fg.tiles[0].pattern[0]).toBe(0b11110100)
+    const bg = applyRoleStroke(fg, 0, [{ x: 0, y: 0 }], 'bg')
+    expect(bg.tiles[0].pattern[0]).toBe(0b01110100)
+    // The row's palette is untouched by either button.
+    expect(bg.tiles[0].color[0]).toBe(before.tiles[0].color[0])
+  })
+
+  it('never conflicts on a row that already uses two colors', () => {
+    // The same stroke through applyStroke with a third color is a conflict...
+    const conflicting = applyStroke(twoToneRow(), 0, [{ x: 5, y: 0 }], 7)
+    expect(conflicting.ok).toBe(false)
+    // ...but painting the row's own roles always succeeds.
+    expect(() => applyRoleStroke(twoToneRow(), 0, [{ x: 5, y: 0 }], 'fg')).not.toThrow()
+  })
+
+  it('paints each row with that row\'s own colors across a multi-row stroke', () => {
+    let doc = normalizeTiles({
+      mode: 'sc2',
+      count: 1,
+      tiles: [{ pattern: [0, 0, 0, 0, 0, 0, 0, 0], color: [mergeColorByte(4, 5), mergeColorByte(6, 7), 0, 0, 0, 0, 0, 0] }]
+    })
+    doc = applyRoleStroke(doc, 0, [{ x: 0, y: 0 }, { x: 0, y: 1 }], 'fg')
+    // Both bits set; each pixel resolves to its own row's foreground.
+    expect(tilePixels(doc, 0)[0]).toBe(4)
+    expect(tilePixels(doc, 0)[8]).toBe(6)   // 8 px per row, so index 8 is row 1
+  })
+
+  it('ignores points outside the tile and returns the same document when nothing changes', () => {
+    const doc = twoToneRow()
+    expect(applyRoleStroke(doc, 0, [{ x: -1, y: 0 }, { x: 9, y: 0 }], 'fg')).toBe(doc)
+    // x=0 is already foreground, so asking for foreground again is a no-op.
+    expect(applyRoleStroke(doc, 0, [{ x: 0, y: 0 }], 'fg')).toBe(doc)
   })
 })
 

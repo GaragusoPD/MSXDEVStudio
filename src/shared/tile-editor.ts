@@ -17,6 +17,7 @@ import {
   TILE_SIZE,
   tileFromPixels,
   tilePixels,
+  setPixelRole,
   type PaintConflict,
   type TilesDoc
 } from './msx/tile'
@@ -137,6 +138,25 @@ export function applyStroke(
     changed = changed || result.changed
   }
   return { ok: true, doc: current, changed }
+}
+
+/**
+ * Paints each point with the row's own foreground or background, which is what
+ * left and right mouse buttons do on the canvas. Because it only ever sets or
+ * clears pattern bits it cannot introduce a third color into a row, so it has
+ * no failure case and no conflict to resolve.
+ */
+export function applyRoleStroke(
+  doc: TilesDoc,
+  tileIndex: number,
+  points: readonly Point[],
+  role: 'fg' | 'bg'
+): TilesDoc {
+  let current = doc
+  for (const { x, y } of points.filter(inTile)) {
+    current = setPixelRole(current, tileIndex, x, y, role)
+  }
+  return current
 }
 
 // ── whole-tile transforms ───────────────────────────────────────────────────

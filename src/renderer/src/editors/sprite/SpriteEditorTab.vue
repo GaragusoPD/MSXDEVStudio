@@ -202,6 +202,10 @@ watch(
         {{ budget.limit }} on the same scanline will be dropped by the VDP. Informational only.
       </p>
 
+      <p class="draw-hint">
+        Left click draws, right click erases.
+      </p>
+
       <div class="panes">
         <SpriteList
           :doc="doc(session)"
@@ -291,6 +295,13 @@ watch(
 
 .spacer {
   flex: 1;
+}
+
+.draw-hint {
+  margin: 0 0 4px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 .scanline-hint {

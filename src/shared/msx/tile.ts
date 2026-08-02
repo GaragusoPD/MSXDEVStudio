@@ -250,6 +250,29 @@ function cloneForEdit(doc: TilesDoc, index: number): TilesDoc {
   return { ...doc, tiles, groupColors: doc.groupColors.slice() }
 }
 
+/**
+ * Sets a pixel to whichever color its row already carries: `fg` sets the
+ * pattern bit, `bg` clears it. This is the plain pixel-art edit, and unlike
+ * `paintPixel` it can never ask the row for a third color, so it never
+ * conflicts. Returns `doc` unchanged when the bit is already what was asked.
+ */
+export function setPixelRole(
+  doc: TilesDoc,
+  tileIndex: number,
+  x: number,
+  y: number,
+  role: 'fg' | 'bg'
+): TilesDoc {
+  if (!doc.tiles[tileIndex] || x < 0 || x > 7 || y < 0 || y > 7) return doc
+  const bit = 0x80 >> x
+  const pattern = doc.tiles[tileIndex].pattern
+  const next = role === 'fg' ? pattern[y] | bit : pattern[y] & ~bit & 0xff
+  if (next === pattern[y]) return doc
+  const edited = cloneForEdit(doc, tileIndex)
+  edited.tiles[tileIndex].pattern[y] = next
+  return edited
+}
+
 /** Is FG (bit set) / BG (bit clear) still used anywhere in the constrained area, ignoring the pixel being painted? */
 function rolesInUse(
   doc: TilesDoc,

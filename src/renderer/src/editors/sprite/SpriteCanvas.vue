@@ -28,6 +28,9 @@ const canvasSize = computed(() => props.doc.size * PIXEL)
 let dragging = false
 let dragStart: { x: number; y: number } | null = null
 let lastCell: { x: number; y: number } | null = null
+// Left button draws the pixel, right button clears it, whatever tool is
+// selected. The erase tool forces clearing on either button.
+let drawing = true
 
 function cellAt(event: PointerEvent): { x: number; y: number } {
   const rect = (canvasRef.value as HTMLCanvasElement).getBoundingClientRect()
@@ -42,20 +45,20 @@ function cellAt(event: PointerEvent): { x: number; y: number } {
 function paintTo(cell: { x: number; y: number }): void {
   if (props.tool === 'line') {
     livePreview.value = updateLayer(props.doc, props.target, (layer) =>
-      paintLine(layer, dragStart!.x, dragStart!.y, cell.x, cell.y, props.doc.size, true)
+      paintLine(layer, dragStart!.x, dragStart!.y, cell.x, cell.y, props.doc.size, drawing)
     )
     return
   }
   const base = livePreview.value ?? props.doc
-  const on = props.tool !== 'erase'
   const from = lastCell ?? cell
-  livePreview.value = updateLayer(base, props.target, (layer) => paintLine(layer, from.x, from.y, cell.x, cell.y, base.size, on))
+  livePreview.value = updateLayer(base, props.target, (layer) => paintLine(layer, from.x, from.y, cell.x, cell.y, base.size, drawing))
 }
 
 function onPointerDown(event: PointerEvent): void {
   const cell = cellAt(event)
+  drawing = props.tool !== 'erase' && event.button !== 2
   if (props.tool === 'fill') {
-    emit('commit', updateLayer(props.doc, props.target, (layer) => floodFill(layer, cell.x, cell.y, props.doc.size, true)))
+    emit('commit', updateLayer(props.doc, props.target, (layer) => floodFill(layer, cell.x, cell.y, props.doc.size, drawing)))
     return
   }
   dragging = true
@@ -122,6 +125,7 @@ watchEffect(draw, { flush: 'post' })
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
+      @contextmenu.prevent
     />
   </div>
 </template>

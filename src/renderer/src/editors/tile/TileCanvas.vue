@@ -7,7 +7,7 @@
  */
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
-import { TILE_SIZE } from '../../../../shared/msx/tile'
+import { colorByteAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
 import { toolPoints, type Point } from '../../../../shared/tile-editor'
 import {
   activePixels,
@@ -25,6 +25,15 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const preview = ref<Point[]>([])
 let origin: Point | null = null
 let last: Point | null = null
+// Left button paints the row's foreground, right button its background, and the
+// role is fixed for the whole stroke by whichever button started it.
+let role: 'fg' | 'bg' = 'fg'
+
+/** The colour a role currently resolves to on `y`, for the drag preview. */
+function roleColor(y: number): number {
+  const { fg, bg } = splitColorByte(colorByteAt(props.session.doc, props.session.active, y))
+  return role === 'fg' ? fg : bg
+}
 
 const zoom = computed(() => props.session.zoom)
 const size = computed(() => TILE_SIZE * zoom.value)
@@ -47,6 +56,7 @@ function pixelAt(event: PointerEvent): Point {
 
 function onDown(event: PointerEvent): void {
   if (props.session.conflict) return
+  role = event.button === 2 ? 'bg' : 'fg'
   const point = pixelAt(event)
   origin = point
   last = point
@@ -54,7 +64,7 @@ function onDown(event: PointerEvent): void {
   beginStroke(props.session)
   const tool = props.session.tool
   if (tool === 'pencil' || tool === 'fill') {
-    paint(props.session, toolPoints(tool, point, point, activePixels(props.session), props.session.filledRect))
+    paint(props.session, toolPoints(tool, point, point, activePixels(props.session), props.session.filledRect), role)
     if (tool === 'fill') endStroke(props.session, 'fill')
   }
 }
@@ -64,7 +74,7 @@ function onMove(event: PointerEvent): void {
   const point = pixelAt(event)
   if (point.x === last.x && point.y === last.y && props.session.tool !== 'rect') return
   if (props.session.tool === 'pencil') {
-    paint(props.session, toolPoints('pencil', last, point, activePixels(props.session)))
+    paint(props.session, toolPoints('pencil', last, point, activePixels(props.session)), role)
   } else if (props.session.tool !== 'fill') {
     preview.value = toolPoints(props.session.tool, origin, point, activePixels(props.session), props.session.filledRect)
   }
@@ -75,7 +85,7 @@ function onUp(): void {
   if (!origin || !last) return
   const tool = props.session.tool
   if (tool === 'line' || tool === 'rect') {
-    paint(props.session, toolPoints(tool, origin, last, activePixels(props.session), props.session.filledRect))
+    paint(props.session, toolPoints(tool, origin, last, activePixels(props.session), props.session.filledRect), role)
   }
   preview.value = []
   origin = null
@@ -114,9 +124,11 @@ watchEffect(() => {
   }
 
   if (preview.value.length) {
-    context.fillStyle = toHex(rgb.value[props.session.color])
     context.globalAlpha = 0.6
-    for (const point of preview.value) context.fillRect(point.x * step, point.y * step, step, step)
+    for (const point of preview.value) {
+      context.fillStyle = toHex(rgb.value[roleColor(point.y)])
+      context.fillRect(point.x * step, point.y * step, step, step)
+    }
     context.globalAlpha = 1
   }
 
@@ -146,6 +158,7 @@ watchEffect(() => {
         @pointermove="onMove"
         @pointerup="onUp"
         @pointercancel="onUp"
+        @contextmenu.prevent
       />
 
       <div
@@ -193,6 +206,10 @@ watchEffect(() => {
         </div>
       </div>
     </div>
+
+    <p class="hint">
+      Left click paints the foreground, right click the background.
+    </p>
   </div>
 </template>
 
@@ -216,6 +233,12 @@ watchEffect(() => {
   border: 1px solid var(--color-border);
   touch-action: none;
   cursor: crosshair;
+}
+
+.hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 .conflict {

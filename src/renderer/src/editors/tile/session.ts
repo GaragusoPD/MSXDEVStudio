@@ -21,6 +21,7 @@ import {
   type TilesDoc
 } from '../../../../shared/msx/tile'
 import {
+  applyRoleStroke,
   applyStroke,
   canRedo,
   canUndo,
@@ -160,8 +161,18 @@ export function beginStroke(session: TileSession): void {
 }
 
 /** Applies `points` with the current color, parking the stroke if the mode's constraint refuses a pixel. */
-export function paint(session: TileSession, points: Point[]): void {
+/**
+ * `role` is the mouse button: left paints the row's foreground, right its
+ * background, which is a plain bit edit and can never conflict. Without a role
+ * (the palette's "paint this color" path) a third color in a row still raises
+ * the conflict popover.
+ */
+export function paint(session: TileSession, points: Point[], role?: 'fg' | 'bg'): void {
   if (session.conflict) return
+  if (role) {
+    session.doc = applyRoleStroke(session.doc, session.active, points, role)
+    return
+  }
   const result = applyStroke(session.doc, session.active, points, session.color)
   session.doc = result.doc
   if (!result.ok) {
