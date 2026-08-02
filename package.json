@@ -8,7 +8,7 @@
   "homepage": "https://github.com/pgaraguso/msxstudio",
   "desktopName": "com.msxstudio.app.desktop",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "electron-vite dev --noSandbox",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "lint": "eslint .",
