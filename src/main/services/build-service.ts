@@ -24,6 +24,7 @@ import type {
 import type { MsxProject } from '../../shared/msxproj'
 import { resolveNodeBinary } from './project'
 import { summarize } from './resources'
+import { openmsxSystemDataDir } from './toolchain'
 import {
   ArtifactServer,
   buildArgs,
@@ -46,6 +47,8 @@ export interface BuildDeps {
   msxglPath(): string | null
   /** User's Node override; null falls back to MSXgl's bundled Node. */
   nodeOverride(): string | null
+  /** The effective openMSX executable, or null — used to help relocatable builds find their data. */
+  openmsxPath(): string | null
   emit<K extends keyof IpcEvents>(channel: K, payload: IpcEvents[K]): void
   openExternal(url: string): Promise<void>
 }
@@ -184,8 +187,17 @@ export class BuildService {
     const stderrTail: string[] = []
     this.killed = false
 
+    // MSXgl's `run` step execs openMSX as our grandchild; relocatable tarball
+    // builds need OPENMSX_SYSTEM_DATA to find the share/ next to their bin/.
+    const openmsxShare = openmsxSystemDataDir(this.deps.openmsxPath())
+    const env =
+      openmsxShare && !process.env.OPENMSX_SYSTEM_DATA
+        ? { ...process.env, OPENMSX_SYSTEM_DATA: openmsxShare }
+        : process.env
+
     const child = spawn(node, args, {
       cwd: root,
+      env,
       // Own process group (POSIX) so the kill button can take down sdcc too.
       detached: process.platform !== 'win32',
       windowsHide: true

@@ -10,6 +10,7 @@ import {
   findOpenmsxOnPath,
   getMsxglVersion,
   isExecutable,
+  openmsxSystemDataDir,
   parseOpenmsxVersion,
   pullMsxgl,
   validateMsxglRoot,
@@ -133,6 +134,19 @@ describe('findOpenmsxOnPath', () => {
     expect(() => findOpenmsxOnPath()).not.toThrow()
     const result = findOpenmsxOnPath()
     expect(result === null || typeof result === 'string').toBe(true)
+  })
+})
+
+describe('openmsxSystemDataDir', () => {
+  it('returns ../share for the relocatable tarball layout, null otherwise', () => {
+    const root = makeTmpDir('openmsx-bin-')
+    mkdirSync(join(root, 'bin'), { recursive: true })
+    const exec = join(root, 'bin', 'openmsx')
+    writeFileSync(exec, '')
+    expect(openmsxSystemDataDir(exec)).toBeNull() // no share/machines yet
+    mkdirSync(join(root, 'share', 'machines'), { recursive: true })
+    expect(openmsxSystemDataDir(exec)).toBe(join(root, 'share'))
+    expect(openmsxSystemDataDir(null)).toBeNull()
   })
 })
 

@@ -74,6 +74,7 @@ const buildService = new BuildService({
   exportResources: () => resourceService.exportAll(),
   msxglPath: () => toolchainService.resolveMsxglPath(),
   nodeOverride: () => toolchainService.nodeOverride(),
+  openmsxPath: () => toolchainService.resolveOpenmsxPath(),
   emit: (channel, payload) => mainWindow?.webContents.send(channel, payload),
   openExternal: (url) => shell.openExternal(url)
 })

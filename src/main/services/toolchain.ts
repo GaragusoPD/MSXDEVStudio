@@ -110,6 +110,19 @@ export function findOpenmsxOnPath(): string | null {
 
 export const WINDOWS_DEFAULT_OPENMSX_PATH = 'C:\\Program Files\\openMSX\\openmsx.exe'
 
+/**
+ * The relocatable binary tarballs (`openmsx-*-linux-*-bin/bin/openmsx`) have a
+ * compiled-in data prefix that doesn't exist, so the binary can't find its own
+ * `share/` sitting next to `bin/`. When that layout is detected, return the
+ * share dir so callers can point `OPENMSX_SYSTEM_DATA` at it. Installed
+ * builds (distro package, Windows installer) don't match and return null.
+ */
+export function openmsxSystemDataDir(execPath: string | null): string | null {
+  if (!execPath) return null
+  const share = join(dirname(execPath), '..', 'share')
+  return existsSync(join(share, 'machines')) ? share : null
+}
+
 export function runOpenmsxVersion(execPath: string): Promise<string | null> {
   return new Promise((resolvePromise) => {
     execFile(execPath, ['--version'], { timeout: 5000 }, (error, stdout, stderr) => {

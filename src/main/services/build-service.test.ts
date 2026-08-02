@@ -49,6 +49,7 @@ function harness(open: OpenProject, overrides: Partial<BuildDeps> = {}): Harness
     exportResources: async () => [],
     msxglPath: () => REAL_MSXGL,
     nodeOverride: () => null,
+    openmsxPath: () => null,
     emit: (channel, payload) => {
       events.push({ channel, payload })
     },

@@ -65,7 +65,8 @@ export class ToolchainService {
     return this.settings().nodePath
   }
 
-  private resolveOpenmsxPath(): string | null {
+  /** The effective openMSX executable — settings, then PATH, then the Windows default install. */
+  resolveOpenmsxPath(): string | null {
     return (
       this.settings().openmsxPath ??
       findOpenmsxOnPath() ??

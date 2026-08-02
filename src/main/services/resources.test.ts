@@ -362,6 +362,7 @@ describe('generated headers compile into a ROM', () => {
       exportResources: () => exportAll(open.root, open.project, { msxglPath: REAL_MSXGL }),
       msxglPath: () => REAL_MSXGL,
       nodeOverride: () => null,
+      openmsxPath: () => null,
       emit: (channel, payload) => {
         if (channel === 'build:output') lines.push(...(payload as IpcEvents['build:output']).lines)
       },
