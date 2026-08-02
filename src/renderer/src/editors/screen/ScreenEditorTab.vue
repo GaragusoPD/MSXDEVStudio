@@ -172,6 +172,16 @@ function sourceButtonLabel(active: ScreenSession): string {
         </button>
       </div>
 
+      <p
+        v-if="!doc(session).source"
+        class="hint"
+      >
+        Bitmap screens are for the MSX2 modes (SCREEN 5–12): import a source image,
+        then retouch the conversion with the pencil/fill tools and palette panel.
+        For MSX1 full-screen art (SCREEN 1/2), draw a tileset in the tile editor and
+        place it in a map instead — a 32×24 map is one screen.
+      </p>
+
       <div class="panes">
         <ScreenCanvas :session="session" />
         <ScreenPalettePanel :session="session" />
@@ -254,5 +264,13 @@ function sourceButtonLabel(active: ScreenSession): string {
 
 .error {
   color: var(--color-error, #f14c4c);
+}
+
+.hint {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
 }
 </style>
