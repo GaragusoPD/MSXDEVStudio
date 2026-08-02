@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { invalidateMsxglCompletions } from '../editors/msxgl-completions'
 import type { ToolchainProgress, ToolchainSettings, ToolchainStatus } from '../../../shared/ipc'
 
 /**
@@ -34,6 +35,7 @@ export const useToolchainStore = defineStore('toolchain', {
 
     async setPaths(partial: Partial<ToolchainSettings>): Promise<void> {
       this.status = await window.api.invoke('toolchain:setPaths', partial)
+      invalidateMsxglCompletions()
     },
 
     async downloadMsxgl(targetDir?: string): Promise<void> {
@@ -41,6 +43,7 @@ export const useToolchainStore = defineStore('toolchain', {
       this.progress = null
       try {
         this.status = await window.api.invoke('toolchain:downloadMsxgl', { targetDir })
+        invalidateMsxglCompletions()
       } finally {
         this.busy = false
         this.progress = null
@@ -52,6 +55,7 @@ export const useToolchainStore = defineStore('toolchain', {
       this.progress = null
       try {
         this.status = await window.api.invoke('toolchain:updateMsxgl', undefined)
+        invalidateMsxglCompletions()
       } finally {
         this.busy = false
         this.progress = null

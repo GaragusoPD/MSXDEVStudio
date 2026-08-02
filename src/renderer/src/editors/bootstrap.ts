@@ -1,4 +1,5 @@
 import { registerEditor } from './registry'
+import { registerMsxglCompletions } from './msxgl-completions'
 import { setupMonacoEnvironment } from './monaco-setup'
 import ExampleViewerTab from './ExampleViewerTab.vue'
 import GitDiffTab from './GitDiffTab.vue'
@@ -11,6 +12,8 @@ import SpriteEditorTab from './sprite/SpriteEditorTab.vue'
 import TileEditorTab from './tile/TileEditorTab.vue'
 
 setupMonacoEnvironment()
+// The symbol index itself is fetched lazily, on the first completion request.
+registerMsxglCompletions()
 
 registerEditor({
   extensions: ['c', 'h', 's', 'asm', 'json', 'md', 'markdown'],

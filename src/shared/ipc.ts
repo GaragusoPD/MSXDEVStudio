@@ -66,6 +66,25 @@ export interface ToolchainProgress {
   percent: number | null
 }
 
+/**
+ * One completable MSXgl symbol, parsed out of the engine headers' own
+ * NaturalDocs comments (see `main/services/msxgl-symbols.ts`).
+ */
+export interface MsxglSymbol {
+  name: string
+  kind: 'function' | 'constant'
+  /** Declaration with SDCC attributes stripped, e.g. `void VDP_SetPaletteEntry(u8 index, u16 color)`. */
+  signature?: string
+  /** The doc comment's description, or a trailing `//` comment for constants. */
+  detail?: string
+  /** `name - description` per documented parameter. */
+  params?: string[]
+  /** MSXgl's compatibility tag when it has one, e.g. `MSX2/2+/TR`. */
+  machines?: string
+  /** Header this came from, relative to the MSXgl root. */
+  file: string
+}
+
 /** A file-tree entry as returned by `fs:readDir`, one level (not recursive). */
 export interface FsEntry {
   name: string
@@ -239,6 +258,9 @@ export interface IpcApi {
   'toolchain:updateMsxgl': { req: void; res: ToolchainStatus }
   /** Native folder-picker dialog; used for both the MSXgl path and a download target. */
   'toolchain:pickFolder': { req: void; res: string | null }
+  /** MSXgl API symbols for editor completion; empty when MSXgl is not configured.
+   *  Cached in main per checkout — `force` re-reads it after an update to the same path. */
+  'toolchain:msxglSymbols': { req: { force?: boolean }; res: MsxglSymbol[] }
   /** Native file-picker dialog; used for both the openMSX and node executable overrides. */
   'toolchain:pickFile': { req: void; res: string | null }
   /** Scaffolds a new project from the MSXgl template and opens it. */

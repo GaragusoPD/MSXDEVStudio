@@ -6,11 +6,12 @@ import { ExamplesService } from './services/examples-service'
 import { FsService } from './services/fs-service'
 import { GitService } from './services/git-service'
 import { extractProjectPath } from './services/launch-args'
+import { indexMsxglSymbols } from './services/msxgl-symbols'
 import { ProjectService } from './services/project-service'
 import { ResourceService } from './services/resource-service'
 import { StateService } from './services/state-service'
 import { ToolchainService } from './services/toolchain-service'
-import type { AppState, BuildCommand } from '../shared/ipc'
+import type { AppState, BuildCommand, MsxglSymbol } from '../shared/ipc'
 
 // Single-instance lock: a second `.msxproj` double-click while MSXStudio is
 // already running should focus the existing window and open the file there,
@@ -31,6 +32,19 @@ if (launchProjectPath) stateService.update({ lastProject: launchProjectPath })
 let mainWindow: BrowserWindow | null = null
 const toolchainService = new ToolchainService(stateService, () => mainWindow)
 toolchainService.registerIpc()
+// MSXgl API completions: parsing all 117 headers takes ~60ms, so it is done
+// once per configured checkout and cached until the path changes.
+let symbolCache: { path: string; symbols: MsxglSymbol[] } | null = null
+ipcMain.handle('toolchain:msxglSymbols', (_e, req: { force?: boolean } | undefined) => {
+  const path = toolchainService.resolveMsxglPath()
+  if (!path) return []
+  // `force` covers updating MSXgl in place, where the path alone is unchanged.
+  if (req?.force || symbolCache?.path !== path) {
+    symbolCache = { path, symbols: indexMsxglSymbols(path) }
+  }
+  return symbolCache.symbols
+})
+
 const fsService = new FsService(() => mainWindow)
 fsService.registerIpc()
 const gitService = new GitService((status) => mainWindow?.webContents.send('git:changed', status))
