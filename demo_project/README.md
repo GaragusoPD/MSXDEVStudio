@@ -4,6 +4,8 @@ A small, complete MSX1 game built entirely with MSXStudio's own editors. Collect
 all eight coins, then reach the door at the far right. Arrow keys move, SPACE
 jumps.
 
+![Title screen](../docs/images/demo-title.png)
+
 ![Gameplay](../docs/images/demo-gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
@@ -38,8 +40,15 @@ The game code in `main.c` covers the techniques the
   which is the difference between a stride and a flicker.
 - **Sound**, an ayFX bank played with `ayFX_PlayBank`, updated once per frame by
   `ayFX_Update()` and pushed to the chip with `PSG_Apply()`.
-- **Text screens**, drawn in SCREEN 1 with the BIOS font, so the title and
-  ending do not have to share the pattern table with the game's tiles.
+- **Text screens**, drawn in SCREEN 1 with MSXgl's `g_Font_MGL_Sample8`, so the
+  title and ending do not have to share the pattern table with the game's tiles.
+  The title is framed with `Print_DrawBox`, and the MSXgl logo is characters 1
+  to 6 of any MSXgl font (`MSX_GL` in `main.c`).
+- **Colour in SCREEN 1**, which stores one colour per group of eight pattern
+  codes rather than per character. Loading the font at offset 0 makes a pattern
+  code equal its character code, so whole classes can be recoloured:
+  `ColorChars()` tints the box frame cyan, capitals yellow, digits green and the
+  logo cyan, which is why SPACE and the coin count stand out in a sentence.
 
 ## Three things worth knowing
 

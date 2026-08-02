@@ -26,6 +26,9 @@
 #include "psg.h"
 #include "ayfx/ayfx_player.h"
 
+// MSXgl's own 8x8 font, which also carries its logo as characters 1 to 6.
+#include "font/font_mgl_sample8.h"
+
 #include "content/tiles.h"
 #include "content/player.h"
 #include "content/level.h"
@@ -50,6 +53,9 @@
 #define T_STONE      9
 #define T_EXIT_TOP   11
 #define T_DIGIT_0    16          // digits live at 16..25, so tile = T_DIGIT_0 + value
+
+// The MSXgl logo, drawn with characters 1-6 of any MSXgl font.
+#define MSX_GL       "\x01\x02\x03\x04\x05\x06"
 
 #define COIN_COUNT   8
 #define EXIT_X       60
@@ -162,14 +168,34 @@ void DrawHUD()
 // Text screens (SCREEN 1, so the BIOS font can use the pattern table freely)
 //──────────────────────────────────────────────────────────────────────────────
 
-// Sets up SCREEN 1 with the BIOS font and clears it, ready to be printed on.
+// SCREEN 1 stores one colour per group of eight consecutive pattern codes. The
+// MSXgl font starts at character 0, so loading it at offset 0 makes a pattern
+// code equal to the character code. So whole classes of character can be recoloured: capitals are 65-90,
+// digits 48-57, and Print_DrawBox's frame glyphs 22-27 (lines 0x16/0x17,
+// corners 0x18-0x1B).
+void ColorChars(u8 firstChar, u8 lastChar, u8 fg, u8 bg)
+{
+	u8 col = (fg << 4) | bg;
+	for (u8 group = firstChar >> 3; group <= (lastChar >> 3); ++group)
+		VDP_Poke_16K(col, g_ScreenColorLow + group);
+}
+
+#define PAPER  COLOR_BLACK
+
+// Sets up SCREEN 1 with the BIOS font and the demo's palette, and clears it.
 void BeginTextScreen()
 {
 	VDP_SetMode(VDP_MODE_GRAPHIC1);
 	VDP_ClearVRAM();
-	VDP_SetColor(COLOR_BLACK);
-	Print_SetTextFont(PRINT_DEFAULT_FONT, 1);
-	Print_SetColor(COLOR_WHITE, COLOR_BLACK);
+	VDP_SetColor(PAPER);                       // border, so it matches the page
+	Print_SetTextFont(g_Font_MGL_Sample8, 0);
+	Print_SetColor(COLOR_WHITE, PAPER);        // fills all 32 groups at once
+
+	// ...then lift a few classes out of that flat white.
+	ColorChars(1,   6, COLOR_CYAN,          PAPER);   // the MSXgl logo
+	ColorChars(22, 27, COLOR_CYAN,         PAPER);   // box lines and corners
+	ColorChars(65, 90, COLOR_LIGHT_YELLOW, PAPER);   // capitals
+	ColorChars(48, 57, COLOR_LIGHT_GREEN,  PAPER);   // digits
 }
 
 void PrintAt(u8 x, u8 y, const c8* text)
@@ -181,18 +207,24 @@ void PrintAt(u8 x, u8 y, const c8* text)
 void TitleScreen()
 {
 	BeginTextScreen();
-	PrintAt(7,  3, "M S X S T U D I O");
-	PrintAt(4,  5, "A two-screen demo game");
 
-	PrintAt(3,  9, "Arrows move, SPACE jumps");
-	PrintAt(2, 11, "Collect all 8 coins, then");
-	PrintAt(2, 12, "reach the door on the right");
+	// A framed title, then the rules underneath.
+	Print_DrawBox(3, 2, 26, 5);
+	PrintAt(7,  4, "M S X S T U D I O");
 
-	PrintAt(6, 15, "Press SPACE to play");
+	PrintAt(5,  8, "A two-screen demo game");
+
+	PrintAt(4, 11, "Arrows move, SPACE jumps");
+	PrintAt(3, 13, "Collect all 8 coins, then");
+	PrintAt(2, 14, "reach the door on the right");
+
+	PrintAt(6, 17, "Press SPACE to play");
 
 	// The attribution MSXStudio's license asks of anything built with it.
-	PrintAt(5, 20, "Built with MSXStudio");
-	PrintAt(8, 21, "by P.D. Garaguso");
+	PrintAt(6, 19, "Built with MSXStudio");
+	PrintAt(8, 20, "by P.D. Garaguso");
+	PrintAt(4, 22, MSX_GL " MSX Game Library");
+	PrintAt(0, 23, "");
 }
 
 // Everything this game stands on. MSXgl is CC BY-SA 4.0 and asks to be
@@ -206,15 +238,16 @@ void CreditsScreen()
 	PrintAt(5,  5, "Built with MSXStudio");
 	PrintAt(8,  6, "by P.D. Garaguso");
 
-	PrintAt(4,  9, "Powered by MSXgl + MSXtk");
-	PrintAt(8, 10, "by G. Blanchard");
-	PrintAt(10, 11, "CC BY-SA 4.0");
+	PrintAt(13, 8, MSX_GL);
+	PrintAt(4, 10, "Powered by MSXgl + MSXtk");
+	PrintAt(8, 11, "by G. Blanchard");
+	PrintAt(10, 12, "CC BY-SA 4.0");
 
-	PrintAt(3, 14, "Sound: ayFX by Shiru");
-	PrintAt(3, 15, "Compiled with SDCC");
-	PrintAt(3, 16, "Runs on openMSX / WebMSX");
+	PrintAt(3, 15, "Sound: ayFX by Shiru");
+	PrintAt(3, 16, "Compiled with SDCC");
+	PrintAt(3, 17, "Runs on openMSX / WebMSX");
 
-	PrintAt(2, 19, "Not endorsed by the above");
+	PrintAt(2, 20, "Not endorsed by the above");
 	PrintAt(6, 22, "SPACE to restart");
 }
 
