@@ -3,6 +3,7 @@ import { defineName, emitBin, emitCHeader } from './emitC'
 import { createMapDoc, normalizeMap } from './map'
 import { packGrb } from './palette'
 import {
+  RESOURCE_SUFFIXES,
   defaultExport,
   defaultTableName,
   parseResource,
@@ -297,5 +298,21 @@ describe('sfx resource', () => {
     expect(parsed).toEqual(fixtureSfx())
     expect(validateResource(parsed)).toEqual([])
     expect(defaultExport('audio/fx.sfx.json')).toEqual({ name: 'g_Fx', format: 'c', out: 'content/fx.h' })
+  })
+
+  it('creates a valid default doc from {} for every kind — the Resources panel New button', () => {
+    for (const [kind, suffix] of Object.entries(RESOURCE_SUFFIXES)) {
+      const path = `untitled${suffix}`
+      const resource = parseResource(path, '{}')
+      expect(resource.kind).toBe(kind)
+      resource.doc.export = defaultExport(path)
+      // Blank maps/screens legitimately warn until their editor picks a tileset / imports a source.
+      const blankStateWarnings: Record<string, string[]> = {
+        map: ['No tileset referenced'],
+        screen: ['No source image']
+      }
+      expect(validateResource(resource)).toEqual(blankStateWarnings[kind] ?? [])
+      expect(parseResource(path, serializeResource(resource))).toEqual(resource)
+    }
   })
 })

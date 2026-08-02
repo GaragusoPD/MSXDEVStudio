@@ -1,16 +1,47 @@
 <script setup lang="ts">
 /**
- * Side panel for Spec 07: the project's editor resources, the manual export
- * command, and the standalone entry point for the Import-image dialog.
- * Specs 08–10 add "open in editor" once those editors register.
+ * Side panel for Spec 07: the project's editor resources — create/open them in
+ * their editors (Specs 08–11), the manual export command, and the standalone
+ * entry point for the Import-image dialog.
  */
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import {
+  RESOURCE_SUFFIXES,
+  defaultExport,
+  parseResource,
+  serializeResource,
+  type ResourceKind
+} from '../../../shared/msx/resource'
 import { useProjectStore } from '../stores/projectStore'
 import { useResourcesStore } from '../stores/resourcesStore'
+import { useTabsStore } from '../stores/tabsStore'
 import ImportImageDialog from './ImportImageDialog.vue'
 
 const projectStore = useProjectStore()
 const resourcesStore = useResourcesStore()
+const tabsStore = useTabsStore()
+
+const newKind = ref<ResourceKind>('tiles')
+const newName = ref('')
+
+function openResource(path: string): void {
+  tabsStore.openFile(path, path.split('/').pop() ?? path)
+}
+
+/** Writes a fresh default doc (or just opens an existing file of that name) and its editor tab. */
+async function createResource(): Promise<void> {
+  const base = newName.value.replace(/[^A-Za-z0-9_-]/g, '')
+  if (!base) return
+  const path = `${base}${RESOURCE_SUFFIXES[newKind.value]}`
+  if (!(await window.api.invoke('fs:stat', { path }))) {
+    const resource = parseResource(path, '{}')
+    resource.doc.export = defaultExport(path)
+    await window.api.invoke('fs:write', { path, content: serializeResource(resource) })
+    await resourcesStore.refresh()
+  }
+  newName.value = ''
+  openResource(path)
+}
 
 const grouped = computed<[string, typeof resourcesStore.entries][]>(() => {
   const map = new Map<string, typeof resourcesStore.entries>()
@@ -42,6 +73,34 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
     </p>
 
     <template v-else>
+      <form
+        class="actions"
+        @submit.prevent="createResource"
+      >
+        <select v-model="newKind">
+          <option
+            v-for="(suffix, kind) in RESOURCE_SUFFIXES"
+            :key="kind"
+            :value="kind"
+          >
+            {{ kind }}
+          </option>
+        </select>
+        <input
+          v-model="newName"
+          type="text"
+          placeholder="name"
+          spellcheck="false"
+        >
+        <button
+          type="submit"
+          :disabled="!newName.trim()"
+          title="Create the resource file and open its editor"
+        >
+          New
+        </button>
+      </form>
+
       <div class="actions">
         <button
           type="button"
@@ -88,10 +147,14 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
           :key="entry.path"
           class="row"
         >
-          <span
+          <button
+            type="button"
             class="path"
-            :title="entry.path"
-          >{{ entry.path }}</span>
+            :title="`Open ${entry.path} in its editor`"
+            @click="openResource(entry.path)"
+          >
+            {{ entry.path }}
+          </button>
           <span
             class="out"
             :title="entry.out ?? 'No export target set'"
@@ -162,6 +225,21 @@ h3 {
   cursor: default;
 }
 
+.actions select,
+.actions input {
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.actions input {
+  flex: 1;
+  min-width: 60px;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -170,12 +248,24 @@ h3 {
   font-size: 12px;
 }
 
-.path {
+.row .path {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.row .path:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
 }
 
 .out {

@@ -123,7 +123,7 @@ export function needsFullRebuild(root: string, stamp: string): boolean {
   }
   if (!rels.length) return false
 
-  let previous: string | null = null
+  let previous: string
   try {
     previous = readFileSync(join(outDir, STAMP_FILE), 'utf-8')
   } catch {
