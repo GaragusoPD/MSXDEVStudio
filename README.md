@@ -95,6 +95,27 @@ Double-click any `.msxproj` file, or run `msxstudio path/to/Game.msxproj`. If
 MSXStudio is already open it focuses the existing window rather than starting a
 second copy.
 
+## The demo game
+
+[`demo_project/`](demo_project/) is a complete, playable MSX1 platformer, and
+the fastest way to see what the editors actually produce. Open its
+`demo.msxproj` and press Run.
+
+<p align="center">
+  <img src="docs/images/demo-title.png" width="47%" alt="The demo's title screen, framed with Print_DrawBox and carrying the MSXgl logo">
+  <img src="docs/images/demo-gameplay.png" width="47%" alt="The demo in play: a tile level scrolling across two screens with a sprite and a coin counter">
+</p>
+
+Collect eight coins across a two-screen scrolling level, then reach the door.
+Every graphic and sound in it came from a resource editor: a SCREEN 2 tileset,
+a six-frame sprite, a 64x24 map and an ayFX bank. It builds to about 13 KB of a
+32 KB ROM, and its [README](demo_project/README.md) explains how each piece is
+loaded, along with a few MSX gotchas worth knowing before you hit them yourself.
+
+It is also the worked example of the attribution this project's
+[license](#license) asks for: the credit appears on the title screen and again
+on a credits screen at the end.
+
 ## Documentation
 
 - **[Resources guide](docs/resources.md)** — the five asset editors, how
@@ -146,6 +167,7 @@ src/shared/     the IPC contract, plus MSX hardware and format logic
                 (dependency-free, runs in main, renderer and tests unchanged)
 specs/          implementation specs, one per feature area
 docs/           user guides and tutorials
+demo_project/   a complete example game, built with the editors
 scripts/        build-time generators (icons, the trimmed Monaco shim)
 ```
 
