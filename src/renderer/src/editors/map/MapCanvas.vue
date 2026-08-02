@@ -168,12 +168,19 @@ watchEffect(() => {
   const tileset = props.session.tileset
   if (tileset) {
     const sheet = ensureSheet(tileset)
+    // The first tiles layer is the base: hardware draws every cell, so tile 0
+    // renders like any other. On overlay layers 0 stays transparent — it's
+    // what erase writes and what a fresh layer is filled with.
+    let base = true
     for (const layer of current.layers) {
-      if (layer.kind !== 'tiles' || !layer.visible) continue
+      if (layer.kind !== 'tiles') continue
+      const skipZero = !base
+      base = false
+      if (!layer.visible) continue
       for (let y = 0; y < current.height; y++) {
         for (let x = 0; x < current.width; x++) {
           const index = layer.data[y * current.width + x]
-          if (!index) continue
+          if (!index && skipZero) continue
           const sx = (index % SHEET_COLUMNS) * TILE_SIZE
           const sy = Math.floor(index / SHEET_COLUMNS) * TILE_SIZE
           ctx.drawImage(sheet, sx, sy, TILE_SIZE, TILE_SIZE, x * zoom, y * zoom, zoom, zoom)
