@@ -1,0 +1,1 @@
+./template.c:41: syntax error: token -> 'VDP_ClearVRAM' ; column 14

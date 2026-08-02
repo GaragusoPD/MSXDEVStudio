@@ -1,0 +1,47 @@
+name: Release
+
+# Builds installers for a tagged version and attaches them to a draft GitHub
+# release for manual review before publishing (see README "Known gaps" — no
+# code signing yet, so Windows/SmartScreen and Gatekeeper-style warnings are
+# expected on the resulting binaries).
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            builder-args: --linux
+          - os: windows-latest
+            builder-args: --win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+      - run: npx electron-builder ${{ matrix.builder-args }}
+
+      - name: Attach artifacts to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.exe

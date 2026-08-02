@@ -1,0 +1,89 @@
+/*
+ * Theming via CSS custom properties. Dark is the default (:root); the light
+ * theme overrides the same variable names under [data-theme='light'], set on
+ * <html> from appStore.theme. No other selectors should hard-code colors.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --color-bg-activitybar: #333333;
+  --color-bg-sidebar: #252526;
+  --color-bg-editor: #1e1e1e;
+  --color-bg-panel: #1e1e1e;
+  --color-bg-tab-active: #1e1e1e;
+  --color-bg-tab-inactive: #2d2d2d;
+  --color-bg-statusbar: #007acc;
+  --color-bg-hover: rgba(255, 255, 255, 0.1);
+  --color-bg-active-item: rgba(255, 255, 255, 0.08);
+
+  --color-fg-statusbar: #ffffff;
+  --color-text: #cccccc;
+  --color-text-muted: #8a8a8a;
+
+  --color-border: #3c3c3c;
+  --color-accent: #007acc;
+
+  --font-ui: -apple-system, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --color-bg-activitybar: #ececec;
+  --color-bg-sidebar: #f3f3f3;
+  --color-bg-editor: #ffffff;
+  --color-bg-panel: #ffffff;
+  --color-bg-tab-active: #ffffff;
+  --color-bg-tab-inactive: #ececec;
+  --color-bg-statusbar: #007acc;
+  --color-bg-hover: rgba(0, 0, 0, 0.06);
+  --color-bg-active-item: rgba(0, 0, 0, 0.05);
+
+  --color-fg-statusbar: #ffffff;
+  --color-text: #1e1e1e;
+  --color-text-muted: #6e6e6e;
+
+  --color-border: #d4d4d4;
+  --color-accent: #007acc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-bg-editor);
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-hover);
+  border-radius: 5px;
+}

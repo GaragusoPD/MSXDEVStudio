@@ -1,0 +1,5 @@
+.endm
+[0m
+[90m----------------------------------------[0m
+» MSXgl Modules: system,no_such_module
+[91mError: Module no_such_module.c not found![0m

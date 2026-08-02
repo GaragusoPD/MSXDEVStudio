@@ -1,0 +1,720 @@
+[
+  {
+    "id": "s_hello",
+    "title": "Hello World",
+    "category": "Getting started",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Minimal MSXgl program: prints text to the screen. The starting point for any new project.",
+    "tags": [
+      "beginner",
+      "print",
+      "hello-world"
+    ]
+  },
+  {
+    "id": "s_print",
+    "title": "Formatted print",
+    "category": "Text & print",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Formatted printing with the print module's printf-style helpers.",
+    "tags": [
+      "print",
+      "printf",
+      "format"
+    ]
+  },
+  {
+    "id": "s_text",
+    "title": "Text console",
+    "category": "Text & print",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Text console basics: cursor positioning, colors and plain screen text output.",
+    "tags": [
+      "text",
+      "console"
+    ]
+  },
+  {
+    "id": "s_draw",
+    "title": "2D drawing primitives",
+    "category": "Graphics & VDP",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "2D drawing primitives (lines, boxes, circles) with the draw module.",
+    "tags": [
+      "draw",
+      "graphics",
+      "shapes"
+    ]
+  },
+  {
+    "id": "s_v9990",
+    "title": "V9990 graphics",
+    "category": "Graphics & VDP",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "V9990 (GFX9000) video chip: extended graphics modes and its own command engine.",
+    "tags": [
+      "v9990",
+      "gfx9000",
+      "graphics"
+    ]
+  },
+  {
+    "id": "s_vdpcmd",
+    "title": "VDP command engine",
+    "category": "Graphics & VDP",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "MSX2 VDP command engine: hardware-accelerated line, box and copy operations.",
+    "tags": [
+      "vdp",
+      "command-engine",
+      "msx2"
+    ]
+  },
+  {
+    "id": "s_sm1",
+    "title": "Sprite mode 1",
+    "category": "Sprites",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Hardware sprite mode 1, the MSX1-compatible single-color sprite mode.",
+    "tags": [
+      "sprite",
+      "mode1",
+      "msx1"
+    ]
+  },
+  {
+    "id": "s_sprite",
+    "title": "Sprite mode 2",
+    "category": "Sprites",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Hardware sprite mode 2 (16 colors, OR'ed sprite colors) on MSX2.",
+    "tags": [
+      "sprite",
+      "mode2",
+      "msx2"
+    ]
+  },
+  {
+    "id": "s_sprtfx",
+    "title": "Sprite effects",
+    "category": "Sprites",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Flicker-free sprite multiplexing and animation with the sprite_fx module.",
+    "tags": [
+      "sprite",
+      "multiplex",
+      "animation"
+    ]
+  },
+  {
+    "id": "s_swsprt",
+    "title": "Software sprites",
+    "category": "Sprites",
+    "machine": "2",
+    "target": "ROM_ASCII8",
+    "description": "Software-drawn sprites via VDP commands, for more moving objects than hardware sprites allow.",
+    "tags": [
+      "sprite",
+      "software",
+      "vdp-command"
+    ]
+  },
+  {
+    "id": "s_gm3",
+    "title": "Multi-directional scroll",
+    "category": "Scrolling",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Multi-directional smooth scrolling driven by an IM2 + H-Blank interrupt handler.",
+    "tags": [
+      "scroll",
+      "im2",
+      "hblank",
+      "interrupt"
+    ]
+  },
+  {
+    "id": "s_scroll",
+    "title": "Scrolling",
+    "category": "Scrolling",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Hardware-assisted screen scrolling with the scroll module.",
+    "tags": [
+      "scroll",
+      "tile"
+    ]
+  },
+  {
+    "id": "s_swtile",
+    "title": "Software tiles",
+    "category": "Tiles & maps",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Software tile rendering with a moving actor (pawn), independent of the hardware tile layer.",
+    "tags": [
+      "tile",
+      "software",
+      "pawn"
+    ]
+  },
+  {
+    "id": "s_mapper",
+    "title": "ASCII-8 mapper + banked calls",
+    "category": "ROM mappers & memory",
+    "machine": "1",
+    "target": "ROM_ASCII8",
+    "description": "An ASCII-8 mapped ROM with automatic banked calls and trampoline functions.",
+    "tags": [
+      "mapper",
+      "ascii8",
+      "bankedcall"
+    ]
+  },
+  {
+    "id": "s_neomap",
+    "title": "NEO-8 megarom mapper",
+    "category": "ROM mappers & memory",
+    "machine": "1",
+    "target": "ROM_NEO8",
+    "description": "A NEO-8 mapped ROM, scaling up to 8 MB of banked ROM.",
+    "tags": [
+      "mapper",
+      "neo8",
+      "megarom"
+    ]
+  },
+  {
+    "id": "s_arkos",
+    "title": "Arkos Tracker 2 replayers",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_ASCII8",
+    "description": "Playing Arkos Tracker 2 songs with all 3 AKG/AKM/AKY replayers.",
+    "tags": [
+      "arkos",
+      "tracker",
+      "music"
+    ]
+  },
+  {
+    "id": "s_ayfx",
+    "title": "ayFX sound effects",
+    "category": "Sound & music",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Playing ayFX sound effects from sound banks or individual files.",
+    "tags": [
+      "ayfx",
+      "sfx",
+      "psg"
+    ]
+  },
+  {
+    "id": "s_lvgm",
+    "title": "Looped VGM from disk",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "DOS2",
+    "description": "Playing looped VGM (lVGM) tracks streamed straight off disk.",
+    "tags": [
+      "vgm",
+      "lvgm",
+      "disk",
+      "music"
+    ]
+  },
+  {
+    "id": "s_ndp",
+    "title": "NDP music replayer",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Playing NDP-format music with the ndp_player.",
+    "tags": [
+      "ndp",
+      "music"
+    ]
+  },
+  {
+    "id": "s_pcmenc",
+    "title": "PCM encoding",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Encoding and streaming PCM sample playback.",
+    "tags": [
+      "pcm",
+      "sample",
+      "audio"
+    ]
+  },
+  {
+    "id": "s_pcmplay",
+    "title": "PCM playback",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Playing pre-encoded PCM audio samples.",
+    "tags": [
+      "pcm",
+      "playback",
+      "audio"
+    ]
+  },
+  {
+    "id": "s_psg",
+    "title": "PSG sound",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Direct PSG (AY-3-8910) tone, noise and envelope programming.",
+    "tags": [
+      "psg",
+      "sound",
+      "ay-3-8910"
+    ]
+  },
+  {
+    "id": "s_pt3",
+    "title": "PT3 music replayer",
+    "category": "Sound & music",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Playing PT3 (Pro Tracker 3) module music.",
+    "tags": [
+      "pt3",
+      "tracker",
+      "music"
+    ]
+  },
+  {
+    "id": "s_trilo",
+    "title": "Trilo SCC chiptunes",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_KONAMI_SCC",
+    "description": "Playing Trilo SCC-based chiptunes on a Konami SCC mapper.",
+    "tags": [
+      "trilo",
+      "scc",
+      "music"
+    ]
+  },
+  {
+    "id": "s_vgm",
+    "title": "VGM playback",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_ASCII16",
+    "description": "Playing VGM chip-log recordings across PSG, SCC, MSX-Music and MSX-Audio.",
+    "tags": [
+      "vgm",
+      "music",
+      "replay"
+    ]
+  },
+  {
+    "id": "s_wyz",
+    "title": "Wyz music replayer",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Playing Wyz-format music tracks.",
+    "tags": [
+      "wyz",
+      "music",
+      "tracker"
+    ]
+  },
+  {
+    "id": "s_wyz2",
+    "title": "Wyz2 music replayer",
+    "category": "Sound & music",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Playing Wyz2-format music tracks (the newer replayer).",
+    "tags": [
+      "wyz",
+      "music",
+      "tracker"
+    ]
+  },
+  {
+    "id": "s_jmega",
+    "title": "JoyMega pad",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Reading a 6-button Mega Drive pad (JoyMega) through the joystick port.",
+    "tags": [
+      "joymega",
+      "gamepad",
+      "input"
+    ]
+  },
+  {
+    "id": "s_joystk",
+    "title": "Joystick input",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Reading standard MSX joysticks.",
+    "tags": [
+      "joystick",
+      "input"
+    ]
+  },
+  {
+    "id": "s_keybrd",
+    "title": "Keyboard input",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Reading the MSX keyboard matrix.",
+    "tags": [
+      "keyboard",
+      "input"
+    ]
+  },
+  {
+    "id": "s_lgun",
+    "title": "Light gun input",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Reading a light gun via the VDP's light-pen interrupt.",
+    "tags": [
+      "lightgun",
+      "input"
+    ]
+  },
+  {
+    "id": "s_lpt",
+    "title": "Printer (LPT) output",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Sending data to a printer through the parallel (LPT) port.",
+    "tags": [
+      "printer",
+      "lpt",
+      "device"
+    ]
+  },
+  {
+    "id": "s_mouse",
+    "title": "Mouse input",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Reading an MSX mouse on the joystick port.",
+    "tags": [
+      "mouse",
+      "input"
+    ]
+  },
+  {
+    "id": "s_ntap",
+    "title": "Ninja Tap multitap",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Reading up to 4 joysticks through a Ninja Tap multitap.",
+    "tags": [
+      "ninjatap",
+      "multitap",
+      "input"
+    ]
+  },
+  {
+    "id": "s_onet",
+    "title": "ObsoNet network cartridge",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_16K_P2",
+    "description": "Sending and receiving packets through an ObsoNet network cartridge.",
+    "tags": [
+      "network",
+      "onet",
+      "cartridge"
+    ]
+  },
+  {
+    "id": "s_paddle",
+    "title": "Paddle input",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_48K_ISR",
+    "description": "Reading an MSX paddle controller.",
+    "tags": [
+      "paddle",
+      "input"
+    ]
+  },
+  {
+    "id": "s_wavegm",
+    "title": "WaveGame device",
+    "category": "Input & devices",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Driving the WaveGame controller peripheral.",
+    "tags": [
+      "wavegame",
+      "device",
+      "input"
+    ]
+  },
+  {
+    "id": "s_dos",
+    "title": "MSX-DOS 1 program",
+    "category": "Storage & DOS",
+    "machine": "2P",
+    "target": "DOS1",
+    "description": "A basic MSX-DOS 1 program: command-line arguments and file I/O.",
+    "tags": [
+      "dos",
+      "dos1",
+      "cli"
+    ]
+  },
+  {
+    "id": "s_dos0",
+    "title": "MSX-DOS direct boot",
+    "category": "Storage & DOS",
+    "machine": "2",
+    "target": "DOS0",
+    "description": "A direct-boot MSX-DOS program that skips COMMAND.COM.",
+    "tags": [
+      "dos",
+      "dos0",
+      "boot"
+    ]
+  },
+  {
+    "id": "s_dos2",
+    "title": "MSX-DOS 2 program",
+    "category": "Storage & DOS",
+    "machine": "2",
+    "target": "DOS2",
+    "description": "An MSX-DOS 2 program using its extended file API.",
+    "tags": [
+      "dos",
+      "dos2"
+    ]
+  },
+  {
+    "id": "s_dosmap",
+    "title": "DOS2 mapper emulator",
+    "category": "Storage & DOS",
+    "machine": "1",
+    "target": "DOS2_MAPPER",
+    "description": "A ROM-mapper emulator running under MSX-DOS 2.",
+    "tags": [
+      "dos",
+      "dos2",
+      "mapper-emulator"
+    ]
+  },
+  {
+    "id": "s_pac",
+    "title": "PAC SRAM storage",
+    "category": "Storage & DOS",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Reading and writing the Panasonic PAC cartridge's battery-backed SRAM.",
+    "tags": [
+      "pac",
+      "sram",
+      "storage"
+    ]
+  },
+  {
+    "id": "s_save",
+    "title": "Save-game storage",
+    "category": "Storage & DOS",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Save-game storage across disk, PAC SRAM and other devices with disk_save.",
+    "tags": [
+      "save",
+      "sram",
+      "pac",
+      "disk"
+    ]
+  },
+  {
+    "id": "s_bios",
+    "title": "BIOS calls",
+    "category": "System & misc",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Calling MSX BIOS routines directly from C.",
+    "tags": [
+      "bios",
+      "system"
+    ]
+  },
+  {
+    "id": "s_clock",
+    "title": "Real-time clock",
+    "category": "System & misc",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Reading the MSX2 real-time clock chip.",
+    "tags": [
+      "clock",
+      "rtc",
+      "msx2"
+    ]
+  },
+  {
+    "id": "s_crypt",
+    "title": "Encryption",
+    "category": "System & misc",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Data encryption and decryption with the crypt module.",
+    "tags": [
+      "crypt",
+      "encryption"
+    ]
+  },
+  {
+    "id": "s_drv",
+    "title": "Raw MSX-DOS driver",
+    "category": "System & misc",
+    "machine": "1",
+    "target": "RAW",
+    "description": "Writing a low-level MSX-DOS device driver (RAW target).",
+    "tags": [
+      "driver",
+      "dos",
+      "raw"
+    ]
+  },
+  {
+    "id": "s_game",
+    "title": "Game FSM & pawn",
+    "category": "System & misc",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "The game module's finite-state machine and pawn (actor) framework.",
+    "tags": [
+      "fsm",
+      "pawn",
+      "game-framework"
+    ]
+  },
+  {
+    "id": "s_loc",
+    "title": "Localization",
+    "category": "System & misc",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "Multi-language text with the localize module.",
+    "tags": [
+      "localization",
+      "i18n",
+      "text"
+    ]
+  },
+  {
+    "id": "s_math",
+    "title": "Math & trigonometry",
+    "category": "System & misc",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Fixed-point math: trigonometry and square-root lookup tables, plus the mem_op memory helper.",
+    "tags": [
+      "math",
+      "trigonometry",
+      "tables"
+    ]
+  },
+  {
+    "id": "s_menu",
+    "title": "In-game menu",
+    "category": "System & misc",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "A navigable in-game menu built with the game/menu module.",
+    "tags": [
+      "menu",
+      "ui",
+      "game"
+    ]
+  },
+  {
+    "id": "s_qrcode",
+    "title": "QR code",
+    "category": "System & misc",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "Generating and drawing a QR code on screen.",
+    "tags": [
+      "qrcode",
+      "encoding"
+    ]
+  },
+  {
+    "id": "s_qrtiny",
+    "title": "QR code (tiny)",
+    "category": "System & misc",
+    "machine": "2",
+    "target": "ROM_32K",
+    "description": "A smaller, size-optimized QR code generator and renderer.",
+    "tags": [
+      "qrcode",
+      "encoding",
+      "size"
+    ]
+  },
+  {
+    "id": "s_sys",
+    "title": "System module",
+    "category": "System & misc",
+    "machine": "1",
+    "target": "ROM_32K",
+    "description": "The system module: slot layout, RAM/ROM detection and other low-level system info.",
+    "tags": [
+      "system",
+      "slots"
+    ]
+  },
+  {
+    "id": "s_usr",
+    "title": "BASIC USR routine",
+    "category": "System & misc",
+    "machine": "1",
+    "target": "BIN_USR",
+    "description": "A BASIC-callable USR machine-code routine (basic_usr).",
+    "tags": [
+      "basic",
+      "usr",
+      "driver"
+    ]
+  },
+  {
+    "id": "s_zip",
+    "title": "Decompression algorithms",
+    "category": "System & misc",
+    "machine": "2",
+    "target": "DOS1",
+    "description": "Every bundled decompressor (Pletter, ZX0, LZ48, Bitbuster) compared side by side.",
+    "tags": [
+      "compression",
+      "pletter",
+      "zx0"
+    ]
+  }
+]

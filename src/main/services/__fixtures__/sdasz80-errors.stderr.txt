@@ -1,0 +1,2 @@
+./bad.s:3: Error: <u> undefined symbol encountered during assembly
+./bad.s:4: Error: <o> .org in REL area or directive / mnemonic error

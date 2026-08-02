@@ -1,0 +1,6 @@
+?ASxxxx-Error-<o> in line 4 of bad.s
+              org in REL area or directive / mnemonic error
+?ASxxxx-Warning-<q> in line 12 of src/tiles.asm
+              missing or improper operators, terminators, or delimiters
+?ASlink-Warning-Undefined Global '_Missing_Function' referenced by module 'main'
+?ASlink-Error-Could not get 4 consecutive bytes in internal memory for area _CODE

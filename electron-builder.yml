@@ -1,0 +1,61 @@
+appId: com.msxstudio.app
+productName: MSXStudio
+directories:
+  buildResources: build
+  output: dist
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!specs/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!vitest.config.{js,ts,mjs,cjs}'
+  - '!eslint.config.{js,mjs,cjs}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{.editorconfig,.gitignore}'
+asarUnpack:
+  - resources/**
+
+# No code signing (no certificates yet) and no auto-update (YAGNI pre-users) —
+# see README's "Known gaps" section.
+fileAssociations:
+  - ext: msxproj
+    name: MSX Studio Project
+    description: MSX Studio project file
+    # Linux .desktop/MimeType + shared-mime-info registration keys off this;
+    # Windows NSIS registers the extension directly and uses the app's own
+    # icon (electron-builder default) since no per-association icon is set.
+    mimeType: application/x-msxstudio-project
+    role: Editor
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  createDesktopShortcut: always
+
+portable:
+  artifactName: ${name}-${version}-portable.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  category: Development
+  synopsis: Desktop IDE for MSX game development
+  syncDesktopName: true
+
+appImage:
+  artifactName: ${name}-${version}.${ext}
+
+deb:
+  artifactName: ${name}-${version}.${ext}
+
+npmRebuild: false
+publish: null

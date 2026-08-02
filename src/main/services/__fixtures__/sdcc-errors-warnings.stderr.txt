@@ -1,0 +1,7 @@
+./template.c:48: error 20: Undefined identifier 'g_DoesNotExist'
+./template.c:49: warning 112: function 'No_Such_Function' implicit declaration
+./template.c:49: error 101: too many parameters 
+./template.c:49: warning 85: in function main unreferenced local variable : '__200000245'
+./template.c:49: warning 85: in function main unreferenced local variable : '__200010246'
+./template.c:49: warning 85: in function main unreferenced local variable : '__300010248'
+./template.c:49: warning 85: in function main unreferenced local variable : '__300010249'
