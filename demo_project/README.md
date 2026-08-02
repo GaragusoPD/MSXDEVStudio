@@ -1,0 +1,70 @@
+# Demo project: a two-screen platformer
+
+A small, complete MSX1 game built entirely with MSXStudio's own editors. Collect
+all eight coins, then reach the door at the far right. Arrow keys move, SPACE
+jumps.
+
+![Gameplay](../docs/images/demo-gameplay.png)
+
+Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
+(about 10.8 KB used) and boots in openMSX or WebMSX.
+
+## What it demonstrates
+
+Every graphic and sound came from a resource editor and was exported to a C
+header, which is the workflow described in [the resources
+guide](../docs/resources.md):
+
+| Resource | Editor | Exports | Used for |
+|---|---|---|---|
+| `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors` | 32 SCREEN 2 tiles: terrain, coins, scenery, and digits 0-9 for the HUD |
+| `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors` | One 16x16 sprite in mode 1, six frames: standing, four walk poses, jumping |
+| `level.map.json` | Map editor | `g_Level_Background` | A 64x24 map, exactly two screens wide, one byte per cell |
+| `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
+
+The game code in `main.c` covers the techniques the
+[tutorials](../docs/tutorials/) explain, in one place:
+
+- **Tiles**, loaded into all three SCREEN 2 banks with `VDP_LoadPattern_GM2` and
+  `VDP_LoadColor_GM2`.
+- **Scrolling**, without the `scroll` module. The visible 32 columns of a 64
+  wide map are contiguous in memory, so each screen row is one `VDP_WriteVRAM_16K`
+  straight out of ROM. The camera moves in whole tiles and only redraws when it
+  actually changes.
+- **Collision**, read directly from the same map data the VDP is drawing, so
+  there is no second copy of the level to keep in sync.
+- **Sprites**, placed with `VDP_SetSpriteSM1`. The walk is a six step cycle
+  (`g_WalkCycle` in `main.c`) rather than two poses flipping back and forth,
+  which is the difference between a stride and a flicker.
+- **Sound**, an ayFX bank played with `ayFX_PlayBank`, updated once per frame by
+  `ayFX_Update()` and pushed to the chip with `PSG_Apply()`.
+- **Text screens**, drawn in SCREEN 1 with the BIOS font, so the title and
+  ending do not have to share the pattern table with the game's tiles.
+
+## Two things worth knowing
+
+**Use the `_16K` VRAM calls on MSX1.** The four-argument `VDP_WriteVRAM(src,
+destLow, destHigh, count)` form is meant for the 17-bit addressing MSX2 uses.
+With `VDP_VRAM_ADDR_14`, which is what an MSX1 project gets, `g_ScreenLayoutHigh`
+does not even exist, and the level silently failed to draw here until the code
+called `VDP_WriteVRAM_16K(src, dest, count)` and `VDP_Poke_16K(value, dest)`
+directly. It compiles cleanly either way, so this is worth knowing before you
+lose an hour to it.
+
+**ayFX needs configuring for standalone use.** `msxgl_config.h` sets
+`AYFX_BUFFER` to `AYFX_BUFFER_DEFAULT`. The MSXgl samples use
+`AYFX_BUFFER_PT3` because they play PT3 music alongside the effects, and with
+that setting the sound goes into PT3's register buffer, which nothing here would
+ever flush. `psg` and `ayfx/ayfx_player` both have to be in **LibModules**, and
+`msxgl.h` does not include their headers for you.
+
+## Changing it
+
+Open any of the four `.json` resources from the Resources panel and edit it,
+then press Run. Exports happen automatically as part of the build, and only for
+files that changed.
+
+The level is the easiest thing to play with: open `level.map.json`, paint with
+the tile picker, and remember that coins are also tracked in the `g_Coins` table
+at the top of `main.c`, so a coin painted in the map still needs its position
+adding there to be collectable.

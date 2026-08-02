@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "rate": 50,
+  "effects": [
+    {
+      "name": "coin",
+      "frames": [
+        {
+          "toneOn": true,
+          "tone": 300,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 300,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 15
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 14
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 11
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 9
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 7
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 5
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 3
+        },
+        {
+          "toneOn": true,
+          "tone": 200,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 1
+        }
+      ]
+    },
+    {
+      "name": "jump",
+      "frames": [
+        {
+          "toneOn": true,
+          "tone": 500,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 440,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 380,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 11
+        },
+        {
+          "toneOn": true,
+          "tone": 330,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 10
+        },
+        {
+          "toneOn": true,
+          "tone": 290,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 9
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 7
+        },
+        {
+          "toneOn": true,
+          "tone": 230,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 5
+        },
+        {
+          "toneOn": true,
+          "tone": 210,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 3
+        }
+      ]
+    },
+    {
+      "name": "win",
+      "frames": [
+        {
+          "toneOn": true,
+          "tone": 400,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 14
+        },
+        {
+          "toneOn": true,
+          "tone": 400,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 400,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 320,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 14
+        },
+        {
+          "toneOn": true,
+          "tone": 320,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 320,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 15
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 14
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 10
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 8
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 6
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 4
+        },
+        {
+          "toneOn": true,
+          "tone": 255,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 2
+        }
+      ]
+    }
+  ],
+  "export": {
+    "name": "g_Sfx",
+    "format": "c",
+    "out": "content/sfx.h"
+  }
+}

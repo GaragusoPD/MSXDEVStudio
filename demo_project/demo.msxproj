@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "name": "demo",
+  "machine": "1",
+  "target": "ROM_32K",
+  "romSize": null,
+  "libModules": [
+    "system",
+    "bios",
+    "vdp",
+    "print",
+    "input",
+    "keyboard",
+    "memory",
+    "psg",
+    "ayfx/ayfx_player"
+  ],
+  "projModules": [
+    "main"
+  ],
+  "build": {
+    "optim": "Speed",
+    "debug": false,
+    "allowUndocumented": false,
+    "compileComplexity": "Default",
+    "defines": {}
+  },
+  "rom": {
+    "checkVersion": true,
+    "delayBoot": false,
+    "signature": false,
+    "installRamIsr": "RAMISR_NONE",
+    "customIsr": "VBLANK",
+    "bankedCall": false
+  },
+  "files": {
+    "rawFiles": [],
+    "diskFiles": [],
+    "diskSize": "720K"
+  },
+  "emulator": {
+    "preferred": "openmsx",
+    "openmsxMachine": null,
+    "ext": {
+      "scc": false,
+      "msxMusic": false,
+      "msxAudio": false,
+      "opl4": false,
+      "psg2": false,
+      "v9990": false,
+      "ram": false,
+      "pac": false
+    },
+    "portA": "",
+    "portB": "",
+    "hz60": false,
+    "fullscreen": false,
+    "mute": false
+  },
+  "resources": {
+    "imgRules": []
+  },
+  "customConfig": false
+}
