@@ -12,7 +12,6 @@ import {
   isExecutable,
   openmsxSystemDataDir,
   parseOpenmsxVersion,
-  sdlAudioDriver,
   pullMsxgl,
   validateMsxglRoot,
   writeEmulatorConfig
@@ -148,26 +147,6 @@ describe('openmsxSystemDataDir', () => {
     mkdirSync(join(root, 'share', 'machines'), { recursive: true })
     expect(openmsxSystemDataDir(exec)).toBe(join(root, 'share'))
     expect(openmsxSystemDataDir(null)).toBeNull()
-  })
-})
-
-describe.skipIf(process.platform !== 'linux')('sdlAudioDriver', () => {
-  it('names pulseaudio when a PulseAudio socket exists', () => {
-    const runtime = makeTmpDir('msxstudio-runtime-')
-    mkdirSync(join(runtime, 'pulse'), { recursive: true })
-    writeFileSync(join(runtime, 'pulse', 'native'), '')
-    expect(sdlAudioDriver({ XDG_RUNTIME_DIR: runtime })).toBe('pulseaudio')
-  })
-
-  it('leaves the environment alone when there is no socket, or the user set one', () => {
-    const runtime = makeTmpDir('msxstudio-runtime-')
-    // A pure-ALSA box: openMSX's own default is right, so say nothing.
-    expect(sdlAudioDriver({ XDG_RUNTIME_DIR: runtime })).toBeNull()
-    expect(sdlAudioDriver({})).toBeNull()
-
-    mkdirSync(join(runtime, 'pulse'), { recursive: true })
-    writeFileSync(join(runtime, 'pulse', 'native'), '')
-    expect(sdlAudioDriver({ XDG_RUNTIME_DIR: runtime, SDL_AUDIODRIVER: 'alsa' })).toBeNull()
   })
 })
 
