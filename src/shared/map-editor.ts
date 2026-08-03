@@ -1,9 +1,12 @@
 /**
  * Map editor (Spec 10 A) — the editor-side logic that isn't hardware
  * knowledge: what a tool touches, stamp/fill/rect/erase application,
- * rectangular select + copy/paste (copy is just a `Stamp`), the collision/meta
- * flag palette derived from `tileMeta`, undo/redo, and the reorder-replay seam
- * that consumes Spec 08's `tilesetReordered` events.
+ * rectangular select + copy/paste (copy is just a `Stamp`), undo/redo, and the
+ * reorder-replay seam that consumes Spec 08's `tilesetReordered` events.
+ *
+ * Gameplay bits are not here: they belong to the tileset as `TilesDoc.flags`,
+ * eight per tile, so every map drawn with that tileset agrees about which tiles
+ * are solid.
  *
  * Everything here is pure, so it lives in `shared/` where Vitest already
  * runs; `editors/map/*.vue` is a thin shell on top. All *hardware* rules —
@@ -11,7 +14,7 @@
  * and are only ever called from here.
  */
 
-import { cellIndex, getCell, remapTiles, type MapDoc, type MapLayer, type MapLayerKind } from './msx/map'
+import { cellIndex, getCell, remapTiles, type MapDoc, type MapLayer } from './msx/map'
 import { linePoints, rectPoints, type Point, type TilesReorderEvent } from './tile-editor'
 
 export type { Point }
@@ -84,7 +87,7 @@ export function applyStamp(doc: MapDoc, layerIndex: number, stamp: Stamp, points
   return changed ? withLayerData(doc, layerIndex, data) : doc
 }
 
-/** Sets every point in `points` to one `value` — the fill/rect/erase tools (a uniform tile index or flag mask). */
+/** Sets every point in `points` to one `value` — the fill/rect/erase tools (a uniform tile index). */
 export function paintValue(doc: MapDoc, layerIndex: number, points: readonly Point[], value: number): MapDoc {
   const layer = doc.layers[layerIndex]
   if (!layer) return doc
@@ -174,59 +177,11 @@ export function clearRect(doc: MapDoc, layerIndex: number, rect: Rect): MapDoc {
   return paintValue(doc, layerIndex, points, 0)
 }
 
-// ── collision/meta flags (from `tileMeta`) ──────────────────────────────────
-
-/** Distinct flag names across every tile's meta, alphabetical so a name's bit position stays stable as tiles change. */
-export function flagNames(doc: MapDoc): string[] {
-  const names = new Set<string>()
-  for (const meta of Object.values(doc.tileMeta)) for (const flag of meta.flags) names.add(flag)
-  return [...names].sort()
-}
-
-/** Bit position of `name` within `flagNames(doc)` — -1 when it isn't assigned to any tile yet. */
-export function flagBit(doc: MapDoc, name: string): number {
-  return flagNames(doc).indexOf(name)
-}
-
-/** Adds or removes `flag` from tile `tileIndex`'s meta — the tile picker's per-tile checkbox. */
-export function toggleTileFlag(doc: MapDoc, tileIndex: number, flag: string): MapDoc {
-  const key = String(tileIndex)
-  const current = doc.tileMeta[key]?.flags ?? []
-  const flags = current.includes(flag) ? current.filter((f) => f !== flag) : [...current, flag]
-  const tileMeta = { ...doc.tileMeta }
-  if (flags.length) tileMeta[key] = { flags }
-  else delete tileMeta[key]
-  return { ...doc, tileMeta }
-}
-
-/** Sets or clears one flag's bit across `points` on a `flags` layer; every other bit is left alone. */
-export function paintFlag(doc: MapDoc, layerIndex: number, points: readonly Point[], bit: number, on: boolean): MapDoc {
-  const layer = doc.layers[layerIndex]
-  if (!layer || layer.kind !== 'flags' || bit < 0) return doc
-  const mask = 1 << bit
-  const data = layer.data.slice()
-  let changed = false
-  for (const p of points) {
-    if (p.x < 0 || p.y < 0 || p.x >= doc.width || p.y >= doc.height) continue
-    const index = cellIndex(doc, p.x, p.y)
-    const next = on ? data[index] | mask : data[index] & ~mask
-    if (next !== data[index]) {
-      data[index] = next
-      changed = true
-    }
-  }
-  return changed ? withLayerData(doc, layerIndex, data) : doc
-}
-
-export function hasFlag(value: number, bit: number): boolean {
-  return bit >= 0 && (value & (1 << bit)) !== 0
-}
-
 // ── layer list ops ───────────────────────────────────────────────────────────
 
-export function addLayer(doc: MapDoc, kind: MapLayerKind, name: string): MapDoc {
+export function addLayer(doc: MapDoc, name: string): MapDoc {
   const data = new Array<number>(doc.width * doc.height).fill(0)
-  return { ...doc, layers: [...doc.layers, { name, kind, data, visible: true }] }
+  return { ...doc, layers: [...doc.layers, { name, kind: 'tiles', data, visible: true }] }
 }
 
 /** Refuses to drop the last layer — a map with zero layers has nothing to paint. */

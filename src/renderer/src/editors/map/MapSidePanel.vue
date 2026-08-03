@@ -1,25 +1,23 @@
 <script setup lang="ts">
 /**
  * Spec 10 A's right pane: the layer list (visibility, add/remove/rename), the
- * `tileMeta` flags editor (define flags, assign them to the picker's active
+ * the layer list (gameplay flags live on the tileset, edited in the tile
  * tile, choose the paint brush for flags mode), the tileset reference, map
  * size, and the export block Spec 07's converter reads.
  */
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
-import { availableFlags, addFlag, addLayer, commit, doc, removeLayer, renameLayer, resize, selectLayer, setFlagBrush, setTileset, toggleLayerVisible, toggleTileFlagOn, type MapSession } from './session'
+import { addLayer, commit, doc, removeLayer, renameLayer, resize, selectLayer, setTileset, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 
 const props = defineProps<{ session: MapSession }>()
 const resourcesStore = useResourcesStore()
 
 const mapDoc = computed(() => doc(props.session))
-const newFlagName = ref('')
 const widthInput = computed({ get: () => mapDoc.value.width, set: (v) => resize(props.session, v, mapDoc.value.height) })
 const heightInput = computed({ get: () => mapDoc.value.height, set: (v) => resize(props.session, mapDoc.value.width, v) })
 
 const tilesetOptions = computed(() => resourcesStore.entries.filter((entry) => entry.kind === 'tiles').map((entry) => entry.path))
-const activeTileFlags = computed(() => mapDoc.value.tileMeta[String(props.session.pickerActive)]?.flags ?? [])
 
 function setupExport(): void {
   commit(props.session, { ...mapDoc.value, export: defaultExport(props.session.path) })
@@ -31,10 +29,6 @@ function patchExport(patch: Partial<ExportBlock>): void {
   commit(props.session, { ...current, export: { ...current.export, ...patch } })
 }
 
-function submitNewFlag(): void {
-  addFlag(props.session, props.session.pickerActive, newFlagName.value)
-  newFlagName.value = ''
-}
 </script>
 
 <template>
@@ -125,67 +119,20 @@ function submitNewFlag(): void {
       <div class="add-row">
         <button
           type="button"
-          @click="addLayer(session, 'tiles')"
+          @click="addLayer(session)"
         >
-          +tiles
-        </button>
-        <button
-          type="button"
-          @click="addLayer(session, 'flags')"
-        >
-          +flags
+          Add layer
         </button>
       </div>
     </section>
 
     <section>
-      <h3>Flags</h3>
+      <h3>Tile flags</h3>
       <p class="hint">
-        Tile {{ session.pickerActive }}'s flags (from <code>tileMeta</code>):
+        The eight gameplay bits per tile live on the tileset now, so every map
+        drawn with it agrees. Open <code>{{ mapDoc.tileset || 'the tileset' }}</code>
+        and use the flag squares there.
       </p>
-      <div class="flag-list">
-        <label
-          v-for="name in availableFlags(session)"
-          :key="name"
-          class="flag-item"
-        >
-          <input
-            type="checkbox"
-            :checked="activeTileFlags.includes(name)"
-            @change="toggleTileFlagOn(session, session.pickerActive, name)"
-          >
-          <span>{{ name }}</span>
-          <button
-            type="button"
-            class="brush"
-            :class="{ active: session.flagBrush === name }"
-            title="Use as the flags-mode paint brush"
-            @click="setFlagBrush(session, name)"
-          >
-            🖌
-          </button>
-        </label>
-        <p
-          v-if="!availableFlags(session).length"
-          class="hint"
-        >
-          No flags defined yet.
-        </p>
-      </div>
-      <form
-        class="new-flag"
-        @submit.prevent="submitNewFlag"
-      >
-        <input
-          v-model="newFlagName"
-          type="text"
-          placeholder="new flag name"
-          spellcheck="false"
-        >
-        <button type="submit">
-          Add
-        </button>
-      </form>
     </section>
 
     <section>

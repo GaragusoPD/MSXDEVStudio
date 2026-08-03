@@ -1,16 +1,16 @@
 /**
  * `*.map.json` (Spec 10 A): a tilemap over a `*.tiles.json` tileset. Layers
  * are flat `width * height` arrays — either tile indices or per-cell bit
- * flags — which is exactly what gets exported.
+ * layers — which is exactly what gets exported.
  */
 
 import type { ExportBlock } from './resource'
 
-export type MapLayerKind = 'tiles' | 'flags'
 
 export interface MapLayer {
   name: string
-  kind: MapLayerKind
+  /** Only tile layers exist; gameplay bits live on the tileset (`TilesDoc.flags`). */
+  kind: 'tiles'
   /** `width * height` values, row-major. Tile indices, or a flag bitmask per cell. */
   data: number[]
   visible: boolean
@@ -23,8 +23,6 @@ export interface MapDoc {
   width: number
   height: number
   layers: MapLayer[]
-  /** Flag names per tile index, e.g. `{ "12": { "flags": ["solid"] } }`. */
-  tileMeta: Record<string, { flags: string[] }>
   export: ExportBlock | null
 }
 
@@ -49,17 +47,12 @@ export function normalizeMap(raw: unknown): MapDoc {
     for (let i = 0; i < cells; i++) data[i] = Number(layer.data?.[i]) || 0
     return {
       name: String(layer.name ?? `layer_${index}`),
-      kind: layer.kind === 'flags' ? 'flags' : 'tiles',
+      kind: 'tiles',
       data,
       visible: layer.visible !== false
     }
   })
 
-  const tileMeta: MapDoc['tileMeta'] = {}
-  for (const [key, value] of Object.entries(input.tileMeta ?? {})) {
-    const flags = Array.isArray((value as { flags?: unknown })?.flags) ? (value as { flags: string[] }).flags : []
-    tileMeta[key] = { flags: flags.map(String) }
-  }
 
   return {
     version: 1,
@@ -67,7 +60,6 @@ export function normalizeMap(raw: unknown): MapDoc {
     width,
     height,
     layers,
-    tileMeta,
     export: input.export ?? null
   }
 }
@@ -104,12 +96,7 @@ export function remapTiles(doc: MapDoc, mapping: readonly number[]): MapDoc {
   const layers = doc.layers.map((layer) =>
     layer.kind === 'tiles' ? { ...layer, data: layer.data.map((value) => mapping[value] ?? value) } : layer
   )
-  const tileMeta: MapDoc['tileMeta'] = {}
-  for (const [key, value] of Object.entries(doc.tileMeta)) {
-    const moved = mapping[Number(key)]
-    tileMeta[String(moved === undefined ? key : moved)] = value
-  }
-  return { ...doc, layers, tileMeta }
+  return { ...doc, layers }
 }
 
 export function validateMap(doc: MapDoc): string[] {

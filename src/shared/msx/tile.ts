@@ -35,8 +35,19 @@ export interface TilesDoc {
   tiles: TileEntry[]
   /** sc1 only: `ceil(count / 8)` bytes, one FG/BG pair per group of 8 tiles. */
   groupColors: number[]
+  /**
+   * Eight gameplay bits per tile, one byte each, in the manner of PICO-8's
+   * sprite flags: what a tile *means* to the game rather than how it looks.
+   * Meaning is entirely the game's to decide (bit 0 solid, bit 1 collectable,
+   * and so on). Exported as a table indexed by tile id, so collision is a
+   * lookup rather than a chain of comparisons.
+   */
+  flags: number[]
   export: ExportBlock | null
 }
+
+/** How many gameplay bits a tile carries. Eight, so one byte per tile. */
+export const TILE_FLAG_COUNT = 8
 
 const zeros = (n: number): number[] => new Array<number>(n).fill(0)
 
@@ -83,6 +94,9 @@ export function normalizeTiles(raw: unknown): TilesDoc {
       ? Array.from({ length: 16 }, (_, i) => Number(input.palette?.[i]) || 0)
       : null
 
+  // Absent in files written before tile flags existed, so default to none.
+  const rawFlags = Array.isArray(input.flags) ? input.flags : []
+
   return {
     version: 1,
     mode,
@@ -90,6 +104,7 @@ export function normalizeTiles(raw: unknown): TilesDoc {
     count,
     tiles,
     groupColors,
+    flags: Array.from({ length: count }, (_, i) => (Number(rawFlags[i]) || 0) & 0xff),
     export: (input.export as ExportBlock | undefined) ?? null
   }
 }

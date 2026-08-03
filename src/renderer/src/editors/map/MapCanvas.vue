@@ -1,8 +1,7 @@
 <script setup lang="ts">
 /**
- * Spec 10 A's center pane: the map grid — stamp/fill/rect/erase, flags-mode
- * painting, rectangular select (shift+drag) and the zoom/grid/screen-outline
- * overlays. All the logic is in `shared/map-editor.ts` and `./session.ts`;
+ * Spec 10 A's center pane: the map grid — stamp/fill/rect/erase, rectangular
+ * select (shift+drag) and the zoom/grid/screen-outline overlays. All the logic is in `shared/map-editor.ts` and `./session.ts`;
  * this file only turns pointer events into cells and draws the result.
  *
  * Rect/erase-drag mirrors `TileCanvas.vue`: 'stamp'/'erase' paint
@@ -15,7 +14,7 @@ import { computed, ref, watchEffect } from 'vue'
 import { SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { tilePixels, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
-import { flagBit, hasFlag, type Point } from '../../../../shared/map-editor'
+import { type Point } from '../../../../shared/map-editor'
 import { rectPoints } from '../../../../shared/tile-editor'
 import {
   clearSelection,
@@ -185,19 +184,6 @@ watchEffect(() => {
           const sy = Math.floor(index / SHEET_COLUMNS) * TILE_SIZE
           ctx.drawImage(sheet, sx, sy, TILE_SIZE, TILE_SIZE, x * zoom, y * zoom, zoom, zoom)
         }
-      }
-    }
-  }
-
-  const activeLayer = current.layers[props.session.activeLayer]
-  if (props.session.flagsMode && activeLayer?.kind === 'flags') {
-    const bit = props.session.flagBrush ? flagBit(current, props.session.flagBrush) : -1
-    ctx.fillStyle = 'rgba(255, 64, 64, 0.45)'
-    for (let y = 0; y < current.height; y++) {
-      for (let x = 0; x < current.width; x++) {
-        const value = activeLayer.data[y * current.width + x]
-        const show = bit >= 0 ? hasFlag(value, bit) : value !== 0
-        if (show) ctx.fillRect(x * zoom, y * zoom, zoom, zoom)
       }
     }
   }

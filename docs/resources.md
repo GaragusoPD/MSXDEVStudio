@@ -26,6 +26,21 @@ colors per 8-pixel row, SCREEN 1 gives one pair per group of 8 tiles. SCREEN 4
 adds an editable 16-colour palette. **Import image…** converts a PNG into a
 whole tileset.
 
+**Tile flags** — eight numbered squares in the tile editor, in the manner of
+PICO-8's sprite flags. They say what a tile *means* to your game rather than how
+it looks: solid, collectable, deadly, whatever you decide. They belong to the
+tileset, so every map drawn with it agrees, and they export as `_Flags`, one
+byte per tile, only once some tile carries a bit.
+
+```c
+#define FLAG_SOLID 0x01          // flag 1 is bit 0
+if (g_Tiles_Flags[tile] & FLAG_SOLID) { /* blocked */ }
+```
+
+That turns collision into a table lookup rather than a list of tile numbers in
+your code, so re-arranging a tileset does not break the game. See
+[`demo_project`](../demo_project/) for it in use.
+
 **Sprites** — mode 1 gives each sprite one colour; mode 2 gives a colour per
 line, plus the EC/CC/IC bits. Sprites are 8×8 or 16×16 and can stack up to 4
 layers for multicolour characters. The animation bar previews frames.
@@ -33,8 +48,8 @@ layers for multicolour characters. The animation bar previews frames.
 **Map** — pick a tileset first (dropdown in the side panel), then paint with
 stamp, fill, rectangle and erase. Shift+click or drag in the tile picker takes
 a multi-tile stamp. A 32×24 map is exactly one screen; larger maps get a screen
-outline overlay for designing scrolling worlds. Flags mode paints collision
-bits per cell into a separate layer.
+outline overlay for designing scrolling worlds. Add layers to draw a foreground
+over a background: on any layer above the first, tile 0 means transparent.
 
 **Screen** — for MSX2 bitmap modes only. Import a source image, then retouch
 the conversion with pencil/fill and edit the palette. For MSX1 full-screen art,
@@ -129,11 +144,12 @@ Load the map's tileset first, or you'll see the wrong patterns. For maps wider
 than one screen, add MSXgl's `scroll` module to LibModules and pass the array
 to `Scroll_Initialize((u16)g_MyMap_Background)` instead.
 
-A flags layer exports the same way — it is your collision data, read it from C
-rather than sending it to the VDP:
+Collision comes from the tileset's flags rather than from the map, so the same
+map data serves both the VDP and the game logic:
 
 ```c
-u8 tile_flags = g_MyMap_Collision[y * 32 + x];
+u8 tile = g_MyMap_Background[y * 32 + x];
+if (g_MyTiles_Flags[tile] & FLAG_SOLID) { /* blocked */ }
 ```
 
 ### Screen

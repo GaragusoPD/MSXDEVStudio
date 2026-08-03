@@ -33,6 +33,7 @@ import {
   redoHistory,
   setPaletteEntry,
   setRowColors,
+  setTileFlagBit,
   transformTile,
   undoHistory,
   type Point,
@@ -248,6 +249,13 @@ export function addTile(session: TileSession): void {
   if (session.doc.count >= MAX_TILES) return
   commit(session, normalizeTiles({ ...session.doc, count: session.doc.count + 1 }), 'add tile')
   select(session, session.doc.count - 1)
+}
+
+/** Flips one of the active tile's eight gameplay bits (the flag squares). */
+export function toggleFlag(session: TileSession, bit: number): void {
+  const current = session.doc.flags[session.active] ?? 0
+  const next = setTileFlagBit(session.doc, session.active, bit, (current & (1 << bit)) === 0)
+  if (next !== session.doc) commit(session, next, `flag ${bit + 1}`)
 }
 
 export function setColor(session: TileSession, index: number): void {

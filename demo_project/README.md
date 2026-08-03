@@ -19,7 +19,7 @@ guide](../docs/resources.md):
 
 | Resource | Editor | Exports | Used for |
 |---|---|---|---|
-| `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors` | 32 SCREEN 2 tiles: terrain, coins, scenery, and digits 0-9 for the HUD |
+| `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags` | 32 SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, plus the flags that say which are solid |
 | `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors` | One 16x16 sprite in mode 1, six frames: standing, four walk poses, jumping |
 | `level.map.json` | Map editor | `g_Level_Background` | A 64x24 map, exactly two screens wide, one byte per cell |
 | `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
@@ -34,9 +34,14 @@ The game code in `main.c` covers the techniques the
   each screen row is a single `VDP_WriteVRAM_16K`. The camera moves in whole
   tiles and only redraws when it actually changes, which on MSX1 is as smooth as
   the hardware gets (see below).
-- **Collision**, read from the same RAM map the VDP is drawing, so there is no
-  second copy of the level to keep in sync. Taking a coin writes sky into that
-  map, which is also how the coins are counted at startup.
+- **Collision from tile flags**, not from a list of tile numbers in the code.
+  The tile editor's eight flag squares mark a tile solid, collectable or an
+  exit, and `main.c` only ever asks `g_Tiles_Flags[tile] & FLAG_SOLID`. Re-order
+  the tileset or add a new solid tile and the game keeps working, because
+  nothing in it knows that grass happens to be tile 3.
+- **A level in RAM**, read from the same array the VDP is drawing, so there is
+  no second copy to keep in sync. Taking a coin writes sky into that map, which
+  is also how the coins are counted at startup.
 - **Sprites**, placed with `VDP_SetSpriteSM1`. The walk is a six step cycle
   (`g_WalkCycle` in `main.c`) rather than two poses flipping back and forth,
   which is the difference between a stride and a flicker.
@@ -142,5 +147,7 @@ files that changed.
 
 The level is the easiest thing to play with: open `level.map.json`, paint with
 the tile picker, and press Run. Coins need nothing else, because the game counts
-them out of the map at startup and collects whatever coin tile the player walks
-into, so painting one anywhere is enough. The HUD handles up to 99.
+them out of the map at startup and collects whatever carries the coin flag, so
+painting one anywhere is enough. The HUD handles up to 99. To invent a new kind
+of tile, draw it, tick the flags it should have in the tile editor, and paint
+it into the map; `main.c` needs no changes at all.

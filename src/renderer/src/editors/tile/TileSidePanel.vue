@@ -17,8 +17,9 @@ import {
   unpackGrb
 } from '../../../../shared/msx/palette'
 import { defaultExport } from '../../../../shared/msx/resource'
+import { TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
 import { colorByteAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
-import { commit, setColor, setPalette, setRow, swapRow, type TileSession } from './session'
+import { commit, setColor, setPalette, setRow, swapRow, toggleFlag, type TileSession } from './session'
 
 const props = defineProps<{ session: TileSession }>()
 
@@ -159,6 +160,25 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
     </section>
 
     <section>
+      <h3>Flags</h3>
+      <p class="hint">
+        Eight gameplay bits for tile {{ session.active }}. What they mean is up
+        to your game; they export as <code>_Flags</code>, one byte per tile.
+      </p>
+      <div class="flag-row">
+        <button
+          v-for="bit in TILE_FLAG_COUNT"
+          :key="bit"
+          type="button"
+          class="flag"
+          :class="{ on: ((doc.flags[session.active] ?? 0) >> (bit - 1) & 1) === 1 }"
+          :title="`Flag ${bit} (bit ${bit - 1}, mask 0x${(1 << (bit - 1)).toString(16).toUpperCase()})`"
+          @click="toggleFlag(session, bit - 1)"
+        >
+          {{ bit }}
+        </button>
+      </div>
+
       <h3>Export</h3>
       <template v-if="doc.export">
         <label>
@@ -294,6 +314,29 @@ section {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--color-text-muted);
+}
+
+.flag-row {
+  display: flex;
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+
+.flag-row .flag {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.flag-row .flag.on {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
 }
 
 .chip {

@@ -144,6 +144,14 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
       if (doc.palette) {
         tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
       }
+      // Only worth the ROM space once a tile actually carries a bit.
+      if (doc.flags.some((value) => value !== 0)) {
+        tables.push({
+          suffix: '_Flags',
+          bytes: Uint8Array.from(doc.flags),
+          comment: 'Gameplay flags, one byte per tile (bit 0 = flag 1)'
+        })
+      }
       return tables
     }
     case 'sprites': {
@@ -162,7 +170,7 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
         suffix: `_${pascal(layer.name)}`,
         bytes: mapLayerBytes(layer),
         perLine: Math.min(32, resource.doc.width),
-        comment: `${layer.kind === 'flags' ? 'Flags' : 'Names'} layer "${layer.name}" (${resource.doc.width}×${resource.doc.height})`
+        comment: `Names layer "${layer.name}" (${resource.doc.width}×${resource.doc.height})`
       }))
     case 'screen': {
       const { doc } = resource
@@ -206,6 +214,9 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
   switch (resource.kind) {
     case 'tiles':
       notes.push(`Mode: ${MODES[resource.doc.mode].label}`, `Tiles: ${resource.doc.count}`)
+      if (resource.doc.flags.some((value) => value !== 0)) {
+        notes.push(`Flagged tiles: ${resource.doc.flags.filter((value) => value !== 0).length}`)
+      }
       break
     case 'sprites':
       notes.push(

@@ -43,21 +43,25 @@
 #define VIEW_W       32          // what fits on screen
 #define MAX_CAM      (MAP_W - VIEW_W)
 
-// Tile indices, matching the order of tiles.tiles.json.
+// Tile indices, matching the order of tiles.tiles.json. Only the ones the code
+// draws with are named; what a tile *does* is a flag, not an index.
 #define T_SKY        0
-#define T_GRASS      3
-#define T_DIRT       4
-#define T_BRICK      5
-#define T_COIN       6
-#define T_CRATE      7
-#define T_STONE      9
-#define T_EXIT_TOP   11
+#define T_COIN       6           // for the HUD icon
 #define T_DIGIT_0    16          // digits live at 16..25, so tile = T_DIGIT_0 + value
+
+// The tile editor's eight flag squares, as this game reads them. Set flag 1 on
+// a tile and it becomes solid, anywhere it appears in any map; nothing here
+// needs to know which tile index that was.
+#define FLAG_SOLID   0x01        // flag 1
+#define FLAG_COIN    0x02        // flag 2
+#define FLAG_EXIT    0x04        // flag 3
+
+/** What the tileset says this tile does. `g_Tiles_Flags` is one byte per tile. */
+#define TileFlags(t) (g_Tiles_Flags[t])
 
 // The MSXgl logo, drawn with characters 1-6 of any MSXgl font.
 #define MSX_GL       "\x01\x02\x03\x04\x05\x06"
 
-#define EXIT_X       60
 
 // Sprite frames are 16x16, so each one occupies 4 pattern slots, and the shape
 // passed to the VDP is the frame index times four.
@@ -108,15 +112,13 @@ const u8 g_WalkCycle[WALK_STEPS] = { 0, 4, 8, 0, 12, 16 };
 // The level is a flat array of one byte per cell, straight from the map editor.
 u8 TileAt(i16 tx, i16 ty)
 {
-	if ((tx < 0) || (tx >= MAP_W) || (ty < 0)) return T_SKY;
-	if (ty >= MAP_H) return T_DIRT;   // below the level counts as solid floor
+	if ((tx < 0) || (tx >= MAP_W) || (ty < 0) || (ty >= MAP_H)) return T_SKY;
 	return g_Map[(u16)ty * MAP_W + (u16)tx];
 }
 
 bool IsSolid(u8 tile)
 {
-	return (tile == T_GRASS) || (tile == T_DIRT) || (tile == T_BRICK)
-	    || (tile == T_CRATE) || (tile == T_STONE);
+	return (TileFlags(tile) & FLAG_SOLID) != 0;
 }
 
 // True when the 16x16 box at (px, py) overlaps any solid tile.
@@ -126,6 +128,8 @@ bool BoxHitsSolid(i16 px, i16 py)
 	i16 right  = (px + 15) >> 3;
 	i16 top    = py >> 3;
 	i16 bottom = (py + 15) >> 3;
+	// Below the last row counts as floor, so the player cannot fall out.
+	if (bottom >= MAP_H) return TRUE;
 	for (i16 ty = top; ty <= bottom; ++ty)
 		for (i16 tx = left; tx <= right; ++tx)
 			if (IsSolid(TileAt(tx, ty))) return TRUE;
@@ -289,7 +293,7 @@ void InitGame()
 	Mem_Copy(g_Level_Background, g_Map, sizeof(g_Map));
 	g_Remaining = 0;
 	for (u16 i = 0; i < sizeof(g_Map); ++i)
-		if (g_Map[i] == T_COIN) g_Remaining++;
+		if (TileFlags(g_Map[i]) & FLAG_COIN) g_Remaining++;
 
 	g_PlayerX   = 2 * 8;
 	g_PlayerY   = 19 * 8 - 8;    // standing on the grass line
@@ -355,7 +359,7 @@ void CollectCoins()
 	{
 		for (i16 tx = left; tx <= right; ++tx)
 		{
-			if (TileAt(tx, ty) != T_COIN) continue;
+			if ((TileFlags(TileAt(tx, ty)) & FLAG_COIN) == 0) continue;
 
 			g_Map[(u16)ty * MAP_W + (u16)tx] = T_SKY;
 			g_Remaining--;
@@ -388,9 +392,16 @@ void UpdateCamera()
 bool AtExit()
 {
 	if (g_Remaining != 0) return FALSE;
-	i16 tx = (g_PlayerX + 8) >> 3;
-	i16 ty = (g_PlayerY + 8) >> 3;
-	return (tx >= EXIT_X - 1) && (tx <= EXIT_X + 1) && (TileAt(EXIT_X, ty) >= T_EXIT_TOP);
+	// Any tile the player overlaps will do: the character is 16 pixels wide and
+	// the door 8, so demanding an exact centre match makes it easy to miss.
+	i16 left   = g_PlayerX >> 3;
+	i16 right  = (g_PlayerX + 15) >> 3;
+	i16 top    = g_PlayerY >> 3;
+	i16 bottom = (g_PlayerY + 15) >> 3;
+	for (i16 ty = top; ty <= bottom; ++ty)
+		for (i16 tx = left; tx <= right; ++tx)
+			if (TileFlags(TileAt(tx, ty)) & FLAG_EXIT) return TRUE;
+	return FALSE;
 }
 
 void PlayGame()

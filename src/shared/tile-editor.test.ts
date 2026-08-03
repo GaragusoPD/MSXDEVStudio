@@ -30,6 +30,7 @@ import {
   rectPoints,
   redoHistory,
   setPaletteEntry,
+  setTileFlagBit,
   setRowColors,
   transformTile,
   undoHistory,
@@ -175,6 +176,37 @@ describe('applyRoleStroke — the left/right mouse buttons', () => {
     expect(applyRoleStroke(doc, 0, [{ x: -1, y: 0 }, { x: 9, y: 0 }], 'fg')).toBe(doc)
     // x=0 is already foreground, so asking for foreground again is a no-op.
     expect(applyRoleStroke(doc, 0, [{ x: 0, y: 0 }], 'fg')).toBe(doc)
+  })
+})
+
+describe('tile flags', () => {
+  it('toggles bits independently and leaves other tiles alone', () => {
+    let doc = createTilesDoc('sc2', 3)
+    expect(doc.flags).toEqual([0, 0, 0])
+
+    doc = setTileFlagBit(doc, 1, 0, true)      // flag 1
+    doc = setTileFlagBit(doc, 1, 3, true)      // flag 4
+    expect(doc.flags).toEqual([0, 0b1001, 0])
+
+    doc = setTileFlagBit(doc, 1, 0, false)
+    expect(doc.flags).toEqual([0, 0b1000, 0])
+  })
+
+  it('returns the same document when nothing changes or the target is out of range', () => {
+    const doc = setTileFlagBit(createTilesDoc('sc2', 2), 0, 2, true)
+    expect(setTileFlagBit(doc, 0, 2, true)).toBe(doc)   // already set
+    expect(setTileFlagBit(doc, 9, 0, true)).toBe(doc)   // no such tile
+    expect(setTileFlagBit(doc, 0, 8, true)).toBe(doc)   // only eight bits exist
+    expect(setTileFlagBit(doc, 0, -1, true)).toBe(doc)
+  })
+
+  it('survives a JSON round-trip, and older files without flags load as zero', () => {
+    let doc = createTilesDoc('sc2', 2)
+    doc = setTileFlagBit(doc, 0, 7, true)
+    expect(normalizeTiles(JSON.parse(JSON.stringify(doc))).flags).toEqual([0b10000000, 0])
+
+    const legacy = { mode: 'sc2', count: 2 }   // written before flags existed
+    expect(normalizeTiles(legacy).flags).toEqual([0, 0])
   })
 })
 

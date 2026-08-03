@@ -17,7 +17,7 @@
  */
 
 import { shallowReactive } from 'vue'
-import { normalizeMap, resizeMap, type MapDoc, type MapLayerKind } from '../../../../shared/msx/map'
+import { normalizeMap, resizeMap, type MapDoc } from '../../../../shared/msx/map'
 import type { TilesDoc } from '../../../../shared/msx/tile'
 import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import {
@@ -29,11 +29,8 @@ import {
   copyRect,
   createHistory,
   eraseCells,
-  flagBit,
-  flagNames,
   floodPoints,
   normalizeSelection,
-  paintFlag,
   paintValue,
   pushHistory,
   redo as redoHistory,
@@ -43,7 +40,6 @@ import {
   samePath,
   singleStamp,
   toggleLayerVisible as toggleLayerVisiblePure,
-  toggleTileFlag,
   toolPoints,
   undo as undoHistory,
   type MapHistory,
@@ -86,8 +82,6 @@ export interface MapSession {
   screenOutline: boolean
   selection: Rect | null
 
-  flagsMode: boolean
-  flagBrush: string | null
 
   status: string
   /**
@@ -126,8 +120,6 @@ export function mapSession(path: string): MapSession {
     gridVisible: true,
     screenOutline: true,
     selection: null,
-    flagsMode: false,
-    flagBrush: null,
     status: '',
     preview: null
   })
@@ -265,16 +257,6 @@ export async function setTileset(session: MapSession, tilesetPath: string): Prom
 
 export function setTool(session: MapSession, tool: MapTool): void {
   session.tool = tool
-  session.flagsMode = false
-}
-
-export function setFlagsMode(session: MapSession, on: boolean): void {
-  session.flagsMode = on
-  if (!on) return
-  session.tool = 'stamp'
-  // Jump to the first flags layer, if there is one — painting a flag bit on a tiles layer is a no-op.
-  const flagsIndex = doc(session).layers.findIndex((layer) => layer.kind === 'flags')
-  if (flagsIndex !== -1) session.activeLayer = flagsIndex
 }
 
 export function pickTile(session: MapSession, index: number, indices: number[], stamp: Stamp): void {
@@ -285,16 +267,12 @@ export function pickTile(session: MapSession, index: number, indices: number[], 
 
 // ── painting on the map canvas ───────────────────────────────────────────
 
-/** `points` come from `toolPoints`/`floodPoints` (`from`/`to` in grid cells). Flags mode paints
- *  `session.flagBrush`'s bit instead of a tile; 'erase' clears the bit rather than setting it. */
+/** `points` come from `toolPoints`/`floodPoints` (`from`/`to` in grid cells). */
 export function paintDrag(session: MapSession, points: Point[]): void {
   const current = session.preview ?? session.history.present
   const layerIndex = session.activeLayer
   let next: MapDoc
-  if (session.flagsMode) {
-    const bit = session.flagBrush ? flagBit(current, session.flagBrush) : -1
-    next = paintFlag(current, layerIndex, points, bit, session.tool !== 'erase')
-  } else if (session.tool === 'stamp') {
+  if (session.tool === 'stamp') {
     next = applyStamp(current, layerIndex, session.brush, points)
   } else if (session.tool === 'erase') {
     next = eraseCells(current, layerIndex, points)
@@ -317,9 +295,7 @@ export function fillAt(session: MapSession, start: Point): void {
   if (!layer) return
   const points = floodPoints(current, layer, start)
   if (!points.length) return
-  const next = session.flagsMode
-    ? paintFlag(current, session.activeLayer, points, session.flagBrush ? flagBit(current, session.flagBrush) : -1, true)
-    : paintValue(current, session.activeLayer, points, session.brush.tiles[0] ?? 0)
+  const next = paintValue(current, session.activeLayer, points, session.brush.tiles[0] ?? 0)
   commit(session, next)
 }
 
@@ -351,7 +327,6 @@ export function pasteClipboard(session: MapSession): void {
   if (!session.clipboard) return
   session.brush = session.clipboard
   session.tool = 'stamp'
-  session.flagsMode = false
 }
 
 export function deleteSelection(session: MapSession): void {
@@ -359,31 +334,10 @@ export function deleteSelection(session: MapSession): void {
   commit(session, clearRect(doc(session), session.activeLayer, session.selection))
 }
 
-// ── flags ────────────────────────────────────────────────────────────────
-
-export function availableFlags(session: MapSession): string[] {
-  return flagNames(doc(session))
-}
-
-export function setFlagBrush(session: MapSession, name: string): void {
-  session.flagBrush = name
-}
-
-export function addFlag(session: MapSession, tileIndex: number, name: string): void {
-  const trimmed = name.trim()
-  if (!trimmed) return
-  commit(session, toggleTileFlag(doc(session), tileIndex, trimmed))
-}
-
-export function toggleTileFlagOn(session: MapSession, tileIndex: number, flag: string): void {
-  commit(session, toggleTileFlag(doc(session), tileIndex, flag))
-}
-
 // ── layers ───────────────────────────────────────────────────────────────
 
-export function addLayer(session: MapSession, kind: MapLayerKind): void {
-  const name = kind === 'flags' ? 'collision' : `layer_${doc(session).layers.length}`
-  commit(session, addLayerPure(doc(session), kind, name))
+export function addLayer(session: MapSession): void {
+  commit(session, addLayerPure(doc(session), `layer_${doc(session).layers.length}`))
 }
 
 export function removeLayer(session: MapSession, index: number): void {

@@ -25,10 +25,8 @@ import {
   pruneMapSessions,
   redo,
   saveSession,
-  setFlagsMode,
   setTool,
   undo,
-  type MapSession
 } from './session'
 
 const tabsStore = useTabsStore()
@@ -99,9 +97,6 @@ watch(
 // The tileset dropdown reads from the Resources panel's list.
 onMounted(() => void resourcesStore.refresh())
 
-function flagsToggleLabel(active: MapSession): string {
-  return active.flagsMode ? 'Flags mode: ON' : 'Flags mode'
-}
 </script>
 
 <template>
@@ -118,7 +113,7 @@ function flagsToggleLabel(active: MapSession): string {
           v-for="tool in TOOLS"
           :key="tool.id"
           type="button"
-          :class="{ active: session.tool === tool.id && !session.flagsMode }"
+          :class="{ active: session.tool === tool.id }"
           :title="tool.title"
           @click="setTool(session, tool.id)"
         >
@@ -135,15 +130,6 @@ function flagsToggleLabel(active: MapSession): string {
           <span>filled</span>
         </label>
 
-        <span class="sep" />
-        <button
-          type="button"
-          :class="{ active: session.flagsMode }"
-          title="Paint tileMeta flags on the active flags layer instead of tiles"
-          @click="setFlagsMode(session, !session.flagsMode)"
-        >
-          {{ flagsToggleLabel(session) }}
-        </button>
 
         <span class="sep" />
         <button

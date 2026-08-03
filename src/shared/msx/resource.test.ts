@@ -149,6 +149,17 @@ describe('tiles resource', () => {
     expect([...tables[2].bytes.subarray(0, 2)]).toEqual([0x70, 0x00]) // [0RRR0BBB][00000GGG]
   })
 
+  it('appends a flags table only once a tile carries a bit', () => {
+    const doc = createTilesDoc('sc2', 4)
+    expect(resourceTables({ kind: 'tiles', doc }).map((t) => t.suffix)).toEqual(['_Patterns', '_Colors'])
+
+    doc.flags[2] = 0b0000_0101
+    const tables = resourceTables({ kind: 'tiles', doc })
+    expect(tables.map((t) => t.suffix)).toEqual(['_Patterns', '_Colors', '_Flags'])
+    // One byte per tile, so the game can index it straight with a tile id.
+    expect([...tables[2].bytes]).toEqual([0, 0, 0b101, 0])
+  })
+
   it('round-trips through JSON', () => {
     const resource = fixtureTiles()
     const reparsed = parseResource('x.tiles.json', serializeResource(resource))
@@ -192,13 +203,13 @@ describe('map resource', () => {
       height: 2,
       layers: [
         { name: 'background', data: [1, 2, 3, 4, 5, 6, 7, 8] },
-        { name: 'collision', kind: 'flags', data: [0, 1, 0, 1, 0, 1, 0, 1] }
+        { name: 'foreground', data: [0, 1, 0, 1, 0, 1, 0, 1] }
       ]
     })
     const tables = resourceTables({ kind: 'map', doc })
-    expect(tables.map((table) => table.suffix)).toEqual(['_Background', '_Collision'])
+    expect(tables.map((table) => table.suffix)).toEqual(['_Background', '_Foreground'])
     expect([...tables[0].bytes]).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
-    expect(tables[1].comment).toContain('Flags layer')
+    expect(tables[1].comment).toContain('Names layer')
   })
 
   it('defaults to a single background layer of the right size', () => {

@@ -10,12 +10,8 @@ import {
   copyRect,
   createHistory,
   eraseCells,
-  flagBit,
-  flagNames,
   floodPoints,
-  hasFlag,
   normalizeSelection,
-  paintFlag,
   paintValue,
   pendingReorders,
   pushHistory,
@@ -27,7 +23,6 @@ import {
   singleStamp,
   stampFromMarquee,
   toggleLayerVisible,
-  toggleTileFlag,
   toolPoints,
   undo,
   type Stamp
@@ -162,48 +157,10 @@ describe('rectangular select + copy/paste', () => {
   })
 })
 
-describe('flags (from tileMeta)', () => {
-  function withFlags(): MapDoc {
-    let doc = normalizeMap({ tileset: 'x', width: 4, height: 4, layers: [{ name: 'bg' }, { name: 'collision', kind: 'flags' }] })
-    doc = toggleTileFlag(doc, 12, 'solid')
-    doc = toggleTileFlag(doc, 3, 'hazard')
-    return doc
-  }
-
-  it('derives an alphabetical, deduplicated flag list', () => {
-    expect(flagNames(withFlags())).toEqual(['hazard', 'solid'])
-  })
-
-  it('toggling twice removes the flag and drops the empty tileMeta entry', () => {
-    let doc = withFlags()
-    doc = toggleTileFlag(doc, 12, 'solid')
-    expect(doc.tileMeta['12']).toBeUndefined()
-    expect(flagNames(doc)).toEqual(['hazard'])
-  })
-
-  it('paints one flag bit without touching others', () => {
-    let doc = withFlags()
-    const solid = flagBit(doc, 'solid')
-    const hazard = flagBit(doc, 'hazard')
-    doc = paintFlag(doc, 1, [{ x: 0, y: 0 }], solid, true)
-    doc = paintFlag(doc, 1, [{ x: 0, y: 0 }], hazard, true)
-    expect(hasFlag(doc.layers[1].data[0], solid)).toBe(true)
-    expect(hasFlag(doc.layers[1].data[0], hazard)).toBe(true)
-    doc = paintFlag(doc, 1, [{ x: 0, y: 0 }], solid, false)
-    expect(hasFlag(doc.layers[1].data[0], solid)).toBe(false)
-    expect(hasFlag(doc.layers[1].data[0], hazard)).toBe(true)
-  })
-
-  it('refuses to paint a flags-kind bit onto a tiles layer', () => {
-    const doc = withFlags()
-    expect(paintFlag(doc, 0, [{ x: 0, y: 0 }], 0, true)).toBe(doc)
-  })
-})
-
 describe('layer list ops', () => {
   it('adds, renames, toggles visibility, and removes layers', () => {
     let doc = mapDoc(2, 2)
-    doc = addLayer(doc, 'flags', 'collision')
+    doc = addLayer(doc, 'foreground')
     expect(doc.layers).toHaveLength(2)
     doc = renameLayer(doc, 1, 'meta')
     expect(doc.layers[1].name).toBe('meta')

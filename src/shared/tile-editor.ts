@@ -18,6 +18,7 @@ import {
   tileFromPixels,
   tilePixels,
   setPixelRole,
+  TILE_FLAG_COUNT,
   type PaintConflict,
   type TilesDoc
 } from './msx/tile'
@@ -157,6 +158,22 @@ export function applyRoleStroke(
     current = setPixelRole(current, tileIndex, x, y, role)
   }
   return current
+}
+
+/**
+ * Flips one of a tile's eight gameplay bits. What each bit means is the game's
+ * business; the editor only stores them, which is why they are numbered rather
+ * than named.
+ */
+export function setTileFlagBit(doc: TilesDoc, tileIndex: number, bit: number, on: boolean): TilesDoc {
+  if (tileIndex < 0 || tileIndex >= doc.flags.length || bit < 0 || bit >= TILE_FLAG_COUNT) return doc
+  const mask = 1 << bit
+  const current = doc.flags[tileIndex]
+  const next = on ? current | mask : current & ~mask & 0xff
+  if (next === current) return doc
+  const flags = doc.flags.slice()
+  flags[tileIndex] = next
+  return { ...doc, flags }
 }
 
 // ── whole-tile transforms ───────────────────────────────────────────────────
