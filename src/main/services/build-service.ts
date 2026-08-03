@@ -24,7 +24,7 @@ import type {
 import type { MsxProject } from '../../shared/msxproj'
 import { resolveNodeBinary } from './project'
 import { summarize } from './resources'
-import { openmsxSystemDataDir } from './toolchain'
+import { openmsxSystemDataDir, sdlAudioDriver } from './toolchain'
 import {
   ArtifactServer,
   buildArgs,
@@ -204,13 +204,14 @@ export class BuildService {
     const stderrTail: string[] = []
     this.killed = false
 
-    // MSXgl's `run` step execs openMSX as our grandchild; relocatable tarball
-    // builds need OPENMSX_SYSTEM_DATA to find the share/ next to their bin/.
+    // MSXgl's `run` step execs openMSX as our grandchild, so anything it needs
+    // from the environment has to be set here.
     const openmsxShare = openmsxSystemDataDir(this.deps.openmsxPath())
-    const env =
-      openmsxShare && !process.env.OPENMSX_SYSTEM_DATA
-        ? { ...process.env, OPENMSX_SYSTEM_DATA: openmsxShare }
-        : process.env
+    const audioDriver = sdlAudioDriver()
+    const overrides: Record<string, string> = {}
+    if (openmsxShare && !process.env.OPENMSX_SYSTEM_DATA) overrides.OPENMSX_SYSTEM_DATA = openmsxShare
+    if (audioDriver) overrides.SDL_AUDIODRIVER = audioDriver
+    const env = Object.keys(overrides).length ? { ...process.env, ...overrides } : process.env
 
     const child = spawn(node, args, {
       cwd: root,

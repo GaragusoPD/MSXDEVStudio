@@ -135,6 +135,22 @@ export function runOpenmsxVersion(execPath: string): Promise<string | null> {
   })
 }
 
+/**
+ * The SDL audio backend to hand openMSX on Linux, or null to leave it alone.
+ *
+ * openMSX's SDL build probes ALSA first, which fails outright on a PipeWire
+ * desktop ("Couldn't open audio device") and leaves the emulator silent with no
+ * error the user would ever see. When a PulseAudio-compatible socket exists,
+ * which pipewire-pulse provides, naming that backend makes it work. Anything
+ * the user has already set in the environment wins.
+ */
+export function sdlAudioDriver(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (process.platform !== 'linux' || env.SDL_AUDIODRIVER) return null
+  const runtime = env.XDG_RUNTIME_DIR
+  if (!runtime) return null
+  return existsSync(join(runtime, 'pulse', 'native')) ? 'pulseaudio' : null
+}
+
 // ---------------------------------------------------------------------------
 // Acquisition: git clone
 // ---------------------------------------------------------------------------
