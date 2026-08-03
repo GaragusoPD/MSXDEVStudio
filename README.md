@@ -89,6 +89,19 @@ install an emulator at all, choose WebMSX and your games run in the browser.
 > find its own `share/` directory. MSXStudio detects that layout and sets
 > `OPENMSX_SYSTEM_DATA` for you, so it works without any manual setup.
 
+> **No sound from openMSX on Linux?** The distributed openMSX builds can only
+> use ALSA, and on a PipeWire desktop ALSA has no working default device unless
+> the bridge package is installed:
+>
+> ```
+> sudo apt install pipewire-alsa
+> ```
+>
+> Then log out and back in. This affects every ALSA application, not just
+> openMSX, and the emulator gives no visible sign: it runs perfectly and stays
+> silent. If you are unsure whether it is your game or your system, run
+> `speaker-test -t sine -l 1` — if that is silent too, it is the system.
+
 ### Opening projects
 
 Double-click any `.msxproj` file, or run `msxstudio path/to/Game.msxproj`. If

@@ -50,7 +50,7 @@ The game code in `main.c` covers the techniques the
   `ColorChars()` tints the box frame cyan, capitals yellow, digits green and the
   logo cyan, which is why SPACE and the coin count stand out in a sentence.
 
-## Three things worth knowing
+## Four things worth knowing
 
 **Use the `_16K` VRAM calls on MSX1.** The four-argument `VDP_WriteVRAM(src,
 destLow, destHigh, count)` form is meant for the 17-bit addressing MSX2 uses.
@@ -75,6 +75,16 @@ sprite flickered into its jump pose while walking on flat ground. It looked like
 an animation speed problem and was not: `ApplyGravity()` now derives the flag
 from `BoxHitsSolid(x, y + 1)`, which is a question about the world rather than
 about what happened this frame.
+
+**Silence is usually the desktop, not the game.** The demo plays a sound on
+every coin, jump and win. If you hear nothing on Linux, check the system before
+suspecting the code: the distributed openMSX builds can only use ALSA, and on a
+PipeWire desktop ALSA has no working default device until `pipewire-alsa` is
+installed (`sudo apt install pipewire-alsa`, then log out and back in). openMSX
+gives no visible sign of this, it just runs silently. `speaker-test -t sine -l 1`
+being silent too confirms it is the system. To check the game end instead, run
+openMSX's debugger and watch the PSG: `debug read {PSG regs} 8` is the channel A
+volume, and it should ramp down over the frames after a coin is collected.
 
 ## Credits and attribution
 
