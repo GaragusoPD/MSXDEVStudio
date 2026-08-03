@@ -102,6 +102,20 @@ install an emulator at all, choose WebMSX and your games run in the browser.
 > silent. If you are unsure whether it is your game or your system, run
 > `speaker-test -t sine -l 1` — if that is silent too, it is the system.
 
+> **Blurry or uneven pixels?** openMSX ships with a softened, TV-like picture.
+> For a pixel-perfect image, open its console with **F10** and set:
+>
+> ```
+> set scale_algorithm simple
+> set horizontal_stretch 256
+> set blur 0
+> set scanline 0
+> ```
+>
+> Settings save when openMSX exits. `horizontal_stretch` is the subtle one: the
+> default stretches 256 MSX pixels across 280, so some columns come out wider
+> than others whatever scaler you pick.
+
 ### Opening projects
 
 Double-click any `.msxproj` file, or run `msxstudio path/to/Game.msxproj`. If
