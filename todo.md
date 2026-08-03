@@ -18,11 +18,17 @@
 
 ## When creating the GitHub repo
 
-- [ ] Fix `homepage` in `package.json` (currently a guessed URL — needed by the .deb builder).
-- [ ] Push, then tag `v0.1.0` → `release.yml` builds Linux + **Windows NSIS/portable**
+Repo created 2026-08-03 at https://github.com/GaragusoPD/MSXStudio, **private for now** —
+make it public when the work in progress is ready to show.
+
+- [x] Fix `homepage` in `package.json` (was a guessed URL — needed by the .deb builder).
+- [ ] Tag `v0.1.0` → `release.yml` builds Linux + **Windows NSIS/portable**
       (not buildable locally, no wine) and drafts a release with all artifacts.
-- [ ] Verify `ci.yml` (check + 486 tests) goes green on the runner.
+- [ ] Verify `ci.yml` (check + 486 tests) goes green on the runner. Note that Actions
+      minutes on a private repo are metered, unlike a public one.
 - [ ] Windows manual pass: NSIS install → toolchain setup → build → run loop.
+- [ ] Before going public: re-read `LICENSE` and the README license section, and decide
+      whether the source-available terms are still what you want with an audience.
 
 ## Known gaps (documented, deliberate)
 

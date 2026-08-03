@@ -6,7 +6,7 @@
   "private": true,
   "main": "./out/main/index.js",
   "author": "Pablo Garaguso <pablo.garaguso@gmail.com>",
-  "homepage": "https://github.com/pgaraguso/msxstudio",
+  "homepage": "https://github.com/GaragusoPD/MSXStudio",
   "desktopName": "com.msxstudio.app.desktop",
   "scripts": {
     "dev": "electron-vite dev --noSandbox",
