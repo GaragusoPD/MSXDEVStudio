@@ -31,6 +31,48 @@
   only) — Linux users need wine for those; ayFX/VGM/lVGM paths are cross-platform.
 - MSXgl is CC BY-SA 4.0 — surfaced in README; games built with it inherit the terms.
 
+## Sprite composition and software sprites (planned)
+
+Four related features. Each one wants the same two deliverables: **editor support in
+the UI**, and **ready-made C** the IDE can drop into a project as a script/snippet, so
+a user gets a working character without writing the VDP plumbing by hand.
+
+Where this already starts: `src/shared/msx/sprite.ts` models a sprite as up to
+`MAX_LAYERS` (4) `SpriteLayer`s per frame and already composites them for the mode-2
+OR-color preview (`lineColorByte`), with `SpriteLayerPanel.vue` in the editor. So the
+data model exists — what is missing is emitting the extra sprite planes and the
+runtime code that drives them.
+
+- [ ] **1. Superposition of sprites.** Stack several hardware sprites on the same
+      coordinates to get a multi-color character. This is the only way to do it in
+      sprite mode 1 (MSX1), where a sprite is a single color. Needs: the layer stack
+      emitted as N sprite planes rather than one composite (`emitC.ts`), a plane→color
+      assignment in the editor, and a runtime helper that writes N attribute entries
+      from one x/y. Watch the 4-sprites-per-scanline limit — a 3-layer character costs
+      3 of the 4, so the editor should warn.
+- [ ] **2. Multi-sprite characters (Metal Gear style).** A character built from a grid
+      of hardware sprites, side by side as well as stacked — 16x32 or 32x32 from two or
+      four 16x16 sprites, each of which may itself be layered per item 1. Needs a
+      "metasprite" concept above the current flat sprite list: cell offsets, a combined
+      canvas in the editor, and emitted code that places the whole group from one
+      coordinate. This is the item that most changes the sprite document shape, so
+      design it before item 1 hardcodes a one-sprite-per-character assumption.
+- [ ] **3. Software sprites and animation.** Characters drawn into the screen surface
+      instead of the sprite attribute table, so there is no per-scanline limit. Needs
+      background save/restore per object, a draw order, and dirty-rect redraw. On MSX2
+      this can lean on the VDP blitter (HMMM/LMMM); on MSX1 it is CPU blits into the
+      pattern table. Pre-made code matters most here — this is the item users are least
+      likely to get right unaided.
+- [ ] **4. Tiles and software sprites for bitmap modes.** Extend both to the bitmap
+      modes already described in `src/shared/msx/modes.ts` (`BITMAP_MODES`: sc5, sc6,
+      sc7, sc8, plus import-only sc10/12). Bitmap modes have no name table, so "tiles"
+      there means stamping pattern blocks into the bitmap, and software sprites are the
+      normal way to move things. Needs the tile and map editors to accept a bitmap
+      target, and the blit helpers from item 3 in their MSX2 form.
+
+Sequencing note: 2 constrains 1, and 3 is the foundation for 4. Doing 2 then 1 then 3
+then 4 avoids reworking the document format twice.
+
 ## Deferred features (add when wanted, specs/00-overview.md)
 
 - msxgl_config.h settings UI (currently edited as C in Monaco)
