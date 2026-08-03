@@ -43,20 +43,26 @@ OR-color preview (`lineColorByte`), with `SpriteLayerPanel.vue` in the editor. S
 data model exists — what is missing is emitting the extra sprite planes and the
 runtime code that drives them.
 
-- [ ] **1. Superposition of sprites.** Stack several hardware sprites on the same
+Listed in build order, which is not the order they were asked for: the multi-sprite
+character shape constrains superposition, so it is designed first, and the software
+sprite blitters are what the bitmap-mode work stands on.
+
+- [ ] **1. Multi-sprite characters (Metal Gear style).** A character built from a grid
+      of hardware sprites, side by side as well as stacked — 16x32 or 32x32 from two or
+      four 16x16 sprites, each of which may itself be layered per the next item. Needs a
+      "metasprite" concept above the current flat sprite list: cell offsets, a combined
+      canvas in the editor, and emitted code that places the whole group from one
+      coordinate. First because it is the item that most changes the sprite document
+      shape — built after superposition, it would mean undoing a one-sprite-per-
+      character assumption.
+- [ ] **2. Superposition of sprites.** Stack several hardware sprites on the same
       coordinates to get a multi-color character. This is the only way to do it in
       sprite mode 1 (MSX1), where a sprite is a single color. Needs: the layer stack
       emitted as N sprite planes rather than one composite (`emitC.ts`), a plane→color
       assignment in the editor, and a runtime helper that writes N attribute entries
       from one x/y. Watch the 4-sprites-per-scanline limit — a 3-layer character costs
-      3 of the 4, so the editor should warn.
-- [ ] **2. Multi-sprite characters (Metal Gear style).** A character built from a grid
-      of hardware sprites, side by side as well as stacked — 16x32 or 32x32 from two or
-      four 16x16 sprites, each of which may itself be layered per item 1. Needs a
-      "metasprite" concept above the current flat sprite list: cell offsets, a combined
-      canvas in the editor, and emitted code that places the whole group from one
-      coordinate. This is the item that most changes the sprite document shape, so
-      design it before item 1 hardcodes a one-sprite-per-character assumption.
+      3 of the 4, and a metasprite from item 1 multiplies that, so the editor should
+      warn.
 - [ ] **3. Software sprites and animation.** Characters drawn into the screen surface
       instead of the sprite attribute table, so there is no per-scanline limit. Needs
       background save/restore per object, a draw order, and dirty-rect redraw. On MSX2
@@ -69,9 +75,6 @@ runtime code that drives them.
       there means stamping pattern blocks into the bitmap, and software sprites are the
       normal way to move things. Needs the tile and map editors to accept a bitmap
       target, and the blit helpers from item 3 in their MSX2 form.
-
-Sequencing note: 2 constrains 1, and 3 is the foundation for 4. Doing 2 then 1 then 3
-then 4 avoids reworking the document format twice.
 
 ## Deferred features (add when wanted, specs/00-overview.md)
 
