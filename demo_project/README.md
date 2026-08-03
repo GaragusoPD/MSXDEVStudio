@@ -32,7 +32,8 @@ The game code in `main.c` covers the techniques the
 - **Scrolling**, without the `scroll` module. The level is copied into RAM at
   startup, and the visible 32 columns of a 64 wide map are contiguous there, so
   each screen row is a single `VDP_WriteVRAM_16K`. The camera moves in whole
-  tiles and only redraws when it actually changes.
+  tiles and only redraws when it actually changes, which on MSX1 is as smooth as
+  the hardware gets (see below).
 - **Collision**, read from the same RAM map the VDP is drawing, so there is no
   second copy of the level to keep in sync. Taking a coin writes sky into that
   map, which is also how the coins are counted at startup.
@@ -51,7 +52,7 @@ The game code in `main.c` covers the techniques the
   `ColorChars()` tints the box frame cyan, capitals yellow, digits green and the
   logo cyan, which is why SPACE and the coin count stand out in a sentence.
 
-## Five things worth knowing
+## Six things worth knowing
 
 **Use the `_16K` VRAM calls on MSX1.** The four-argument `VDP_WriteVRAM(src,
 destLow, destHigh, count)` form is meant for the 17-bit addressing MSX2 uses.
@@ -76,6 +77,24 @@ sprite flickered into its jump pose while walking on flat ground. It looked like
 an animation speed problem and was not: `ApplyGravity()` now derives the flag
 from `BoxHitsSolid(x, y + 1)`, which is a question about the world rather than
 about what happened this frame.
+
+**The scroll steps a whole tile at a time, and on MSX1 that is the hardware.**
+Compare it with MSXgl's own `s_scroll.c`, which glides a pixel at a time and
+looks like it is doing the same job in the same screen mode. It is not. That
+sample sets `Machine = "2"`, so it runs in `VDP_MODE_GRAPHIC3` (SCREEN 4), which
+looks identical to SCREEN 2 but is an MSX2 mode. `Scroll_Update()` splits the
+scroll position into a whole-tile part that redraws the name table, exactly as
+this demo does, and a 0 to 7 pixel remainder that it hands to
+`VDP_SetAdjustOffset()`. That writes VDP register R#18, which shifts the whole
+display by a few pixels, and R#18 does not exist on MSX1's TMS9918. MSXgl says as
+much in its own configs: `SCROLL_ADJUST` is `TRUE` for MSX2 and `FALSE` for MSX1.
+
+So an MSX1 game scrolls in 8 pixel steps unless it rewrites tile pattern data
+every frame, shifted one pixel at a time, which real games did but only for a
+narrow band of tiles and at a cost that would bury the rest of this code. If you
+want the smooth version, switch the project to MSX2 and drive R#18; tutorial 6
+and `s_scroll.c` show how, including the sprite masking that hides the partial
+column the shift exposes at the screen edge.
 
 **Never draw the wrong thing and fix it afterwards.** The first version of this
 demo blitted the screen straight out of the ROM level, which still contains the
