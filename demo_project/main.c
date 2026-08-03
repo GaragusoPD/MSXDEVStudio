@@ -43,6 +43,10 @@
 #define VIEW_W       32          // what fits on screen
 #define MAX_CAM      (MAP_W - VIEW_W)
 
+// The screen column the player is drawn on while the map is scrolling. It is
+// where the centring camera puts them anyway, so the pin never moves them.
+#define PLAYER_PIN_X ((VIEW_W / 2) * 8)
+
 // Tile indices, matching the order of tiles.tiles.json. Only the ones the code
 // draws with are named; what a tile *does* is a flag, not an index.
 #define T_SKY        0
@@ -60,7 +64,7 @@
 #define TileFlags(t) (g_Tiles_Flags[t])
 
 // The MSXgl logo, drawn with characters 1-6 of any MSXgl font.
-#define MSX_GL       "\x01\x02\x03\x04\x05\x06"
+#define MSX_GL       "\x02\x03\x04\x05"
 
 
 // Sprite frames are 16x16, so each one occupies 4 pattern slots, and the shape
@@ -146,11 +150,18 @@ void DrawView()
 {
 	// The window is already correct in `g_Map`, so each row is one write and
 	// the screen is never shown holding a tile that is no longer there.
+	//
+	// Both addresses just step by a constant, so they are carried between rows
+	// rather than recomputed from `row`, which cost two calls to SDCC's 16-bit
+	// multiply per row. Worth the pennies: this redraw is 768 bytes and takes
+	// about half a frame, so it is the one piece of the loop on a deadline.
+	const u8* src = g_Map + (u16)g_CamX;
+	u16 dst = g_ScreenLayoutLow;
 	for (u8 row = 0; row < MAP_H; ++row)
 	{
-		const u8* src = g_Map + ((u16)row * MAP_W) + (u16)g_CamX;
-		u16 dst = g_ScreenLayoutLow + ((u16)row * VIEW_W);
 		VDP_WriteVRAM_16K(src, dst, VIEW_W);
+		src += MAP_W;
+		dst += VIEW_W;
 	}
 }
 
@@ -374,18 +385,19 @@ void CollectCoins()
 
 // The camera keeps the player near the middle, and only ever moves in whole
 // tiles: a column step is one full redraw of the name table.
-void UpdateCamera()
+//
+// Moving it and redrawing are two steps on purpose, so that the caller can
+// place the sprite for the new column before spending half a frame on the
+// redraw. It reports whether the column changed.
+bool UpdateCamera()
 {
 	i16 want = (g_PlayerX >> 3) - (VIEW_W / 2);
 	if (want < 0) want = 0;
 	if (want > MAX_CAM) want = MAX_CAM;
 
-	if ((u8)want != g_CamX)
-	{
-		g_CamX = (u8)want;
-		DrawView();
-		DrawHUD();
-	}
+	if ((u8)want == g_CamX) return FALSE;
+	g_CamX = (u8)want;
+	return TRUE;
 }
 
 // True once every coin is collected and the player is standing in the doorway.
@@ -427,7 +439,7 @@ void PlayGame()
 
 		ApplyGravity();
 		CollectCoins();
-		UpdateCamera();
+		bool scrolled = UpdateCamera();
 
 		// Airborne wins; on the ground, alternate the two walk poses while
 		// moving. The counter only runs while walking, so stopping always
@@ -448,7 +460,25 @@ void PlayGame()
 
 		// Sprite Y is written one line higher than it appears on screen.
 		i16 sx = g_PlayerX - ((i16)g_CamX * 8);
+
+		// The camera steps whole tiles, so it can only follow the player to
+		// within a tile, and `sx` above carries the 0 to 7 pixel remainder.
+		// That remainder is what dragged the player 8 pixels left every time
+		// the map stepped: the scroll was moving the sprite. Pin the sprite to
+		// one column instead and let the map slide underneath it, which is the
+		// whole point of scrolling. The dropped remainder puts the sprite up to
+		// 7 pixels behind where it really is, and never more, because the
+		// camera catches up every eighth pixel.
+		//
+		// Both ends of the level are exempt: there the camera is clamped and
+		// cannot follow at all, so the player really does walk across the
+		// screen. The pin hands over seamlessly, because a clamped camera only
+		// lets `sx` past PLAYER_PIN_X once it has stopped scrolling.
+		if ((sx > PLAYER_PIN_X) && (g_CamX < MAX_CAM)) sx = PLAYER_PIN_X;
+
 		VDP_SetSpriteSM1(0, (u8)sx, (u8)(g_PlayerY - 1), shape, COLOR_LIGHT_RED);
+
+		if (scrolled) { DrawView(); DrawHUD(); }
 
 		if (AtExit()) return;
 	}
