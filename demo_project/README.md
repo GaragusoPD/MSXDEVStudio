@@ -29,12 +29,13 @@ The game code in `main.c` covers the techniques the
 
 - **Tiles**, loaded into all three SCREEN 2 banks with `VDP_LoadPattern_GM2` and
   `VDP_LoadColor_GM2`.
-- **Scrolling**, without the `scroll` module. The visible 32 columns of a 64
-  wide map are contiguous in memory, so each screen row is one `VDP_WriteVRAM_16K`
-  straight out of ROM. The camera moves in whole tiles and only redraws when it
-  actually changes.
-- **Collision**, read directly from the same map data the VDP is drawing, so
-  there is no second copy of the level to keep in sync.
+- **Scrolling**, without the `scroll` module. The level is copied into RAM at
+  startup, and the visible 32 columns of a 64 wide map are contiguous there, so
+  each screen row is a single `VDP_WriteVRAM_16K`. The camera moves in whole
+  tiles and only redraws when it actually changes.
+- **Collision**, read from the same RAM map the VDP is drawing, so there is no
+  second copy of the level to keep in sync. Taking a coin writes sky into that
+  map, which is also how the coins are counted at startup.
 - **Sprites**, placed with `VDP_SetSpriteSM1`. The walk is a six step cycle
   (`g_WalkCycle` in `main.c`) rather than two poses flipping back and forth,
   which is the difference between a stride and a flicker.
@@ -50,7 +51,7 @@ The game code in `main.c` covers the techniques the
   `ColorChars()` tints the box frame cyan, capitals yellow, digits green and the
   logo cyan, which is why SPACE and the coin count stand out in a sentence.
 
-## Four things worth knowing
+## Five things worth knowing
 
 **Use the `_16K` VRAM calls on MSX1.** The four-argument `VDP_WriteVRAM(src,
 destLow, destHigh, count)` form is meant for the 17-bit addressing MSX2 uses.
@@ -75,6 +76,14 @@ sprite flickered into its jump pose while walking on flat ground. It looked like
 an animation speed problem and was not: `ApplyGravity()` now derives the flag
 from `BoxHitsSolid(x, y + 1)`, which is a question about the world rather than
 about what happened this frame.
+
+**Never draw the wrong thing and fix it afterwards.** The first version of this
+demo blitted the screen straight out of the ROM level, which still contains the
+collected coins, and painted them out again immediately after. A full screen is
+768 bytes, far more than fits in the vertical blanking period, so the VDP was
+displaying while the correction was still being written and collected coins
+flashed back into view on every scroll. Editing the RAM map when the coin is
+taken means the blit is right the first time.
 
 **Silence is usually the desktop, not the game.** The demo plays a sound on
 every coin, jump and win. If you hear nothing on Linux, check the system before
@@ -113,6 +122,6 @@ then press Run. Exports happen automatically as part of the build, and only for
 files that changed.
 
 The level is the easiest thing to play with: open `level.map.json`, paint with
-the tile picker, and remember that coins are also tracked in the `g_Coins` table
-at the top of `main.c`, so a coin painted in the map still needs its position
-adding there to be collectable.
+the tile picker, and press Run. Coins need nothing else, because the game counts
+them out of the map at startup and collects whatever coin tile the player walks
+into, so painting one anywhere is enough. The HUD handles up to 99.

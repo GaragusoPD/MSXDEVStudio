@@ -57,7 +57,6 @@
 // The MSXgl logo, drawn with characters 1-6 of any MSXgl font.
 #define MSX_GL       "\x01\x02\x03\x04\x05\x06"
 
-#define COIN_COUNT   8
 #define EXIT_X       60
 
 // Sprite frames are 16x16, so each one occupies 4 pattern slots, and the shape
@@ -81,13 +80,14 @@
 // State
 //──────────────────────────────────────────────────────────────────────────────
 
-struct Coin { u8 x, y, taken; };
-
-// Kept in RAM because the level itself lives in ROM and cannot be edited.
-struct Coin g_Coins[COIN_COUNT] = {
-	{  5, 19, 0 }, {  9, 15, 0 }, { 11, 15, 0 }, { 17, 12, 0 },
-	{ 26, 16, 0 }, { 35, 13, 0 }, { 37, 13, 0 }, { 45, 15, 0 }
-};
+/**
+ * The level, copied out of ROM so it can be edited as it is played: taking a
+ * coin turns that cell into sky here, and everything downstream (the screen
+ * blit, collision, the exit check) reads this one array. Drawing straight from
+ * the ROM copy and painting the collected coins out afterwards is what made
+ * them flash back into view for a frame whenever the screen scrolled.
+ */
+u8  g_Map[MAP_W * MAP_H];
 
 u8  g_Remaining;
 i16 g_PlayerX;       // pixels, top-left of the 16x16 sprite
@@ -110,7 +110,7 @@ u8 TileAt(i16 tx, i16 ty)
 {
 	if ((tx < 0) || (tx >= MAP_W) || (ty < 0)) return T_SKY;
 	if (ty >= MAP_H) return T_DIRT;   // below the level counts as solid floor
-	return g_Level_Background[(u16)ty * MAP_W + (u16)tx];
+	return g_Map[(u16)ty * MAP_W + (u16)tx];
 }
 
 bool IsSolid(u8 tile)
@@ -140,20 +140,13 @@ bool BoxHitsSolid(i16 px, i16 py)
 // so the window can be blitted straight out of ROM without a RAM buffer.
 void DrawView()
 {
+	// The window is already correct in `g_Map`, so each row is one write and
+	// the screen is never shown holding a tile that is no longer there.
 	for (u8 row = 0; row < MAP_H; ++row)
 	{
-		const u8* src = g_Level_Background + ((u16)row * MAP_W) + (u16)g_CamX;
+		const u8* src = g_Map + ((u16)row * MAP_W) + (u16)g_CamX;
 		u16 dst = g_ScreenLayoutLow + ((u16)row * VIEW_W);
 		VDP_WriteVRAM_16K(src, dst, VIEW_W);
-	}
-
-	// Coins already collected are not in the ROM map, so blank them again.
-	for (u8 i = 0; i < COIN_COUNT; ++i)
-	{
-		if (!g_Coins[i].taken) continue;
-		i16 sx = (i16)g_Coins[i].x - (i16)g_CamX;
-		if ((sx >= 0) && (sx < VIEW_W))
-			VDP_Poke_16K(T_SKY, g_ScreenLayoutLow + ((u16)g_Coins[i].y * VIEW_W) + (u16)sx);
 	}
 }
 
@@ -161,7 +154,18 @@ void DrawView()
 void DrawHUD()
 {
 	VDP_Poke_16K(T_COIN, g_ScreenLayoutLow + 1);
-	VDP_Poke_16K(T_DIGIT_0 + g_Remaining, g_ScreenLayoutLow + 2);
+	// Two digits when the level holds ten coins or more, so a hand-painted map
+	// still reads correctly; a single digit sits tight against the icon.
+	if (g_Remaining >= 10)
+	{
+		VDP_Poke_16K(T_DIGIT_0 + (g_Remaining / 10), g_ScreenLayoutLow + 2);
+		VDP_Poke_16K(T_DIGIT_0 + (g_Remaining % 10), g_ScreenLayoutLow + 3);
+	}
+	else
+	{
+		VDP_Poke_16K(T_DIGIT_0 + g_Remaining, g_ScreenLayoutLow + 2);
+		VDP_Poke_16K(T_SKY, g_ScreenLayoutLow + 3);
+	}
 }
 
 //──────────────────────────────────────────────────────────────────────────────
@@ -280,8 +284,12 @@ void InitGame()
 	ayFX_InitBank((void*)g_Sfx);
 	ayFX_SetChannel(PSG_CHANNEL_A);
 
-	for (u8 i = 0; i < COIN_COUNT; ++i) g_Coins[i].taken = 0;
-	g_Remaining = COIN_COUNT;
+	// Restart from the pristine level, and trust the map for the coin count so
+	// that painting a coin in the map editor is all it takes to add one.
+	Mem_Copy(g_Level_Background, g_Map, sizeof(g_Map));
+	g_Remaining = 0;
+	for (u16 i = 0; i < sizeof(g_Map); ++i)
+		if (g_Map[i] == T_COIN) g_Remaining++;
 
 	g_PlayerX   = 2 * 8;
 	g_PlayerY   = 19 * 8 - 8;    // standing on the grass line
@@ -343,19 +351,20 @@ void CollectCoins()
 	i16 top    = g_PlayerY >> 3;
 	i16 bottom = (g_PlayerY + 15) >> 3;
 
-	for (u8 i = 0; i < COIN_COUNT; ++i)
+	for (i16 ty = top; ty <= bottom; ++ty)
 	{
-		if (g_Coins[i].taken) continue;
-		if ((g_Coins[i].x < left) || (g_Coins[i].x > right)) continue;
-		if ((g_Coins[i].y < top) || (g_Coins[i].y > bottom)) continue;
+		for (i16 tx = left; tx <= right; ++tx)
+		{
+			if (TileAt(tx, ty) != T_COIN) continue;
 
-		g_Coins[i].taken = 1;
-		g_Remaining--;
-		i16 sx = (i16)g_Coins[i].x - (i16)g_CamX;
-		if ((sx >= 0) && (sx < VIEW_W))
-			VDP_Poke_16K(T_SKY, g_ScreenLayoutLow + ((u16)g_Coins[i].y * VIEW_W) + (u16)sx);
-		DrawHUD();
-		ayFX_PlayBank(0, 0);
+			g_Map[(u16)ty * MAP_W + (u16)tx] = T_SKY;
+			g_Remaining--;
+			i16 sx = tx - (i16)g_CamX;
+			if ((sx >= 0) && (sx < VIEW_W))
+				VDP_Poke_16K(T_SKY, g_ScreenLayoutLow + ((u16)ty * VIEW_W) + (u16)sx);
+			DrawHUD();
+			ayFX_PlayBank(0, 0);
+		}
 	}
 }
 
