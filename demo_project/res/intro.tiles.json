@@ -5954,8 +5954,8 @@
     }
   ],
   "export": {
-    "name": "g_Intro",
+    "name": "g_IntroTiles",
     "format": "c",
-    "out": "content/intro.h"
+    "out": "content/intro_tiles.h"
   }
 }

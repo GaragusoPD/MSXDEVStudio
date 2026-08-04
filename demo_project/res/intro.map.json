@@ -781,8 +781,8 @@
     }
   ],
   "export": {
-    "name": "g_Intro",
+    "name": "g_IntroMap",
     "format": "c",
-    "out": "content/intro.h"
+    "out": "content/intro_map.h"
   }
 }

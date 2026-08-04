@@ -67,6 +67,8 @@
 #include "font/font_mgl_sample8.h"
 
 #include "content/tiles.h"
+#include "content/intro_tiles.h"
+#include "content/intro_map.h"
 #include "content/player.h"
 #include "content/level.h"
 #include "content/backdrop.h"
@@ -430,32 +432,35 @@ void PrintAt(u8 x, u8 y, const c8* text)
 	Print_DrawText(text);
 }
 
+/**
+ * The title is a picture, not a page of text: `intro.map.json` drawn in
+ * SCREEN 2 with its own tileset, and the player standing in the middle of it.
+ *
+ * It uses the *intro* tileset, so the game's tiles are not in VRAM while this
+ * is up — `InitGame()` loads those when the game starts, which is why the two
+ * screens can each have a full 256-tile bank.
+ */
 void TitleScreen()
 {
-	BeginTextScreen();
+	VDP_SetMode(VDP_MODE_GRAPHIC2);
+	VDP_ClearVRAM();
+	VDP_SetColor(COLOR_BLACK);
 
-	// A framed title, then the rules underneath.
-	Print_DrawBox(3, 2, 26, 5);
-	PrintAt(7,  4, "M S X S T U D I O");
+	VDP_LoadPattern_GM2(g_IntroTiles_Patterns, G_INTROTILES_PATTERNS_SIZE / 8, 0);
+	VDP_LoadColor_GM2(g_IntroTiles_Colors, G_INTROTILES_COLORS_SIZE / 8, 0);
 
-	PrintAt(5,  8, "A two-screen demo game");
+	// One screen exactly, so the map goes into the name table in one write.
+	VDP_WriteVRAM_16K(g_IntroMap_Background, g_ScreenLayoutLow, G_INTROMAP_W * G_INTROMAP_H);
 
-	PrintAt(4, 11, "Arrows move, SPACE jumps");
-	PrintAt(3, 13, "Collect all 8 coins, then");
-	PrintAt(2, 14, "reach the door on the right");
-
-	PrintAt(6, 17, "Press SPACE to play");
-
-	// The attribution MSXStudio's license asks of anything built with it.
-	PrintAt(6, 19, "Built with MSXStudio");
-	PrintAt(8, 20, "by P.D. Garaguso");
-	PrintAt(4, 22, MSX_GL " MSX Game Library");
-	PrintAt(0, 23, "");
+	// The dragon waits in the middle, facing right, in its standing pose.
+	VDP_SetSpriteFlag(VDP_SPRITE_SIZE_16);
+	VDP_LoadSpritePattern(g_Player_Patterns, 0, G_PLAYER_PATTERNS_SIZE / 8);
+	VDP_DisableSpritesFrom(G_PLAYER_PLAYER_PLANES);
+	g_FaceLeft = 0;
+	g_Player_SetMeta(0, (256 - 16) / 2, ((192 - 16) / 2) - 1,
+		G_PLAYER_PLAYER_BASE + FRAME_STAND * G_PLAYER_PLAYER_PLANES, G_PLAYER_PLAYER_PLANES);
 }
 
-// Everything this game stands on. MSXgl is CC BY-SA 4.0 and asks to be
-// credited; MSXStudio asks the same, and both ask not to look like an
-// endorsement, which is what the last line is for.
 void CreditsScreen()
 {
 	BeginTextScreen();

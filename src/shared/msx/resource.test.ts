@@ -120,10 +120,12 @@ describe('file naming', () => {
   it('derives table names and default export blocks', () => {
     expect(resourceBaseName('art/city_bg.tiles.json')).toBe('city_bg')
     expect(defaultTableName('city_bg')).toBe('g_CityBg')
+    // The kind is part of the default name, so a tileset and a map of the same
+    // subject cannot both land on `g_CityBg` in `content/city_bg.h`.
     expect(defaultExport('art/city_bg.tiles.json')).toEqual({
-      name: 'g_CityBg',
+      name: 'g_CityBgTiles',
       format: 'c',
-      out: 'content/city_bg.h'
+      out: 'content/city_bg_tiles.h'
     })
   })
 })
@@ -172,14 +174,14 @@ describe('tiles resource', () => {
 
     const block = defaultExport('scenery.tiles.json')
     const plain = decode(renderResource(resource, 'scenery.tiles.json', block))
-    expect(plain).toContain('#define G_SCENERY_DOOR_BASE 0')
-    expect(plain).toContain('#define G_SCENERY_DOOR_W 2')
-    expect(plain).toContain('#define G_SCENERY_DOOR_H 3')
+    expect(plain).toContain('#define G_SCENERYTILES_DOOR_BASE 0')
+    expect(plain).toContain('#define G_SCENERYTILES_DOOR_W 2')
+    expect(plain).toContain('#define G_SCENERYTILES_DOOR_H 3')
     expect(plain).not.toContain('DrawBlock')
 
     const withCode = decode(renderResource(resource, 'scenery.tiles.json', { ...block, helpers: true }))
-    expect(withCode).toContain('static void g_Scenery_DrawBlock(u8 x, u8 y, u8 base, u8 w, u8 h)')
-    expect(withCode).toContain('VDP_WriteLayout_GM2(g_Scenery_Blocks + base, x, y, w, h);')
+    expect(withCode).toContain('static void g_SceneryTiles_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h)')
+    expect(withCode).toContain('VDP_WriteLayout_GM2(g_SceneryTiles_Blocks + base, x, y, w, h);')
   })
 
   it('round-trips through JSON', () => {
@@ -193,7 +195,7 @@ describe('tiles resource', () => {
     const text = decode(renderResource(fixtureTiles(), 'art/fixture.tiles.json', defaultExport('art/fixture.tiles.json')))
     expect(text).toContain('//  - Source: art/fixture.tiles.json')
     expect(text).toContain('//  - Mode: SCREEN 2 (GRAPHIC 2)')
-    expect(text).toContain('const unsigned char g_Fixture_Patterns[] =')
+    expect(text).toContain('const unsigned char g_FixtureTiles_Patterns[] =')
   })
 
   it('renders bin as the raw concatenation', () => {
@@ -239,19 +241,19 @@ describe('sprites resource', () => {
 
   it('emits per-character offsets so one character can be addressed out of a sheet', () => {
     const text = decode(renderResource(metaResource(), 'hero.sprites.json', defaultExport('hero.sprites.json')))
-    expect(text).toContain('#define G_HERO_SPRITE_0_BASE 0')
-    expect(text).toContain('#define G_HERO_SPRITE_0_PLANES 4')
-    expect(text).toContain('#define G_HERO_SPRITE_0_FRAMES 1')
+    expect(text).toContain('#define G_HEROSPRITES_SPRITE_0_BASE 0')
+    expect(text).toContain('#define G_HEROSPRITES_SPRITE_0_PLANES 4')
+    expect(text).toContain('#define G_HEROSPRITES_SPRITE_0_FRAMES 1')
   })
 
   it('appends the placement helper only when the export opts in', () => {
     const block = defaultExport('hero.sprites.json')
-    expect(decode(renderResource(metaResource(), 'hero.sprites.json', block))).not.toContain('g_Hero_SetMeta')
+    expect(decode(renderResource(metaResource(), 'hero.sprites.json', block))).not.toContain('g_HeroSprites_SetMeta')
 
     const text = decode(renderResource(metaResource(), 'hero.sprites.json', { ...block, helpers: true }))
-    expect(text).toContain('static void g_Hero_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)')
+    expect(text).toContain('static void g_HeroSprites_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)')
     // Mode 2 drives the per-line color table; 16×16 patterns step by 4.
-    expect(text).toContain('VDP_SetSpriteExMultiColor(index + i, px, py, plane * 4, g_Hero_Colors + ((u16)plane * 16));')
+    expect(text).toContain('VDP_SetSpriteExMultiColor(index + i, px, py, plane * 4, g_HeroSprites_Colors + ((u16)plane * 16));')
   })
 
   it('uses the mode-1 setter and 8×8 pattern step when that is what the sheet is', () => {
@@ -259,7 +261,7 @@ describe('sprites resource', () => {
     const text = decode(
       renderResource({ kind: 'sprites', doc }, 'hero.sprites.json', { ...defaultExport('hero.sprites.json'), helpers: true })
     )
-    expect(text).toContain('VDP_SetSpriteSM1(index + i, px, py, plane * 1, g_Hero_Colors[plane]);')
+    expect(text).toContain('VDP_SetSpriteSM1(index + i, px, py, plane * 1, g_HeroSprites_Colors[plane]);')
   })
 })
 
@@ -469,7 +471,7 @@ describe('sfx resource', () => {
   it('re-parses an exported bank back into the in-memory model', () => {
     const doc = normalizeSfx({ effects: SFX_PRESETS })
     const bank = renderResource({ kind: 'sfx', doc }, 'audio/fx.sfx.json', {
-      name: 'g_Fx',
+      name: 'g_FxSfx',
       format: 'bin',
       out: 'content/fx.afb'
     })
@@ -482,14 +484,14 @@ describe('sfx resource', () => {
     expect(text).toContain('ayfx/ayfx_player')
     expect(text).toContain('//  - Effects: 0=zap, 1=boom')
     expect(text).toContain('//  - Replay rate: 50 Hz')
-    expect(text).toContain('const unsigned char g_Fx[] =')
+    expect(text).toContain('const unsigned char g_FxSfx[] =')
   })
 
   it('parses, serializes and validates through the resource family', () => {
     const parsed = parseResource('audio/fx.sfx.json', serializeResource(fixtureSfx()))
     expect(parsed).toEqual(fixtureSfx())
     expect(validateResource(parsed)).toEqual([])
-    expect(defaultExport('audio/fx.sfx.json')).toEqual({ name: 'g_Fx', format: 'c', out: 'content/fx.h' })
+    expect(defaultExport('audio/fx.sfx.json')).toEqual({ name: 'g_FxSfx', format: 'c', out: 'content/fx_sfx.h' })
   })
 
   it('creates a valid default doc from {} for every kind — the Resources panel New button', () => {

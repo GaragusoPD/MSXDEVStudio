@@ -119,8 +119,18 @@ export function defaultTableName(base: string): string {
   return `g_${pascal || 'Resource'}`
 }
 
+/**
+ * The default export for a resource, named after the file *and its kind*:
+ * `intro.tiles.json` → `g_IntroTiles` in `content/intro_tiles.h`.
+ *
+ * The kind is in the name because a tileset and a map of the same subject are
+ * the normal case — `intro.tiles.json` beside `intro.map.json` — and without it
+ * both default to `g_Intro` in `content/intro.h`, where whichever exports last
+ * silently overwrites the other.
+ */
 export function defaultExport(path: string): ExportBlock {
-  const base = resourceBaseName(path)
+  const kind = resourceKindOf(path)
+  const base = kind ? `${resourceBaseName(path)}_${kind}` : resourceBaseName(path)
   return { name: defaultTableName(base), format: 'c', out: `content/${base}.h` }
 }
 
