@@ -41,9 +41,23 @@ That turns collision into a table lookup rather than a list of tile numbers in
 your code, so re-arranging a tileset does not break the game. See
 [`demo_project`](../demo_project/) for it in use.
 
+**Tile blocks** — a door, a tree or a boss face is bigger than one tile, so the
+tile editor lets you name a **block**: a W×H design you draw on one canvas.
+A block holds no pixels of its own, only references to tiles in the same bank,
+so painting a block paints those tiles. Pick a size in the side panel and press
+**+ Block**; the seams between tiles are drawn in blue. In SCREEN 1 a new block
+starts on a colour-group boundary, because eight consecutive tiles share one
+FG/BG pair there — the panel warns when a block can't own its whole group.
+
 **Sprites** — mode 1 gives each sprite one colour; mode 2 gives a colour per
 line, plus the EC/CC/IC bits. Sprites are 8×8 or 16×16 and can stack up to 4
 layers for multicolour characters. The animation bar previews frames.
+
+**Metasprites** — a character can span a grid of hardware sprites (the
+*Character grid* control): 2×2 of 16×16 sprites is a 32×32 Metal Gear-style
+hero that moves as one. Each cell is a separate hardware sprite and each of its
+layers costs another, so every character shows what it spends of the VDP's
+4 (mode 1) or 8 (mode 2) sprites per scanline.
 
 **Map** — pick a tileset first (dropdown in the side panel), then paint with
 stamp, fill, rectangle and erase. Shift+click or drag in the tile picker takes
@@ -54,6 +68,12 @@ over a background: on any layer above the first, tile 0 means transparent.
 **Screen** — for MSX2 bitmap modes only. Import a source image, then retouch
 the conversion with pencil/fill and edit the palette. For MSX1 full-screen art,
 draw a tileset and place it in a map instead.
+
+**Fragments** — bitmap modes have no name table, so the block idea arrives as a
+**fragment**: pick the ⛶ tool and drag a rectangle on the converted image to
+name a cut-out of it. Fragments are bitmap-mode blocks *and* the frames of a
+software sprite; like blocks they hold no pixels, so retouching the image
+updates every fragment over it.
 
 **SFX** — one file holds a bank of effects. Draw tone, noise and volume per
 frame, press Play to hear it. Start from a preset, or import `.afx`/`.afb`
@@ -67,6 +87,8 @@ Every editor has an **Export** block in its side panel:
 - **name** — the C variable, e.g. `g_MyTiles`
 - **out** — where to write it, e.g. `content/mytiles.h`
 - **format** — `c` for a header, `bin` for raw bytes
+- **Export ready-made C** — appends working code for the thing you just drew
+  (see below). Off by default, because it calls into MSXgl.
 
 Exports run automatically before every build, and skip anything already up to
 date. To export by hand, use the **Export** button in the editor toolbar, or
@@ -191,3 +213,40 @@ void VBlankHook()
 
 Author your effects at the same rate you call `ayFX_Update()` — set 50 Hz for
 PAL or 60 Hz for NTSC in the SFX editor.
+
+## Ready-made C
+
+Tick **Export ready-made C** in the side panel and the generated header carries
+the code that drives what you drew, so you get a working object without writing
+the VDP plumbing by hand. It calls into MSXgl, so include `msxgl.h` first.
+
+**Sprite groups** — a metasprite, a stack of superposed planes, or both. The
+header defines where each character starts, and one call places the whole group:
+
+```c
+g_Actors_SetMeta(0, x, y, G_ACTORS_HERO_BASE + frame * G_ACTORS_HERO_PLANES,
+                 G_ACTORS_HERO_PLANES);
+```
+
+**Tile blocks** — stamps a block's tile indices into the name table. Needs
+`VDP_USE_MODE_G2` or `VDP_USE_MODE_G3`:
+
+```c
+g_Scenery_DrawBlock(10, 5, G_SCENERY_DOOR_BASE, G_SCENERY_DOOR_W, G_SCENERY_DOOR_H);
+```
+
+**Software sprites** (MSX2, `VDP_USE_COMMAND`) — characters drawn *into* the
+screen, so the per-scanline sprite limit does not apply. The fragments are
+exported as one strip; upload it once, then restore and draw each object:
+
+```c
+g_Actors_Upload(212);                 // strip parked below the visible lines
+g_Actors_SwSprite hero = { 0 };       // slot 0 — one backup column per object
+// every frame:
+g_Actors_Restore(&hero, 212);
+g_Actors_Draw(&hero, G_ACTORS_HERO_IDLE, x, y, 212);
+```
+
+Two rules the generated comments repeat: give every object its own `slot`, and
+when objects can overlap, restore them all in reverse draw order before drawing
+them all in order.

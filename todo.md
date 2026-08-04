@@ -13,6 +13,13 @@
 - [ ] **Metasprites (dev14)**: set a character to 2×2 in the sprite panel, paint each
       cell, check the canvas outline follows the selected cell and that the list,
       filmstrip and playback preview all show the whole character.
+- [ ] **Tile blocks (dev14)**: make a 2×2 block in the tile editor, draw across a seam,
+      check the stroke lands on both tiles and that undo takes the whole stroke back.
+- [ ] **Fragments (dev14)**: in the screen editor, pick ⛶ and drag a rectangle on the
+      converted image; check the overlay boxes and that the export writes a `_Strip`.
+- [ ] **Ready-made C on real hardware/emulator**: the generated `_SetMeta`, `_DrawBlock`
+      and software-sprite runtime all compile, but none has been *run* — check a
+      metasprite lands in one piece and a software sprite leaves no trail as it moves.
 - [ ] **SFX audition**: play the 5 presets (laser/jump/explosion/pickup/hit) — do they
       sound right? 50 Hz playback smooth?
 - [ ] Try-it on a few samples (`s_scroll`, `s_arkos`) from the Examples panel.
@@ -75,34 +82,41 @@ sprite blitters are what the bitmap-mode work stands on.
       mode-1 color picker / mode-2 line colors. Each character now carries its own
       cost badge (`characterPlaneCost` = the busiest cell row) next to the sheet-wide
       scanline hint, so a 3-layer character visibly spends 3 of mode 1's 4.
-- [ ] **3. Software sprites and animation.** Characters drawn into the screen surface
-      instead of the sprite attribute table, so there is no per-scanline limit. Needs
-      background save/restore per object, a draw order, and dirty-rect redraw. On MSX2
-      this can lean on the VDP blitter (HMMM/LMMM); on MSX1 it is CPU blits into the
-      pattern table. Pre-made code matters most here — this is the item users are least
-      likely to get right unaided.
-- [ ] **4. Multi-tile designs, in tiled and bitmap modes.** The tile-side counterpart of
+- [x] **3. Software sprites and animation (MSX2).** Characters drawn into the screen
+      surface instead of the sprite attribute table, so there is no per-scanline limit.
+      *Done (dev14):* MSXgl ships no software-sprite module — only the `s_swsprt`
+      sample — so the export carries the runtime: frames laid side by side in one
+      strip (`fragmentStrip`), uploaded once with `HMMC`, then per object restore the
+      old background, save the new one, blit with `LMMM`/`VDP_OP_TIMP`. The saved
+      rectangle *is* the dirty rect. Two things one sample sprite never had to face
+      are handled: a per-object backup column, and the reverse-order restore rule for
+      overlapping objects, which is the draw order.
+      **Not done: the MSX1 path** (CPU blits into the pattern table). Pixel-precise
+      MSX1 software sprites need a pattern-shifting blitter neither MSXgl nor this
+      code has — `sprite_fx` only shifts 1-bit *hardware* sprite patterns.
+      Tile-aligned MSX1 animation is already covered by item 4's blocks: point a
+      block at different tiles and re-stamp it.
+- [x] **4. Multi-tile designs, in tiled and bitmap modes.** The tile-side counterpart of
       the metasprite in item 1: draw an object bigger than one tile as **one canvas**,
-      not as N separate 8x8 cells the user has to mentally assemble. Two halves:
-      - *Tiled modes* — author a WxH block (2x2, 4x3, whatever); on save it splits into
-        `TileEntry`s appended to the `TilesDoc` and keeps the grouping so it reopens as a
-        block. Reuse `packTiles()`'s dedup so identical cells collapse, and reuse
-        `map-editor.ts`'s `Stamp` (already `{width, height, tiles[]}`) as the placement
-        form, so the map editor can stamp the block whole. Watch sc1: its `SC1_GROUP` of
-        8 tiles shares one color byte, so a block straddling a group boundary is a color
-        conflict the editor should flag.
-      - *Bitmap modes* (`BITMAP_MODES` in `src/shared/msx/modes.ts`: sc5, sc6, sc7, sc8,
-        plus import-only sc10/12) — same canvas, no 8x8 quantization, since bitmap modes
-        have no name table: a fragment is WxH pixels stored as bitmap bytes for the
-        target mode, emitted as a blob plus width/height. Software sprites are the normal
-        way to move things here, so this leans on item 3's blit helpers in their MSX2
-        form. Needs the tile and map editors to accept a bitmap target.
+      not as N separate 8x8 cells the user has to mentally assemble. *Done (dev14):*
+      - *Tiled modes* — a `TilesDoc` carries named `blocks`, each `width × height`
+        references into the same tile bank. A block owns no pixels, so painting one
+        paints its tiles and the existing per-tile constraint engine still governs
+        every pixel; the canvas works in block space and splits each stroke back per
+        tile. `TileBlock` is structurally `map-editor.ts`'s `Stamp`, so it can be
+        handed to `applyStamp` unchanged. sc1 blocks start on a `SC1_GROUP` boundary
+        and the panel names the tiles a block still has to share colour with.
+      - *Bitmap modes* — a `ScreenDoc` carries named `fragments`: rectangles of the
+        converted image, cut with a drag on the canvas. Same "holds no pixels" trick,
+        so retouching the image updates every fragment over it.
+      - The opt-in **Export ready-made C** checkbox is on all three editors:
+        `_DrawBlock` (name table, via MSXgl's `VDP_WriteLayout_GM2`), `_SetMeta`
+        (sprite groups), and the software-sprite runtime for fragments. Every emitted
+        variant was compiled against a real MSXgl + SDCC into a ROM.
 
-      Same two deliverables as the rest: editor support, **and an opt-in "include the C"
-      checkbox on export** that drops the matching runtime into the project — a
-      block-stamp helper writing the WxH group into the name table for tiled modes, and
-      an HMMM/LMMM fragment blit for bitmap modes — so a user gets a placeable object
-      without writing the VDP plumbing.
+      **Not done:** the map editor still targets tiled modes only. Composing a whole
+      bitmap screen out of fragments would be a bitmap map editor — the fragments and
+      the stamping runtime it would need already exist, so it is additive.
 
 ## Deferred features (add when wanted, specs/00-overview.md)
 
