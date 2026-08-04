@@ -9,7 +9,7 @@ jumps.
 ![Gameplay](../docs/images/demo-gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
-(about 12.6 KB used) and boots in openMSX or WebMSX.
+(about 13.2 KB used) and boots in openMSX or WebMSX.
 
 ## What it demonstrates
 
@@ -22,6 +22,7 @@ guide](../docs/resources.md):
 | `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
 | `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 character in mode 1, six poses, each drawn by **two superposed planes** so it can have two colours |
 | `level.map.json` | Map editor | `g_Level_Background` | A 64x24 map, exactly two screens wide, one byte per cell — **RLEp-compressed**, 1536 cells in 132 bytes |
+| `background.map.json` | Map editor | `g_Backdrop_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
 | `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
 
 The game code in `main.c` covers the techniques the
@@ -49,6 +50,29 @@ The game code in `main.c` covers the techniques the
   Compression is worth having exactly when the data was going to be copied to
   RAM anyway; unpacking a map you meant to read straight out of ROM would cost
   you the RAM you were trying to save.
+- **A backdrop behind the level**, which on an MSX1 is a thing you build rather
+  than a thing the VDP has. SCREEN 2 owns exactly one name table, so there is no
+  layer to be behind: the "layer" is a single rule applied where a cell reaches
+  the screen. `background.map.json` is a 32x24 map pinned to the *screen* (not
+  the world), and `ScreenTile()` says that a level tile carrying **flag 8** is
+  not drawn — the backdrop's tile at that screen position is. Because the
+  backdrop does not scroll and the level does, the holes slide across it.
+
+  It costs a compare per cell inside `DrawView()`, which now composes a row into
+  `g_Row` before its single `VDP_WriteVRAM_16K` instead of blitting the level
+  row directly — no extra VDP traffic, and the redraw only happens when the
+  camera crosses a whole tile. The same rule is applied to the one other place a
+  cell reaches the screen on its own, the poke that clears a collected coin;
+  anywhere else would be a cell that ignores the backdrop.
+
+  Nothing in the level carries flag 8 yet — that part is yours to paint. Two
+  ways in: paint tile 39 (the checkered *transparent* tile) wherever you want a
+  hole, or set flag 8 on tile 0 in the tile editor and the entire sky becomes
+  the backdrop at once. Flags come from the *level's* tile, so a transparent
+  cell is still non-solid, still not a coin — the backdrop is decoration and
+  nothing reads its flags. Sampling `g_Back` at `(camX / 2 + col) & 31` instead
+  of `col` would make it scroll at half speed; that is the same merge with a
+  different index, and it wants tileable art.
 - **Superposed sprites**, placed with the sprite sheet's own
   `g_Player_SetMeta()`. A mode 1 sprite is a single colour, so a two-colour
   character means two hardware sprites on the same coordinate: the sprite editor

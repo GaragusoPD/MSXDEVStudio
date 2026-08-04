@@ -13,9 +13,11 @@
 //                                            _Layout + g_Player_SetMeta)
 //    level.map.json      -> content/level.h   (g_Level_Background, 64x24 cells,
 //                                            RLEp-compressed to 132 bytes)
+//    background.map.json -> content/backdrop.h (g_Backdrop_Sky, 32x24, the
+//                                            static backdrop behind the level)
 //    sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
 //
-//  Four of MSXStudio's editor features carry their weight here:
+//  Five of MSXStudio's editor features carry their weight here:
 //
 //    * The coins spin without the map being touched. The four poses are a 4x1
 //      *block* in the tileset — a multi-tile design drawn on one canvas — and
@@ -27,6 +29,12 @@
 //      planes and their colours; g_Player_SetMeta places both from one x/y.
 //    * The doorway opens when the last coin is taken, stamped from a 1x2 block
 //      by g_Tiles_DrawBlock.
+//    * A backdrop behind the level, from a second map. SCREEN 2 has one name
+//      table and no hardware layers, so the "layer" is one rule: a tile whose
+//      flag 8 is set is not drawn — the backdrop's tile at that screen position
+//      is (`ScreenTile()`). The backdrop does not scroll, so the holes slide
+//      across it. Nothing in the level carries flag 8 yet: set it on a tile in
+//      the tile editor, or paint tile 39 into the map, and it opens up.
 //    * The level is compressed. A name table is mostly runs of the same tile,
 //      so the map editor's "Compress (RLEp)" packs 1536 cells into 132 bytes of
 //      ROM — and it costs nothing at run time, because the game already keeps a
@@ -53,6 +61,7 @@
 #include "content/tiles.h"
 #include "content/player.h"
 #include "content/level.h"
+#include "content/backdrop.h"
 #include "content/sfx.h"
 
 //──────────────────────────────────────────────────────────────────────────────
@@ -89,9 +98,21 @@
 #define FLAG_SOLID   0x01        // flag 1
 #define FLAG_COIN    0x02        // flag 2
 #define FLAG_EXIT    0x04        // flag 3
+#define FLAG_TRANS   0x80        // flag 8 (bit 7): show the backdrop here instead
 
 /** What the tileset says this tile does. `g_Tiles_Flags` is one byte per tile. */
 #define TileFlags(t) (g_Tiles_Flags[t])
+
+/**
+ * The one rule that makes the backdrop a layer: what the screen shows at a
+ * cell is the level's tile, unless that tile is flagged transparent, in which
+ * case it is whatever the backdrop has at the *same screen position*. `back`
+ * points at that backdrop cell.
+ *
+ * A macro rather than a function because the redraw runs it 768 times in a
+ * frame; the call overhead alone would cost more than the merge.
+ */
+#define ScreenTile(tile, back) ((TileFlags(tile) & FLAG_TRANS) ? (back) : (tile))
 
 // The MSXgl logo, drawn with characters 1-6 of any MSXgl font.
 #define MSX_GL       "\x02\x03\x04\x05"
@@ -126,6 +147,17 @@
  * them flash back into view for a frame whenever the screen scrolled.
  */
 u8  g_Map[MAP_W * MAP_H];
+
+/**
+ * The backdrop, one screen wide and pinned to the screen: it does not scroll,
+ * so it is indexed by *view* column rather than by world column. SCREEN 2 has
+ * one name table and no hardware layers, so "behind" happens here — see
+ * `ScreenTile()`. Unpacked from ROM once, like the level.
+ */
+u8  g_Back[VIEW_W * MAP_H];
+
+/** One row of the composed view, so a scroll step is still one VDP write per row. */
+u8  g_Row[VIEW_W];
 
 u8  g_Remaining;
 i16 g_PlayerX;       // pixels, top-left of the 16x16 sprite
@@ -178,24 +210,29 @@ bool BoxHitsSolid(i16 px, i16 py)
 // Drawing
 //──────────────────────────────────────────────────────────────────────────────
 
-// One VDP write per row: the visible 32 columns are contiguous in the map,
-// so the window can be blitted straight out of ROM without a RAM buffer.
+// One VDP write per row: the visible 32 columns are contiguous in the map, so
+// a row is composed into `g_Row` and blitted in a single call.
 void DrawView()
 {
 	// The window is already correct in `g_Map`, so each row is one write and
 	// the screen is never shown holding a tile that is no longer there.
 	//
-	// Both addresses just step by a constant, so they are carried between rows
-	// rather than recomputed from `row`, which cost two calls to SDCC's 16-bit
-	// multiply per row. Worth the pennies: this redraw is 768 bytes and takes
-	// about half a frame, so it is the one piece of the loop on a deadline.
-	const u8* src = g_Map + (u16)g_CamX;
+	// All three addresses just step by a constant, so they are carried between
+	// rows rather than recomputed from `row`, which cost two calls to SDCC's
+	// 16-bit multiply per row. Worth the pennies: this redraw is 768 bytes and
+	// takes about half a frame, so it is the one piece of the loop on a
+	// deadline. The merge below adds a compare per cell and no VDP traffic.
+	const u8* src  = g_Map + (u16)g_CamX;
+	const u8* back = g_Back;
 	u16 dst = g_ScreenLayoutLow;
 	for (u8 row = 0; row < MAP_H; ++row)
 	{
-		VDP_WriteVRAM_16K(src, dst, VIEW_W);
-		src += MAP_W;
-		dst += VIEW_W;
+		for (u8 col = 0; col < VIEW_W; ++col)
+			g_Row[col] = ScreenTile(src[col], back[col]);
+		VDP_WriteVRAM_16K(g_Row, dst, VIEW_W);
+		src  += MAP_W;
+		back += VIEW_W;
+		dst  += VIEW_W;
 	}
 }
 
@@ -382,6 +419,10 @@ void InitGame()
 	// The ROM copy is RLEp-compressed (132 bytes for 1536 cells); unpacking it
 	// straight into the working array is the same one line the copy used to be.
 	RLEp_UnpackToRAM(g_Level_Background, g_Map);
+	// The backdrop never changes, so this could be read straight out of ROM —
+	// it is unpacked into RAM because compressing it costs 127 bytes of ROM
+	// against 768, and the unpacker is already here for the level.
+	RLEp_UnpackToRAM(g_Backdrop_Sky, g_Back);
 	g_Remaining = 0;
 	for (u16 i = 0; i < sizeof(g_Map); ++i)
 		if (TileFlags(g_Map[i]) & FLAG_COIN) g_Remaining++;
@@ -459,7 +500,12 @@ void CollectCoins()
 			g_Remaining--;
 			i16 sx = tx - (i16)g_CamX;
 			if ((sx >= 0) && (sx < VIEW_W))
-				VDP_Poke_16K(T_SKY, g_ScreenLayoutLow + ((u16)ty * VIEW_W) + (u16)sx);
+			{
+				// Same rule as the full redraw: if sky is a transparent tile,
+				// the cell the coin leaves behind has to show the backdrop.
+				u16 at = ((u16)ty * VIEW_W) + (u16)sx;
+				VDP_Poke_16K(ScreenTile(T_SKY, g_Back[at]), g_ScreenLayoutLow + at);
+			}
 			DrawHUD();
 			ayFX_PlayBank(0, 0);
 		}
