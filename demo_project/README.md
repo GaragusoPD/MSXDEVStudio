@@ -20,7 +20,7 @@ guide](../docs/resources.md):
 | Resource | Editor | Exports | Used for |
 |---|---|---|---|
 | `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
-| `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 character in mode 1, six poses, each drawn by **two superposed planes** so it can have two colours |
+| `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 dragon in mode 1, six poses, each drawn by **two superposed planes**: one flat green body, one black line art in front of it |
 | `level.map.json` | Map editor | `g_Level_Background` | A 64x12 map, two screens wide and half a screen tall — the bottom half, where the level actually is. One byte per cell, **RLEp-compressed**: 768 cells in 86 bytes |
 | `background.map.json` | Map editor | `g_Backdrop_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
 | `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
@@ -99,7 +99,11 @@ The game code in `main.c` covers the techniques the
   `g_Player_SetMeta()`. A mode 1 sprite is a single colour, so a two-colour
   character means two hardware sprites on the same coordinate: the sprite editor
   holds both planes and their colours, and one call writes both attribute
-  entries. It costs two of the four sprites the VDP will draw on one line, which
+  entries. The split here is the useful one — **plane 0 is the line art, plane 1
+  the flat body colour**, in that order because the lower plane number wins
+  where they overlap. The body plane carries the whole silhouette, line pixels
+  included, so nothing shows through if the two ever land a pixel apart; and the
+  black outline is what keeps a green dragon readable against green hills. It costs two of the four sprites the VDP will draw on one line, which
   the editor shows per character. The walk is a six step cycle (`g_WalkCycle` in
   `main.c`) rather than two poses flipping back and forth, which is the
   difference between a stride and a flicker.

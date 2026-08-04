@@ -26,8 +26,9 @@
 //      Every coin on screen turns at once, for 24 bytes a step, because the
 //      name table still says "tile 6" everywhere.
 //    * The player is two superposed hardware sprites, which is the only way to
-//      get a two-colour character on an MSX1. The sprite editor holds the
-//      planes and their colours; g_Player_SetMeta places both from one x/y.
+//      get a two-colour character on an MSX1: plane 0 is the dragon's line art,
+//      plane 1 the flat body colour behind it. The sprite editor holds both
+//      planes and their colours; g_Player_SetMeta places them from one x/y.
 //    * The doorway opens when the last coin is taken, stamped from a 1x2 block
 //      by g_Tiles_DrawBlock.
 //    * A backdrop behind the level, from a second map. SCREEN 2 has one name
