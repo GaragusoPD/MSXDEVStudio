@@ -4,7 +4,7 @@
 //-- Project
 ProjName = "demo";
 ProjModules = ["main"];
-LibModules = ["system", "bios", "vdp", "print", "input", "keyboard", "memory", "psg", "ayfx/ayfx_player", "compress", "sprite_fx"];
+LibModules = ["system", "bios", "vdp", "print", "keyboard", "memory", "psg", "ayfx/ayfx_player", "compress", "sprite_fx"];
 
 //-- Target
 Machine = "1";

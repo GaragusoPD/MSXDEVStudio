@@ -9,7 +9,7 @@ jumps.
 ![Gameplay](../docs/images/demo-gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
-(about 14.4 KB used) and boots in openMSX or WebMSX.
+(about 15 KB used) and boots in openMSX or WebMSX.
 
 ## What it demonstrates
 
@@ -19,11 +19,11 @@ guide](../docs/resources.md):
 
 | Resource | Editor | Exports | Used for |
 |---|---|---|---|
-| `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
-| `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 dragon in mode 1, six poses, each drawn by **two superposed planes**: one flat green body, one black line art in front of it. Mirrored at run time to face left |
-| `level.map.json` | Map editor | `g_Level_Background` | A 64x12 map, two screens wide and half a screen tall — the bottom half, where the level actually is. One byte per cell, **RLEp-compressed**: 768 cells in 86 bytes |
-| `background.map.json` | Map editor | `g_Backdrop_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
-| `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
+| `res/tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
+| `res/player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 dragon in mode 1, six poses, each drawn by **two superposed planes**: one flat green body, one black line art in front of it. Mirrored at run time to face left |
+| `res/level.map.json` | Map editor | `g_Level_Background` | A 64x12 map, two screens wide and half a screen tall — the bottom half, where the level actually is. One byte per cell, **RLEp-compressed**: 768 cells in 86 bytes |
+| `res/background.map.json` | Map editor | `g_Backdrop_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
+| `res/sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
 
 The game code in `main.c` covers the techniques the
 [tutorials](../docs/tutorials/) explain, in one place:
@@ -161,6 +161,27 @@ does not even exist, and the level silently failed to draw here until the code
 called `VDP_WriteVRAM_16K(src, dest, count)` and `VDP_Poke_16K(value, dest)`
 directly. It compiles cleanly either way, so this is worth knowing before you
 lose an hour to it.
+
+**SCREEN 2 has three colour tables, one per third of the screen.** A pattern can
+therefore look different depending on where it is used, and the HUD leans on
+that: the coin's background is sky blue, which is right in the level and wrong
+in the black corner the counter sits in, so `InitGame()` recolours *pattern 6's
+top-third entry only* to yellow-on-black. The level starts below that third, so
+no coin in play is touched. The counter writes only the cells it
+needs, too: the name table has no "nothing", so "blank" is a tile like any
+other, and blanking the cells around the digits erased the border the backdrop
+draws along the top row. Where the count is one digit the tens cell is restored
+from `g_Back` — the backdrop, not a blank — so the HUD covers three cells and
+leaves the rest of the border alone.
+
+**`input` already contains `keyboard`.** MSXgl's `input.c` ends with
+`#include "keyboard.c"` (and joystick and mouse, each behind its own
+`INPUT_USE_*` flag), so listing both `input` and `keyboard` in **LibModules**
+compiles that code into two objects and the linker says *Definition of public
+symbol `_Keyboard_Read` found more than once*. It is a warning, not an error —
+the link succeeds and the game runs, which is why it can sit there unnoticed —
+but it costs ROM: 149 bytes here. This project reads the keyboard and nothing
+else, so it lists `keyboard` alone.
 
 **ayFX needs configuring for standalone use.** `msxgl_config.h` sets
 `AYFX_BUFFER` to `AYFX_BUFFER_DEFAULT`. The MSXgl samples use

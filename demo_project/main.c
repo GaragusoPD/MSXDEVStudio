@@ -7,16 +7,16 @@
 //  Every graphic and sound in here was made with MSXStudio's own editors and
 //  exported to the headers included below:
 //
-//    tiles.tiles.json    -> content/tiles.h   (g_Tiles_Patterns / _Colors,
+//    res/tiles.tiles.json    -> content/tiles.h   (g_Tiles_Patterns / _Colors,
 //                                            _Blocks + g_Tiles_DrawBlock)
-//    player.sprites.json -> content/player.h  (g_Player_Patterns / _Colors,
+//    res/player.sprites.json -> content/player.h  (g_Player_Patterns / _Colors,
 //                                            _Layout + g_Player_SetMeta)
-//    level.map.json      -> content/level.h   (g_Level_Background, 64x12 cells
+//    res/level.map.json      -> content/level.h   (g_Level_Background, 64x12 cells
 //                                            — the bottom half of the screen,
 //                                            RLEp-compressed to 86 bytes)
-//    background.map.json -> content/backdrop.h (g_Backdrop_Sky, 32x24, the
+//    res/background.map.json -> content/backdrop.h (g_Backdrop_Sky, 32x24, the
 //                                            static backdrop behind the level)
-//    sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
+//    res/sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
 //
 //  Five of MSXStudio's editor features carry their weight here:
 //
@@ -97,7 +97,7 @@
 // where the centring camera puts them anyway, so the pin never moves them.
 #define PLAYER_PIN_X ((VIEW_W / 2) * 8)
 
-// Tile indices, matching the order of tiles.tiles.json. Only the ones the code
+// Tile indices, matching the order of res/tiles.tiles.json. Only the ones the code
 // draws with are named; what a tile *does* is a flag, not an index.
 #define T_SKY        0
 #define T_COIN       6           // for the HUD icon, and the slot the spin animates
@@ -370,6 +370,9 @@ void OpenDoor()
 // Coins left, drawn with the digit tiles built into the tileset.
 void DrawHUD()
 {
+	// Only the cells the counter actually needs are written. The corner cell is
+	// left alone: the backdrop's top row draws the screen border, and the HUD
+	// has nothing to put there worth erasing it for.
 	VDP_Poke_16K(T_COIN, g_ScreenLayoutLow + 1);
 	// Two digits when the level holds ten coins or more, so a hand-painted map
 	// still reads correctly; a single digit sits tight against the icon.
@@ -381,7 +384,9 @@ void DrawHUD()
 	else
 	{
 		VDP_Poke_16K(T_DIGIT_0 + g_Remaining, g_ScreenLayoutLow + 2);
-		VDP_Poke_16K(T_SKY, g_ScreenLayoutLow + 3);
+		// One digit, so the tens cell shows the backdrop again — the count can
+		// fall from 10 to 9, and a leftover digit there would be a lie.
+		VDP_Poke_16K(g_Back[3], g_ScreenLayoutLow + 3);
 	}
 }
 
@@ -495,6 +500,13 @@ void InitGame()
 	VDP_LoadPattern_GM2(g_Tiles_Patterns, G_TILES_PATTERNS_SIZE / 8, 0);
 	VDP_LoadColor_GM2(g_Tiles_Colors, G_TILES_COLORS_SIZE / 8, 0);
 
+	// SCREEN 2 keeps a separate colour table for each third of the screen, so a
+	// pattern can look different depending on where it is used. The coin's
+	// background is sky blue, which is right in the level and wrong in the HUD's
+	// black corner — so its entry is recoloured in the *top* third only. The
+	// level starts below that third, so no coin in play is affected.
+	VDP_FillVRAM(0xB1, g_ScreenColorLow + (T_COIN * 8), 0, 8);
+
 	// The player is two superposed planes per pose, so the pattern table holds
 	// frames x planes shapes and the character costs two of the four sprites
 	// the VDP will draw on one line.
@@ -503,7 +515,16 @@ void InitGame()
 	VDP_DisableSpritesFrom(G_PLAYER_PLAYER_PLANES);
 	g_FaceLeft = 0;   // matches what was just uploaded
 
+	// ayFX_InitBank takes a plain `void*` although it only ever reads the bank
+	// (it stores the pointer and reads sample data through it — see
+	// ayfx_player.c). The bank is `const` because the exporter puts it in ROM,
+	// so casting the const away is what the API forces. SDCC warning 357 is
+	// disabled for this one line rather than making the data writable to please
+	// it: a bank in RAM would cost 200-odd bytes to fix a cast.
+#pragma save
+#pragma disable_warning 357
 	ayFX_InitBank((void*)g_Sfx);
+#pragma restore
 	ayFX_SetChannel(PSG_CHANNEL_A);
 
 	// Restart from the pristine level, and trust the map for the coin count so

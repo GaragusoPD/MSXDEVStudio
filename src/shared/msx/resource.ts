@@ -73,6 +73,14 @@ export interface ExportBlock {
 
 export type ResourceKind = 'tiles' | 'sprites' | 'map' | 'screen' | 'sfx'
 
+/**
+ * Where new resources are created. Nothing *requires* them to live here — the
+ * project is walked recursively, so a resource anywhere still gets found and
+ * exported — but a project root fills up fast with a tileset, its maps, its
+ * sprite sheets and their sources all in it.
+ */
+export const RESOURCE_DIR = 'res'
+
 export const RESOURCE_SUFFIXES: Readonly<Record<ResourceKind, string>> = {
   tiles: '.tiles.json',
   sprites: '.sprites.json',

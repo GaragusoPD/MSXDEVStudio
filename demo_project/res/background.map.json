@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "tileset": "tiles.tiles.json",
+  "tileset": "res/tiles.tiles.json",
   "width": 32,
   "height": 24,
   "layers": [
@@ -8,7 +8,7 @@
       "name": "sky",
       "kind": "tiles",
       "data": [
-        13,
+        63,
         13,
         13,
         13,
@@ -40,7 +40,7 @@
         13,
         13,
         62,
-        38,
+        64,
         38,
         38,
         38,

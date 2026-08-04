@@ -6,6 +6,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import {
+  RESOURCE_DIR,
   RESOURCE_SUFFIXES,
   defaultExport,
   parseResource,
@@ -32,10 +33,13 @@ function openResource(path: string): void {
 async function createResource(): Promise<void> {
   const base = newName.value.replace(/[^A-Za-z0-9_-]/g, '')
   if (!base) return
-  const path = `${base}${RESOURCE_SUFFIXES[newKind.value]}`
+  const path = `${RESOURCE_DIR}/${base}${RESOURCE_SUFFIXES[newKind.value]}`
   if (!(await window.api.invoke('fs:stat', { path }))) {
     const resource = parseResource(path, '{}')
     resource.doc.export = defaultExport(path)
+    // `fs:write` doesn't create parent folders, and a project made before this
+    // (or one whose res/ was deleted) hasn't got one. mkdir is idempotent.
+    await window.api.invoke('fs:create', { path: RESOURCE_DIR, kind: 'directory' })
     await window.api.invoke('fs:write', { path, content: serializeResource(resource) })
     await resourcesStore.refresh()
   }

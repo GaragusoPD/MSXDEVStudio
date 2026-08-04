@@ -2,7 +2,7 @@
 // Edit the source resource and re-export (or press Build) instead.
 //
 // Generation parameters:
-//  - Source: sfx.sfx.json
+//  - Source: res/sfx.sfx.json
 //  - Format: ayFX bank (play with MSXgl LibModules "ayfx/ayfx_player")
 //  - Effects: 0=coin, 1=jump, 2=win
 //  - Replay rate: 50 Hz

@@ -31,6 +31,7 @@ import {
   type ConfigGlobals,
   type MsxProject
 } from '../../shared/msxproj'
+import { RESOURCE_DIR } from '../../shared/msx/resource'
 import type { ProjectTabsState } from '../../shared/tabs'
 
 export const PROJECT_EXT = '.msxproj'
@@ -94,7 +95,8 @@ export function launcherScripts(msxglPath: string): { name: string; content: str
 /**
  * Creates `<location>/<name>/` from the MSXgl template: `main.c` and
  * `msxgl_config.h` copied verbatim, a generated `project_config.js`, the
- * `.msxproj`, an empty `content/`, `.gitignore`, and terminal launchers.
+ * `.msxproj`, empty `content/` and `res/` folders, `.gitignore`, and terminal
+ * launchers.
  */
 export function createProject(request: NewProjectRequest, msxglPath: string): OpenProject {
   const root = join(request.location, request.name)
@@ -108,6 +110,8 @@ export function createProject(request: NewProjectRequest, msxglPath: string): Op
   }
 
   mkdirSync(join(root, 'content'), { recursive: true })
+  // Generated headers land in content/, editor resources in res/ — see RESOURCE_DIR.
+  mkdirSync(join(root, RESOURCE_DIR), { recursive: true })
   copyFileSync(join(template, 'template.c'), join(root, 'main.c'))
   copyFileSync(join(template, 'msxgl_config.h'), join(root, 'msxgl_config.h'))
   writeFileSync(join(root, '.gitignore'), `out/\nemul/\n${IDE_STATE_DIR}/\n`, 'utf-8')

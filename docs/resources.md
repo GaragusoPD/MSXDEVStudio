@@ -15,8 +15,19 @@ in your project that an editor owns, and each one exports a C header your game
 ## Creating and opening
 
 In the **Resources** panel (side bar): pick a kind, type a name, press **New**.
-The file is created and its editor opens. Click any listed resource to reopen
-it later — or open the file from the Explorer.
+The file is created in the project's **`res/`** folder and its editor opens.
+Click any listed resource to reopen it later — or open the file from the
+Explorer.
+
+`res/` is where new resources go so the project root doesn't fill up with a
+tileset, its maps, its sprite sheets and their sources. Nothing requires it:
+the project is walked recursively, so a resource anywhere in it is still found,
+listed and exported — projects made before this keep working untouched, and you
+can move files into `res/` at your leisure. If you do move a tileset, fix the
+**Tileset** dropdown in any map that referenced it (a map stores that path).
+
+Exported headers are a separate thing and still go where the resource's
+**Output** says, `content/` by default.
 
 ## The editors
 
