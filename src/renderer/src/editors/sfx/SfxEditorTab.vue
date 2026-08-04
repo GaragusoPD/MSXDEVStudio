@@ -21,6 +21,7 @@ import {
 } from '../../../../shared/sfx-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
+import Icon from '../../components/Icon.vue'
 import SfxLanes from './SfxLanes.vue'
 import { playSfx, scrubFrame, stopSfx } from './audio'
 import {
@@ -197,14 +198,14 @@ watch(
           :title="session.playing ? 'Stop (Space)' : 'Play (Space) — P restarts from frame 0'"
           @click="toggle"
         >
-          {{ session.playing ? '■' : '▶' }}
+          <Icon :name="session.playing ? 'stop' : 'play_arrow'" />
         </button>
         <button
           :class="{ active: session.loop }"
           title="Loop"
           @click="session.loop = !session.loop"
         >
-          ↻
+          <Icon name="repeat" />
         </button>
         <select
           :value="bank.rate"

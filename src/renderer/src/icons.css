@@ -1,0 +1,35 @@
+/*
+ * Material Symbols (Outlined), Apache License 2.0 — bundled, never fetched, so
+ * the app draws its icons offline like everything else it does.
+ *
+ * Only the outlined face is declared: the package also ships rounded and sharp,
+ * and importing its own stylesheet would pull all three (1.5 MB) into the
+ * renderer instead of one (488 KB).
+ *
+ * `font-display: block` rather than `swap`: a ligature font that has not loaded
+ * yet renders the *name* — a button reading "delete" where a bin belongs — so
+ * an invisible moment is better than a wrong-looking one.
+ */
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('@material-symbols/font-400/material-symbols-outlined.woff2') format('woff2');
+}
+
+.icon {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'liga';
+  /* The variable axes: FILL 0 (outlined), weight 400, GRADE 0, optical size 24. */
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}

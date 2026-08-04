@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { MaterialSymbol } from '@material-symbols/font-400'
 /**
  * Spec 10 A — the `.map.json` editor tab: tile picker, map canvas
  * (stamp/fill/rect/erase, rect-select + copy/paste, flags mode, layer
@@ -14,6 +15,7 @@ import { useTabsStore } from '../../stores/tabsStore'
 import MapCanvas from './MapCanvas.vue'
 import MapPicker from './MapPicker.vue'
 import MapSidePanel from './MapSidePanel.vue'
+import Icon from '../../components/Icon.vue'
 import {
   canRedo,
   canUndo,
@@ -35,11 +37,11 @@ const resourcesStore = useResourcesStore()
 const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed(() => mapSession(path.value))
 
-const TOOLS: { id: MapTool; label: string; title: string }[] = [
-  { id: 'stamp', label: '✎', title: 'Stamp — drag to paint the picked tile(s)' },
-  { id: 'fill', label: '🪣', title: 'Fill (flood)' },
-  { id: 'rect', label: '▭', title: 'Rectangle' },
-  { id: 'erase', label: '⌫', title: 'Erase' }
+const TOOLS: { id: MapTool; icon: MaterialSymbol; title: string }[] = [
+  { id: 'stamp', icon: 'edit', title: 'Stamp — drag to paint the picked tile(s)' },
+  { id: 'fill', icon: 'format_color_fill', title: 'Fill (flood)' },
+  { id: 'rect', icon: 'rectangle', title: 'Rectangle' },
+  { id: 'erase', icon: 'ink_eraser', title: 'Erase' }
 ]
 
 async function save(): Promise<void> {
@@ -115,7 +117,7 @@ onMounted(() => void resourcesStore.refresh())
           :title="tool.title"
           @click="setTool(session, tool.id)"
         >
-          {{ tool.label }}
+          <Icon :name="tool.icon" />
         </button>
         <label
           v-if="session.tool === 'rect'"

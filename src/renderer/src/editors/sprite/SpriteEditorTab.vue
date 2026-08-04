@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { MaterialSymbol } from '@material-symbols/font-400'
 /**
  * Spec 09 — the `.sprites.json` editor tab: sprite list, paint canvas with an
  * active-layer picker, per-layer color controls, and the animation filmstrip.
@@ -15,6 +16,7 @@ import SpriteAnimationBar from './SpriteAnimationBar.vue'
 import SpriteCanvas from './SpriteCanvas.vue'
 import SpriteLayerPanel from './SpriteLayerPanel.vue'
 import SpriteList from './SpriteList.vue'
+import Icon from '../../components/Icon.vue'
 import {
   canRedo,
   canUndo,
@@ -37,11 +39,11 @@ const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed(() => spriteSession(path.value))
 const budget = computed(() => scanlineBudget(doc(session.value)))
 
-const TOOLS: { id: SpriteTool; label: string; title: string }[] = [
-  { id: 'pencil', label: '✎', title: 'Pencil' },
-  { id: 'erase', label: '⌫', title: 'Erase' },
-  { id: 'line', label: '／', title: 'Line' },
-  { id: 'fill', label: '🪣', title: 'Fill' }
+const TOOLS: { id: SpriteTool; icon: MaterialSymbol; title: string }[] = [
+  { id: 'pencil', icon: 'edit', title: 'Pencil' },
+  { id: 'erase', icon: 'ink_eraser', title: 'Erase' },
+  { id: 'line', icon: 'pen_size_1', title: 'Line' },
+  { id: 'fill', icon: 'format_color_fill', title: 'Fill' }
 ]
 
 async function save(): Promise<void> {
@@ -110,7 +112,7 @@ watch(
           :title="tool.title"
           @click="session.tool = tool.id"
         >
-          {{ tool.label }}
+          <Icon :name="tool.icon" />
         </button>
 
         <span class="sep" />

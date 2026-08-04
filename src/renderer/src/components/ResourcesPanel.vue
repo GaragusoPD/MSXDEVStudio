@@ -15,6 +15,7 @@ import {
 } from '../../../shared/msx/resource'
 import { useProjectStore } from '../stores/projectStore'
 import { useResourcesStore } from '../stores/resourcesStore'
+import Icon from './Icon.vue'
 import { useTabsStore } from '../stores/tabsStore'
 import ImportImageDialog from './ImportImageDialog.vue'
 
@@ -168,7 +169,7 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
             title="Export this resource now"
             @click="resourcesStore.exportOne(entry.path)"
           >
-            ↻
+            <Icon name="refresh" />
           </button>
         </div>
       </section>

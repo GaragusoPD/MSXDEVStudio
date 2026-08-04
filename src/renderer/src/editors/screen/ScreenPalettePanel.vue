@@ -5,12 +5,14 @@
  * settings (mode/dither/palette source), retouch color/tool, and the export
  * block Spec 07's converter reads.
  */
+import type { MaterialSymbol } from '@material-symbols/font-400'
 import { computed } from 'vue'
 import { BITMAP_MODES, MODES, type BitmapMode } from '../../../../shared/msx/modes'
 import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex, unpackGrb } from '../../../../shared/msx/palette'
 import type { DitherMode } from '../../../../shared/msx/quantize'
 import { rgb332Palette } from '../../../../shared/msx/quantize'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
+import Icon from '../../components/Icon.vue'
 import { screenDataExport } from '../../../../shared/msx/screen'
 import {
   commit,
@@ -38,10 +40,10 @@ const swatchRgb = computed(() => {
 const swatchColumns = computed(() => Math.min(16, swatchRgb.value.length))
 const convertedPalette = computed(() => screenDoc.value.converted?.palette ?? null)
 
-const TOOLS: { id: ScreenTool; label: string; title: string }[] = [
-  { id: 'pencil', label: '✎', title: 'Pencil' },
-  { id: 'fill', label: '🪣', title: 'Fill (flood)' },
-  { id: 'cut', label: '⛶', title: 'Cut a fragment — drag a rectangle on the converted image' }
+const TOOLS: { id: ScreenTool; icon: MaterialSymbol; title: string }[] = [
+  { id: 'pencil', icon: 'edit', title: 'Pencil' },
+  { id: 'fill', icon: 'format_color_fill', title: 'Fill (flood)' },
+  { id: 'cut', icon: 'crop_free', title: 'Cut a fragment — drag a rectangle on the converted image' }
 ]
 
 function grbLabel(index: number): string {
@@ -155,7 +157,7 @@ function patchExport(patch: Partial<ExportBlock>): void {
           :title="tool.title"
           @click="setTool(session, tool.id)"
         >
-          {{ tool.label }}
+          <Icon :name="tool.icon" />
         </button>
       </div>
     </section>
@@ -164,7 +166,7 @@ function patchExport(patch: Partial<ExportBlock>): void {
       <h3>Fragments</h3>
       <p class="blurb">
         Named cut-outs of the converted image: bitmap-mode blocks, and the frames of a software
-        sprite. Pick the ⛶ tool and drag a rectangle to cut one.
+        sprite. Pick the <Icon name="crop_free" /> tool and drag a rectangle to cut one.
       </p>
       <ul
         v-if="screenDoc.fragments.length"

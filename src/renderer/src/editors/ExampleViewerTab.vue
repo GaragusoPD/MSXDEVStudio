@@ -6,6 +6,7 @@ import { useAppStore } from '../stores/appStore'
 import { useBuildStore } from '../stores/buildStore'
 import { useExamplesStore } from '../stores/examplesStore'
 import { useTabsStore } from '../stores/tabsStore'
+import Icon from '../components/Icon.vue'
 
 const EXAMPLE_PREFIX = 'example:'
 
@@ -94,7 +95,8 @@ function forkExample(): void {
           :disabled="buildStore.running"
           @click="tryIt"
         >
-          ▶ Try it
+          <Icon name="play_arrow" />
+          Try it
         </button>
         <button
           type="button"

@@ -353,6 +353,7 @@ openMSX is installed by you. They remain under their own licenses:
 | C-BIOS | BSD-style | No, ships with openMSX |
 | WebMSX | See the project | No, loaded from webmsx.org |
 | Electron, Vue, Pinia, Vue Router, Monaco, chokidar, yauzl | MIT | Yes |
+| Material Symbols (icon font) | Apache-2.0 | Yes — [licenses/](licenses/) |
 
 Because MSXgl is CC BY-SA 4.0, games built with it are expected to credit it.
 Check [MSXgl's own terms](https://github.com/aoineko-fr/MSXgl) for what it asks

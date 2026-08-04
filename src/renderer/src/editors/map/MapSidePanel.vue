@@ -10,6 +10,7 @@ import { mapExport } from '../../../../shared/msx/map'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
 import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, resize, selectLayer, setTileset, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
+import Icon from '../../components/Icon.vue'
 
 const props = defineProps<{ session: MapSession }>()
 const resourcesStore = useResourcesStore()
@@ -89,7 +90,7 @@ const packing = computed(() => {
           :disabled="!mapDoc.tileset || reloading"
           @click="reload"
         >
-          ⟳
+          <Icon name="refresh" />
         </button>
       </div>
       <p
@@ -143,7 +144,7 @@ const packing = computed(() => {
           :title="layer.visible ? 'Hide layer' : 'Show layer'"
           @click.stop="toggleLayerVisible(session, index)"
         >
-          {{ layer.visible ? '👁' : '—' }}
+          <Icon :name="layer.visible ? 'visibility' : 'visibility_off'" />
         </button>
         <input
           class="name"
@@ -161,7 +162,7 @@ const packing = computed(() => {
           :disabled="mapDoc.layers.length <= 1"
           @click.stop="removeLayer(session, index)"
         >
-          ✕
+          <Icon name="close" />
         </button>
       </div>
       <div class="add-row">

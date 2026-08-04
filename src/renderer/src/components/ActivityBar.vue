@@ -1,40 +1,26 @@
 <script setup lang="ts">
+import type { MaterialSymbol } from '@material-symbols/font-400'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/appStore'
+import Icon from './Icon.vue'
 
 interface ActivityItem {
   key: string
   label: string
   route: string
-  icon: string
-}
-
-// Small hand-rolled placeholder icons (24x24, stroke-based) — no icon library.
-const ICONS: Record<string, string> = {
-  explorer:
-    '<path d="M3 6.5C3 5.67 3.67 5 4.5 5h4.379a1.5 1.5 0 0 1 1.06.44L11.5 7H19.5c.83 0 1.5.67 1.5 1.5v9c0 .83-.67 1.5-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5v-11Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
-  search:
-    '<circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="15.2" y1="15.2" x2="20.5" y2="20.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
-  git: '<line x1="6" y1="3" x2="6" y2="15" stroke="currentColor" stroke-width="1.5"/><circle cx="18" cy="6" r="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="6" cy="18" r="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M18 8.5a6 6 0 0 1-6 6H9" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>',
-  resources:
-    '<rect x="3.5" y="4.5" width="17" height="15" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="9.5" r="1.5" fill="currentColor"/><path d="M4 16.5l4.5-4.5 3 3 4-5L20.5 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>',
-  run: '<path d="M7 4.5v15l13-7.5-13-7.5Z" fill="currentColor"/>',
-  examples:
-    '<rect x="3.5" y="3.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>',
-  settings:
-    '<circle cx="12" cy="12" r="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 4.2v2.1M12 17.7v2.1M19.8 12h-2.1M6.3 12H4.2M17.4 6.6l-1.5 1.5M8.1 15.9l-1.5 1.5M17.4 17.4l-1.5-1.5M8.1 8.1 6.6 6.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
+  icon: MaterialSymbol
 }
 
 const items: ActivityItem[] = [
-  { key: 'explorer', label: 'Explorer', route: '/explorer', icon: ICONS.explorer },
-  { key: 'search', label: 'Search', route: '/search', icon: ICONS.search },
-  { key: 'git', label: 'Git', route: '/git', icon: ICONS.git },
-  { key: 'resources', label: 'Resources', route: '/resources', icon: ICONS.resources },
-  { key: 'run', label: 'Run', route: '/run', icon: ICONS.run },
-  { key: 'examples', label: 'Examples', route: '/examples', icon: ICONS.examples }
+  { key: 'explorer', label: 'Explorer', route: '/explorer', icon: 'folder' },
+  { key: 'search', label: 'Search', route: '/search', icon: 'search' },
+  { key: 'git', label: 'Git', route: '/git', icon: 'account_tree' },
+  { key: 'resources', label: 'Resources', route: '/resources', icon: 'imagesmode' },
+  { key: 'run', label: 'Run', route: '/run', icon: 'play_arrow' },
+  { key: 'examples', label: 'Examples', route: '/examples', icon: 'grid_view' }
 ]
 
-const settingsItem: ActivityItem = { key: 'settings', label: 'Toolchain Settings', route: '/settings', icon: ICONS.settings }
+const settingsItem: ActivityItem = { key: 'settings', label: 'Toolchain Settings', route: '/settings', icon: 'settings' }
 
 const route = useRoute()
 const router = useRouter()
@@ -67,14 +53,10 @@ function onClick(item: ActivityItem): void {
       type="button"
       @click="onClick(item)"
     >
-      <!-- eslint-disable vue/no-v-html -- item.icon is a hard-coded constant above, not user input -->
-      <svg
-        viewBox="0 0 24 24"
-        width="22"
-        height="22"
-        v-html="item.icon"
+      <Icon
+        :name="item.icon"
+        :size="22"
       />
-      <!-- eslint-enable vue/no-v-html -->
     </button>
 
     <button
@@ -84,14 +66,10 @@ function onClick(item: ActivityItem): void {
       type="button"
       @click="onClick(settingsItem)"
     >
-      <!-- eslint-disable vue/no-v-html -- settingsItem.icon is a hard-coded constant above, not user input -->
-      <svg
-        viewBox="0 0 24 24"
-        width="22"
-        height="22"
-        v-html="settingsItem.icon"
+      <Icon
+        :name="settingsItem.icon"
+        :size="22"
       />
-      <!-- eslint-enable vue/no-v-html -->
     </button>
   </nav>
 </template>

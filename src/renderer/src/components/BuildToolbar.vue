@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useBuildStore } from '../stores/buildStore'
 import { useProjectStore } from '../stores/projectStore'
+import Icon from './Icon.vue'
 
 const buildStore = useBuildStore()
 const projectStore = useProjectStore()
@@ -19,6 +20,7 @@ const preferred = computed(() => projectStore.project?.emulator.preferred ?? 'op
       :disabled="disabled"
       @click="buildStore.start('build')"
     >
+      <Icon name="build" />
       Build
     </button>
     <button
@@ -28,7 +30,8 @@ const preferred = computed(() => projectStore.project?.emulator.preferred ?? 'op
       :disabled="disabled"
       @click="buildStore.start('run')"
     >
-      ▶ Run
+      <Icon name="play_arrow" />
+      Run
     </button>
     <button
       v-if="buildStore.running"
@@ -37,7 +40,8 @@ const preferred = computed(() => projectStore.project?.emulator.preferred ?? 'op
       title="Terminate the running build"
       @click="buildStore.kill()"
     >
-      ■ Stop
+      <Icon name="stop" />
+      Stop
     </button>
     <select
       class="emulator"
@@ -66,6 +70,9 @@ const preferred = computed(() => projectStore.project?.emulator.preferred ?? 'op
 }
 
 .action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 4px 10px;
   font-size: 12px;
   border-radius: 3px;

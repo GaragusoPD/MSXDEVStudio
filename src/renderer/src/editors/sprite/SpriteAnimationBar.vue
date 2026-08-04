@@ -10,6 +10,7 @@ import { paletteToRgb } from '../../../../shared/msx/palette'
 import { compositeFrame, type SpritesDoc } from '../../../../shared/msx/sprite'
 import { addFrame, cloneFrame, removeFrame, reorderFrame, tickPlayback, type SpriteTarget } from '../../../../shared/sprite-editor'
 import { drawIndices } from './draw'
+import Icon from '../../components/Icon.vue'
 
 const props = defineProps<{ doc: SpritesDoc; target: SpriteTarget }>()
 const emit = defineEmits<{ selectFrame: [index: number]; mutate: [doc: SpritesDoc] }>()
@@ -170,7 +171,7 @@ watchEffect(redrawThumbs, { flush: 'post' })
         :class="{ active: playing }"
         @click="playing = !playing"
       >
-        {{ playing ? '⏸' : '▶' }}
+        <Icon :name="playing ? 'pause' : 'play_arrow'" />
       </button>
       <label class="inline">
         <span>fps</span>

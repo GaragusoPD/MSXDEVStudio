@@ -4,6 +4,7 @@ directories:
   buildResources: build
   output: dist
 files:
+  - 'licenses/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!specs/*'

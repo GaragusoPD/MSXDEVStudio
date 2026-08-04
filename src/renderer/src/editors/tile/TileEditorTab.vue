@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { MaterialSymbol } from '@material-symbols/font-400'
 /**
  * Spec 08 — the `.tiles.json` editor tab: tileset grid, pixel canvas, palette
  * and row colors, with the mode's color constraint enforced on every stroke.
@@ -17,6 +18,7 @@ import TileCanvas from './TileCanvas.vue'
 import TileGrid from './TileGrid.vue'
 import TileMapPreview from './TileMapPreview.vue'
 import TileSidePanel from './TileSidePanel.vue'
+import Icon from '../../components/Icon.vue'
 import {
   canRedo,
   canUndo,
@@ -43,21 +45,21 @@ const importDedup = ref(true)
 const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed(() => tileSession(path.value))
 
-const TOOLS: { id: TileTool; label: string; title: string }[] = [
-  { id: 'pencil', label: '✎', title: 'Pencil' },
-  { id: 'line', label: '／', title: 'Line' },
-  { id: 'rect', label: '▭', title: 'Rectangle' },
-  { id: 'fill', label: '🪣', title: 'Fill' }
+const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
+  { id: 'pencil', icon: 'edit', title: 'Pencil' },
+  { id: 'line', icon: 'pen_size_1', title: 'Line' },
+  { id: 'rect', icon: 'rectangle', title: 'Rectangle' },
+  { id: 'fill', icon: 'format_color_fill', title: 'Fill' }
 ]
 
-const TRANSFORMS: { id: TileTransform; label: string; title: string }[] = [
-  { id: 'shiftLeft', label: '←', title: 'Shift left (wraps)' },
-  { id: 'shiftRight', label: '→', title: 'Shift right (wraps)' },
-  { id: 'shiftUp', label: '↑', title: 'Shift up (row colors move too)' },
-  { id: 'shiftDown', label: '↓', title: 'Shift down (row colors move too)' },
-  { id: 'mirrorH', label: '⇋', title: 'Mirror horizontally' },
-  { id: 'mirrorV', label: '⇅', title: 'Mirror vertically' },
-  { id: 'rotateCW', label: '⟳', title: 'Rotate 90° clockwise' }
+const TRANSFORMS: { id: TileTransform; icon: MaterialSymbol; title: string }[] = [
+  { id: 'shiftLeft', icon: 'arrow_back', title: 'Shift left (wraps)' },
+  { id: 'shiftRight', icon: 'arrow_forward', title: 'Shift right (wraps)' },
+  { id: 'shiftUp', icon: 'arrow_upward', title: 'Shift up (row colors move too)' },
+  { id: 'shiftDown', icon: 'arrow_downward', title: 'Shift down (row colors move too)' },
+  { id: 'mirrorH', icon: 'swap_horiz', title: 'Mirror horizontally' },
+  { id: 'mirrorV', icon: 'swap_vert', title: 'Mirror vertically' },
+  { id: 'rotateCW', icon: 'rotate_right', title: 'Rotate 90° clockwise' }
 ]
 
 async function save(): Promise<void> {
@@ -143,7 +145,7 @@ watch(
           :title="tool.title"
           @click="setTool(session, tool.id)"
         >
-          {{ tool.label }}
+          <Icon :name="tool.icon" />
         </button>
         <label
           v-if="session.tool === 'rect'"
@@ -164,7 +166,7 @@ watch(
           :title="op.title"
           @click="transform(session, op.id)"
         >
-          {{ op.label }}
+          <Icon :name="op.icon" />
         </button>
 
         <span class="sep" />

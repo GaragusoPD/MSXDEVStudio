@@ -414,7 +414,7 @@ layout entirely. There's no export path from the Tile editor to the format
 yourself, the way the engine's own sample content does.
 
 Software sprites have no gap at all: MSXStudio does the whole of the above
-for you. Cut your frames out of a converted image as **fragments** (the ⛶
+for you. Cut your frames out of a converted image as **fragments** (the **cut** tool, the dashed-corners icon
 tool in the Screen editor), and the export lays them side by side into one
 `_Strip` in the packed native format for the mode — exactly what
 `VDP_CommandHMMC` uploads and `VDP_CommandLMMM` blits. Tick **Export

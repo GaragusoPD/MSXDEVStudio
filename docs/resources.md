@@ -115,7 +115,7 @@ the conversion with pencil/fill and edit the palette. For MSX1 full-screen art,
 draw a tileset and place it in a map instead.
 
 **Fragments** — bitmap modes have no name table, so the block idea arrives as a
-**fragment**: pick the ⛶ tool and drag a rectangle on the converted image to
+**fragment**: pick the **cut** tool (the dashed-corners icon) and drag a rectangle on the converted image to
 name a cut-out of it. Fragments are bitmap-mode blocks *and* the frames of a
 software sprite; like blocks they hold no pixels, so retouching the image
 updates every fragment over it.

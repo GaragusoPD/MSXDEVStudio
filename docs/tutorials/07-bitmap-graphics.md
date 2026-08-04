@@ -292,7 +292,7 @@ Project Settings, paste this into `main.c`, and press Run.
 
 Bitmap modes have no name table, so there is no "tile" to place — a piece of art
 is just a rectangle of pixels stamped wherever you want it. MSXStudio's screen
-editor makes those explicit: pick the ⛶ tool, drag a rectangle, and you have a
+editor makes those explicit: pick the **cut** tool (the dashed-corners icon), drag a rectangle, and you have a
 named **fragment**. Fragments hold no pixels of their own, only the rectangle,
 so retouching the image updates every fragment over it.
 

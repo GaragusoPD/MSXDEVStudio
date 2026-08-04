@@ -1,4 +1,5 @@
 import './theme.css'
+import './icons.css'
 import './editors/bootstrap'
 
 import { createApp } from 'vue'
