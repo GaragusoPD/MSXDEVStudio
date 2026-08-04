@@ -2,7 +2,7 @@
 
 ## Verify now (manual — nothing here was verifiable headless)
 
-- [ ] **Boot a ROM in openMSX**: install openMSX (`sudo apt install openmsx`), run the app
+- [x] **Boot a ROM in openMSX**: install openMSX (`sudo apt install openmsx`), run the app
       (`npm run dev` or `dist/msxstudio-0.1.0.AppImage`), Settings → point at an MSXgl
       checkout (or Download), New Project, press **F5**.
 - [ ] Turbo R / real-BIOS machines: set the openMSX machine override in Project Settings
@@ -75,12 +75,28 @@ sprite blitters are what the bitmap-mode work stands on.
       this can lean on the VDP blitter (HMMM/LMMM); on MSX1 it is CPU blits into the
       pattern table. Pre-made code matters most here — this is the item users are least
       likely to get right unaided.
-- [ ] **4. Tiles and software sprites for bitmap modes.** Extend both to the bitmap
-      modes already described in `src/shared/msx/modes.ts` (`BITMAP_MODES`: sc5, sc6,
-      sc7, sc8, plus import-only sc10/12). Bitmap modes have no name table, so "tiles"
-      there means stamping pattern blocks into the bitmap, and software sprites are the
-      normal way to move things. Needs the tile and map editors to accept a bitmap
-      target, and the blit helpers from item 3 in their MSX2 form.
+- [ ] **4. Multi-tile designs, in tiled and bitmap modes.** The tile-side counterpart of
+      the metasprite in item 1: draw an object bigger than one tile as **one canvas**,
+      not as N separate 8x8 cells the user has to mentally assemble. Two halves:
+      - *Tiled modes* — author a WxH block (2x2, 4x3, whatever); on save it splits into
+        `TileEntry`s appended to the `TilesDoc` and keeps the grouping so it reopens as a
+        block. Reuse `packTiles()`'s dedup so identical cells collapse, and reuse
+        `map-editor.ts`'s `Stamp` (already `{width, height, tiles[]}`) as the placement
+        form, so the map editor can stamp the block whole. Watch sc1: its `SC1_GROUP` of
+        8 tiles shares one color byte, so a block straddling a group boundary is a color
+        conflict the editor should flag.
+      - *Bitmap modes* (`BITMAP_MODES` in `src/shared/msx/modes.ts`: sc5, sc6, sc7, sc8,
+        plus import-only sc10/12) — same canvas, no 8x8 quantization, since bitmap modes
+        have no name table: a fragment is WxH pixels stored as bitmap bytes for the
+        target mode, emitted as a blob plus width/height. Software sprites are the normal
+        way to move things here, so this leans on item 3's blit helpers in their MSX2
+        form. Needs the tile and map editors to accept a bitmap target.
+
+      Same two deliverables as the rest: editor support, **and an opt-in "include the C"
+      checkbox on export** that drops the matching runtime into the project — a
+      block-stamp helper writing the WxH group into the name table for tiled modes, and
+      an HMMM/LMMM fragment blit for bitmap modes — so a user gets a placeable object
+      without writing the VDP plumbing.
 
 ## Deferred features (add when wanted, specs/00-overview.md)
 
