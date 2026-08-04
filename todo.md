@@ -2,7 +2,10 @@
 
 ## Verify now (manual — nothing here was verifiable headless)
 
-- [x] **Boot a ROM in openMSX**: install openMSX (`sudo apt install openmsx`), run the app
+- [x] **Boot a ROM in openMSX**: openMSX 21.0 lives at
+      `~/Development/openMSX/openmsx-21.0-linux-x86_64-bin` and needs
+      `OPENMSX_SYSTEM_DATA=<that>/share` — the relocatable-tarball case the build
+      service already handles. Original note: install openMSX, run the app
       (`npm run dev` or `dist/msxstudio-0.1.0.AppImage`), Settings → point at an MSXgl
       checkout (or Download), New Project, press **F5**.
 - [ ] Turbo R / real-BIOS machines: set the openMSX machine override in Project Settings
@@ -17,9 +20,11 @@
       check the stroke lands on both tiles and that undo takes the whole stroke back.
 - [ ] **Fragments (dev14)**: in the screen editor, pick ⛶ and drag a rectangle on the
       converted image; check the overlay boxes and that the export writes a `_Strip`.
-- [ ] **Ready-made C on real hardware/emulator**: the generated `_SetMeta`, `_DrawBlock`
-      and software-sprite runtime all compile, but none has been *run* — check a
-      metasprite lands in one piece and a software sprite leaves no trail as it moves.
+- [x] **Ready-made C on an emulator**: all three generated helpers were built into ROMs
+      and booted in openMSX 21.0 (C-BIOS_MSX2_EU) — `_SetMeta` placed a 2×2 metasprite
+      as one character, `_DrawBlock` stamped a 3×2 block into the name table, and the
+      software sprite crossed a striped background leaving no trail. Not yet run on
+      *real* hardware.
 - [ ] **SFX audition**: play the 5 presets (laser/jump/explosion/pickup/hit) — do they
       sound right? 50 Hz playback smooth?
 - [ ] Try-it on a few samples (`s_scroll`, `s_arkos`) from the Examples panel.
