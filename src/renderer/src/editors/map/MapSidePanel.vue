@@ -6,6 +6,7 @@
  * size, and the export block Spec 07's converter reads.
  */
 import { computed } from 'vue'
+import { mapExport } from '../../../../shared/msx/map'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
 import { addLayer, commit, doc, removeLayer, renameLayer, resize, selectLayer, setTileset, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
@@ -28,6 +29,17 @@ function patchExport(patch: Partial<ExportBlock>): void {
   if (!current.export) return
   commit(props.session, { ...current, export: { ...current.export, ...patch } })
 }
+
+/**
+ * What the layer tables cost either way, so the trade is visible before it is
+ * taken. A name table is mostly runs of one tile, so this is usually a large
+ * number — but it is measured, not promised.
+ */
+const packing = computed(() => {
+  const raw = mapDoc.value.layers.reduce((total, layer) => total + layer.data.length, 0)
+  const packed = mapExport(mapDoc.value, 'rlep').layers.reduce((total, layer) => total + layer.bytes.length, 0)
+  return { raw, packed, saved: raw ? Math.round(((raw - packed) / raw) * 100) : 0 }
+})
 
 </script>
 
@@ -170,6 +182,37 @@ function patchExport(patch: Partial<ExportBlock>): void {
             </option>
           </select>
         </label>
+        <label class="inline">
+          <input
+            type="checkbox"
+            :checked="mapDoc.export.compress === 'rlep'"
+            @change="patchExport({ compress: ($event.target as HTMLInputElement).checked ? 'rlep' : undefined })"
+          >
+          <span title="Pack the layer tables with MSXgl's RLEp run-length format">
+            Compress (RLEp) — {{ packing.raw }} → {{ packing.packed }} bytes
+            <template v-if="packing.saved > 0">({{ packing.saved }}% smaller)</template>
+          </span>
+        </label>
+        <label class="inline">
+          <input
+            type="checkbox"
+            :checked="mapDoc.export.helpers === true"
+            @change="patchExport({ helpers: ($event.target as HTMLInputElement).checked })"
+          >
+          <span title="Appends a _DrawLayer() that writes a layer into the name table. Needs msxgl.h included first.">
+            Export ready-made C
+          </span>
+        </label>
+        <p
+          v-if="mapDoc.export.compress === 'rlep'"
+          class="hint"
+        >
+          The game unpacks these at run time with MSXgl's <code>RLEp_UnpackToRAM</code>: tick
+          <em>ready-made C</em> above for a <code>_DrawLayer()</code> that does it, add
+          <strong>compress</strong> to the project's library modules, and leave
+          <code>COMPRESS_USE_RLEP</code> / <code>_DEFAULT</code> TRUE in
+          <code>msxgl_config.h</code> (they are, unless you changed them).
+        </p>
       </template>
       <button
         v-else
@@ -347,6 +390,13 @@ label > span:first-child {
 .hint {
   margin: 4px 0;
   font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+label.inline {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   color: var(--color-text-muted);
 }
 

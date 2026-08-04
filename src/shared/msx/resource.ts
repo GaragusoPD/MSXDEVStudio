@@ -9,7 +9,7 @@
  */
 
 import { defineName, emitBin, emitCHeader, type EmitTable } from './emitC'
-import { normalizeMap, mapLayerBytes, validateMap, type MapDoc } from './map'
+import { normalizeMap, mapExport, mapHelperC, validateMap, type MapDoc } from './map'
 import { MODES } from './modes'
 import {
   fragmentRectBytes,
@@ -17,9 +17,10 @@ import {
   fragmentStripBytes,
   palettePairBytes,
   normalizeScreen,
-  packBitmap,
+  screenDataExport,
   screenHelperC,
   screenPixels,
+  screenUnpackC,
   validateScreen,
   type ScreenDoc
 } from './screen'
@@ -61,6 +62,13 @@ export interface ExportBlock {
    * included after `msxgl.h`. Ignored by the `bin` format.
    */
   helpers?: boolean
+  /**
+   * Compress the bulk table with MSXgl's RLEp — a map's layers, or a screen's
+   * bitmap (in bands; see `screen.ts`). The game has to unpack before use, so
+   * this is off by default and the `helpers` C is what knows how. Both decline
+   * it when packing wouldn't shrink the data.
+   */
+  compress?: 'rlep'
 }
 
 export type ResourceKind = 'tiles' | 'sprites' | 'map' | 'screen' | 'sfx'
@@ -161,10 +169,10 @@ function pascal(name: string): string {
  *
  * - tiles → `_Patterns`, `_Colors` (+ `_Palette` on sc4)
  * - sprites → `_Patterns`, `_Colors` (+ `_Palette` in mode 2)
- * - map → one table per layer, named after the layer
+ * - map → one table per layer, named after the layer (RLEp-packed when asked)
  * - screen → `_Palette` (when the mode has one) then the packed bitmap
  */
-export function resourceTables(resource: ResourceDoc): EmitTable[] {
+export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['compress']): EmitTable[] {
   switch (resource.kind) {
     case 'tiles': {
       const { doc } = resource
@@ -216,12 +224,21 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
       return tables
     }
     case 'map':
-      return resource.doc.layers.map((layer) => ({
-        suffix: `_${pascal(layer.name)}`,
-        bytes: mapLayerBytes(layer),
-        perLine: Math.min(32, resource.doc.width),
-        comment: `Names layer "${layer.name}" (${resource.doc.width}×${resource.doc.height})`
-      }))
+      return mapExport(resource.doc, compress).layers.map(({ bytes, unpacked }, index) => {
+        const layer = resource.doc.layers[index]
+        const size = `${resource.doc.width}×${resource.doc.height}`
+        return {
+          suffix: `_${pascal(layer.name)}`,
+          bytes,
+          unpacked,
+          perLine: unpacked === undefined ? Math.min(32, resource.doc.width) : 16,
+          comment:
+            unpacked === undefined
+              ? `Names layer "${layer.name}" (${size})`
+              : `Names layer "${layer.name}" (${size}) — RLEp, ${unpacked} → ${bytes.length} bytes. ` +
+                'Unpack with MSXgl\'s RLEp_UnpackToRAM before writing it to VRAM.'
+        }
+      })
     case 'screen': {
       const { doc } = resource
       const pixels = screenPixels(doc)
@@ -239,11 +256,29 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
           comment: 'Palette (V9938 GRB333)'
         })
       }
+      const picture = screenDataExport(doc, compress)
+      const geometry = picture.geometry
       tables.push({
-        suffix: tables.length ? '_Data' : '',
-        bytes: packBitmap(pixels.indices, pixels.width, pixels.height, doc.mode),
-        comment: `${MODES[doc.mode].label} bitmap ${pixels.width}×${pixels.height}`
+        // A compressed picture always takes `_Data`, because `_Bands` sits next
+        // to it and a bare `g_Title` reading as "the packed one" helps nobody.
+        suffix: tables.length || geometry ? '_Data' : '',
+        bytes: picture.bytes,
+        unpacked: picture.unpacked,
+        perLine: geometry ? 16 : undefined,
+        comment: geometry
+          ? `${MODES[doc.mode].label} bitmap ${pixels.width}×${pixels.height} — RLEp in ${geometry.count} bands of ` +
+            `${geometry.rows} lines, ${picture.unpacked} → ${picture.bytes.length} bytes. Unpack a band at a time ` +
+            'with MSXgl\'s RLEp_UnpackToRAM.'
+          : `${MODES[doc.mode].label} bitmap ${pixels.width}×${pixels.height}`
       })
+      if (picture.offsets && geometry) {
+        tables.push({
+          suffix: '_Bands',
+          bytes: picture.offsets,
+          perLine: 2,
+          comment: `Where each band starts in _Data — u16 little-endian, ${geometry.count} of them`
+        })
+      }
       if (doc.fragments.length) {
         const strip = fragmentStrip(doc)
         tables.push({
@@ -275,8 +310,17 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
 }
 
 /** Human-readable generation parameters for the header's comment block. */
-function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
+function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportBlock): string[] {
   const notes = [`Source: ${sourceName}`]
+  // Only what actually happened: asking for RLEp and getting it are different
+  // things when packing would have made the tables bigger.
+  if (block.compress === 'rlep' && (resource.kind === 'map' || resource.kind === 'screen')) {
+    notes.push(
+      compressionApplied(resource, block.compress)
+        ? 'Compression: RLEp (MSXgl "compress" module — unpack with RLEp_UnpackToRAM)'
+        : 'Compression: RLEp asked for, but packing gained nothing here — the tables are raw'
+    )
+  }
   switch (resource.kind) {
     case 'tiles':
       notes.push(`Mode: ${MODES[resource.doc.mode].label}`, `Tiles: ${resource.doc.count}`)
@@ -329,16 +373,39 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
 }
 
 /**
+ * Whether the requested compression was actually taken. Both kinds that support
+ * it can decline, so nothing may assume that asking is the same as getting.
+ */
+export function compressionApplied(resource: ResourceDoc, compress: ExportBlock['compress']): boolean {
+  if (compress !== 'rlep') return false
+  if (resource.kind === 'map') return mapExport(resource.doc, compress).compressed
+  if (resource.kind === 'screen') return screenDataExport(resource.doc, compress).geometry !== undefined
+  return false
+}
+
+/**
  * Where each character starts in the flat plane order, so game code can place
  * one character out of a sheet: `..._BASE + frame * ..._PLANES`.
  */
-function resourceConstants(resource: ResourceDoc, name: string): string[] {
+function resourceConstants(resource: ResourceDoc, name: string, compress?: ExportBlock['compress']): string[] {
   const prefix = defineName(name)
   if (resource.kind === 'screen') {
     const { doc } = resource
-    if (!doc.fragments.length) return []
+    const geometry = screenDataExport(doc, compress).geometry
+    const banded = geometry
+      ? [
+          `#define ${prefix}_W ${geometry.width}`,
+          `#define ${prefix}_H ${geometry.height}`,
+          `#define ${prefix}_STRIDE ${geometry.stride}`,
+          `#define ${prefix}_BANDS ${geometry.count}`,
+          `#define ${prefix}_BAND_ROWS ${geometry.rows}`,
+          `#define ${prefix}_BAND_BYTES ${geometry.bufferBytes}`
+        ]
+      : []
+    if (!doc.fragments.length) return banded
     const strip = fragmentStrip(doc)
     return [
+      ...banded,
       `#define ${prefix}_STRIP_W ${strip.width}`,
       `#define ${prefix}_STRIP_H ${strip.height}`,
       // Backgrounds are saved side by side under the strip; the widest frame
@@ -346,6 +413,10 @@ function resourceConstants(resource: ResourceDoc, name: string): string[] {
       `#define ${prefix}_BACKUP_PITCH ${Math.max(0, ...doc.fragments.map((fragment) => fragment.width)) + 4}`,
       ...doc.fragments.map((fragment, index) => `#define ${prefix}_${defineName(fragment.name)} ${index}`)
     ]
+  }
+  if (resource.kind === 'map') {
+    // The helper C needs the map's shape, and so does anything that walks a layer.
+    return [`#define ${prefix}_W ${resource.doc.width}`, `#define ${prefix}_H ${resource.doc.height}`]
   }
   if (resource.kind === 'tiles') {
     return blockPlacements(resource.doc).flatMap((placement) => {
@@ -369,8 +440,16 @@ function resourceConstants(resource: ResourceDoc, name: string): string[] {
 }
 
 /** The opt-in ready-made C for this resource; empty when the kind has none (yet). */
-function resourceCode(resource: ResourceDoc, name: string): string[] {
-  if (resource.kind === 'screen') return resource.doc.fragments.length ? screenHelperC(resource.doc, name) : []
+function resourceCode(resource: ResourceDoc, name: string, compress?: ExportBlock['compress']): string[] {
+  if (resource.kind === 'map') {
+    const first = resource.doc.layers[0]
+    if (!first) return []
+    return mapHelperC(resource.doc, name, mapExport(resource.doc, compress).compressed, `${name}_${pascal(first.name)}`)
+  }
+  if (resource.kind === 'screen') {
+    const banded = screenDataExport(resource.doc, compress).geometry ? screenUnpackC(name) : []
+    return resource.doc.fragments.length ? [...banded, ...screenHelperC(resource.doc, name)] : banded
+  }
   if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : []
   if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
   return spriteHelperC(resource.doc, name)
@@ -383,16 +462,16 @@ function resourceCode(resource: ResourceDoc, name: string): string[] {
  * machines).
  */
 export function renderResource(resource: ResourceDoc, sourceName: string, block: ExportBlock): Uint8Array {
-  const tables = resourceTables(resource)
+  const tables = resourceTables(resource, block.compress)
   if (block.format === 'bin') return emitBin(tables)
   const name = block.name || defaultTableName(resourceBaseName(sourceName))
   const text = emitCHeader({
     name,
     tables,
-    notes: resourceNotes(resource, sourceName),
+    notes: resourceNotes(resource, sourceName, block),
     defines: true,
-    constants: resourceConstants(resource, name),
-    code: block.helpers ? resourceCode(resource, name) : []
+    constants: resourceConstants(resource, name, block.compress),
+    code: block.helpers ? resourceCode(resource, name, block.compress) : []
   })
   return new TextEncoder().encode(text)
 }

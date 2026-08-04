@@ -19,6 +19,12 @@ export interface EmitTable {
   perLine?: number
   /** Placed above the table as a `// …` line. */
   comment?: string
+  /**
+   * Set when `bytes` is compressed: the size it unpacks to, emitted as
+   * `<NAME>_UNPACKED_SIZE` so the game can size the buffer it unpacks into.
+   * `<NAME>_SIZE` stays what it always was — the length of the table itself.
+   */
+  unpacked?: number
 }
 
 export interface EmitOptions {
@@ -83,7 +89,11 @@ export function emitCHeader(options: EmitOptions): string {
   let total = 0
   for (const table of options.tables) {
     const name = `${options.name}${table.suffix}`
-    if (options.defines) lines.push(`#define ${defineName(name)}_SIZE ${table.bytes.length}`, '')
+    if (options.defines) {
+      lines.push(`#define ${defineName(name)}_SIZE ${table.bytes.length}`)
+      if (table.unpacked !== undefined) lines.push(`#define ${defineName(name)}_UNPACKED_SIZE ${table.unpacked}`)
+      lines.push('')
+    }
     lines.push(...emitTable(name, table))
     total += table.bytes.length
   }

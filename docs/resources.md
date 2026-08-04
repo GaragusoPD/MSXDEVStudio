@@ -77,6 +77,22 @@ it. Each cell is a separate hardware sprite and each of its layers costs
 another, so every character shows what it spends of the VDP's 4 (mode 1) or
 8 (mode 2) sprites per scanline.
 
+**Compressing a map** — a name table is mostly runs of the same tile, so the
+map editor's Export block offers **Compress (RLEp)**, with the two sizes shown
+next to the checkbox so the trade is visible before you take it (a screen of
+sky and ground is typically 768 → under 40 bytes). RLEp is *MSXgl's own* format:
+the game unpacks with `RLEp_UnpackToRAM` from the engine's `compress` module —
+add that module in Project Settings, and leave `COMPRESS_USE_RLEP` and
+`COMPRESS_USE_RLEP_DEFAULT` TRUE in `msxgl_config.h` (they are by default).
+Tick **Export ready-made C** for a `_DrawLayer()` that unpacks and writes to
+the name table in one call, and size your buffer with the generated
+`..._UNPACKED_SIZE`.
+
+A layer that packs no smaller than raw is shipped raw instead — and because one
+`_DrawLayer()` serves every layer, one such layer turns compression off for the
+whole map rather than leaving a helper that is wrong for one of the tables. The
+generated header's parameter block always says which of the two happened.
+
 **Map** — pick a tileset first (dropdown in the side panel), then paint with
 stamp, fill, rectangle and erase. Shift+click or drag in the tile picker takes
 a multi-tile stamp. A 32×24 map is exactly one screen; larger maps get a screen
@@ -92,6 +108,20 @@ draw a tileset and place it in a map instead.
 name a cut-out of it. Fragments are bitmap-mode blocks *and* the frames of a
 software sprite; like blocks they hold no pixels, so retouching the image
 updates every fragment over it.
+
+**Compressing a picture** — a SCREEN 5 image is 27 KB, so the screen editor's
+Export block has the same **Compress (RLEp)** checkbox, with both sizes shown.
+It packs in **bands** rather than in one piece, precisely because no 32K-ROM
+program could unpack 27 KB in RAM: each band is one buffer's worth of lines
+(`..._BAND_BYTES`, 2 KB — 16 lines in SCREEN 5), and the generated
+`_Unpack(buffer, y)` unpacks one and blits it with `HMMC` before touching the
+next, so the whole picture never has to be anywhere but VRAM. `_Bands` is the
+u16 offset table it walks.
+
+The palette and any fragment strip stay uncompressed: they are small, and the
+strip is uploaded straight from ROM in one `HMMC`. As with maps, a picture that
+packs no smaller than raw is shipped raw — dithering in particular defeats
+run-length coding, so check the numbers next to the checkbox before assuming.
 
 **SFX** — one file holds a bank of effects. Draw tone, noise and volume per
 frame, press Play to hear it. Start from a preset, or import `.afx`/`.afb`

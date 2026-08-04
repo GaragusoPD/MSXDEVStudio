@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { unpackRlep } from './compress'
 import { defineName, emitBin, emitCHeader } from './emitC'
 import { createMapDoc, normalizeMap } from './map'
 import { packGrb } from './palette'
@@ -285,6 +286,53 @@ describe('map resource', () => {
     expect(doc.layers[0].data).toHaveLength(32 * 24)
     expect(validateResource({ kind: 'map', doc })).toEqual([])
   })
+
+  it('packs the layers when the export asks for it, and says what it unpacks to', () => {
+    const doc = createMapDoc('./main.tiles.json')
+    doc.layers[0].data.fill(3)
+    const [table] = resourceTables({ kind: 'map', doc }, 'rlep')
+    expect(table.unpacked).toBe(32 * 24)
+    expect(table.bytes.length).toBeLessThan(40)
+    expect([...unpackRlep(table.bytes)]).toEqual(doc.layers[0].data)
+
+    const header = new TextDecoder().decode(
+      renderResource({ kind: 'map', doc }, 'art/level.map.json', {
+        name: 'g_Level',
+        format: 'c',
+        out: 'content/level.h',
+        helpers: true,
+        compress: 'rlep'
+      })
+    )
+    expect(header).toContain('#define G_LEVEL_BACKGROUND_UNPACKED_SIZE 768')
+    expect(header).toContain('RLEp_UnpackToRAM(layer, buffer)')
+  })
+
+  it('ships the layer raw when packing it would make it bigger, helper included', () => {
+    // 8 cells of alternating noise: every chunk costs more than the byte it saves.
+    const doc = normalizeMap({
+      tileset: './main.tiles.json',
+      width: 4,
+      height: 2,
+      layers: [{ name: 'background', data: [1, 2, 3, 4, 5, 6, 7, 8] }]
+    })
+    const [table] = resourceTables({ kind: 'map', doc }, 'rlep')
+    expect(table.unpacked).toBeUndefined()
+    expect([...table.bytes]).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+
+    const header = new TextDecoder().decode(
+      renderResource({ kind: 'map', doc }, 'art/level.map.json', {
+        name: 'g_Level',
+        format: 'c',
+        out: 'content/level.h',
+        helpers: true,
+        compress: 'rlep'
+      })
+    )
+    // The helper has to agree with the table it sits next to, or it unpacks raw bytes.
+    expect(header).not.toContain('RLEp_UnpackToRAM')
+    expect(header).toContain('VDP_WriteLayout_GM2(layer, x, y, G_LEVEL_W, G_LEVEL_H)')
+  })
 })
 
 describe('screen resource', () => {
@@ -321,6 +369,72 @@ describe('screen resource', () => {
 
   it('writes palette entries as the V9938 register pair (screen)', () => {
     expect([...palettePairBytes([packGrb(1, 2, 3)])]).toEqual([0x13, 0x02])
+  })
+
+  it('packs a picture into bands small enough to unpack on an MSX', () => {
+    // A full SCREEN 5 of one colour: 27 136 bytes raw, which no 32K-ROM
+    // program could unpack in one piece.
+    const flat = normalizeScreen({
+      mode: 'sc5',
+      source: './title.png',
+      converted: {
+        width: 256,
+        height: 212,
+        palette: new Array(16).fill(packGrb(1, 2, 3)),
+        indices: encodeIndices(new Uint8Array(256 * 212).fill(4))
+      }
+    })
+    const tables = resourceTables({ kind: 'screen', doc: flat }, 'rlep')
+    expect(tables.map((table) => table.suffix)).toEqual(['_Palette', '_Data', '_Bands'])
+
+    const data = tables[1]
+    const offsets = tables[2].bytes
+    expect(data.unpacked).toBe(256 * 212 / 2)
+    expect(data.bytes.length).toBeLessThan(1000)
+    expect(offsets).toHaveLength(14 * 2) // 212 lines in bands of 16
+
+    // Every band unpacks to its own slice of the raw bitmap, in order.
+    const rebuilt: number[] = []
+    for (let band = 0; band < offsets.length / 2; band++) {
+      const at = offsets[band * 2] + (offsets[band * 2 + 1] << 8)
+      rebuilt.push(...unpackRlep(data.bytes.subarray(at)))
+    }
+    expect(rebuilt).toEqual([...packBitmap(new Uint8Array(256 * 212).fill(4), 256, 212, 'sc5')])
+
+    const header = new TextDecoder().decode(
+      renderResource({ kind: 'screen', doc: flat }, 'art/title.screen.json', {
+        name: 'g_Title',
+        format: 'c',
+        out: 'content/title.h',
+        helpers: true,
+        compress: 'rlep'
+      })
+    )
+    expect(header).toContain('#define G_TITLE_BANDS 14')
+    expect(header).toContain('#define G_TITLE_BAND_ROWS 16')
+    expect(header).toContain('#define G_TITLE_BAND_BYTES 2048')
+    expect(header).toContain('#define G_TITLE_STRIDE 128')
+    expect(header).toContain('RLEp_UnpackToRAM(src, buffer)')
+  })
+
+  it('leaves a picture that will not shrink alone, and says so', () => {
+    // 4×4 of 16 distinct indices: nothing repeats, and the band table would
+    // cost more than the packing saves.
+    const tables = resourceTables({ kind: 'screen', doc }, 'rlep')
+    expect(tables.map((table) => table.suffix)).toEqual(['_Palette', '_Data'])
+    expect(tables[1].unpacked).toBeUndefined()
+
+    const header = new TextDecoder().decode(
+      renderResource({ kind: 'screen', doc }, 'art/title.screen.json', {
+        name: 'g_Title',
+        format: 'c',
+        out: 'content/title.h',
+        helpers: true,
+        compress: 'rlep'
+      })
+    )
+    expect(header).toContain('packing gained nothing here')
+    expect(header).not.toContain('RLEp_UnpackToRAM')
   })
 })
 

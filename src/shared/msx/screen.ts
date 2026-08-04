@@ -7,6 +7,7 @@
  * `retouch` pixels are re-applied on top.
  */
 
+import { packRlep } from './compress'
 import { isBitmapMode, MODES, type BitmapMode } from './modes'
 import type { ExportBlock } from './resource'
 import type { DitherMode } from './quantize'
@@ -158,6 +159,69 @@ export function packBitmap(indices: Uint8Array, width: number, height: number, m
   return out
 }
 
+// ── compression: the picture, in bands ──────────────────────────────────────
+
+/**
+ * How much RAM the unpack buffer may take on the MSX side. A whole SCREEN 5
+ * picture is 27 KB, which no 32K-ROM program can hold in RAM, so a compressed
+ * picture is packed as a **strip of bands** — each one unpacked into a buffer
+ * this size and blitted with `HMMC` before the next one is touched. 2 KB is one
+ * band of 16 lines in SCREEN 5, and leaves the 16 KB RAM page room to live in.
+ */
+export const BAND_BUDGET = 2048
+
+export interface ScreenDataExport {
+  /** The packed bands back to back, or the raw bitmap when compression wasn't taken. */
+  bytes: Uint8Array
+  /** Total unpacked size — set only when `bytes` is compressed. */
+  unpacked?: number
+  /** Where each band starts in `bytes`, as u16 little-endian pairs. */
+  offsets?: Uint8Array
+  /** Rows per band, bands, buffer size, and the row stride the helper divides by. */
+  geometry?: { rows: number; count: number; bufferBytes: number; stride: number; width: number; height: number }
+}
+
+/**
+ * The picture as it goes into the header. Compression is all-or-nothing, like
+ * a map's layers: the offsets table has to be paid for, and a dithered photo
+ * packs no smaller than it started, so the raw bitmap ships instead.
+ */
+export function screenDataExport(doc: ScreenDoc, compress: ExportBlock['compress']): ScreenDataExport {
+  const pixels = screenPixels(doc)
+  if (!pixels) throw new Error('no converted image')
+  const raw = packBitmap(pixels.indices, pixels.width, pixels.height, doc.mode)
+  if (compress !== 'rlep') return { bytes: raw }
+
+  const stride = Math.ceil(pixels.width / MODES[doc.mode].pixelsPerByte)
+  const rows = Math.max(1, Math.floor(BAND_BUDGET / Math.max(1, stride)))
+  const count = Math.ceil(pixels.height / rows)
+  const packed: Uint8Array[] = []
+  const offsets = new Uint8Array(count * 2)
+  let at = 0
+  for (let band = 0; band < count; band++) {
+    const start = band * rows * stride
+    const bytes = packRlep(raw.subarray(start, Math.min(raw.length, start + rows * stride)))
+    offsets[band * 2] = at & 0xff
+    offsets[band * 2 + 1] = (at >> 8) & 0xff
+    at += bytes.length
+    packed.push(bytes)
+  }
+  if (at + offsets.length >= raw.length) return { bytes: raw }
+
+  const bytes = new Uint8Array(at)
+  let offset = 0
+  for (const band of packed) {
+    bytes.set(band, offset)
+    offset += band.length
+  }
+  return {
+    bytes,
+    unpacked: raw.length,
+    offsets,
+    geometry: { rows, count, bufferBytes: rows * stride, stride, width: pixels.width, height: pixels.height }
+  }
+}
+
 // ── fragments: the strip, and the code that draws it ────────────────────────
 
 /**
@@ -298,6 +362,42 @@ export function screenHelperC(doc: ScreenDoc, name: string): string[] {
     '\ts->bh = h;',
     `\tVDP_CommandHMMM(s->bx, y, s->slot * ${prefix}_BACKUP_PITCH, stripY + ${prefix}_STRIP_H, s->bw, h);`,
     '\tVDP_CommandLMMM(sx, stripY, x, y, w, h, VDP_OP_TIMP);',
+    '}'
+  ]
+}
+
+/**
+ * Draws an RLEp-compressed picture. It arrives as bands (see
+ * `screenDataExport`) precisely so this can exist on a 32K-ROM machine: one
+ * band is unpacked into a small RAM buffer and blitted before the next is
+ * touched, so the whole 27 KB picture never has to be anywhere but VRAM.
+ */
+export function screenUnpackC(name: string): string[] {
+  const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
+  return [
+    '',
+    `// ── ${name}: the picture, RLEp-packed ─────────────────────────────────`,
+    '//',
+    `// Unpacks band by band into \`buffer\` (${prefix}_BAND_BYTES bytes — a plain`,
+    '// global array is fine) and blits each one to VRAM row `y` onwards.',
+    '//',
+    '// Needs MSXgl\'s VDP command engine (MSX2+ with VDP_USE_COMMAND) and the',
+    '// "compress" library module, with COMPRESS_USE_RLEP TRUE and',
+    '// COMPRESS_USE_RLEP_DEFAULT TRUE in msxgl_config.h.',
+    '//',
+    '// Example:',
+    `//   u8 buffer[${prefix}_BAND_BYTES];`,
+    `//   ${name}_Unpack(buffer, 0);`,
+    `static void ${name}_Unpack(u8* buffer, u8 y)`,
+    '{',
+    '\tu8 band;',
+    `\tfor(band = 0; band < ${prefix}_BANDS; ++band)`,
+    '\t{',
+    `\t\tconst u8* src = ${name}_Data + (${name}_Bands[band * 2] + ((u16)${name}_Bands[band * 2 + 1] << 8));`,
+    '\t\tu16 size = RLEp_UnpackToRAM(src, buffer);',
+    // The last band is short, so its height comes from what it unpacked to.
+    `\t\tVDP_CommandHMMC(buffer, 0, y + (band * ${prefix}_BAND_ROWS), ${prefix}_W, size / ${prefix}_STRIDE);`,
+    '\t}',
     '}'
   ]
 }

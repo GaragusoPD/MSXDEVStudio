@@ -4,7 +4,7 @@
 // Generation parameters:
 //  - Source: tiles.tiles.json
 //  - Mode: SCREEN 2 (GRAPHIC 2)
-//  - Tiles: 38
+//  - Tiles: 39
 //  - Blocks: coin_spin 4×1, door_open 1×2
 //  - Flagged tiles: 10
 
@@ -15,7 +15,7 @@
 #define G_TILES_DOOR_OPEN_W 1
 #define G_TILES_DOOR_OPEN_H 2
 
-#define G_TILES_PATTERNS_SIZE 304
+#define G_TILES_PATTERNS_SIZE 312
 
 // Patterns Table
 const unsigned char g_Tiles_Patterns[] =
@@ -308,26 +308,34 @@ const unsigned char g_Tiles_Patterns[] =
 	0x5A, /* .#.##.#. */
 	0x24, /* ..#..#.. */
 	0x18, /* ...##... */
-	0x7E, /* .######. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x42, /* .#....#. */
-	0x7E, /* .######. */
+	0xFF, /* ######## */
+	0x95, /* #..#.#.# */
+	0x8B, /* #...#.## */
+	0x85, /* #....#.# */
+	0x83, /* #.....## */
+	0x81, /* #......# */
+	0x81, /* #......# */
+	0x81, /* #......# */
+	0x81, /* #......# */
+	0x81, /* #......# */
+	0x81, /* #......# */
+	0x81, /* #......# */
+	0x81, /* #......# */
+	0x83, /* #.....## */
+	0x85, /* #....#.# */
+	0xFF, /* ######## */
+	0x00, /* ........ */
+	0x00, /* ........ */
+	0x00, /* ........ */
+	0x00, /* ........ */
+	0x00, /* ........ */
+	0x00, /* ........ */
+	0x00, /* ........ */
+	0x00, /* ........ */
 };
-// g_Tiles_Patterns size: 304 Bytes
+// g_Tiles_Patterns size: 312 Bytes
 
-#define G_TILES_COLORS_SIZE 304
+#define G_TILES_COLORS_SIZE 312
 
 // Colors Table
 const unsigned char g_Tiles_Colors[] =
@@ -351,19 +359,20 @@ const unsigned char g_Tiles_Colors[] =
 	0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5,
 	0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5,
 	0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1,
+	0xFF, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5,
 };
-// g_Tiles_Colors size: 304 Bytes
+// g_Tiles_Colors size: 312 Bytes
 
-#define G_TILES_FLAGS_SIZE 38
+#define G_TILES_FLAGS_SIZE 39
 
 // Gameplay flags, one byte per tile (bit 0 = flag 1)
 const unsigned char g_Tiles_Flags[] =
 {
 	0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x02, 0x01, 0x00, 0x01, 0x00, 0x04, 0x04, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x04, 0x04,
+	0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x00,
 };
-// g_Tiles_Flags size: 38 Bytes
+// g_Tiles_Flags size: 39 Bytes
 
 #define G_TILES_BLOCKS_SIZE 6
 
@@ -375,7 +384,7 @@ const unsigned char g_Tiles_Blocks[] =
 };
 // g_Tiles_Blocks size: 6 Bytes
 
-// Total size: 652 Bytes
+// Total size: 669 Bytes
 
 // Stamps one block of g_Tiles into the name table at tile column/row (x, y).
 // Needs MSXgl's VDP module (#include "msxgl.h" before this header) built

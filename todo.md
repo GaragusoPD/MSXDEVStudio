@@ -24,6 +24,14 @@
       the sheet instead of scrolling sideways — in the map picker too.
 - [ ] **Emptied metasprite cell**: delete a cell's only plane, then click that cell on the
       canvas and confirm it gets a plane back and can be drawn on.
+- [x] **Compressed map export**: verified on hardware terms, not by eye — a scratch ROM
+      unpacked a 768→29 byte RLEp layer with MSXgl's own `RLEp_UnpackToRAM` and compared
+      all 768 bytes against the raw export of the same map. openMSX (C-BIOS_MSX1_EU),
+      verdict read from RAM: 0 mismatches, unpacked size 768.
+- [x] **Compressed screen export**: same treatment on MSX2 — a 256×50 SCREEN 5 picture
+      (6400→288 bytes in 4 bands) unpacked band by band and compared against the raw
+      export, then the generated `_Unpack()` ran for real and VRAM row 24 was read back
+      and compared. openMSX (C-BIOS_MSX2_EU): 0 mismatches in RAM *and* in VRAM.
 - [ ] **Menu bar**: File ▸ Save on each editor kind (text, tile, sprite, map, screen, sfx,
       project settings) and Save All with several dirty tabs; Edit ▸ Undo in Monaco and in
       a canvas editor; check Ctrl+S still saves exactly once (the accelerators in the menu

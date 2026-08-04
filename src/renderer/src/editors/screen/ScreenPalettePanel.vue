@@ -11,6 +11,7 @@ import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex, unpackGrb } from '../
 import type { DitherMode } from '../../../../shared/msx/quantize'
 import { rgb332Palette } from '../../../../shared/msx/quantize'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
+import { screenDataExport } from '../../../../shared/msx/screen'
 import {
   commit,
   doc,
@@ -62,6 +63,26 @@ function swatchHex(packed: number): string {
 function setupExport(): void {
   commit(props.session, { ...screenDoc.value, export: defaultExport(props.session.path) })
 }
+
+/**
+ * What the picture costs either way, and the band shape that makes unpacking
+ * it possible on a 32K-ROM machine. Null until the image has been converted —
+ * there is nothing to measure before that.
+ */
+const packing = computed(() => {
+  if (!screenDoc.value.converted) return null
+  const raw = screenDataExport(screenDoc.value, undefined).bytes.length
+  const packed = screenDataExport(screenDoc.value, 'rlep')
+  const total = packed.bytes.length + (packed.offsets?.length ?? 0)
+  return {
+    raw,
+    packed: total,
+    saved: raw ? Math.round(((raw - total) / raw) * 100) : 0,
+    bands: packed.geometry?.count ?? 0,
+    rows: packed.geometry?.rows ?? 0,
+    bufferBytes: packed.geometry?.bufferBytes ?? 0
+  }
+})
 
 function patchExport(patch: Partial<ExportBlock>): void {
   const current = screenDoc.value
@@ -276,18 +297,40 @@ function patchExport(patch: Partial<ExportBlock>): void {
           </select>
         </label>
         <label
-          v-if="screenDoc.fragments.length"
+          v-if="packing"
           class="inline"
         >
+          <input
+            type="checkbox"
+            :checked="screenDoc.export.compress === 'rlep'"
+            @change="patchExport({ compress: ($event.target as HTMLInputElement).checked ? 'rlep' : undefined })"
+          >
+          <span title="Pack the picture with MSXgl's RLEp run-length format, in bands small enough to unpack on an MSX">
+            Compress (RLEp) — {{ packing.raw }} → {{ packing.packed }} bytes
+            <template v-if="packing.saved > 0">({{ packing.saved }}% smaller)</template>
+          </span>
+        </label>
+        <label class="inline">
           <input
             type="checkbox"
             :checked="screenDoc.export.helpers === true"
             @change="patchExport({ helpers: ($event.target as HTMLInputElement).checked })"
           >
-          <span title="Appends the software-sprite runtime: upload the frames once, then restore/draw each object. Needs msxgl.h included first.">
+          <span title="Appends the unpack loop for a compressed picture, and the software-sprite runtime when there are fragments. Needs msxgl.h included first.">
             Export ready-made C
           </span>
         </label>
+        <p
+          v-if="screenDoc.export.compress === 'rlep' && packing?.saved"
+          class="hint"
+        >
+          The picture ships as {{ packing.bands }} bands of {{ packing.rows }} lines: tick
+          <em>ready-made C</em> for an <code>_Unpack()</code> that unpacks each one into a
+          {{ packing.bufferBytes }}-byte buffer and blits it, so the whole image never has to fit in
+          RAM. Add <strong>compress</strong> to the project's library modules. The palette and any
+          fragment strip stay uncompressed — they are small, and the strip is uploaded straight
+          from ROM.
+        </p>
       </template>
       <button
         v-else
