@@ -12,8 +12,10 @@
  */
 
 import {
+  cellLayers,
   createLayer,
   getSpritePixel,
+  MAX_GRID,
   MAX_LAYERS,
   setSpritePixel,
   SPRITE_COLOR_MASK,
@@ -189,7 +191,7 @@ function cloneLayers(layers: readonly SpriteLayer[]): SpriteLayer[] {
   return layers.map((layer) => ({ ...layer, pattern: [...layer.pattern], lineColors: [...layer.lineColors] }))
 }
 
-/** A blank frame with the same layer count/colors as frame 0, so the character stays visually consistent. */
+/** A blank frame with the same layer count/cells/colors as frame 0, so the character stays visually consistent. */
 export function addFrame(doc: SpritesDoc, spriteIndex: number): SpritesDoc {
   return updateSprite(doc, spriteIndex, (sprite) => ({
     ...sprite,
@@ -197,7 +199,7 @@ export function addFrame(doc: SpritesDoc, spriteIndex: number): SpritesDoc {
       ...sprite.frames,
       {
         layers: sprite.frames[0].layers.map((source) => ({
-          ...createLayer(doc.size, source.color),
+          ...createLayer(doc.size, source.color, source.cx, source.cy),
           ec: source.ec,
           lineColors: source.lineColors.slice(),
           cc: source.cc
@@ -235,13 +237,14 @@ export function reorderFrame(doc: SpritesDoc, spriteIndex: number, from: number,
 
 export function addSprite(doc: SpritesDoc): SpritesDoc {
   const name = `sprite_${doc.sprites.length}`
-  return { ...doc, sprites: [...doc.sprites, { name, frames: [{ layers: [createLayer(doc.size)] }] }] }
+  return { ...doc, sprites: [...doc.sprites, { name, cols: 1, rows: 1, frames: [{ layers: [createLayer(doc.size)] }] }] }
 }
 
 export function duplicateSprite(doc: SpritesDoc, index: number): SpritesDoc {
   const source = doc.sprites[index]
   if (!source) return doc
   const copy: SpriteCharacter = {
+    ...source,
     name: `${source.name}_copy`,
     frames: source.frames.map((frame) => ({ layers: cloneLayers(frame.layers) }))
   }
@@ -259,22 +262,76 @@ export function renameSprite(doc: SpritesDoc, index: number, name: string): Spri
   return updateSprite(doc, index, (sprite) => ({ ...sprite, name }))
 }
 
-/** Adds a blank layer to every frame of the sprite, keeping the layer count in sync across frames; no-op at MAX_LAYERS. */
-export function addLayer(doc: SpritesDoc, spriteIndex: number): SpritesDoc {
+/**
+ * Adds a blank plane on cell `(cx, cy)` to every frame, keeping the layer
+ * count in sync across frames; no-op once that cell holds MAX_LAYERS (the
+ * OR-color stack limit is per hardware sprite, so each cell gets its own 4).
+ */
+export function addLayer(doc: SpritesDoc, spriteIndex: number, cx = 0, cy = 0): SpritesDoc {
   return updateSprite(doc, spriteIndex, (sprite) => ({
     ...sprite,
     frames: sprite.frames.map((frame) =>
-      frame.layers.length >= MAX_LAYERS ? frame : { layers: [...frame.layers, createLayer(doc.size)] }
+      cellLayers(frame, cx, cy).length >= MAX_LAYERS ? frame : { layers: [...frame.layers, createLayer(doc.size, 15, cx, cy)] }
     )
   }))
 }
 
-/** Removes one layer index from every frame; no-op if any frame would be left with none. */
+/**
+ * Removes one layer index from every frame; no-op if any frame would be left
+ * with none. A cell *may* end up empty — that just means the metasprite
+ * doesn't spend a hardware sprite there.
+ */
 export function removeLayer(doc: SpritesDoc, spriteIndex: number, layerIndex: number): SpritesDoc {
   return updateSprite(doc, spriteIndex, (sprite) =>
     sprite.frames.some((frame) => frame.layers.length <= 1)
       ? sprite
       : { ...sprite, frames: sprite.frames.map((frame) => ({ layers: frame.layers.filter((_, i) => i !== layerIndex) })) }
+  )
+}
+
+/** Index of the first plane on cell `(cx, cy)`, or -1 — what a canvas click selects. */
+export function layerAtCell(frame: SpriteFrame, cx: number, cy: number): number {
+  return frame.layers.findIndex((layer) => layer.cx === cx && layer.cy === cy)
+}
+
+/**
+ * Resizes a character's metasprite grid. Growing gives every new cell one
+ * blank plane so it can be drawn on immediately; shrinking drops the planes
+ * that fall outside — which is real pixel loss, so the editor confirms first
+ * (`gridShrinkLossy`).
+ */
+export function setCharacterGrid(doc: SpritesDoc, spriteIndex: number, cols: number, rows: number): SpritesDoc {
+  const clamp = (value: number): number => Math.min(MAX_GRID, Math.max(1, value | 0))
+  const nextCols = clamp(cols)
+  const nextRows = clamp(rows)
+  return updateSprite(doc, spriteIndex, (sprite) => {
+    if (sprite.cols === nextCols && sprite.rows === nextRows) return sprite
+    const added: { cx: number; cy: number }[] = []
+    for (let cy = 0; cy < nextRows; cy++) {
+      for (let cx = 0; cx < nextCols; cx++) if (cx >= sprite.cols || cy >= sprite.rows) added.push({ cx, cy })
+    }
+    return {
+      ...sprite,
+      cols: nextCols,
+      rows: nextRows,
+      frames: sprite.frames.map((frame) => ({
+        layers: [
+          ...frame.layers.filter((layer) => layer.cx < nextCols && layer.cy < nextRows),
+          ...added.map(({ cx, cy }) => createLayer(doc.size, 15, cx, cy))
+        ]
+      }))
+    }
+  })
+}
+
+/** True when shrinking to `cols × rows` would discard planes that carry pixels. */
+export function gridShrinkLossy(doc: SpritesDoc, spriteIndex: number, cols: number, rows: number): boolean {
+  const sprite = doc.sprites[spriteIndex]
+  if (!sprite) return false
+  return sprite.frames.some((frame) =>
+    frame.layers.some(
+      (layer) => (layer.cx >= cols || layer.cy >= rows) && layer.pattern.some((value) => value !== 0)
+    )
   )
 }
 
@@ -306,7 +363,12 @@ export function convertSpriteSize(doc: SpritesDoc, size: SpriteSize): SpritesDoc
     ...sprite,
     frames: sprite.frames.map((frame) => ({
       layers: frame.layers.map((layer) => {
-        let out: SpriteLayer = { ...createLayer(size, layer.color), ec: layer.ec, lineColors: layer.lineColors.slice(), cc: layer.cc }
+        let out: SpriteLayer = {
+          ...createLayer(size, layer.color, layer.cx, layer.cy),
+          ec: layer.ec,
+          lineColors: layer.lineColors.slice(),
+          cc: layer.cc
+        }
         for (let y = 0; y < min; y++) {
           for (let x = 0; x < min; x++) {
             if (getSpritePixel(layer, x, y, from)) out = setSpritePixel(out, x, y, size, true)
@@ -344,14 +406,20 @@ export interface ScanlineBudget {
 
 /**
  * ponytail: the editor has no notion of on-screen placement, so this sums every
- * character's resting-pose (frame 0) layer count as a worst case — the number of
- * hardware sprite planes you'd burn if every character were placed on the same
- * scanline. Upgrade to real placement tracking if a scene/map editor ever knows
- * actual sprite Y coordinates.
+ * character's resting-pose (frame 0) worst case — the number of hardware sprite
+ * planes you'd burn if every character were placed on the same scanline.
+ * Within a character only the busiest *cell row* counts: a metasprite's second
+ * row of cells sits `size` dots lower and never shares a scanline with the first.
+ * Upgrade to real placement tracking if a scene/map editor ever knows actual
+ * sprite Y coordinates.
  */
 export function scanlineBudget(doc: SpritesDoc): ScanlineBudget {
   const limit = doc.mode === 1 ? 4 : 8
-  const total = doc.sprites.reduce((sum, sprite) => sum + (sprite.frames[0]?.layers.length ?? 0), 0)
+  const total = doc.sprites.reduce((sum, sprite) => {
+    const perRow = new Map<number, number>()
+    for (const layer of sprite.frames[0]?.layers ?? []) perRow.set(layer.cy, (perRow.get(layer.cy) ?? 0) + 1)
+    return sum + Math.max(0, ...perRow.values())
+  }, 0)
   return { limit, total, exceeded: total > limit }
 }
 

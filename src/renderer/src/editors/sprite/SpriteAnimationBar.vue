@@ -25,6 +25,10 @@ const previewCanvas = ref<HTMLCanvasElement>()
 
 const sprite = computed(() => props.doc.sprites[props.target.sprite])
 const frames = computed(() => sprite.value?.frames ?? [])
+const cols = computed(() => sprite.value?.cols ?? 1)
+const rows = computed(() => sprite.value?.rows ?? 1)
+/** Longest side of the character in dots — what both the preview and the thumbnails scale against. */
+const span = computed(() => Math.max(cols.value, rows.value) * props.doc.size)
 
 const previewIndex = ref(0)
 const displayIndex = computed(() => (playing.value ? previewIndex.value : props.target.frame))
@@ -66,9 +70,10 @@ function drawPreview(): void {
   const frame = frames.value[displayIndex.value]
   if (!canvas || !ctx || !frame) return
   const size = props.doc.size
-  const scale = canvas.width / size
+  const scale = canvas.width / span.value
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-  drawIndices(ctx, compositeFrame(frame.layers, props.doc.mode, size), size, scale, paletteToRgb(props.doc.palette))
+  const indices = compositeFrame(frame.layers, props.doc.mode, size, cols.value, rows.value)
+  drawIndices(ctx, indices, cols.value * size, scale, paletteToRgb(props.doc.palette))
 }
 // flush: 'post' so both effects' canvas refs exist on the very first run.
 watchEffect(drawPreview, { flush: 'post' })
@@ -81,7 +86,8 @@ function redrawThumbs(): void {
     if (!canvas || !ctx) return
     ctx.clearRect(0, 0, THUMB, THUMB)
     const size = props.doc.size
-    drawIndices(ctx, compositeFrame(frame.layers, props.doc.mode, size), size, THUMB / size, rgb)
+    const indices = compositeFrame(frame.layers, props.doc.mode, size, cols.value, rows.value)
+    drawIndices(ctx, indices, cols.value * size, THUMB / span.value, rgb)
   })
 }
 watchEffect(redrawThumbs, { flush: 'post' })
@@ -95,8 +101,8 @@ watchEffect(redrawThumbs, { flush: 'post' })
     >
       <canvas
         ref="previewCanvas"
-        :width="doc.size * 6"
-        :height="doc.size * 6"
+        :width="span * 6"
+        :height="span * 6"
       />
     </div>
 

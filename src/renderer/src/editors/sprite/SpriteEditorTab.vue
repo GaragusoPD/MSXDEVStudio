@@ -219,6 +219,7 @@ watch(
           :tool="session.tool"
           :onion-skin="session.onionSkin"
           @commit="commit(session, $event)"
+          @select-layer="selectLayer(session, $event)"
         />
         <SpriteLayerPanel
           :doc="doc(session)"

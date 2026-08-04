@@ -26,9 +26,10 @@ function redrawThumbs(): void {
     if (!canvas || !ctx) return
     ctx.clearRect(0, 0, THUMB, THUMB)
     const size = props.doc.size
-    const scale = THUMB / size
-    const indices = compositeFrame(sprite.frames[0].layers, props.doc.mode, size)
-    drawIndices(ctx, indices, size, scale, rgb)
+    // A metasprite is wider and/or taller than one sprite: fit the longer side.
+    const scale = THUMB / (Math.max(sprite.cols, sprite.rows) * size)
+    const indices = compositeFrame(sprite.frames[0].layers, props.doc.mode, size, sprite.cols, sprite.rows)
+    drawIndices(ctx, indices, sprite.cols * size, scale, rgb)
   })
 }
 

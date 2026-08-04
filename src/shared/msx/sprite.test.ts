@@ -19,6 +19,7 @@ import {
   spriteColorBytes,
   spritePatternBytes,
   validateSprites,
+  type SpriteFrame,
   type SpriteLayer
 } from './sprite'
 
@@ -193,6 +194,103 @@ describe('document normalization', () => {
     })
     expect(doc.sprites[0].frames[0].layers).toHaveLength(4)
     expect(validateSprites(doc)).toEqual([])
+  })
+})
+
+describe('metasprites', () => {
+  /** A 2×1 character: 8 dots of `left` on cell 0, 8 of `right` on cell 1, both on row 0. */
+  function pair(left: number, right: number): SpriteFrame {
+    return {
+      layers: [
+        { ...layer8(left, 2), cx: 0, cy: 0 },
+        { ...layer8(right, 5), cx: 1, cy: 0 }
+      ]
+    }
+  }
+
+  it('defaults every character to a 1×1 grid at cell (0, 0)', () => {
+    const doc = createSpritesDoc(2, 16)
+    expect(doc.sprites[0]).toMatchObject({ cols: 1, rows: 1 })
+    expect(doc.sprites[0].frames[0].layers[0]).toMatchObject({ cx: 0, cy: 0 })
+  })
+
+  it('composites the whole grid, each plane answering only for its own cell', () => {
+    const indices = compositeFrame(pair(0xff, 0xff).layers, 2, 8, 2, 1)
+    expect(indices).toHaveLength(16 * 8)
+    expect([...indices.subarray(0, 16)]).toEqual([...new Array(8).fill(2), ...new Array(8).fill(5)])
+    // Row 1 is blank in both planes: cell offsets shift x, never y.
+    expect([...indices.subarray(16, 32)]).toEqual(new Array(16).fill(0))
+  })
+
+  it('offsets rows as well as columns', () => {
+    const layers = [
+      { ...layer8(0xff, 2), cx: 0, cy: 0 },
+      { ...layer8(0xff, 5), cx: 0, cy: 1 }
+    ]
+    const indices = compositeFrame(layers, 2, 8, 1, 2)
+    expect(indices[0]).toBe(2)
+    expect(indices[8 * 8]).toBe(5) // first dot of the second cell row
+  })
+
+  it('OR-blends inside a cell but never across cells', () => {
+    const layers = [
+      { ...layer8(0xff, 1), cx: 0, cy: 0 },
+      { ...layer8(0xff, 4, SPRITE_CC), cx: 0, cy: 0 },
+      { ...layer8(0xff, 8, SPRITE_CC), cx: 1, cy: 0 } // CC, but a different sprite: no blend
+    ]
+    const row = [...compositeFrame(layers, 2, 8, 2, 1).subarray(0, 16)]
+    expect(row.slice(0, 8)).toEqual(new Array(8).fill(1 | 4))
+    expect(row.slice(8)).toEqual(new Array(8).fill(8))
+  })
+
+  it('counts the 4-layer limit per cell, not per character', () => {
+    const doc = normalizeSprites({
+      mode: 2,
+      size: 8,
+      sprites: [
+        {
+          name: 'big',
+          cols: 2,
+          rows: 1,
+          layers: [...new Array(5).fill({ ...createLayer(8), cx: 0 }), ...new Array(5).fill({ ...createLayer(8), cx: 1 })]
+        }
+      ]
+    })
+    const layers = doc.sprites[0].frames[0].layers
+    expect(layers.filter((l) => l.cx === 0)).toHaveLength(4)
+    expect(layers.filter((l) => l.cx === 1)).toHaveLength(4)
+    expect(validateSprites(doc)).toEqual([])
+  })
+
+  it('clamps a grid and any cell outside it back into range', () => {
+    const doc = normalizeSprites({
+      mode: 2,
+      size: 8,
+      sprites: [{ name: 'x', cols: 99, rows: 0, layers: [{ ...createLayer(8), cx: 7, cy: 3 }] }]
+    })
+    expect(doc.sprites[0]).toMatchObject({ cols: 4, rows: 1 })
+    expect(doc.sprites[0].frames[0].layers[0]).toMatchObject({ cx: 3, cy: 0 })
+    expect(validateSprites(doc)).toEqual([])
+  })
+
+  it('reports a plane parked outside the grid', () => {
+    const doc = createSpritesDoc(2, 8)
+    doc.sprites[0].frames[0].layers[0].cx = 2
+    expect(validateSprites(doc)).toEqual([
+      'sprite_0 frame 0 layer 0: cell (2,0) outside the 1×1 grid'
+    ])
+  })
+
+  it('round-trips the grid and cells through serialize/normalize', () => {
+    const doc = normalizeSprites({ mode: 2, size: 8, sprites: [{ name: 'x', cols: 2, rows: 2 }] })
+    const meta = { ...doc, sprites: [{ ...doc.sprites[0], frames: [pair(0x0f, 0xf0)] }] }
+    const reloaded = normalizeSprites(JSON.parse(JSON.stringify(serializeSprites(meta))))
+    expect(reloaded.sprites[0]).toMatchObject({ cols: 2, rows: 2 })
+    expect(reloaded.sprites[0].frames[0].layers.map((l) => [l.cx, l.cy])).toEqual([
+      [0, 0],
+      [1, 0]
+    ])
+    expect(spritePatternBytes(reloaded)).toEqual(spritePatternBytes(meta))
   })
 })
 

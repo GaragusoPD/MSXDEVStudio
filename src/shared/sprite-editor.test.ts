@@ -7,6 +7,7 @@ import {
   getSpritePixel,
   normalizeSprites,
   serializeSprites,
+  MAX_GRID,
   setLayerCc,
   setLineColorByte,
   SPRITE_CC
@@ -20,6 +21,8 @@ import {
   createHistory,
   duplicateSprite,
   floodFill,
+  gridShrinkLossy,
+  layerAtCell,
   mirrorLayer,
   modeConversionLossy,
   paintLine,
@@ -32,6 +35,7 @@ import {
   renameSprite,
   reorderFrame,
   scanlineBudget,
+  setCharacterGrid,
   shiftLayer,
   sizeConversionLossy,
   stripToFrames,
@@ -258,6 +262,71 @@ describe('scanline budget hint', () => {
 
   it('mode 2’s limit is 8', () => {
     expect(scanlineBudget(createSpritesDoc(2, 16)).limit).toBe(8)
+  })
+
+  it('charges a metasprite only its busiest cell row — the other rows sit on other scanlines', () => {
+    let doc = setCharacterGrid(createSpritesDoc(2, 16), 0, 2, 2) // 4 cells, one plane each
+    expect(scanlineBudget(doc).total).toBe(2) // 2 planes per cell row, not 4
+    doc = addLayer(doc, 0, 0, 0) // second plane on the top-left cell
+    expect(scanlineBudget(doc).total).toBe(3)
+  })
+})
+
+describe('metasprite grid', () => {
+  it('grows with one blank plane per new cell and shrinks by dropping the ones outside', () => {
+    const doc = setCharacterGrid(createSpritesDoc(2, 8), 0, 2, 2)
+    expect(doc.sprites[0]).toMatchObject({ cols: 2, rows: 2 })
+    expect(doc.sprites[0].frames[0].layers.map((l) => [l.cx, l.cy])).toEqual([
+      [0, 0],
+      [1, 0],
+      [0, 1],
+      [1, 1]
+    ])
+
+    const shrunk = setCharacterGrid(doc, 0, 1, 1)
+    expect(shrunk.sprites[0].frames[0].layers).toHaveLength(1)
+    expect(shrunk.sprites[0].frames[0].layers[0]).toMatchObject({ cx: 0, cy: 0 })
+  })
+
+  it('resizes every frame, not just the one being edited', () => {
+    let doc = addFrame(createSpritesDoc(2, 8), 0)
+    doc = setCharacterGrid(doc, 0, 2, 1)
+    expect(doc.sprites[0].frames.map((f) => f.layers.length)).toEqual([2, 2])
+  })
+
+  it('clamps the grid to 1..MAX_GRID', () => {
+    const doc = setCharacterGrid(createSpritesDoc(2, 8), 0, 99, 0)
+    expect(doc.sprites[0]).toMatchObject({ cols: MAX_GRID, rows: 1 })
+  })
+
+  it('only calls a shrink lossy when the dropped planes carry pixels', () => {
+    const doc = setCharacterGrid(createSpritesDoc(2, 8), 0, 2, 1)
+    expect(gridShrinkLossy(doc, 0, 1, 1)).toBe(false)
+    const painted = updateLayer(doc, { sprite: 0, frame: 0, layer: 1 }, (l) => paintPixel(l, 0, 0, 8, true))
+    expect(gridShrinkLossy(painted, 0, 1, 1)).toBe(true)
+  })
+
+  it('adds and finds layers per cell', () => {
+    let doc = setCharacterGrid(createSpritesDoc(2, 8), 0, 2, 1)
+    expect(layerAtCell(doc.sprites[0].frames[0], 1, 0)).toBe(1)
+    expect(layerAtCell(doc.sprites[0].frames[0], 0, 1)).toBe(-1)
+
+    for (let i = 0; i < 5; i++) doc = addLayer(doc, 0, 1, 0) // cell (1,0) fills at MAX_LAYERS
+    const layers = doc.sprites[0].frames[0].layers
+    expect(layers.filter((l) => l.cx === 1)).toHaveLength(4)
+    expect(layers.filter((l) => l.cx === 0)).toHaveLength(1)
+  })
+
+  it('lets a cell go empty but never the whole frame', () => {
+    const doc = setCharacterGrid(createSpritesDoc(2, 8), 0, 2, 1)
+    const emptied = removeLayer(doc, 0, 1)
+    expect(layerAtCell(emptied.sprites[0].frames[0], 1, 0)).toBe(-1)
+    expect(removeLayer(emptied, 0, 0)).toBe(emptied)
+  })
+
+  it('keeps cells through a size conversion', () => {
+    const doc = setCharacterGrid(createSpritesDoc(2, 8), 0, 2, 1)
+    expect(convertSpriteSize(doc, 16).sprites[0].frames[0].layers.map((l) => l.cx)).toEqual([0, 1])
   })
 })
 

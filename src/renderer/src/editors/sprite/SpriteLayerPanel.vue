@@ -11,6 +11,8 @@ import {
   compositeFrame,
   convertSpriteMode,
   lineColorByte,
+  MAX_GRID,
+  MAX_LAYERS,
   setLayerCc,
   setLineColorByte,
   SPRITE_CC,
@@ -23,8 +25,10 @@ import {
 import {
   addLayer,
   convertSpriteSize,
+  gridShrinkLossy,
   modeConversionLossy,
   removeLayer,
+  setCharacterGrid,
   sizeConversionLossy,
   updateLayer,
   type SpriteTarget
@@ -35,10 +39,17 @@ const props = defineProps<{ doc: SpritesDoc; target: SpriteTarget }>()
 const emit = defineEmits<{ selectLayer: [index: number]; mutate: [doc: SpritesDoc] }>()
 
 const rgb = computed<Rgb[]>(() => paletteToRgb(props.doc.palette))
-const frame = computed(() => props.doc.sprites[props.target.sprite]?.frames[props.target.frame])
+const character = computed(() => props.doc.sprites[props.target.sprite])
+const frame = computed(() => character.value?.frames[props.target.frame])
 const layers = computed(() => frame.value?.layers ?? [])
 const activeLayer = computed(() => layers.value[props.target.layer])
 const lines = computed(() => props.doc.size) // 8×8 sprites only use the first 8 of the 16 line-color bytes
+const isMeta = computed(() => (character.value?.cols ?? 1) * (character.value?.rows ?? 1) > 1)
+/** New planes land on the active plane's cell — the one the canvas is outlining. */
+const activeCell = computed(() => ({ cx: activeLayer.value?.cx ?? 0, cy: activeLayer.value?.cy ?? 0 }))
+const cellFull = computed(
+  () => layers.value.filter((l) => l.cx === activeCell.value.cx && l.cy === activeCell.value.cy).length >= MAX_LAYERS
+)
 
 const THUMB = 32
 const thumbRefs = ref<(HTMLCanvasElement | null)[]>([])
@@ -50,7 +61,8 @@ function redrawThumbs(): void {
     if (!canvas || !ctx) return
     ctx.clearRect(0, 0, THUMB, THUMB)
     const size = props.doc.size
-    drawIndices(ctx, compositeFrame([layer], props.doc.mode, size), size, THUMB / size, rgb.value)
+    // Drawn at the origin whatever cell it belongs to, so the thumbnail is the plane itself.
+    drawIndices(ctx, compositeFrame([{ ...layer, cx: 0, cy: 0 }], props.doc.mode, size), size, THUMB / size, rgb.value)
   })
 }
 // flush: 'post' so the layer-row canvas refs exist on the very first run, not just later ones.
@@ -93,6 +105,18 @@ function changeMode(mode: SpriteMode): void {
   emit('mutate', convertSpriteMode(props.doc, mode))
 }
 
+function changeGrid(cols: number, rows: number): void {
+  if (
+    gridShrinkLossy(props.doc, props.target.sprite, cols, rows) &&
+    !window.confirm('Shrinking the grid deletes the hardware sprites outside it, with their pixels. Continue?')
+  ) {
+    return
+  }
+  emit('mutate', setCharacterGrid(props.doc, props.target.sprite, cols, rows))
+  // The active plane may have just been dropped; the first one always exists.
+  emit('selectLayer', 0)
+}
+
 function changeSize(size: SpriteSize): void {
   if (size === props.doc.size) return
   if (sizeConversionLossy(props.doc, size) && !window.confirm('Shrinking to 8×8 crops every pattern to its top-left corner and discards the rest. Continue?')) return
@@ -102,13 +126,55 @@ function changeSize(size: SpriteSize): void {
 
 <template>
   <div class="panel">
+    <section v-if="character">
+      <h3>Character grid</h3>
+      <div class="grid-pick">
+        <select
+          :value="character.cols"
+          title="Hardware sprites across"
+          @change="changeGrid(Number(($event.target as HTMLSelectElement).value), character.rows)"
+        >
+          <option
+            v-for="c in MAX_GRID"
+            :key="c"
+            :value="c"
+          >
+            {{ c }}
+          </option>
+        </select>
+        <span>×</span>
+        <select
+          :value="character.rows"
+          title="Hardware sprites down"
+          @change="changeGrid(character.cols, Number(($event.target as HTMLSelectElement).value))"
+        >
+          <option
+            v-for="r in MAX_GRID"
+            :key="r"
+            :value="r"
+          >
+            {{ r }}
+          </option>
+        </select>
+        <span class="dims">= {{ character.cols * doc.size }}×{{ character.rows * doc.size }} px</span>
+      </div>
+      <p
+        v-if="isMeta"
+        class="hint"
+      >
+        Click a cell on the canvas to paint it. Each cell is one hardware sprite, and each of its
+        layers costs another — the 4/8-per-scanline limit counts them all.
+      </p>
+    </section>
+
     <section>
       <div class="section-head">
         <h3>Layers</h3>
         <button
           type="button"
-          :disabled="layers.length >= 4"
-          @click="emit('mutate', addLayer(doc, target.sprite))"
+          :title="isMeta ? `Add a plane on cell (${activeCell.cx}, ${activeCell.cy})` : 'Add a plane'"
+          :disabled="cellFull"
+          @click="emit('mutate', addLayer(doc, target.sprite, activeCell.cx, activeCell.cy))"
         >
           + Layer
         </button>
@@ -118,7 +184,7 @@ function changeSize(size: SpriteSize): void {
           v-for="(layer, index) in layers"
           :key="index"
           class="row"
-          :class="{ active: index === target.layer }"
+          :class="{ active: index === target.layer, dim: isMeta && (layer.cx !== activeCell.cx || layer.cy !== activeCell.cy) }"
           @click="emit('selectLayer', index)"
         >
           <canvas
@@ -127,7 +193,13 @@ function changeSize(size: SpriteSize): void {
             :width="THUMB"
             :height="THUMB"
           />
-          <span class="label">Layer {{ index + 1 }}</span>
+          <span class="label">
+            Layer {{ index + 1 }}
+            <span
+              v-if="isMeta"
+              class="cell"
+            >({{ layer.cx }}, {{ layer.cy }})</span>
+          </span>
           <span
             class="dot"
             :style="{ background: swatch(layer.color) }"
@@ -364,6 +436,41 @@ ul {
 .label {
   flex: 1;
   font-size: 11px;
+}
+
+.row.dim {
+  opacity: 0.55;
+}
+
+.cell {
+  color: var(--color-text-muted);
+}
+
+.grid-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.grid-pick select {
+  padding: 2px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.grid-pick .dims {
+  color: var(--color-text-muted);
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
 }
 
 .dot {

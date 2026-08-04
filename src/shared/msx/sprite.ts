@@ -24,7 +24,10 @@ export const SPRITE_CC = 0x40
 export const SPRITE_IC = 0x20
 export const SPRITE_COLOR_MASK = 0x0f
 
+/** Planes stacked on one cell — the OR-color limit, not a grid limit. */
 export const MAX_LAYERS = 4
+/** Cells per axis in a metasprite grid. 4 × 16 = 64 dots, past any practical character. */
+export const MAX_GRID = 4
 
 export interface SpriteLayer {
   /** 8 bytes for an 8×8 sprite, 32 for 16×16 (four quadrants). */
@@ -37,14 +40,30 @@ export interface SpriteLayer {
   lineColors: number[]
   /** Mode 2 convenience mirror: true when every line byte has CC set. Writing it rewrites all 16. */
   cc: boolean
+  /** Metasprite grid column this plane sits in, in `size` units. 0 for a plain character. */
+  cx: number
+  /** Metasprite grid row, in `size` units. */
+  cy: number
 }
 
 export interface SpriteFrame {
+  /**
+   * Every plane of every cell, flat. Order is priority order within a cell
+   * (and the order planes are emitted in); planes of different cells never
+   * overlap, so their relative order doesn't matter.
+   */
   layers: SpriteLayer[]
 }
 
 export interface SpriteCharacter {
   name: string
+  /**
+   * Metasprite grid, in `size` units: a 32×32 Metal Gear-style character is
+   * `cols: 2, rows: 2` of 16×16 hardware sprites. 1×1 is one sprite (plus
+   * however many planes are stacked on it).
+   */
+  cols: number
+  rows: number
   /** Animation frames; `frames[0]` is the resting pose. */
   frames: SpriteFrame[]
 }
@@ -65,13 +84,15 @@ export function patternBytesFor(size: SpriteSize): number {
 
 const zeros = (n: number): number[] => new Array<number>(n).fill(0)
 
-export function createLayer(size: SpriteSize, color = 15): SpriteLayer {
+export function createLayer(size: SpriteSize, color = 15, cx = 0, cy = 0): SpriteLayer {
   return {
     pattern: zeros(patternBytesFor(size)),
     color,
     ec: false,
     lineColors: new Array<number>(16).fill(color & SPRITE_COLOR_MASK),
-    cc: false
+    cc: false,
+    cx,
+    cy
   }
 }
 
@@ -79,11 +100,21 @@ export function createSpritesDoc(mode: SpriteMode = 2, size: SpriteSize = 16): S
   return normalizeSprites({ mode, size, sprites: [{ name: 'sprite_0', layers: [createLayer(size)] }] })
 }
 
+/** Layers of one cell, in document order. */
+export function cellLayers(frame: SpriteFrame, cx: number, cy: number): SpriteLayer[] {
+  return frame.layers.filter((layer) => layer.cx === cx && layer.cy === cy)
+}
+
 function byte(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? ((value | 0) & 0xff) : fallback
 }
 
-function normalizeLayer(raw: unknown, size: SpriteSize): SpriteLayer {
+/** Clamps to `1..max`, falling back to 1 for anything non-numeric. */
+function extent(value: unknown, max: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(1, value | 0)) : 1
+}
+
+function normalizeLayer(raw: unknown, size: SpriteSize, cols: number, rows: number): SpriteLayer {
   const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<SpriteLayer>
   const length = patternBytesFor(size)
   const color = typeof input.color === 'number' ? input.color & SPRITE_COLOR_MASK : 15
@@ -92,13 +123,18 @@ function normalizeLayer(raw: unknown, size: SpriteSize): SpriteLayer {
       ? (input.ec ? SPRITE_EC : 0) | (input.cc ? SPRITE_CC : 0) | color
       : byte(input.lineColors[i])
   )
+  // A cell outside the grid would be a plane the editor can't reach, so clamp rather than keep it.
+  const cell = (value: unknown, limit: number): number =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.min(limit - 1, Math.max(0, value | 0)) : 0
   return {
     pattern: Array.from({ length }, (_, i) => byte(input.pattern?.[i])),
     color,
     ec: input.ec === true,
     lineColors,
     // Derived, never trusted from the file: the line bytes are what the VDP reads.
-    cc: lineColors.every((value) => (value & SPRITE_CC) !== 0)
+    cc: lineColors.every((value) => (value & SPRITE_CC) !== 0),
+    cx: cell(input.cx, cols),
+    cy: cell(input.cy, rows)
   }
 }
 
@@ -115,14 +151,27 @@ export function normalizeSprites(raw: unknown): SpritesDoc {
 
   const sprites = rawSprites.map((entry, index) => {
     const sprite = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>
+    const cols = extent(sprite.cols, MAX_GRID)
+    const rows = extent(sprite.rows, MAX_GRID)
     const rawFrames = Array.isArray(sprite.frames) && sprite.frames.length ? sprite.frames : null
     const frameSources = rawFrames ?? [{ layers: sprite.layers }]
     const frames: SpriteFrame[] = frameSources.map((frame) => {
       const layers = (frame as { layers?: unknown })?.layers
       const list = Array.isArray(layers) && layers.length ? layers : [null]
-      return { layers: list.slice(0, MAX_LAYERS).map((layer) => normalizeLayer(layer, size)) }
+      // MAX_LAYERS is the OR-color stack per cell, so the cap is counted per cell, not per frame.
+      const perCell = new Map<string, number>()
+      const kept: SpriteLayer[] = []
+      for (const raw of list) {
+        const layer = normalizeLayer(raw, size, cols, rows)
+        const key = `${layer.cx},${layer.cy}`
+        const count = perCell.get(key) ?? 0
+        if (count >= MAX_LAYERS) continue
+        perCell.set(key, count + 1)
+        kept.push(layer)
+      }
+      return { layers: kept.length ? kept : [createLayer(size)] }
     })
-    return { name: String(sprite.name ?? `sprite_${index}`), frames }
+    return { name: String(sprite.name ?? `sprite_${index}`), cols, rows, frames }
   })
 
   const palette =
@@ -135,7 +184,7 @@ export function normalizeSprites(raw: unknown): SpritesDoc {
     mode,
     size,
     palette: mode === 2 ? palette : null,
-    sprites: sprites.length ? sprites : [{ name: 'sprite_0', frames: [{ layers: [createLayer(size)] }] }],
+    sprites: sprites.length ? sprites : [{ name: 'sprite_0', cols: 1, rows: 1, frames: [{ layers: [createLayer(size)] }] }],
     export: (input.export as ExportBlock | undefined) ?? null
   }
 }
@@ -149,6 +198,8 @@ export function serializeSprites(doc: SpritesDoc): unknown {
     palette: doc.palette,
     sprites: doc.sprites.map((sprite) => ({
       name: sprite.name,
+      cols: sprite.cols,
+      rows: sprite.rows,
       layers: sprite.frames[0]?.layers ?? [],
       frames: sprite.frames
     })),
@@ -199,7 +250,9 @@ export function setLayerCc(layer: SpriteLayer, cc: boolean): SpriteLayer {
 // ── OR-color composite (the Spec 09 core) ───────────────────────────────────
 
 /**
- * The composite color the VDP shows at (x, y) for one frame's planes.
+ * The composite color the VDP shows at (x, y) for one frame's planes, in
+ * *character* space — for a metasprite that is the whole `cols × rows` grid,
+ * and each plane only answers for dots inside its own cell.
  * Returns 0 when nothing is displayed (sprite color 0 is transparent).
  *
  * VDP rule (MSX2 Technical Handbook 4.5, sprite mode 2): a plane whose CC bit
@@ -224,7 +277,13 @@ export function compositePixel(
   let groupHasPixel = false
 
   for (const layer of layers) {
-    const byteValue = lineColorByte(layer, y, mode)
+    // Character space → this plane's own 8×8/16×16 space. Out-of-cell dots
+    // simply have no pixel, and their (zero) color byte closes the group,
+    // which is what a lower-priority plane would do anyway.
+    const lx = x - layer.cx * size
+    const ly = y - layer.cy * size
+    const inCell = lx >= 0 && ly >= 0 && lx < size && ly < size
+    const byteValue = inCell ? lineColorByte(layer, ly, mode) : 0
     const startsGroup = mode === 1 || (byteValue & SPRITE_CC) === 0
     if (startsGroup) {
       // The previous group is complete: if it painted this dot, it wins.
@@ -232,7 +291,7 @@ export function compositePixel(
       groupColor = 0
       groupHasPixel = false
     }
-    if (getSpritePixel(layer, x, y, size)) {
+    if (inCell && getSpritePixel(layer, lx, ly, size)) {
       groupColor |= byteValue & SPRITE_COLOR_MASK
       groupHasPixel = true
     }
@@ -240,15 +299,22 @@ export function compositePixel(
   return groupHasPixel ? groupColor : 0
 }
 
-/** `size × size` composite color indices, row-major. 0 = transparent. */
+/**
+ * `(cols·size) × (rows·size)` composite color indices, row-major.
+ * 0 = transparent. The default 1×1 grid is one hardware sprite.
+ */
 export function compositeFrame(
   layers: readonly SpriteLayer[],
   mode: SpriteMode,
-  size: SpriteSize
+  size: SpriteSize,
+  cols = 1,
+  rows = 1
 ): Uint8Array {
-  const out = new Uint8Array(size * size)
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) out[y * size + x] = compositePixel(layers, x, y, mode, size)
+  const width = cols * size
+  const height = rows * size
+  const out = new Uint8Array(width * height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) out[y * width + x] = compositePixel(layers, x, y, mode, size)
   }
   return out
 }
@@ -309,10 +375,23 @@ export function validateSprites(doc: SpritesDoc): string[] {
   const length = patternBytesFor(doc.size)
   doc.sprites.forEach((sprite, s) => {
     if (!sprite.frames.length) problems.push(`Sprite ${s} (${sprite.name}) has no frames`)
+    if (sprite.cols < 1 || sprite.cols > MAX_GRID || sprite.rows < 1 || sprite.rows > MAX_GRID) {
+      problems.push(`${sprite.name}: grid ${sprite.cols}×${sprite.rows} outside 1..${MAX_GRID}`)
+    }
     sprite.frames.forEach((frame, f) => {
       if (!frame.layers.length) problems.push(`${sprite.name} frame ${f} has no layers`)
-      if (frame.layers.length > MAX_LAYERS) problems.push(`${sprite.name} frame ${f} has more than ${MAX_LAYERS} layers`)
+      const perCell = new Map<string, number>()
+      frame.layers.forEach((layer) => {
+        const key = `${layer.cx},${layer.cy}`
+        perCell.set(key, (perCell.get(key) ?? 0) + 1)
+      })
+      for (const [cell, count] of perCell) {
+        if (count > MAX_LAYERS) problems.push(`${sprite.name} frame ${f} cell (${cell}) has more than ${MAX_LAYERS} layers`)
+      }
       frame.layers.forEach((layer, l) => {
+        if (layer.cx >= sprite.cols || layer.cy >= sprite.rows || layer.cx < 0 || layer.cy < 0) {
+          problems.push(`${sprite.name} frame ${f} layer ${l}: cell (${layer.cx},${layer.cy}) outside the ${sprite.cols}×${sprite.rows} grid`)
+        }
         if (layer.pattern.length !== length) {
           problems.push(`${sprite.name} frame ${f} layer ${l}: expected ${length} pattern bytes`)
         }
