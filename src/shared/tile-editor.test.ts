@@ -27,6 +27,7 @@ import {
   canRedo,
   canUndo,
   createBlock,
+  copyTiles,
   emitTilesReordered,
   fillPoints,
   fitColumns,
@@ -40,6 +41,7 @@ import {
   pushHistory,
   rectPoints,
   redoHistory,
+  pasteTiles,
   removeBlock,
   selectionBlock,
   splitBlockPoints,
@@ -389,6 +391,75 @@ describe('selectionBlock', () => {
       height: 1,
       tiles: [4, 5]
     })
+  })
+})
+
+describe('the tile clipboard', () => {
+  /** A bank whose tile `i` has pattern byte `i` on every row and flags `i`. */
+  const bank = (count: number): TilesDoc =>
+    normalizeTiles({
+      mode: 'sc2',
+      count,
+      tiles: Array.from({ length: count }, (_, i) => ({ pattern: new Array(8).fill(i), color: new Array(8).fill(0xf1) })),
+      flags: Array.from({ length: count }, (_, i) => i)
+    })
+
+  it('copies pixels, colours and flags — a copy of the tile, not just its picture', () => {
+    const doc = bank(40)
+    const clip = copyTiles(doc, [5], 16)
+    expect(clip).toMatchObject({ width: 1, height: 1, mode: 'sc2' })
+    expect(clip?.tiles[0].entry.pattern).toEqual(new Array(8).fill(5))
+    expect(clip?.tiles[0].flags).toBe(5)
+  })
+
+  it('copies a marquee as a rectangle and pastes it somewhere else', () => {
+    const doc = bank(40)
+    const clip = copyTiles(doc, marqueeIndices(0, 17, 16, 40), 16) // 2×2 of tiles 0, 1, 16, 17
+    expect(clip).toMatchObject({ width: 2, height: 2 })
+
+    const { doc: pasted, pasted: count } = pasteTiles(doc, clip!, 20, 16)
+    expect(count).toBe(4)
+    expect(pasted.tiles[20].pattern[0]).toBe(0)
+    expect(pasted.tiles[21].pattern[0]).toBe(1)
+    expect(pasted.tiles[36].pattern[0]).toBe(16)
+    expect(pasted.tiles[37].pattern[0]).toBe(17)
+    expect(pasted.flags[37]).toBe(17)
+    // Everything outside the paste is untouched.
+    expect(pasted.tiles[22].pattern[0]).toBe(22)
+  })
+
+  it('clips at the right edge instead of wrapping into the next row', () => {
+    const doc = bank(40)
+    const clip = copyTiles(doc, marqueeIndices(0, 2, 16, 40), 16) // 3 wide
+    // Pasted at column 14: two cells fit, the third would wrap.
+    const { doc: pasted, pasted: count } = pasteTiles(doc, clip!, 14, 16)
+    expect(count).toBe(2)
+    expect(pasted.tiles[14].pattern[0]).toBe(0)
+    expect(pasted.tiles[15].pattern[0]).toBe(1)
+    expect(pasted.tiles[16].pattern[0]).toBe(16) // the next row, left alone
+  })
+
+  it('drops cells past the end of the bank, and changes nothing when none land', () => {
+    const doc = bank(18)
+    const clip = copyTiles(doc, marqueeIndices(0, 17, 16, 18), 16)
+    const { pasted } = pasteTiles(doc, clip!, 17, 16)
+    expect(pasted).toBe(1) // only the top-left cell is inside the bank
+    expect(pasteTiles(doc, clip!, 18, 16)).toMatchObject({ pasted: 0, doc })
+  })
+
+  it('refuses a ragged selection, which is no rectangle to copy', () => {
+    expect(copyTiles(bank(40), [0, 1, 8, 9], 16)).toBeNull()
+  })
+
+  it('normalizes what the destination cannot carry, pasting sc2 into sc1', () => {
+    const source = bank(20)
+    const clip = copyTiles(source, [3], 16)!
+    const target = normalizeTiles({ mode: 'sc1', count: 16 })
+    const { doc, pasted } = pasteTiles(target, clip, 0, 16)
+    expect(pasted).toBe(1)
+    expect(doc.tiles[0].pattern).toEqual(new Array(8).fill(3)) // pixels travel
+    expect(doc.tiles[0].color).toEqual([]) // sc1 colour lives on the group
+    expect(validateTiles(doc)).toEqual([])
   })
 })
 

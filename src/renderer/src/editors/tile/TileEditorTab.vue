@@ -21,6 +21,8 @@ import {
   canRedo,
   canUndo,
   commit,
+  copySelection,
+  pasteClipboard,
   pruneTileSessions,
   redo,
   saveSession,
@@ -97,7 +99,13 @@ function onKeydown(event: KeyboardEvent): void {
   if (!event.ctrlKey) return
   const key = event.key.toLowerCase()
   // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.
-  if (key === 'z' && !event.shiftKey) {
+  if (key === 'c') {
+    event.preventDefault()
+    copySelection(session.value)
+  } else if (key === 'v') {
+    event.preventDefault()
+    pasteClipboard(session.value)
+  } else if (key === 'z' && !event.shiftKey) {
     event.preventDefault()
     undo(session.value)
   } else if (key === 'y' || (key === 'z' && event.shiftKey)) {

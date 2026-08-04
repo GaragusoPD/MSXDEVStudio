@@ -10,6 +10,7 @@
  * validation — stay in `shared/msx/tile.ts` and are only ever called from here.
  */
 
+import type { TileMode } from './msx/modes'
 import { MSX1_PALETTE_GRB } from './msx/palette'
 import {
   blockTileAt,
@@ -26,6 +27,7 @@ import {
   TILE_FLAG_COUNT,
   type PaintConflict,
   type TileBlock,
+  type TileEntry,
   type TilesDoc
 } from './msx/tile'
 
@@ -495,6 +497,84 @@ export function marqueeIndices(anchor: number, focus: number, columns: number, c
     }
   }
   return out
+}
+
+// ── clipboard ───────────────────────────────────────────────────────────────
+
+/**
+ * Tiles lifted out of the sheet: their pixels, their per-row colours where the
+ * mode has them, and their gameplay flags — a copy of the *tile*, not just its
+ * picture. `mode` records where they came from, because sc1 keeps colour per
+ * group of eight rather than per tile, so what a paste can carry depends on
+ * both ends.
+ */
+export interface TileClipboard {
+  width: number
+  height: number
+  mode: TileMode
+  /** Row-major, `width * height` of them. */
+  tiles: { entry: TileEntry; flags: number }[]
+}
+
+/** The selection as a rectangle. A single tile is a 1×1 one; a ragged selection is none. */
+export function selectionRect(
+  selection: readonly number[],
+  columns = GRID_COLUMNS
+): { width: number; height: number; tiles: number[] } | null {
+  if (selection.length === 1) return { width: 1, height: 1, tiles: [...selection] }
+  const block = selectionBlock(selection, columns)
+  return block && { width: block.width, height: block.height, tiles: block.tiles }
+}
+
+export function copyTiles(doc: TilesDoc, selection: readonly number[], columns = GRID_COLUMNS): TileClipboard | null {
+  const rect = selectionRect(selection, columns)
+  if (!rect) return null
+  return {
+    width: rect.width,
+    height: rect.height,
+    mode: doc.mode,
+    tiles: rect.tiles.map((index) => ({
+      entry: {
+        pattern: [...(doc.tiles[index]?.pattern ?? [])],
+        color: [...(doc.tiles[index]?.color ?? [])]
+      },
+      flags: doc.flags[index] ?? 0
+    }))
+  }
+}
+
+/**
+ * Writes the clipboard into the bank with its top-left at `at`. Cells that
+ * would run past the right edge of the row, or past the end of the bank, are
+ * dropped rather than wrapping into the next row — a 3-wide stamp pasted two
+ * columns from the edge pastes two columns, not one and a wrapped stray.
+ *
+ * `normalizeTiles` finishes the job, which is what makes a cross-mode paste
+ * safe: colours the destination cannot carry are replaced by its defaults
+ * rather than left in an impossible state.
+ */
+export function pasteTiles(
+  doc: TilesDoc,
+  clipboard: TileClipboard,
+  at: number,
+  columns = GRID_COLUMNS
+): { doc: TilesDoc; pasted: number } {
+  const tiles = doc.tiles.map((tile) => ({ pattern: [...tile.pattern], color: [...tile.color] }))
+  const flags = [...doc.flags]
+  const left = at % columns
+  let pasted = 0
+  for (let y = 0; y < clipboard.height; y++) {
+    for (let x = 0; x < clipboard.width; x++) {
+      const target = at + y * columns + x
+      if (left + x >= columns || target >= doc.count) continue
+      const source = clipboard.tiles[y * clipboard.width + x]
+      if (!source) continue
+      tiles[target] = { pattern: [...source.entry.pattern], color: [...source.entry.color] }
+      flags[target] = source.flags
+      pasted++
+    }
+  }
+  return { doc: pasted ? normalizeTiles({ ...doc, tiles, flags }) : doc, pasted }
 }
 
 // ── the Spec 10 remap seam ──────────────────────────────────────────────────

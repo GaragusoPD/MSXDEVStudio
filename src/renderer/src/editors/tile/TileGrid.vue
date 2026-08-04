@@ -11,7 +11,18 @@ import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
 import { fitColumns, marqueeIndices } from '../../../../shared/tile-editor'
-import { addTile, deleteTile, reorder, select, setColumns, zoom, type TileSession } from './session'
+import {
+  addTile,
+  copySelection,
+  deleteTile,
+  pasteClipboard,
+  reorder,
+  select,
+  setColumns,
+  tileClipboard,
+  zoom,
+  type TileSession
+} from './session'
 
 const props = defineProps<{ session: TileSession }>()
 
@@ -240,6 +251,21 @@ watchEffect(() => {
       </button>
       <button
         type="button"
+        title="Copy the selected tiles — pixels, colours and flags (Ctrl+C)"
+        @click="copySelection(session)"
+      >
+        copy
+      </button>
+      <button
+        type="button"
+        title="Paste with the clipboard's top-left on the selected tile (Ctrl+V)"
+        :disabled="!tileClipboard()"
+        @click="pasteClipboard(session)"
+      >
+        paste
+      </button>
+      <button
+        type="button"
         title="Append a blank tile"
         @click="addTile(session)"
       >
@@ -269,8 +295,8 @@ watchEffect(() => {
       />
     </div>
     <p class="hint">
-      Drag a rectangle to edit those tiles as one image · Shift+click extends it · Alt+drag a tile
-      onto another to reorder.
+      Drag a rectangle to edit those tiles as one image · Shift+click extends it · Ctrl+C/Ctrl+V
+      copies tiles · Alt+drag a tile onto another to reorder.
     </p>
   </div>
 </template>

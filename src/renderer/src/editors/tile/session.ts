@@ -8,7 +8,7 @@
  * here knows a hardware rule.
  */
 
-import { shallowReactive } from 'vue'
+import { shallowReactive, shallowRef } from 'vue'
 import type { TileMode } from '../../../../shared/msx/modes'
 import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import {
@@ -32,6 +32,8 @@ import {
   applyRoleStroke,
   applyStroke,
   blockFromTiles,
+  copyTiles,
+  pasteTiles,
   canRedo,
   createBlock,
   GRID_COLUMNS,
@@ -51,6 +53,7 @@ import {
   transformTile,
   undoHistory,
   type Point,
+  type TileClipboard,
   type TileHistory,
   type TileTool,
   type TileTransform,
@@ -320,6 +323,51 @@ export function deleteBlock(session: TileSession, index: number): void {
   if (next === session.doc) return
   commit(session, next, 'remove block')
   selectBlock(session, null)
+}
+
+// ── clipboard ───────────────────────────────────────────────────────────────
+
+/**
+ * One clipboard for every open tileset, deliberately: copying a tile out of one
+ * bank and into another is the case worth supporting, and a per-session
+ * clipboard would be the one thing that couldn't do it. A `ref` rather than a
+ * plain variable so the toolbar's paste button can be disabled until there is
+ * something to paste.
+ */
+const clipboard = shallowRef<TileClipboard | null>(null)
+
+export function tileClipboard(): TileClipboard | null {
+  return clipboard.value
+}
+
+/** Copies the selection — pixels, per-row colours where the mode has them, and gameplay flags. */
+export function copySelection(session: TileSession): void {
+  const copied = copyTiles(session.doc, session.selection, session.columns)
+  if (!copied) {
+    session.status = 'Select a tile, or drag a rectangle, before copying.'
+    return
+  }
+  clipboard.value = copied
+  session.status = `Copied ${copied.width}×${copied.height} tile${copied.width * copied.height === 1 ? '' : 's'}`
+}
+
+/** Pastes with the clipboard's top-left on the active tile. */
+export function pasteClipboard(session: TileSession): void {
+  const source = clipboard.value
+  if (!source) return
+  const mode = session.doc.mode
+  const { doc, pasted } = pasteTiles(session.doc, source, session.active, session.columns)
+  if (!pasted) {
+    session.status = 'Nothing pasted — that corner leaves no room for the clipboard.'
+    return
+  }
+  commit(session, doc, `paste ${source.width}×${source.height}`)
+  // sc1 keeps colour per group of eight tiles rather than per tile, so pixels
+  // travel and colours stay behind. Better said than silently observed.
+  session.status =
+    source.mode === mode && mode !== 'sc1'
+      ? `Pasted ${pasted} tile${pasted === 1 ? '' : 's'}`
+      : `Pasted ${pasted} tile${pasted === 1 ? '' : 's'} — patterns only; ${mode === 'sc1' ? 'sc1 colours belong to the group of eight' : `colours don't carry from ${source.mode}`}.`
 }
 
 // ── the rest of the toolbar ─────────────────────────────────────────────────
