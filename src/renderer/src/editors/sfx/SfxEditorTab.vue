@@ -21,6 +21,7 @@ import {
 } from '../../../../shared/sfx-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
+import { isTypingTarget } from '../../commands'
 import Icon from '../../components/Icon.vue'
 import SfxLanes from './SfxLanes.vue'
 import { playSfx, scrubFrame, stopSfx } from './audio'
@@ -147,8 +148,7 @@ async function exportNow(): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  const target = event.target as HTMLElement | null
-  if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return
+  if (isTypingTarget(event)) return
   if (event.ctrlKey) {
     const key = event.key.toLowerCase()
     // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.

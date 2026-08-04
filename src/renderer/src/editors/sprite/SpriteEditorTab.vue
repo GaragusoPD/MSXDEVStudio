@@ -17,6 +17,7 @@ import SpriteCanvas from './SpriteCanvas.vue'
 import SpriteLayerPanel from './SpriteLayerPanel.vue'
 import SpriteList from './SpriteList.vue'
 import Icon from '../../components/Icon.vue'
+import { isTypingTarget } from '../../commands'
 import {
   canRedo,
   canUndo,
@@ -71,6 +72,8 @@ function shift(dx: number, dy: number): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // Typing a filename in a side panel is not an editor shortcut.
+  if (isTypingTarget(event)) return
   if (!event.ctrlKey) return
   const key = event.key.toLowerCase()
   // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.

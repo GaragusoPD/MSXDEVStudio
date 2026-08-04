@@ -77,7 +77,14 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
       Open a project to see its graphics resources.
     </p>
 
-    <template v-else>
+    <p
+      v-if="resourcesStore.error"
+      class="hint error"
+    >
+      Couldn't list resources: {{ resourcesStore.error }}
+    </p>
+
+    <template v-else-if="projectStore.open">
       <form
         class="actions"
         @submit.prevent="createResource"
@@ -289,6 +296,10 @@ h3 {
 
 .row button:hover {
   color: var(--color-text);
+}
+
+.hint.error {
+  color: var(--color-error, #f14c4c);
 }
 
 .hint {

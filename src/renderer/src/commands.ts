@@ -20,6 +20,18 @@ import { useBuildStore } from './stores/buildStore'
 import { useProjectStore } from './stores/projectStore'
 import { useTabsStore, type EditorTab } from './stores/tabsStore'
 
+/**
+ * True when the keystroke belongs to whatever the user is typing in. The editors
+ * listen on `window`, so without this a name typed into the Resources panel
+ * reaches the map editor as Backspace-deletes-the-selection, and Ctrl+C in a
+ * text field copies tiles instead of text.
+ */
+export function isTypingTarget(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null
+  if (!target) return false
+  return target.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)
+}
+
 /** Saves one tab through its own editor, whatever kind it is. Synthetic tabs have no path and are skipped. */
 export async function saveTab(tab: EditorTab | undefined): Promise<void> {
   if (!tab?.filePath) return
@@ -28,9 +40,25 @@ export async function saveTab(tab: EditorTab | undefined): Promise<void> {
   else await saveModel(tab)
 }
 
+/**
+ * Saves every dirty tab. One that fails — its file deleted or renamed under the
+ * editor, a permission problem — must not stop the rest: the whole point of the
+ * command is that afterwards nothing is left unsaved. Failures are collected and
+ * reported once, by name, rather than as a console full of rejections.
+ */
 export async function saveAllTabs(): Promise<void> {
+  const failed: string[] = []
   // Sequential: these are small files, and a burst of concurrent writes buys nothing.
-  for (const tab of useTabsStore().tabs.filter((tab) => tab.dirty && tab.filePath)) await saveTab(tab)
+  for (const tab of useTabsStore().tabs.filter((tab) => tab.dirty && tab.filePath)) {
+    try {
+      await saveTab(tab)
+    } catch (error) {
+      failed.push(`${tab.filePath}: ${String(error)}`)
+    }
+  }
+  if (failed.length) {
+    window.alert(`Couldn't save ${failed.length} file${failed.length === 1 ? '' : 's'}:\n\n${failed.join('\n')}`)
+  }
 }
 
 export function closeTabWithPrompt(id: string): void {

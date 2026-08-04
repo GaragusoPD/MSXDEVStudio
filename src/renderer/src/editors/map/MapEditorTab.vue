@@ -16,6 +16,7 @@ import MapCanvas from './MapCanvas.vue'
 import MapPicker from './MapPicker.vue'
 import MapSidePanel from './MapSidePanel.vue'
 import Icon from '../../components/Icon.vue'
+import { isTypingTarget } from '../../commands'
 import {
   canRedo,
   canUndo,
@@ -64,6 +65,8 @@ function zoom(delta: number): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // Typing a filename in a side panel is not an editor shortcut.
+  if (isTypingTarget(event)) return
   const active = session.value
   if (event.ctrlKey) {
     const key = event.key.toLowerCase()

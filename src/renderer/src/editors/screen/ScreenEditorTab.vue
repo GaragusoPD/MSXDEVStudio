@@ -19,6 +19,7 @@ import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import ScreenCanvas from './ScreenCanvas.vue'
 import ScreenPalettePanel from './ScreenPalettePanel.vue'
+import { isTypingTarget } from '../../commands'
 import {
   canRedo,
   canUndo,
@@ -67,6 +68,8 @@ async function onImported(result: ImportResult, file: File | null, mode: ScreenM
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // Typing a filename in a side panel is not an editor shortcut.
+  if (isTypingTarget(event)) return
   if (!event.ctrlKey) return
   const key = event.key.toLowerCase()
   // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.
