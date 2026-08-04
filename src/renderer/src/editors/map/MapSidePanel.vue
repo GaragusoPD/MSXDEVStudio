@@ -8,7 +8,7 @@
 import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
-import { addLayer, commit, doc, pickBlock, reloadTileset, removeLayer, renameLayer, resize, selectLayer, setTileset, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, resize, selectLayer, setTileset, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 
 const props = defineProps<{ session: MapSession }>()
@@ -17,9 +17,6 @@ const resourcesStore = useResourcesStore()
 const mapDoc = computed(() => doc(props.session))
 const widthInput = computed({ get: () => mapDoc.value.width, set: (v) => resize(props.session, v, mapDoc.value.height) })
 const heightInput = computed({ get: () => mapDoc.value.height, set: (v) => resize(props.session, mapDoc.value.width, v) })
-
-/** The tileset's named blocks, straight from the copy the map already holds for drawing. */
-const blocks = computed(() => props.session.tileset?.blocks ?? [])
 
 const tilesetOptions = computed(() => resourcesStore.entries.filter((entry) => entry.kind === 'tiles').map((entry) => entry.path))
 
@@ -107,35 +104,6 @@ const packing = computed(() => {
       >
         Tileset reloaded.
       </p>
-    </section>
-
-    <section>
-      <h3>Blocks</h3>
-      <p
-        v-if="!blocks.length"
-        class="hint"
-      >
-        A block is a design bigger than one tile — a door, a tree — drawn on one
-        canvas in the tile editor and stored as the tiles it is made of. Name one
-        there and it becomes a stamp here.
-      </p>
-      <template v-else>
-        <button
-          v-for="(block, index) in blocks"
-          :key="index"
-          type="button"
-          class="block-row"
-          :class="{ active: session.brushBlock === index }"
-          :title="`Stamp ${block.name} (${block.width}×${block.height} tiles)`"
-          @click="pickBlock(session, index)"
-        >
-          <span class="name">{{ block.name }}</span>
-          <span class="dims">{{ block.width }}×{{ block.height }}</span>
-        </button>
-        <p class="hint">
-          Picks it up as the stamp brush — then click on the map to place it.
-        </p>
-      </template>
     </section>
 
     <section>
@@ -453,43 +421,6 @@ label > span:first-child {
   border-radius: 3px;
   background: var(--color-bg-hover);
   font-size: 11px;
-}
-
-.block-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  margin-bottom: 3px;
-  padding: 3px 6px;
-  border: 1px solid var(--color-border);
-  border-radius: 3px;
-  background: var(--color-bg-tab-inactive);
-  color: var(--color-text);
-  font-size: 11px;
-  text-align: left;
-}
-
-.block-row:hover {
-  background: var(--color-bg-hover);
-}
-
-.block-row.active {
-  border-color: var(--color-accent);
-  background: var(--color-bg-active-item);
-}
-
-.block-row .name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.block-row .dims {
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
 }
 
 .tileset-row {

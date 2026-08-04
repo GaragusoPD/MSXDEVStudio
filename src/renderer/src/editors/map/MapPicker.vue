@@ -10,7 +10,7 @@ import { paletteToRgb } from '../../../../shared/msx/palette'
 import { tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
 import { singleStamp, stampFromMarquee } from '../../../../shared/map-editor'
 import { fitColumns } from '../../../../shared/tile-editor'
-import { pickTile, type MapSession } from './session'
+import { pickBlock, pickTile, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
@@ -18,6 +18,9 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const scroller = ref<HTMLElement | null>(null)
 const hover = ref<number | null>(null)
 let dragAnchor: number | null = null
+
+/** The tileset's named blocks — a stamp bigger than one tile, picked the same way. */
+const blocks = computed(() => props.session.tileset?.blocks ?? [])
 
 const cell = computed(() => props.session.pickerZoom)
 const count = computed(() => props.session.tileset?.count ?? 0)
@@ -160,6 +163,37 @@ watchEffect(() => {
     <p class="hint">
       Click to pick a tile · shift+click (or drag) for a multi-tile stamp.
     </p>
+
+    <section
+      v-if="session.tileset"
+      class="blocks"
+    >
+      <h3>Blocks</h3>
+      <p
+        v-if="!blocks.length"
+        class="hint"
+      >
+        A design bigger than one tile — a door, a tree — drawn on one canvas in
+        the tile editor. Name one there and it becomes a stamp here.
+      </p>
+      <div
+        v-else
+        class="block-list"
+      >
+        <button
+          v-for="(block, index) in blocks"
+          :key="index"
+          type="button"
+          class="block-row"
+          :class="{ active: session.brushBlock === index }"
+          :title="`Stamp ${block.name} (${block.width}×${block.height} tiles)`"
+          @click="pickBlock(session, index)"
+        >
+          <span class="name">{{ block.name }}</span>
+          <span class="dims">{{ block.width }}×{{ block.height }}</span>
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -222,5 +256,71 @@ header {
   border-top: 1px solid var(--color-border);
   font-size: 10px;
   color: var(--color-text-muted);
+}
+
+/* Below the tiles: same pane, because a block is picked exactly like a tile is. */
+.blocks {
+  flex: none;
+  max-height: 30%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--color-border);
+  padding: 6px 8px;
+}
+
+.blocks h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.blocks .hint {
+  padding: 0;
+  border-top: none;
+}
+
+.block-list {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.block-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 3px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  font-size: 11px;
+  text-align: left;
+}
+
+.block-row:hover {
+  background: var(--color-bg-hover);
+}
+
+.block-row.active {
+  border-color: var(--color-accent);
+  background: var(--color-bg-active-item);
+}
+
+.block-row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.block-row .dims {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
 }
 </style>
