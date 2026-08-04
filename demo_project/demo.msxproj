@@ -14,7 +14,8 @@
     "memory",
     "psg",
     "ayfx/ayfx_player",
-    "compress"
+    "compress",
+    "sprite_fx"
   ],
   "projModules": [
     "main"

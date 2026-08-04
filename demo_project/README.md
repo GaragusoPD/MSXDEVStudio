@@ -9,7 +9,7 @@ jumps.
 ![Gameplay](../docs/images/demo-gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
-(about 13.4 KB used) and boots in openMSX or WebMSX.
+(about 14.4 KB used) and boots in openMSX or WebMSX.
 
 ## What it demonstrates
 
@@ -20,7 +20,7 @@ guide](../docs/resources.md):
 | Resource | Editor | Exports | Used for |
 |---|---|---|---|
 | `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
-| `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 dragon in mode 1, six poses, each drawn by **two superposed planes**: one flat green body, one black line art in front of it |
+| `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 dragon in mode 1, six poses, each drawn by **two superposed planes**: one flat green body, one black line art in front of it. Mirrored at run time to face left |
 | `level.map.json` | Map editor | `g_Level_Background` | A 64x12 map, two screens wide and half a screen tall — the bottom half, where the level actually is. One byte per cell, **RLEp-compressed**: 768 cells in 86 bytes |
 | `background.map.json` | Map editor | `g_Backdrop_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
 | `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
@@ -103,7 +103,17 @@ The game code in `main.c` covers the techniques the
   the flat body colour**, in that order because the lower plane number wins
   where they overlap. The body plane carries the whole silhouette, line pixels
   included, so nothing shows through if the two ever land a pixel apart; and the
-  black outline is what keeps a green dragon readable against green hills. It costs two of the four sprites the VDP will draw on one line, which
+  black outline is what keeps a green dragon readable against green hills.
+
+  The art faces right, and `FacePlayer()` mirrors it with MSXgl's
+  `SpriteFX_FlipHorizontal16()` — 32 bytes per shape, swapping the two
+  half-columns and reversing the bits in each byte. The mirrors go back into the
+  *same* pattern slots rather than a second set, which is what lets
+  `g_Player_SetMeta()` and the sheet's generated plane and colour tables stay
+  usable as they are: they describe the twelve shapes that exist, not
+  twenty-four. It costs 384 bytes of VRAM on a turn and nothing at all while the
+  player keeps walking the same way. Needs `sprite_fx` in **LibModules** and
+  `SPRITEFX_USE_16x16` / `SPRITEFX_USE_FLIP` in `msxgl_config.h`. It costs two of the four sprites the VDP will draw on one line, which
   the editor shows per character. The walk is a six step cycle (`g_WalkCycle` in
   `main.c`) rather than two poses flipping back and forth, which is the
   difference between a stride and a flicker.

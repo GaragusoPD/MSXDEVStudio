@@ -150,7 +150,7 @@ Every graphic and sound in it came from a resource editor: a SCREEN 2 tileset,
 a six-pose sprite, a 64x24 map and an ayFX bank. The coins spin without the map
 being touched, the player is two superposed hardware sprites so it can have two
 colours on an MSX1, and the doorway opens when the last coin is taken — the
-three techniques the editors' generated C exists for. It builds to about 13.4 KB
+three techniques the editors' generated C exists for. It builds to about 14.4 KB
 of a 32 KB ROM, and its [README](demo_project/README.md) explains how each piece
 is loaded, along with a few MSX gotchas worth knowing before you hit them
 yourself.

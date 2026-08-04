@@ -71,6 +71,8 @@ export interface MapSession {
   filledRect: boolean
   /** The stamp the stamp/paste tool places; `brushTile` is what fill/rect/flood use (its top-left tile). */
   brush: Stamp
+  /** Index into the tileset's `blocks` when the brush came from a named block; null when it came from the picker. */
+  brushBlock: number | null
   clipboard: Stamp | null
 
   pickerActive: number
@@ -112,6 +114,7 @@ export function mapSession(path: string): MapSession {
     tool: 'stamp',
     filledRect: false,
     brush: singleStamp(0),
+    brushBlock: null,
     clipboard: null,
     pickerActive: 0,
     pickerSelection: [0],
@@ -177,6 +180,17 @@ async function loadTileset(session: MapSession): Promise<void> {
     session.tileset = null
     session.tilesetError = `Couldn't load tileset ${tilesetPath}: ${String(error)}`
   }
+}
+
+/**
+ * Re-reads the tileset from disk. A map draws with its *own* copy of the
+ * tileset, loaded when the map was opened, so tiles edited and saved in the
+ * tile editor afterwards don't reach it by themselves — this is what fetches
+ * them. Any reorders recorded since are replayed on the way in, exactly as they
+ * are when a map is opened.
+ */
+export async function reloadTileset(session: MapSession): Promise<void> {
+  await loadTileset(session)
 }
 
 /** On open: fold in any tileset reorders this map missed while it wasn't open, behind one confirm dialog. */
@@ -263,6 +277,25 @@ export function pickTile(session: MapSession, index: number, indices: number[], 
   session.pickerActive = index
   session.pickerSelection = indices
   session.brush = stamp
+  session.brushBlock = null
+}
+
+/**
+ * Loads one of the tileset's named blocks as the brush. A `TileBlock` *is* a
+ * `Stamp` — same width/height/tiles, deliberately — so the design the tile
+ * editor drew on one canvas stamps into the map without being converted into
+ * anything. The tiles are copied because the brush outlives this tileset copy:
+ * a reload replaces it.
+ */
+export function pickBlock(session: MapSession, index: number): void {
+  const block = session.tileset?.blocks[index]
+  if (!block) return
+  session.brush = { width: block.width, height: block.height, tiles: [...block.tiles] }
+  session.pickerActive = block.tiles[0] ?? 0
+  session.pickerSelection = [...new Set(block.tiles)]
+  session.brushBlock = index
+  // Same as pasting: the brush is loaded, now the user clicks to place it.
+  session.tool = 'stamp'
 }
 
 // ── painting on the map canvas ───────────────────────────────────────────
@@ -326,6 +359,7 @@ export function copySelection(session: MapSession): void {
 export function pasteClipboard(session: MapSession): void {
   if (!session.clipboard) return
   session.brush = session.clipboard
+  session.brushBlock = null
   session.tool = 'stamp'
 }
 

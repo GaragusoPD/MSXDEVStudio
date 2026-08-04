@@ -29,6 +29,8 @@
 //      get a two-colour character on an MSX1: plane 0 is the dragon's line art,
 //      plane 1 the flat body colour behind it. The sprite editor holds both
 //      planes and their colours; g_Player_SetMeta places them from one x/y.
+//      The art faces right; walking left mirrors it in place with MSXgl's
+//      SpriteFX_FlipHorizontal16 (see FacePlayer).
 //    * The doorway opens when the last coin is taken, stamped from a 1x2 block
 //      by g_Tiles_DrawBlock.
 //    * A backdrop behind the level, from a second map. SCREEN 2 has one name
@@ -57,6 +59,9 @@
 // buffer to the sound chip.
 #include "psg.h"
 #include "ayfx/ayfx_player.h"
+// Sprite mirroring: msxgl.h does not pull this one in either, and "sprite_fx"
+// has to be in the project's LibModules.
+#include "sprite_fx.h"
 
 // MSXgl's own 8x8 font, which also carries its logo as characters 1 to 6.
 #include "font/font_mgl_sample8.h"
@@ -193,6 +198,7 @@ u8  g_Frame;
 u8  g_CoinPhase;     // which pose of the spin is currently in the pattern table
 u8  g_CoinTick;
 u8  g_DoorOpen;
+u8  g_FaceLeft;      // which way the dragon is drawn facing
 
 // The stride, as sprite *frame* numbers now rather than raw shape values:
 // g_Player_SetMeta turns a frame into the right pattern for each of its planes.
@@ -285,6 +291,39 @@ void DrawView()
 		src  += MAP_W;
 		back += VIEW_W;
 		dst  += VIEW_W;
+	}
+}
+
+/**
+ * Turns the dragon around. The art faces right, so facing left means mirrored
+ * patterns — MSXgl's `SpriteFX_FlipHorizontal16` does the 32 bytes of one 16x16
+ * shape, swapping the two half-columns and reversing the bits in each byte.
+ *
+ * The mirrors go back into the *same* pattern slots rather than into a second
+ * set, which keeps `g_Player_SetMeta()` and the sprite sheet's own plane and
+ * colour tables usable exactly as generated — they only describe the twelve
+ * shapes that exist. The cost is 384 bytes of VRAM on a turn, and a turn is
+ * something a player does a few times a second at most.
+ */
+void FacePlayer(u8 left)
+{
+	if (g_FaceLeft == left)
+		return;
+	g_FaceLeft = left;
+
+	if (!left)
+	{
+		VDP_LoadSpritePattern(g_Player_Patterns, 0, G_PLAYER_PATTERNS_SIZE / 8);
+		return;
+	}
+
+	// One shape at a time, so this needs 32 bytes of scratch rather than a
+	// mirrored copy of the whole sheet.
+	u8 shape[32];
+	for (u8 i = 0; i < G_PLAYER_PATTERNS_SIZE / 32; ++i)
+	{
+		SpriteFX_FlipHorizontal16(g_Player_Patterns + ((u16)i * 32), shape);
+		VDP_LoadSpritePattern(shape, i * 4, 4);
 	}
 }
 
@@ -462,6 +501,7 @@ void InitGame()
 	VDP_SetSpriteFlag(VDP_SPRITE_SIZE_16);
 	VDP_LoadSpritePattern(g_Player_Patterns, 0, G_PLAYER_PATTERNS_SIZE / 8);
 	VDP_DisableSpritesFrom(G_PLAYER_PLAYER_PLANES);
+	g_FaceLeft = 0;   // matches what was just uploaded
 
 	ayFX_InitBank((void*)g_Sfx);
 	ayFX_SetChannel(PSG_CHANNEL_A);
@@ -624,8 +664,8 @@ void PlayGame()
 		PSG_Apply();                // and pushes it to the sound chip
 
 		u8 walking = 0;
-		if (Keyboard_IsKeyPressed(KEY_LEFT))  { MoveX(-WALK_SPEED); walking = 1; }
-		if (Keyboard_IsKeyPressed(KEY_RIGHT)) { MoveX( WALK_SPEED); walking = 1; }
+		if (Keyboard_IsKeyPressed(KEY_LEFT))  { MoveX(-WALK_SPEED); walking = 1; FacePlayer(1); }
+		if (Keyboard_IsKeyPressed(KEY_RIGHT)) { MoveX( WALK_SPEED); walking = 1; FacePlayer(0); }
 
 		if (g_OnGround && Keyboard_IsKeyPressed(KEY_SPACE))
 		{
