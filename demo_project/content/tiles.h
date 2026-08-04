@@ -652,7 +652,7 @@ const unsigned char g_Tiles_Blocks[] =
 //
 // Example:
 //   g_Tiles_DrawBlock(10, 5, G_TILES_COIN_SPIN_BASE, G_TILES_COIN_SPIN_W, G_TILES_COIN_SPIN_H);
-static void g_Tiles_DrawBlock(u8 x, u8 y, u8 base, u8 w, u8 h)
+static void g_Tiles_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h)
 {
 	VDP_WriteLayout_GM2(g_Tiles_Blocks + base, x, y, w, h);
 }

@@ -73,7 +73,16 @@ export interface TileBlock {
 export const TILE_FLAG_COUNT = 8
 
 /** Tiles per axis in a block. 8 × 8 tiles = 64 × 64 px, past any practical design. */
-export const MAX_BLOCK = 8
+/**
+ * Widest and tallest a block may be, per axis. There is no hardware unit here —
+ * a block is just references into the bank — so the limit is what the generated
+ * C can express: `_DrawBlock` takes the width and height as `u8`. The table
+ * offset is a `u16`, so many large blocks are fine; it is the axes that cap.
+ *
+ * Anything past 32x24 cannot be stamped onto the screen in one call, but the
+ * data is still valid, so that is left to judgement rather than enforced.
+ */
+export const MAX_BLOCK = 255
 
 const zeros = (n: number): number[] => new Array<number>(n).fill(0)
 
@@ -624,7 +633,7 @@ export function tileHelperC(doc: TilesDoc, name: string): string[] {
     '//',
     '// Example:',
     `//   ${name}_DrawBlock(10, 5, ${id}_BASE, ${id}_W, ${id}_H);`,
-    `static void ${name}_DrawBlock(u8 x, u8 y, u8 base, u8 w, u8 h)`,
+    `static void ${name}_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h)`,
     '{',
     `\tVDP_WriteLayout_GM2(${name}_Blocks + base, x, y, w, h);`,
     '}'

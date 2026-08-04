@@ -294,31 +294,21 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         {{ blockWarning }}
       </p>
       <div class="new-block">
-        <select
+        <input
           v-model.number="newBlock.width"
+          type="number"
+          min="1"
+          :max="MAX_BLOCK"
           title="Tiles across"
         >
-          <option
-            v-for="w in MAX_BLOCK"
-            :key="w"
-            :value="w"
-          >
-            {{ w }}
-          </option>
-        </select>
         <span>×</span>
-        <select
+        <input
           v-model.number="newBlock.height"
+          type="number"
+          min="1"
+          :max="MAX_BLOCK"
           title="Tiles down"
         >
-          <option
-            v-for="h in MAX_BLOCK"
-            :key="h"
-            :value="h"
-          >
-            {{ h }}
-          </option>
-        </select>
         <button
           type="button"
           title="Append that many blank tiles as a new block"
@@ -479,7 +469,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
   opacity: 0.4;
 }
 
-.new-block select,
+.new-block input,
 .new-block button {
   padding: 2px 6px;
   border: 1px solid var(--color-border);

@@ -586,12 +586,22 @@ describe('multi-tile blocks', () => {
   })
 
   it('clamps the grid and names an existing rectangle of tiles', () => {
-    const doc = blockFromTiles(createTilesDoc('sc2', 8), 'reused', 99, 2, [0, 1, 2, 3])
+    const doc = blockFromTiles(createTilesDoc('sc2', 8), 'reused', MAX_BLOCK + 5, 2, [0, 1, 2, 3])
     expect(doc.blocks[0].width).toBe(MAX_BLOCK)
     // Short input pads with tile 0, and the tile count always matches w*h.
     expect(doc.blocks[0].tiles).toHaveLength(MAX_BLOCK * 2)
     expect(doc.count).toBe(8) // names existing tiles, adds none
     expect(validateTiles(doc)).toEqual([])
+  })
+
+  it('names a selection far bigger than one screen — the old 8x8 cap was invented', () => {
+    // 12 wide by 10 tall: refused before, and nothing about the format minded.
+    const doc = createTilesDoc('sc2', 200)
+    const tiles = Array.from({ length: 120 }, (_, i) => i)
+    const named = blockFromTiles(doc, 'landscape', 12, 10, tiles)
+    expect(named.blocks[0]).toMatchObject({ width: 12, height: 10 })
+    expect(named.blocks[0].tiles).toHaveLength(120)
+    expect(validateTiles(named)).toEqual([])
   })
 
   it('drops a block without touching the tiles it pointed at', () => {
