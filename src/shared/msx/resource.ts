@@ -130,7 +130,9 @@ export function defaultTableName(base: string): string {
  */
 export function defaultExport(path: string): ExportBlock {
   const kind = resourceKindOf(path)
-  const base = kind ? `${resourceBaseName(path)}_${kind}` : resourceBaseName(path)
+  const stem = resourceBaseName(path)
+  // `tiles.tiles.json` is already saying it: don't make that `g_TilesTiles`.
+  const base = !kind || stem === kind || stem.endsWith(`_${kind}`) ? stem : `${stem}_${kind}`
   return { name: defaultTableName(base), format: 'c', out: `content/${base}.h` }
 }
 

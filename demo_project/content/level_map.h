@@ -8,14 +8,14 @@
 //  - Size: 64×12
 //  - Layers: background
 
-#define G_LEVEL_W 64
-#define G_LEVEL_H 12
+#define G_LEVELMAP_W 64
+#define G_LEVELMAP_H 12
 
-#define G_LEVEL_BACKGROUND_SIZE 242
-#define G_LEVEL_BACKGROUND_UNPACKED_SIZE 768
+#define G_LEVELMAP_BACKGROUND_SIZE 242
+#define G_LEVELMAP_BACKGROUND_UNPACKED_SIZE 768
 
 // Names layer "background" (64×12) — RLEp, 768 → 242 bytes. Unpack with MSXgl's RLEp_UnpackToRAM before writing it to VRAM.
-const unsigned char g_Level_Background[] =
+const unsigned char g_LevelMap_Background[] =
 {
 	0x27, 0x10, 0xC0, 0x06, 0x3D, 0x43, 0x05, 0x0E, 0xC2, 0x06, 0x09, 0x06, 0x3B, 0x44, 0x05, 0x21,
 	0xC2, 0x06, 0x27, 0x06, 0x20, 0xC0, 0x06, 0x19, 0x44, 0x05, 0x0C, 0xC1, 0x06, 0x0A, 0x0F, 0x43,
@@ -34,4 +34,4 @@ const unsigned char g_Level_Background[] =
 	0x42, 0xC9, 0x43, 0x42, 0x43, 0x42, 0x09, 0x43, 0x42, 0x09, 0x43, 0x43, 0x44, 0x42, 0xC1, 0x43,
 	0x09, 0x00,
 };
-// g_Level_Background size: 242 Bytes
+// g_LevelMap_Background size: 242 Bytes

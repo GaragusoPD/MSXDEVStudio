@@ -781,9 +781,9 @@
     }
   ],
   "export": {
-    "name": "g_Backdrop",
+    "name": "g_BackgroundMap",
     "format": "c",
-    "out": "content/backdrop.h",
+    "out": "content/background_map.h",
     "compress": "rlep"
   },
   "tilesetReorderSeen": 1785866075775

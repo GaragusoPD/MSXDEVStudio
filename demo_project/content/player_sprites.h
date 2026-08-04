@@ -7,14 +7,14 @@
 //  - Size: 16×16
 //  - Characters: 1
 
-#define G_PLAYER_PLAYER_BASE 0
-#define G_PLAYER_PLAYER_PLANES 3
-#define G_PLAYER_PLAYER_FRAMES 6
+#define G_PLAYERSPRITES_PLAYER_BASE 0
+#define G_PLAYERSPRITES_PLAYER_PLANES 3
+#define G_PLAYERSPRITES_PLAYER_FRAMES 6
 
-#define G_PLAYER_PATTERNS_SIZE 576
+#define G_PLAYERSPRITES_PATTERNS_SIZE 576
 
 // Sprite Patterns Table
-const unsigned char g_Player_Patterns[] =
+const unsigned char g_PlayerSprites_Patterns[] =
 {
 	0x06, /* .....##. */
 	0x08, /* ....#... */
@@ -593,22 +593,22 @@ const unsigned char g_Player_Patterns[] =
 	0x00, /* ........ */
 	0x00, /* ........ */
 };
-// g_Player_Patterns size: 576 Bytes
+// g_PlayerSprites_Patterns size: 576 Bytes
 
-#define G_PLAYER_COLORS_SIZE 18
+#define G_PLAYERSPRITES_COLORS_SIZE 18
 
 // Sprite Colors Table
-const unsigned char g_Player_Colors[] =
+const unsigned char g_PlayerSprites_Colors[] =
 {
 	0x01, 0x07, 0x0F, 0x01, 0x07, 0x0F, 0x01, 0x07, 0x0F, 0x01, 0x07, 0x0F, 0x01, 0x07, 0x0F, 0x01,
 	0x07, 0x0F,
 };
-// g_Player_Colors size: 18 Bytes
+// g_PlayerSprites_Colors size: 18 Bytes
 
-#define G_PLAYER_LAYOUT_SIZE 36
+#define G_PLAYERSPRITES_LAYOUT_SIZE 36
 
 // Sprite group layout — dx, dy per plane, in pattern order (0, 0 for stacked planes)
-const unsigned char g_Player_Layout[] =
+const unsigned char g_PlayerSprites_Layout[] =
 {
 	0x00, 0x00,
 	0x00, 0x00,
@@ -629,29 +629,29 @@ const unsigned char g_Player_Layout[] =
 	0x00, 0x00,
 	0x00, 0x00,
 };
-// g_Player_Layout size: 36 Bytes
+// g_PlayerSprites_Layout size: 36 Bytes
 
 // Total size: 630 Bytes
 
-// Places one character of g_Player as a group of hardware sprites, from a single
+// Places one character of g_PlayerSprites as a group of hardware sprites, from a single
 // coordinate. Needs MSXgl's VDP module (#include "msxgl.h" before this header),
 // and the patterns loaded at VRAM pattern 0:
-//   VDP_LoadSpritePattern(g_Player_Patterns, 0, G_PLAYER_PATTERNS_SIZE / 8);
+//   VDP_LoadSpritePattern(g_PlayerSprites_Patterns, 0, G_PLAYERSPRITES_PATTERNS_SIZE / 8);
 //
 // Parameters:
 //   index  - first hardware sprite plane to write [0:31]
 //   x, y   - screen position of the character's top-left corner
-//   base   - first plane of the frame to show: G_PLAYER_<CHARACTER>_BASE + frame * ..._PLANES
+//   base   - first plane of the frame to show: G_PLAYERSPRITES_<CHARACTER>_BASE + frame * ..._PLANES
 //   planes - ..._PLANES for that character
-static void g_Player_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)
+static void g_PlayerSprites_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)
 {
-	const u8* rec = g_Player_Layout + ((u16)base * 2);
+	const u8* rec = g_PlayerSprites_Layout + ((u16)base * 2);
 	for(u8 i = 0; i < planes; ++i)
 	{
 		u8 plane = base + i;
 		u8 px = x + rec[0];
 		u8 py = y + rec[1];
 		rec += 2;
-		VDP_SetSpriteSM1(index + i, px, py, plane * 4, g_Player_Colors[plane]);
+		VDP_SetSpriteSM1(index + i, px, py, plane * 4, g_PlayerSprites_Colors[plane]);
 	}
 }

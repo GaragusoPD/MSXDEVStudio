@@ -1278,9 +1278,9 @@
     }
   ],
   "export": {
-    "name": "g_Player",
+    "name": "g_PlayerSprites",
     "format": "c",
-    "out": "content/player.h",
+    "out": "content/player_sprites.h",
     "helpers": true
   }
 }

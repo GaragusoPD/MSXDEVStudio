@@ -9,12 +9,12 @@
 //
 //    res/tiles.tiles.json    -> content/tiles.h   (g_Tiles_Patterns / _Colors,
 //                                            _Blocks + g_Tiles_DrawBlock)
-//    res/player.sprites.json -> content/player.h  (g_Player_Patterns / _Colors,
-//                                            _Layout + g_Player_SetMeta)
-//    res/level.map.json      -> content/level.h   (g_Level_Background, 64x12 cells
+//    res/player.sprites.json -> content/player_sprites.h  (g_PlayerSprites_Patterns / _Colors,
+//                                            _Layout + g_PlayerSprites_SetMeta)
+//    res/level.map.json      -> content/level_map.h   (g_LevelMap_Background, 64x12 cells
 //                                            — the bottom half of the screen,
 //                                            RLEp-compressed to 86 bytes)
-//    res/background.map.json -> content/backdrop.h (g_Backdrop_Sky, 32x24, the
+//    res/background.map.json -> content/background_map.h (g_BackgroundMap_Sky, 32x24, the
 //                                            static backdrop behind the level)
 //    res/sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
 //
@@ -25,10 +25,10 @@
 //      the game copies one pose's eight pattern bytes over the coin's tile.
 //      Every coin on screen turns at once, for 24 bytes a step, because the
 //      name table still says "tile 6" everywhere.
-//    * The player is two superposed hardware sprites, which is the only way to
-//      get a two-colour character on an MSX1: plane 0 is the dragon's line art,
-//      plane 1 the flat body colour behind it. The sprite editor holds both
-//      planes and their colours; g_Player_SetMeta places them from one x/y.
+//    * The player is several superposed hardware sprites, which is the only way
+//      to get a multi-colour character on an MSX1: plane 0 is the line art, the
+//      colour planes sit behind it. The sprite editor holds every plane and its
+//      colour; g_PlayerSprites_SetMeta places them all from one x/y.
 //      The art faces right; walking left mirrors it in place with MSXgl's
 //      SpriteFX_FlipHorizontal16 (see FacePlayer).
 //    * The doorway opens when the last coin is taken, stamped from a 1x2 block
@@ -69,9 +69,9 @@
 #include "content/tiles.h"
 #include "content/intro_tiles.h"
 #include "content/intro_map.h"
-#include "content/player.h"
-#include "content/level.h"
-#include "content/backdrop.h"
+#include "content/player_sprites.h"
+#include "content/level_map.h"
+#include "content/background_map.h"
 #include "content/sfx.h"
 
 //──────────────────────────────────────────────────────────────────────────────
@@ -142,7 +142,7 @@
 
 
 // Each pose is one frame of the sprite sheet; a frame is two superposed
-// planes, and g_Player_SetMeta works out the patterns and colours for both.
+// planes, and g_PlayerSprites_SetMeta works out the patterns and colours for both.
 #define FRAME_STAND  0
 #define FRAME_JUMP   5
 // Six poses per stride: legs together, two steps out on one side, together
@@ -200,10 +200,10 @@ u8  g_Frame;
 u8  g_CoinPhase;     // which pose of the spin is currently in the pattern table
 u8  g_CoinTick;
 u8  g_DoorOpen;
-u8  g_FaceLeft;      // which way the dragon is drawn facing
+u8  g_FaceLeft;      // which way the player is drawn facing
 
 // The stride, as sprite *frame* numbers now rather than raw shape values:
-// g_Player_SetMeta turns a frame into the right pattern for each of its planes.
+// g_PlayerSprites_SetMeta turns a frame into the right pattern for each of its planes.
 // Frames 1/2 step out one way and 3/4 the other, legs together in between.
 const u8 g_WalkCycle[WALK_STEPS] = { 0, 1, 2, 0, 3, 4 };
 
@@ -297,12 +297,12 @@ void DrawView()
 }
 
 /**
- * Turns the dragon around. The art faces right, so facing left means mirrored
+ * Turns the player around. The art faces right, so facing left means mirrored
  * patterns — MSXgl's `SpriteFX_FlipHorizontal16` does the 32 bytes of one 16x16
  * shape, swapping the two half-columns and reversing the bits in each byte.
  *
  * The mirrors go back into the *same* pattern slots rather than into a second
- * set, which keeps `g_Player_SetMeta()` and the sprite sheet's own plane and
+ * set, which keeps `g_PlayerSprites_SetMeta()` and the sprite sheet's own plane and
  * colour tables usable exactly as generated — they only describe the twelve
  * shapes that exist. The cost is 384 bytes of VRAM on a turn, and a turn is
  * something a player does a few times a second at most.
@@ -315,16 +315,16 @@ void FacePlayer(u8 left)
 
 	if (!left)
 	{
-		VDP_LoadSpritePattern(g_Player_Patterns, 0, G_PLAYER_PATTERNS_SIZE / 8);
+		VDP_LoadSpritePattern(g_PlayerSprites_Patterns, 0, G_PLAYERSPRITES_PATTERNS_SIZE / 8);
 		return;
 	}
 
 	// One shape at a time, so this needs 32 bytes of scratch rather than a
 	// mirrored copy of the whole sheet.
 	u8 shape[32];
-	for (u8 i = 0; i < G_PLAYER_PATTERNS_SIZE / 32; ++i)
+	for (u8 i = 0; i < G_PLAYERSPRITES_PATTERNS_SIZE / 32; ++i)
 	{
-		SpriteFX_FlipHorizontal16(g_Player_Patterns + ((u16)i * 32), shape);
+		SpriteFX_FlipHorizontal16(g_PlayerSprites_Patterns + ((u16)i * 32), shape);
 		VDP_LoadSpritePattern(shape, i * 4, 4);
 	}
 }
@@ -452,13 +452,13 @@ void TitleScreen()
 	// One screen exactly, so the map goes into the name table in one write.
 	VDP_WriteVRAM_16K(g_IntroMap_Background, g_ScreenLayoutLow, G_INTROMAP_W * G_INTROMAP_H);
 
-	// The dragon waits in the middle, facing right, in its standing pose.
+	// The player waits in the middle, facing right, in its standing pose.
 	VDP_SetSpriteFlag(VDP_SPRITE_SIZE_16);
-	VDP_LoadSpritePattern(g_Player_Patterns, 0, G_PLAYER_PATTERNS_SIZE / 8);
-	VDP_DisableSpritesFrom(G_PLAYER_PLAYER_PLANES);
+	VDP_LoadSpritePattern(g_PlayerSprites_Patterns, 0, G_PLAYERSPRITES_PATTERNS_SIZE / 8);
+	VDP_DisableSpritesFrom(G_PLAYERSPRITES_PLAYER_PLANES);
 	g_FaceLeft = 0;
-	g_Player_SetMeta(0, (256 - 16) / 2, ((192 - 16) / 2) - 1,
-		G_PLAYER_PLAYER_BASE + FRAME_STAND * G_PLAYER_PLAYER_PLANES, G_PLAYER_PLAYER_PLANES);
+	g_PlayerSprites_SetMeta(0, (256 - 16) / 2, ((192 - 16) / 2) - 1,
+		G_PLAYERSPRITES_PLAYER_BASE + FRAME_STAND * G_PLAYERSPRITES_PLAYER_PLANES, G_PLAYERSPRITES_PLAYER_PLANES);
 }
 
 void CreditsScreen()
@@ -516,8 +516,8 @@ void InitGame()
 	// frames x planes shapes and the character costs two of the four sprites
 	// the VDP will draw on one line.
 	VDP_SetSpriteFlag(VDP_SPRITE_SIZE_16);
-	VDP_LoadSpritePattern(g_Player_Patterns, 0, G_PLAYER_PATTERNS_SIZE / 8);
-	VDP_DisableSpritesFrom(G_PLAYER_PLAYER_PLANES);
+	VDP_LoadSpritePattern(g_PlayerSprites_Patterns, 0, G_PLAYERSPRITES_PATTERNS_SIZE / 8);
+	VDP_DisableSpritesFrom(G_PLAYERSPRITES_PLAYER_PLANES);
 	g_FaceLeft = 0;   // matches what was just uploaded
 
 	// ayFX_InitBank takes a plain `void*` although it only ever reads the bank
@@ -536,11 +536,11 @@ void InitGame()
 	// that painting a coin in the map editor is all it takes to add one.
 	// The ROM copy is RLEp-compressed (132 bytes for 1536 cells); unpacking it
 	// straight into the working array is the same one line the copy used to be.
-	RLEp_UnpackToRAM(g_Level_Background, g_Map);
+	RLEp_UnpackToRAM(g_LevelMap_Background, g_Map);
 	// The backdrop never changes, so this could be read straight out of ROM —
 	// it is unpacked into RAM because compressing it costs 127 bytes of ROM
 	// against 768, and the unpacker is already here for the level.
-	RLEp_UnpackToRAM(g_Backdrop_Sky, g_Back);
+	RLEp_UnpackToRAM(g_BackgroundMap_Sky, g_Back);
 
 	// Which rows need composing at all — see `g_RowHasTrans`.
 	for (u8 row = 0; row < LEVEL_H; ++row)
@@ -743,9 +743,9 @@ void PlayGame()
 
 		// One call, one coordinate, both planes — and their colours come from
 		// the sprite sheet rather than from a constant in here.
-		g_Player_SetMeta(0, (u8)sx, (u8)(g_PlayerY - 1),
-		                 G_PLAYER_PLAYER_BASE + pose * G_PLAYER_PLAYER_PLANES,
-		                 G_PLAYER_PLAYER_PLANES);
+		g_PlayerSprites_SetMeta(0, (u8)sx, (u8)(g_PlayerY - 1),
+		                 G_PLAYERSPRITES_PLAYER_BASE + pose * G_PLAYERSPRITES_PLAYER_PLANES,
+		                 G_PLAYERSPRITES_PLAYER_PLANES);
 
 		if (scrolled) { DrawView(); DrawHUD(); }
 

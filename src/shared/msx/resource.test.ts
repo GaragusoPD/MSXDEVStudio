@@ -492,6 +492,13 @@ describe('sfx resource', () => {
     expect(parsed).toEqual(fixtureSfx())
     expect(validateResource(parsed)).toEqual([])
     expect(defaultExport('audio/fx.sfx.json')).toEqual({ name: 'g_FxSfx', format: 'c', out: 'content/fx_sfx.h' })
+    // A stem that already names the kind is left alone, rather than doubled.
+    expect(defaultExport('tiles.tiles.json')).toEqual({ name: 'g_Tiles', format: 'c', out: 'content/tiles.h' })
+    expect(defaultExport('hero_sprites.sprites.json')).toEqual({
+      name: 'g_HeroSprites',
+      format: 'c',
+      out: 'content/hero_sprites.h'
+    })
   })
 
   it('creates a valid default doc from {} for every kind — the Resources panel New button', () => {

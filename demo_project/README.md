@@ -9,7 +9,7 @@ jumps.
 ![Gameplay](../docs/images/demo-gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
-(about 15 KB used) and boots in openMSX or WebMSX.
+(about 19.7 KB used) and boots in openMSX or WebMSX.
 
 ## What it demonstrates
 
@@ -20,10 +20,12 @@ guide](../docs/resources.md):
 | Resource | Editor | Exports | Used for |
 |---|---|---|---|
 | `res/tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
-| `res/player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 dragon in mode 1, six poses, each drawn by **two superposed planes**: one flat green body, one black line art in front of it. Mirrored at run time to face left |
-| `res/level.map.json` | Map editor | `g_Level_Background` | A 64x12 map, two screens wide and half a screen tall — the bottom half, where the level actually is. One byte per cell, **RLEp-compressed**: 768 cells in 86 bytes |
-| `res/background.map.json` | Map editor | `g_Backdrop_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
+| `res/player.sprites.json` | Sprite editor | `g_PlayerSprites_Patterns`, `g_PlayerSprites_Colors`, `g_PlayerSprites_Layout` + `g_PlayerSprites_SetMeta()` | A 16x16 character in mode 1, six poses, each drawn by **three superposed planes** — black line art in front, two colour planes behind — so it can have three colours. Mirrored at run time to face left |
+| `res/level.map.json` | Map editor | `g_LevelMap_Background` | A 64x12 map, two screens wide and half a screen tall — the bottom half, where the level actually is. One byte per cell, **RLEp-compressed**: 768 cells in 86 bytes |
+| `res/background.map.json` | Map editor | `g_BackgroundMap_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
 | `res/sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
+| `res/intro.tiles.json` | Tile editor | `g_IntroTiles` | The title screen's own 256-tile bank — logo, lettering, rules |
+| `res/intro.map.json` | Map editor | `g_IntroMap` | The title screen itself, one screen exactly, drawn straight into the name table |
 
 The game code in `main.c` covers the techniques the
 [tutorials](../docs/tutorials/) explain, in one place:
@@ -96,20 +98,20 @@ The game code in `main.c` covers the techniques the
   tile — wherever you want a hole; flagging tile 0 instead turns the whole sky
   into one.
 - **Superposed sprites**, placed with the sprite sheet's own
-  `g_Player_SetMeta()`. A mode 1 sprite is a single colour, so a two-colour
+  `g_PlayerSprites_SetMeta()`. A mode 1 sprite is a single colour, so a two-colour
   character means two hardware sprites on the same coordinate: the sprite editor
   holds both planes and their colours, and one call writes both attribute
-  entries. The split here is the useful one — **plane 0 is the line art, plane 1
-  the flat body colour**, in that order because the lower plane number wins
-  where they overlap. The body plane carries the whole silhouette, line pixels
-  included, so nothing shows through if the two ever land a pixel apart; and the
-  black outline is what keeps a green dragon readable against green hills.
+  entries. The split here is the useful one — **plane 0 is the line art**, the
+  colour planes behind it, in that order because the lower plane number wins
+  where they overlap. A colour plane carries the whole silhouette, line pixels
+  included, so nothing shows through if the planes ever land a pixel apart; and
+  the outline is what keeps the character readable against a busy background.
 
   The art faces right, and `FacePlayer()` mirrors it with MSXgl's
   `SpriteFX_FlipHorizontal16()` — 32 bytes per shape, swapping the two
   half-columns and reversing the bits in each byte. The mirrors go back into the
   *same* pattern slots rather than a second set, which is what lets
-  `g_Player_SetMeta()` and the sheet's generated plane and colour tables stay
+  `g_PlayerSprites_SetMeta()` and the sheet's generated plane and colour tables stay
   usable as they are: they describe the twelve shapes that exist, not
   twenty-four. It costs 384 bytes of VRAM on a turn and nothing at all while the
   player keeps walking the same way. Needs `sprite_fx` in **LibModules** and
@@ -133,10 +135,14 @@ The game code in `main.c` covers the techniques the
   keeps it when the view scrolls back over it.
 - **Sound**, an ayFX bank played with `ayFX_PlayBank`, updated once per frame by
   `ayFX_Update()` and pushed to the chip with `PSG_Apply()`.
+- **A title screen that is a picture**, not text: `intro.map.json` drawn in
+  SCREEN 2 with its own tileset and the player standing in the middle. The game
+  loads its own tiles when SPACE starts it, which is what lets the title and the
+  game each have a full 256-tile bank.
 - **Text screens**, drawn in SCREEN 1 with MSXgl's `g_Font_MGL_Sample8`, so the
-  title and ending do not have to share the pattern table with the game's tiles.
-  The title is framed with `Print_DrawBox`, and the MSXgl logo is characters 1
-  to 6 of any MSXgl font (`MSX_GL` in `main.c`).
+  ending and credits do not have to share the pattern table with the game's
+  tiles. The MSXgl logo is characters 1 to 6 of any MSXgl font (`MSX_GL` in
+  `main.c`).
 - **Colour in SCREEN 1**, which stores one colour per group of eight pattern
   codes rather than per character. Loading the font at offset 0 makes a pattern
   code equal its character code, so whole classes can be recoloured:

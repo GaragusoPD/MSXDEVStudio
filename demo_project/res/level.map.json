@@ -781,9 +781,9 @@
     }
   ],
   "export": {
-    "name": "g_Level",
+    "name": "g_LevelMap",
     "format": "c",
-    "out": "content/level.h",
+    "out": "content/level_map.h",
     "compress": "rlep"
   },
   "tilesetReorderSeen": 1785866075775
