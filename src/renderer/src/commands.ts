@@ -17,6 +17,7 @@ import { disposeModel, saveModel, triggerMonaco } from './editors/monaco-models'
 import { router } from './router'
 import { useAppStore } from './stores/appStore'
 import { useBuildStore } from './stores/buildStore'
+import { useOutputStore } from './stores/outputStore'
 import { useProjectStore } from './stores/projectStore'
 import { useTabsStore, type EditorTab } from './stores/tabsStore'
 
@@ -43,8 +44,13 @@ export async function saveTab(tab: EditorTab | undefined): Promise<void> {
 /**
  * Saves every dirty tab. One that fails — its file deleted or renamed under the
  * editor, a permission problem — must not stop the rest: the whole point of the
- * command is that afterwards nothing is left unsaved. Failures are collected and
- * reported once, by name, rather than as a console full of rejections.
+ * command is that afterwards nothing is left unsaved.
+ *
+ * Failures go to the Output panel, where build and export failures already go,
+ * and deliberately *not* through `window.alert`: in Electron that is a
+ * window-modal dialog, so an alert that opens behind the window or on another
+ * desktop leaves the app painted but unable to take a click or a keystroke —
+ * indistinguishable from a frozen UI.
  */
 export async function saveAllTabs(): Promise<void> {
   const failed: string[] = []
@@ -56,9 +62,11 @@ export async function saveAllTabs(): Promise<void> {
       failed.push(`${tab.filePath}: ${String(error)}`)
     }
   }
-  if (failed.length) {
-    window.alert(`Couldn't save ${failed.length} file${failed.length === 1 ? '' : 's'}:\n\n${failed.join('\n')}`)
-  }
+  if (!failed.length) return
+  const output = useOutputStore()
+  useAppStore().showBottomPanel('output')
+  output.append('build:err', `Save all: ${failed.length} file${failed.length === 1 ? '' : 's'} could not be saved.`)
+  for (const line of failed) output.append('build:err', `  ${line}`)
 }
 
 export function closeTabWithPrompt(id: string): void {
