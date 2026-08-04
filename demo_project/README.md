@@ -39,12 +39,16 @@ explain. It is split into chapters rather than one long file:
 | `screens.c` | ~100 | The title picture and the text screens either side of the game |
 | `main.c` | ~250 | Setup, and the loop that drives the rest |
 
-The four chapters are `#include`d by `main.c` rather than compiled separately,
-which is how MSXgl composes its own modules too — its `input.c` ends with
-`#include "keyboard.c"`. One translation unit means the generated headers'
-tables are defined exactly once (they hold *data*, not declarations, so a
-second including file would be a duplicate symbol), no `extern` boilerplate for
-every global, and SDCC sees the whole program when it optimises.
+Each chapter is a real module, listed in **ProjModules** and compiled on its
+own. That works because MSXStudio's exporter splits every resource in two: a
+header of `#define`s, `extern` declarations and helper prototypes, and a `.c`
+holding the tables themselves. Five files can include `content/tiles.h`; only
+`content/tiles.c` defines `g_Tiles_Patterns`. The IDE adds those generated
+sources to ProjModules for you.
+
+The one header that still holds data is MSXgl's own font
+(`font/font_mgl_sample8.h`), which is why `screens.c` includes it rather than
+`demo.h` — the file that uses it is the file that should define it.
 
 What the code demonstrates:
 

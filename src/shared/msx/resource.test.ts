@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { unpackRlep } from './compress'
-import { defineName, emitBin, emitCHeader } from './emitC'
+import { defineName, emitBin, emitC } from './emitC'
 import { createMapDoc, normalizeMap } from './map'
 import { packGrb } from './palette'
 import {
@@ -8,7 +8,8 @@ import {
   defaultExport,
   defaultTableName,
   parseResource,
-  renderResource,
+  renderResourceBin,
+  renderResourceFiles,
   resourceBaseName,
   resourceKindOf,
   resourceTables,
@@ -23,7 +24,15 @@ import { addLayer, setCharacterGrid } from '../sprite-editor'
 import { createBlock } from '../tile-editor'
 import { createTilesDoc, mergeColorByte, normalizeTiles } from './tile'
 
-const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
+/**
+ * Both halves of a C export as one string. Most assertions here care that a
+ * line was emitted at all, not which of the two files it landed in — the tests
+ * that do care about the split say so explicitly.
+ */
+function rendered(...args: Parameters<typeof renderResourceFiles>): string {
+  const files = renderResourceFiles(...args)
+  return `${files.header ?? ''}\n${files.source ?? ''}`
+}
 
 /** A small, fully specified tileset so the emitted bytes are predictable. */
 function fixtureTiles(): ResourceDoc {
@@ -48,18 +57,26 @@ describe('emitCHeader', () => {
       notes: ['Source: art/fixture.tiles.json'],
       defines: true
     }
-    const first = emitCHeader(options)
-    const second = emitCHeader({ ...options, tables: resourceTables(fixtureTiles()) })
-    expect(second).toBe(first)
-    expect(first).not.toMatch(/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}/)
-    expect(first).not.toMatch(/\/home\/|[A-Z]:\\/)
+    const first = emitC(options)
+    const second = emitC({ ...options, tables: resourceTables(fixtureTiles()) })
+    expect(second).toEqual(first)
+    for (const text of [first.header, first.source]) {
+      expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}/)
+      expect(text).not.toMatch(/\/home\/|[A-Z]:\\/)
+    }
   })
 
   it('writes MSXgl-style tables with per-byte art and a size comment', () => {
-    const text = emitCHeader({
+    const { header, source: text } = emitC({
       name: 'g_Test',
+      headerFile: 'test.h',
       tables: [{ suffix: '_Patterns', bytes: Uint8Array.from([0x7e, 0x00]), art: true }]
     })
+    // The data is in the .c; the .h only says it exists, so a second module
+    // including it is not a duplicate symbol.
+    expect(header).toContain('extern const unsigned char g_Test_Patterns[];')
+    expect(header).not.toContain('0x7E')
+    expect(text).toContain('#include "test.h"')
     expect(text).toContain('const unsigned char g_Test_Patterns[] =')
     expect(text).toContain('\t0x7E, /* .######. */')
     expect(text).toContain('\t0x00, /* ........ */')
@@ -68,24 +85,24 @@ describe('emitCHeader', () => {
   })
 
   it('emits size defines when asked', () => {
-    const text = emitCHeader({
+    const { header } = emitC({
       name: 'g_Test',
       tables: [{ suffix: '', bytes: new Uint8Array(4) }],
       defines: true
     })
-    expect(text).toContain('#define G_TEST_SIZE 4')
+    expect(header).toContain('#define G_TEST_SIZE 4')
     expect(defineName('g_My-Tiles')).toBe('G_MY_TILES')
   })
 
   it('wraps plain tables at 16 bytes per line', () => {
-    const text = emitCHeader({ name: 'g_T', tables: [{ suffix: '', bytes: new Uint8Array(20) }] })
-    const body = text.split('\n').filter((line) => line.startsWith('\t'))
+    const { source } = emitC({ name: 'g_T', tables: [{ suffix: '', bytes: new Uint8Array(20) }] })
+    const body = source.split('\n').filter((line: string) => line.startsWith('\t'))
     expect(body).toHaveLength(2)
     expect(body[0].split(',').filter(Boolean)).toHaveLength(16)
   })
 
   it('totals multi-table headers', () => {
-    const text = emitCHeader({
+    const { source: text } = emitC({
       name: 'g_T',
       tables: [
         { suffix: '_A', bytes: new Uint8Array(3) },
@@ -173,14 +190,19 @@ describe('tiles resource', () => {
     expect([...tables[2].bytes]).toEqual([2, 3, 4, 5, 6, 7]) // row-major tile ids
 
     const block = defaultExport('scenery.tiles.json')
-    const plain = decode(renderResource(resource, 'scenery.tiles.json', block))
+    const plain = rendered(resource, 'scenery.tiles.json', block)
     expect(plain).toContain('#define G_SCENERYTILES_DOOR_BASE 0')
     expect(plain).toContain('#define G_SCENERYTILES_DOOR_W 2')
     expect(plain).toContain('#define G_SCENERYTILES_DOOR_H 3')
     expect(plain).not.toContain('DrawBlock')
 
-    const withCode = decode(renderResource(resource, 'scenery.tiles.json', { ...block, helpers: true }))
-    expect(withCode).toContain('static void g_SceneryTiles_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h)')
+    const withCode = rendered(resource, 'scenery.tiles.json', { ...block, helpers: true })
+    // Prototype in the header, body in the source: a `static` definition in a
+    // header would give every module including it its own copy.
+    const files = renderResourceFiles(resource, 'scenery.tiles.json', { ...block, helpers: true })
+    expect(files.header).toContain('void g_SceneryTiles_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h);')
+    expect(files.source).toContain('void g_SceneryTiles_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h)')
+    expect(files.source).not.toContain('static void g_SceneryTiles_DrawBlock')
     expect(withCode).toContain('VDP_WriteLayout_GM2(g_SceneryTiles_Blocks + base, x, y, w, h);')
   })
 
@@ -192,14 +214,14 @@ describe('tiles resource', () => {
   })
 
   it('renders a C header naming its source, not an absolute path', () => {
-    const text = decode(renderResource(fixtureTiles(), 'art/fixture.tiles.json', defaultExport('art/fixture.tiles.json')))
+    const text = rendered(fixtureTiles(), 'art/fixture.tiles.json', defaultExport('art/fixture.tiles.json'))
     expect(text).toContain('//  - Source: art/fixture.tiles.json')
     expect(text).toContain('//  - Mode: SCREEN 2 (GRAPHIC 2)')
     expect(text).toContain('const unsigned char g_FixtureTiles_Patterns[] =')
   })
 
   it('renders bin as the raw concatenation', () => {
-    const bytes = renderResource(fixtureTiles(), 'x.tiles.json', { name: 'g_X', format: 'bin', out: 'content/x.bin' })
+    const bytes = renderResourceBin(fixtureTiles(), { name: 'g_X', format: 'bin', out: 'content/x.bin' })
     expect(bytes).toHaveLength(32)
     expect(bytes[1]).toBe(0x7e)
   })
@@ -240,7 +262,7 @@ describe('sprites resource', () => {
   })
 
   it('emits per-character offsets so one character can be addressed out of a sheet', () => {
-    const text = decode(renderResource(metaResource(), 'hero.sprites.json', defaultExport('hero.sprites.json')))
+    const text = rendered(metaResource(), 'hero.sprites.json', defaultExport('hero.sprites.json'))
     expect(text).toContain('#define G_HEROSPRITES_SPRITE_0_BASE 0')
     expect(text).toContain('#define G_HEROSPRITES_SPRITE_0_PLANES 4')
     expect(text).toContain('#define G_HEROSPRITES_SPRITE_0_FRAMES 1')
@@ -248,19 +270,19 @@ describe('sprites resource', () => {
 
   it('appends the placement helper only when the export opts in', () => {
     const block = defaultExport('hero.sprites.json')
-    expect(decode(renderResource(metaResource(), 'hero.sprites.json', block))).not.toContain('g_HeroSprites_SetMeta')
+    expect(rendered(metaResource(), 'hero.sprites.json', block)).not.toContain('g_HeroSprites_SetMeta')
 
-    const text = decode(renderResource(metaResource(), 'hero.sprites.json', { ...block, helpers: true }))
-    expect(text).toContain('static void g_HeroSprites_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)')
+    const text = rendered(metaResource(), 'hero.sprites.json', { ...block, helpers: true })
+    expect(text).toContain('void g_HeroSprites_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)')
     // Mode 2 drives the per-line color table; 16×16 patterns step by 4.
     expect(text).toContain('VDP_SetSpriteExMultiColor(index + i, px, py, plane * 4, g_HeroSprites_Colors + ((u16)plane * 16));')
   })
 
   it('uses the mode-1 setter and 8×8 pattern step when that is what the sheet is', () => {
     const doc = setCharacterGrid(createSpritesDoc(1, 8), 0, 2, 1)
-    const text = decode(
-      renderResource({ kind: 'sprites', doc }, 'hero.sprites.json', { ...defaultExport('hero.sprites.json'), helpers: true })
-    )
+    const text = rendered(
+      { kind: 'sprites', doc }, 'hero.sprites.json', { ...defaultExport('hero.sprites.json'), helpers: true })
+    
     expect(text).toContain('VDP_SetSpriteSM1(index + i, px, py, plane * 1, g_HeroSprites_Colors[plane]);')
   })
 })
@@ -297,15 +319,15 @@ describe('map resource', () => {
     expect(table.bytes.length).toBeLessThan(40)
     expect([...unpackRlep(table.bytes)]).toEqual(doc.layers[0].data)
 
-    const header = new TextDecoder().decode(
-      renderResource({ kind: 'map', doc }, 'art/level.map.json', {
+    const header = rendered(
+      { kind: 'map', doc }, 'art/level.map.json', {
         name: 'g_Level',
         format: 'c',
         out: 'content/level.h',
         helpers: true,
         compress: 'rlep'
       })
-    )
+    
     expect(header).toContain('#define G_LEVEL_BACKGROUND_UNPACKED_SIZE 768')
     expect(header).toContain('RLEp_UnpackToRAM(layer, buffer)')
   })
@@ -322,15 +344,15 @@ describe('map resource', () => {
     expect(table.unpacked).toBeUndefined()
     expect([...table.bytes]).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
 
-    const header = new TextDecoder().decode(
-      renderResource({ kind: 'map', doc }, 'art/level.map.json', {
+    const header = rendered(
+      { kind: 'map', doc }, 'art/level.map.json', {
         name: 'g_Level',
         format: 'c',
         out: 'content/level.h',
         helpers: true,
         compress: 'rlep'
       })
-    )
+    
     // The helper has to agree with the table it sits next to, or it unpacks raw bytes.
     expect(header).not.toContain('RLEp_UnpackToRAM')
     expect(header).toContain('VDP_WriteLayout_GM2(layer, x, y, G_LEVEL_W, G_LEVEL_H)')
@@ -403,15 +425,15 @@ describe('screen resource', () => {
     }
     expect(rebuilt).toEqual([...packBitmap(new Uint8Array(256 * 212).fill(4), 256, 212, 'sc5')])
 
-    const header = new TextDecoder().decode(
-      renderResource({ kind: 'screen', doc: flat }, 'art/title.screen.json', {
+    const header = rendered(
+      { kind: 'screen', doc: flat }, 'art/title.screen.json', {
         name: 'g_Title',
         format: 'c',
         out: 'content/title.h',
         helpers: true,
         compress: 'rlep'
       })
-    )
+    
     expect(header).toContain('#define G_TITLE_BANDS 14')
     expect(header).toContain('#define G_TITLE_BAND_ROWS 16')
     expect(header).toContain('#define G_TITLE_BAND_BYTES 2048')
@@ -426,15 +448,15 @@ describe('screen resource', () => {
     expect(tables.map((table) => table.suffix)).toEqual(['_Palette', '_Data'])
     expect(tables[1].unpacked).toBeUndefined()
 
-    const header = new TextDecoder().decode(
-      renderResource({ kind: 'screen', doc }, 'art/title.screen.json', {
+    const header = rendered(
+      { kind: 'screen', doc }, 'art/title.screen.json', {
         name: 'g_Title',
         format: 'c',
         out: 'content/title.h',
         helpers: true,
         compress: 'rlep'
       })
-    )
+    
     expect(header).toContain('packing gained nothing here')
     expect(header).not.toContain('RLEp_UnpackToRAM')
   })
@@ -470,7 +492,7 @@ describe('sfx resource', () => {
 
   it('re-parses an exported bank back into the in-memory model', () => {
     const doc = normalizeSfx({ effects: SFX_PRESETS })
-    const bank = renderResource({ kind: 'sfx', doc }, 'audio/fx.sfx.json', {
+    const bank = renderResourceBin({ kind: 'sfx', doc }, {
       name: 'g_FxSfx',
       format: 'bin',
       out: 'content/fx.afb'
@@ -479,7 +501,7 @@ describe('sfx resource', () => {
   })
 
   it('renders a C header naming the ayFX module to enable', () => {
-    const text = decode(renderResource(fixtureSfx(), 'audio/fx.sfx.json', defaultExport('audio/fx.sfx.json')))
+    const text = rendered(fixtureSfx(), 'audio/fx.sfx.json', defaultExport('audio/fx.sfx.json'))
     expect(text).toContain('//  - Source: audio/fx.sfx.json')
     expect(text).toContain('ayfx/ayfx_player')
     expect(text).toContain('//  - Effects: 0=zap, 1=boom')

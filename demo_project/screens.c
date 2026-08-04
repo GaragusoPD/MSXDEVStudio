@@ -1,7 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  The title picture and the text screens either side of the game.
 // ─────────────────────────────────────────────────────────────────────────────
-// Part of main.c's translation unit — see the note there.
+#include "demo.h"
+
+// MSXgl's own 8x8 font, which also carries its logo as characters 1 to 6.
+// Included *here* rather than in demo.h because it is another header that holds
+// data rather than declarations: every file that included it would define its
+// own copy of the font, and the linker would reject the duplicates.
+#include "font/font_mgl_sample8.h"
 
 // The text screens' paper colour. Local to this file: nothing else draws text.
 #define PAPER  COLOR_BLACK

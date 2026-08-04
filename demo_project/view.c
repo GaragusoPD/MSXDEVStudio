@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  Everything that reaches the name table: the view, the HUD, the coin spin.
 // ─────────────────────────────────────────────────────────────────────────────
-// Part of main.c's translation unit — see the note there.
+#include "demo.h"
 
 
 

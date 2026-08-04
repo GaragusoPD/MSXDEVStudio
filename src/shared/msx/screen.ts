@@ -8,6 +8,7 @@
  */
 
 import { packRlep } from './compress'
+import type { HelperC } from './emitC'
 import { isBitmapMode, MODES, type BitmapMode } from './modes'
 import type { ExportBlock } from './resource'
 import type { DitherMode } from './quantize'
@@ -295,10 +296,11 @@ export function fragmentRectBytes(doc: ScreenDoc): Uint8Array {
  * Opt-in (`ExportBlock.helpers`); needs MSXgl's VDP command engine, so MSX2+
  * with `VDP_USE_COMMAND`.
  */
-export function screenHelperC(doc: ScreenDoc, name: string): string[] {
+export function screenHelperC(doc: ScreenDoc, name: string): HelperC {
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
   const first = doc.fragments[0]?.name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase() ?? 'FRAGMENT'
-  return [
+  return {
+    header: [
     '',
     `// ── ${name}: software sprites ─────────────────────────────────────────`,
     '//',
@@ -332,14 +334,20 @@ export function screenHelperC(doc: ScreenDoc, name: string): string[] {
     '\tu8  by, bw, bh;',
     `} ${name}_SwSprite;`,
     '',
+    `void ${name}_Upload(u8 stripY);`,
+    `void ${name}_Restore(${name}_SwSprite* s, u8 stripY);`,
+    `void ${name}_Draw(${name}_SwSprite* s, u8 frame, u16 x, u8 y, u8 stripY);`
+    ],
+    source: [
+    '',
     '// Copies every frame into the off-screen strip at VRAM row `stripY`.',
-    `static void ${name}_Upload(u8 stripY)`,
+    `void ${name}_Upload(u8 stripY)`,
     '{',
     `\tVDP_CommandHMMC(${name}_Strip, 0, stripY, ${prefix}_STRIP_W, ${prefix}_STRIP_H);`,
     '}',
     '',
     '// Puts back what the object was covering. Safe before the first draw.',
-    `static void ${name}_Restore(${name}_SwSprite* s, u8 stripY)`,
+    `void ${name}_Restore(${name}_SwSprite* s, u8 stripY)`,
     '{',
     '\tif(s->bw == 0)',
     '\t\treturn;',
@@ -348,7 +356,7 @@ export function screenHelperC(doc: ScreenDoc, name: string): string[] {
     '}',
     '',
     '// Saves the background at the new position, then blits `frame` over it.',
-    `static void ${name}_Draw(${name}_SwSprite* s, u8 frame, u16 x, u8 y, u8 stripY)`,
+    `void ${name}_Draw(${name}_SwSprite* s, u8 frame, u16 x, u8 y, u8 stripY)`,
     '{',
     `\tconst u8* rect = ${name}_Rects + ((u16)frame * 4);`,
     '\tu16 sx = rect[0] + ((u16)rect[1] << 8);',
@@ -363,7 +371,8 @@ export function screenHelperC(doc: ScreenDoc, name: string): string[] {
     `\tVDP_CommandHMMM(s->bx, y, s->slot * ${prefix}_BACKUP_PITCH, stripY + ${prefix}_STRIP_H, s->bw, h);`,
     '\tVDP_CommandLMMM(sx, stripY, x, y, w, h, VDP_OP_TIMP);',
     '}'
-  ]
+    ]
+  }
 }
 
 /**
@@ -372,9 +381,11 @@ export function screenHelperC(doc: ScreenDoc, name: string): string[] {
  * band is unpacked into a small RAM buffer and blitted before the next is
  * touched, so the whole 27 KB picture never has to be anywhere but VRAM.
  */
-export function screenUnpackC(name: string): string[] {
+export function screenUnpackC(name: string): HelperC {
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
-  return [
+  const signature = `void ${name}_Unpack(u8* buffer, u8 y)`
+  return {
+    header: [
     '',
     `// ── ${name}: the picture, RLEp-packed ─────────────────────────────────`,
     '//',
@@ -388,7 +399,11 @@ export function screenUnpackC(name: string): string[] {
     '// Example:',
     `//   u8 buffer[${prefix}_BAND_BYTES];`,
     `//   ${name}_Unpack(buffer, 0);`,
-    `static void ${name}_Unpack(u8* buffer, u8 y)`,
+    `${signature};`
+    ],
+    source: [
+    '',
+    signature,
     '{',
     '\tu8 band;',
     `\tfor(band = 0; band < ${prefix}_BANDS; ++band)`,
@@ -399,7 +414,8 @@ export function screenUnpackC(name: string): string[] {
     `\t\tVDP_CommandHMMC(buffer, 0, y + (band * ${prefix}_BAND_ROWS), ${prefix}_W, size / ${prefix}_STRIDE);`,
     '\t}',
     '}'
-  ]
+    ]
+  }
 }
 
 /** Palette table bytes in V9938 write order: `[0RRR0BBB, 00000GGG]` per entry. */

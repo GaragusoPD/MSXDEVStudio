@@ -18,6 +18,7 @@ import {
   writeIdeState
 } from './project'
 import type { FsService } from './fs-service'
+import { generatedSourceModules } from './resources'
 import type { GitService } from './git-service'
 import type { StateService } from './state-service'
 import type { ToolchainService } from './toolchain-service'
@@ -139,7 +140,12 @@ export class ProjectService {
    */
   regenerateConfig(): void {
     if (!this.current) return
-    writeGeneratedConfig(this.current.root, this.current.projectFile, this.current.project)
+    writeGeneratedConfig(
+      this.current.root,
+      this.current.projectFile,
+      this.current.project,
+      generatedSourceModules(this.current.root)
+    )
   }
 
   private libModules(): string[] {

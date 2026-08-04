@@ -13,6 +13,7 @@
  *   `EC<<7 | CC<<6 | IC<<5 | color`.
  */
 
+import type { HelperC } from './emitC'
 import type { ExportBlock } from './resource'
 
 export type SpriteMode = 1 | 2
@@ -426,7 +427,7 @@ export function spriteLayoutBytes(doc: SpritesDoc): Uint8Array {
  * Opt-in (`ExportBlock.helpers`) because it calls into MSXgl's VDP module,
  * which a data-only header must not depend on.
  */
-export function spriteHelperC(doc: SpritesDoc, name: string): string[] {
+export function spriteHelperC(doc: SpritesDoc, name: string): HelperC {
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
   // 16×16 sprites take four VRAM patterns each; 8×8 take one.
   const step = doc.size === 16 ? 4 : 1
@@ -434,7 +435,9 @@ export function spriteHelperC(doc: SpritesDoc, name: string): string[] {
     doc.mode === 1
       ? `VDP_SetSpriteSM1(index + i, px, py, plane * ${step}, ${name}_Colors[plane]);`
       : `VDP_SetSpriteExMultiColor(index + i, px, py, plane * ${step}, ${name}_Colors + ((u16)plane * 16));`
-  return [
+  const signature = `void ${name}_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)`
+  return {
+    header: [
     '',
     `// Places one character of ${name} as a group of hardware sprites, from a single`,
     '// coordinate. Needs MSXgl\'s VDP module (#include "msxgl.h" before this header),',
@@ -446,7 +449,11 @@ export function spriteHelperC(doc: SpritesDoc, name: string): string[] {
     '//   x, y   - screen position of the character\'s top-left corner',
     `//   base   - first plane of the frame to show: ${prefix}_<CHARACTER>_BASE + frame * ..._PLANES`,
     '//   planes - ..._PLANES for that character',
-    `static void ${name}_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)`,
+    `${signature};`
+    ],
+    source: [
+    '',
+    signature,
     '{',
     `\tconst u8* rec = ${name}_Layout + ((u16)base * 2);`,
     '\tfor(u8 i = 0; i < planes; ++i)',
@@ -458,7 +465,8 @@ export function spriteHelperC(doc: SpritesDoc, name: string): string[] {
     `\t\t${setSprite}`,
     '\t}',
     '}'
-  ]
+    ]
+  }
 }
 
 export function validateSprites(doc: SpritesDoc): string[] {

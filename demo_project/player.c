@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  The character: moving, falling, collecting, and turning around.
 // ─────────────────────────────────────────────────────────────────────────────
-// Part of main.c's translation unit — see the note there.
+#include "demo.h"
 
 
 i16 g_PlayerX;     // pixels, top-left of the 16x16 sprite

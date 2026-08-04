@@ -46,8 +46,9 @@
 //      writable copy of the level in RAM (coins vanish, the door opens). What
 //      was a Mem_Copy out of ROM is now an unpack into the same array.
 //
-//  Where things live — each file is a chapter, and `demo.h` is the vocabulary
-//  they share (the tile indices, the flags, the physics constants):
+//  Where things live — each file is a real module, compiled separately, and
+//  `demo.h` is the vocabulary they share (the tile indices, the flags, the
+//  physics constants):
 //
 //    demo.h     what everything agrees on, and who owns which global
 //    level.c    the level in RAM — read it, collide with it, scroll it
@@ -62,16 +63,6 @@
 //  None of the above endorse this demo. The in-game credits screen says the
 //  same thing, which is what MSXStudio's license asks of anything made with it.
 #include "demo.h"
-
-// The rest of the game, in reading order. They are #included rather than
-// compiled separately, which is how MSXgl composes its own modules too (its
-// input.c ends with #include "keyboard.c"): one translation unit means the
-// generated headers' tables are defined exactly once, no extern boilerplate for
-// every global, and SDCC sees the whole program when it optimises.
-#include "level.c"
-#include "view.c"
-#include "player.c"
-#include "screens.c"
 
 //──────────────────────────────────────────────────────────────────────────────
 // Setting up, and the loop that drives everything else

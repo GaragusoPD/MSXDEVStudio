@@ -3,7 +3,7 @@
 
 //-- Project
 ProjName = "demo";
-ProjModules = ["main"];
+ProjModules = ["main", "level", "view", "player", "screens", "content/background_map", "content/intro_map", "content/intro_tiles", "content/level_map", "content/player_sprites", "content/sfx", "content/tiles"];
 LibModules = ["system", "bios", "vdp", "print", "keyboard", "memory", "psg", "ayfx/ayfx_player", "compress", "sprite_fx"];
 
 //-- Target

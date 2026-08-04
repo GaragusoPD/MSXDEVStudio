@@ -24,9 +24,6 @@
 // has to be in the project's LibModules.
 #include "sprite_fx.h"
 
-// MSXgl's own 8x8 font, which also carries its logo as characters 1 to 6.
-#include "font/font_mgl_sample8.h"
-
 #include "content/tiles.h"
 #include "content/intro_tiles.h"
 #include "content/intro_map.h"

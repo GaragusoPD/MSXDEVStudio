@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { quantize } from './msx/quantize'
-import { parseResource, renderResource, serializeResource } from './msx/resource'
+import { parseResource, renderResourceFiles, serializeResource } from './msx/resource'
 import {
   blockPixels,
   blockTileAt,
@@ -525,7 +525,7 @@ describe('image import → save → export round-trip', () => {
     expect(reloaded.doc).toEqual(doc)
     expect(validateTiles(reloaded.doc as TilesDoc)).toEqual([])
 
-    const header = new TextDecoder().decode(renderResource(reloaded, 'imported.tiles.json', doc.export))
+    const header = renderResourceFiles(reloaded, 'imported.tiles.json', doc.export).source ?? ''
     expect(header).toContain('g_Imported_Patterns')
     expect(header).toContain('g_Imported_Colors')
   })

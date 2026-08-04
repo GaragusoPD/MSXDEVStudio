@@ -13,7 +13,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join, resolve } from 'node:path'
 import { isIgnoredName, resolveRelativePath } from '../../shared/fs-safety'
 import type { ImgRule, MsxProject } from '../../shared/msxproj'
-import { parseResource, renderResource, resourceKindOf, validateResource } from '../../shared/msx/resource'
+import { parseResource, renderResourceFiles,
+  sourcePathFor, resourceKindOf, validateResource } from '../../shared/msx/resource'
 
 /** `<msxgl>/tools/MSXtk/bin/MSXimg(.exe)` — MSXgl ships Linux and Windows builds. */
 export function msximgPath(msxglPath: string): string {
@@ -94,6 +95,27 @@ function insideRoot(root: string, relative: string): string | null {
   return safe ? resolve(root, safe) : null
 }
 
+/**
+ * The module names MSXgl must compile for the generated data: every resource
+ * that exports C contributes one `.c` beside its header. Extensionless and
+ * project-relative, which is the form ProjModules takes.
+ */
+export function generatedSourceModules(root: string): string[] {
+  const out: string[] = []
+  for (const relative of findResourceFiles(root)) {
+    const abs = insideRoot(root, relative)
+    if (!abs) continue
+    try {
+      const block = parseResource(relative, readFileSync(abs, 'utf-8')).doc.export
+      if (block?.out && block.format === 'c') out.push(sourcePathFor(block.out).replace(/\.c$/, ''))
+    } catch {
+      // A resource that will not parse cannot contribute a module; the export
+      // itself reports why.
+    }
+  }
+  return [...new Set(out)].sort()
+}
+
 /** Converts one editor resource into the file its `export` block names. */
 export function exportResourceFile(root: string, relative: string, options: ExportOptions = {}): ConversionResult {
   const sourceAbs = insideRoot(root, relative)
@@ -107,15 +129,34 @@ export function exportResourceFile(root: string, relative: string, options: Expo
 
     const outAbs = insideRoot(root, block.out)
     if (!outAbs) return { ...base, out: block.out, message: 'Output path escapes the project folder.' }
-    if (upToDate(sourceAbs, outAbs, options)) return { ...base, out: block.out, status: 'skipped' }
+    // Both halves must be newer than the resource, or a deleted .c would never
+    // come back.
+    const pairAbs = block.format === 'bin' ? null : insideRoot(root, sourcePathFor(block.out))
+    if (upToDate(sourceAbs, outAbs, options) && (!pairAbs || upToDate(sourceAbs, pairAbs, options))) {
+      return { ...base, out: block.out, status: 'skipped' }
+    }
 
     const problems = validateResource(resource)
     if (problems.length) return { ...base, out: block.out, message: problems.join('; ') }
 
-    const bytes = renderResource(resource, relative, block)
+    const files = renderResourceFiles(resource, relative, block)
     mkdirSync(dirname(outAbs), { recursive: true })
-    writeFileSync(outAbs, bytes)
-    return { ...base, out: block.out, status: 'converted', message: `${bytes.length} bytes` }
+    if (files.bin) {
+      writeFileSync(outAbs, files.bin)
+      return { ...base, out: block.out, status: 'converted', message: `${files.bin.length} bytes` }
+    }
+    // A C export is two files: declarations for everyone, definitions once.
+    const sourceRel = sourcePathFor(block.out)
+    const sourceOut = insideRoot(root, sourceRel)
+    if (!sourceOut) return { ...base, out: block.out, message: 'Output path escapes the project folder.' }
+    writeFileSync(outAbs, files.header ?? '')
+    writeFileSync(sourceOut, files.source ?? '')
+    return {
+      ...base,
+      out: `${block.out} + ${sourceRel}`,
+      status: 'converted',
+      message: `${(files.header ?? '').length} + ${(files.source ?? '').length} bytes`
+    }
   } catch (error) {
     return { ...base, message: error instanceof Error ? error.message : String(error) }
   }

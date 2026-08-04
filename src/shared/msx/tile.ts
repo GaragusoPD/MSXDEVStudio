@@ -11,6 +11,7 @@
  *   shares that FG/BG pair.
  */
 
+import type { HelperC } from './emitC'
 import { MSX1_PALETTE_GRB } from './palette'
 import { isTileMode, type TileMode } from './modes'
 import type { ExportBlock } from './resource'
@@ -621,23 +622,24 @@ export function blockBytes(doc: TilesDoc): Uint8Array {
  * 32-column name table, so it serves sc1 as well as sc2/sc4, but it compiles
  * only when the project enables `VDP_USE_MODE_G2` or `VDP_USE_MODE_G3`.
  */
-export function tileHelperC(doc: TilesDoc, name: string): string[] {
+export function tileHelperC(doc: TilesDoc, name: string): HelperC {
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
   const first = doc.blocks[0]?.name ?? 'BLOCK'
   const id = `${prefix}_${first.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`
-  return [
-    '',
-    `// Stamps one block of ${name} into the name table at tile column/row (x, y).`,
-    '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
-    '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.',
-    '//',
-    '// Example:',
-    `//   ${name}_DrawBlock(10, 5, ${id}_BASE, ${id}_W, ${id}_H);`,
-    `static void ${name}_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h)`,
-    '{',
-    `\tVDP_WriteLayout_GM2(${name}_Blocks + base, x, y, w, h);`,
-    '}'
-  ]
+  const signature = `void ${name}_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h)`
+  return {
+    header: [
+      '',
+      `// Stamps one block of ${name} into the name table at tile column/row (x, y).`,
+      '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
+      '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.',
+      '//',
+      '// Example:',
+      `//   ${name}_DrawBlock(10, 5, ${id}_BASE, ${id}_W, ${id}_H);`,
+      `${signature};`
+    ],
+    source: ['', signature, '{', `\tVDP_WriteLayout_GM2(${name}_Blocks + base, x, y, w, h);`, '}']
+  }
 }
 
 export function validateTiles(doc: TilesDoc): string[] {

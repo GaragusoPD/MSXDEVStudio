@@ -37,8 +37,21 @@ export interface EmitOptions {
   defines?: boolean
   /** Extra `#define`s emitted before the tables, as raw `#define NAME value` lines. */
   constants?: string[]
-  /** Ready-made C appended after the tables — the opt-in helpers, verbatim. */
-  code?: string[]
+  /** Ready-made C: what belongs in the header, and what belongs in the source. */
+  code?: HelperC
+  /** File name of the header, so the generated `.c` can include it. */
+  headerFile?: string
+}
+
+/**
+ * A generated helper, split the way C requires once a project spans more than
+ * one file: types and prototypes in the header, bodies in the source. Emitting
+ * the bodies into the header instead would force `static`, and every module
+ * that included it would get its own copy plus an "unused" warning.
+ */
+export interface HelperC {
+  header: string[]
+  source: string[]
 }
 
 const BANNER = [
@@ -77,29 +90,48 @@ function emitTable(name: string, table: EmitTable): string[] {
   return lines
 }
 
-export function emitCHeader(options: EmitOptions): string {
-  const lines = [...BANNER]
+/**
+ * The two halves of a C export.
+ *
+ * The header declares — sizes, offsets, `extern` tables, helper prototypes —
+ * and the source defines. That split is what lets a project be more than one
+ * `.c`: a table *defined* in a header is a duplicate symbol the moment a second
+ * module includes it, which is a link error rather than a warning.
+ */
+export function emitC(options: EmitOptions): { header: string; source: string } {
+  const head = [...BANNER]
   if (options.notes?.length) {
-    lines.push('//', '// Generation parameters:')
-    for (const note of options.notes) lines.push(`//  - ${note}`)
+    head.push('//', '// Generation parameters:')
+    for (const note of options.notes) head.push(`//  - ${note}`)
   }
-  lines.push('')
-  if (options.constants?.length) lines.push(...options.constants, '')
+  head.push('', '#pragma once', '')
+  if (options.constants?.length) head.push(...options.constants, '')
+
+  const body = [...BANNER, '']
+  // The helpers call into MSXgl and their prototypes use its types, so the
+  // source that defines them needs the engine's header — it is compiled on its
+  // own, not pasted into a file that already included it.
+  if (options.code?.source.length) body.push('#include "msxgl.h"')
+  if (options.headerFile) body.push(`#include "${options.headerFile}"`, '')
 
   let total = 0
   for (const table of options.tables) {
     const name = `${options.name}${table.suffix}`
     if (options.defines) {
-      lines.push(`#define ${defineName(name)}_SIZE ${table.bytes.length}`)
-      if (table.unpacked !== undefined) lines.push(`#define ${defineName(name)}_UNPACKED_SIZE ${table.unpacked}`)
-      lines.push('')
+      head.push(`#define ${defineName(name)}_SIZE ${table.bytes.length}`)
+      if (table.unpacked !== undefined) head.push(`#define ${defineName(name)}_UNPACKED_SIZE ${table.unpacked}`)
     }
-    lines.push(...emitTable(name, table))
+    head.push(`extern const unsigned char ${name}[];`, '')
+    body.push(...emitTable(name, table))
     total += table.bytes.length
   }
-  if (options.tables.length > 1) lines.push(`// Total size: ${total} Bytes`)
-  if (options.code?.length) lines.push(...options.code)
-  return `${lines.join('\n').replace(/\n+$/, '')}\n`
+  if (options.tables.length > 1) body.push(`// Total size: ${total} Bytes`)
+  if (options.code) {
+    head.push(...options.code.header)
+    body.push(...options.code.source)
+  }
+  const finish = (lines: string[]): string => `${lines.join('\n').replace(/\n+$/, '')}\n`
+  return { header: finish(head), source: finish(body) }
 }
 
 /** The same tables as one raw blob, concatenated in order — the `format: "bin"` export. */

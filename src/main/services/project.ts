@@ -46,10 +46,20 @@ export function findProjectFile(dir: string): string | null {
   return entries[0]?.name ?? null
 }
 
-/** Regenerates `project_config.js` — unless the user claimed ownership of it. */
-export function writeGeneratedConfig(root: string, projectFile: string, project: MsxProject): void {
+/**
+ * Regenerates `project_config.js` — unless the user claimed ownership of it.
+ * `generatedModules` are the exporter's own `.c` files (see
+ * `resources.ts`); they are appended to ProjModules so the tables they hold get
+ * compiled without the user having to list each resource by hand.
+ */
+export function writeGeneratedConfig(
+  root: string,
+  projectFile: string,
+  project: MsxProject,
+  generatedModules: readonly string[] = []
+): void {
   if (project.customConfig) return
-  writeFileSync(join(root, CONFIG_FILE), generateProjectConfig(project, projectFile), 'utf-8')
+  writeFileSync(join(root, CONFIG_FILE), generateProjectConfig(project, projectFile, generatedModules), 'utf-8')
 }
 
 export function saveProject(root: string, projectFile: string, project: MsxProject): OpenProject {

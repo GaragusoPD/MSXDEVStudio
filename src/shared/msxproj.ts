@@ -231,7 +231,17 @@ function rawFileLiteral(entry: RawFileEntry): string {
  * identity (`ProjName`/`ProjModules`/`LibModules`) is always written because
  * MSXgl's defaults for those are empty.
  */
-export function generateProjectConfig(project: MsxProject, projectFileName: string): string {
+export function generateProjectConfig(
+  project: MsxProject,
+  projectFileName: string,
+  /**
+   * Sources the exporter generates (`content/tiles`, …), appended to
+   * ProjModules. A C export puts its tables in a `.c` so several modules can
+   * include the header; that `.c` has to be compiled, and expecting the user to
+   * list every resource by hand would make the export a trap.
+   */
+  generatedModules: readonly string[] = []
+): string {
   const out: string[] = [
     `${GENERATED_BANNER_PREFIX} ${projectFileName} — edit settings in the IDE, or set`,
     '// "customConfig": true to hand-edit this file.',
@@ -249,7 +259,8 @@ export function generateProjectConfig(project: MsxProject, projectFileName: stri
 
   section('Project')
   emit('ProjName', project.name)
-  emit('ProjModules', project.projModules, `[${project.projModules.map((m) => JSON.stringify(m)).join(', ')}]`)
+  const projModules = [...project.projModules, ...generatedModules.filter((m) => !project.projModules.includes(m))]
+  emit('ProjModules', projModules, `[${projModules.map((m) => JSON.stringify(m)).join(', ')}]`)
   emit('LibModules', project.libModules, `[${project.libModules.map((m) => JSON.stringify(m)).join(', ')}]`)
 
   section('Target')

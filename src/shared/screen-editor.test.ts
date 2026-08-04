@@ -235,8 +235,12 @@ describe('bitmap fragments', () => {
 
   it('emits the software-sprite runtime only for the fragments it has', () => {
     const doc = screen([{ name: 'idle', x: 0, y: 0, width: 16, height: 16 }])
-    const code = screenHelperC(doc, 'g_Hero').join('\n')
-    expect(code).toContain('static void g_Hero_Upload(u8 stripY)')
+    const helper = screenHelperC(doc, 'g_Hero')
+    const code = [...helper.header, ...helper.source].join('\n')
+    // The struct and the prototypes are the header's; the bodies are the .c's.
+    expect(helper.header.join('\n')).toContain('} g_Hero_SwSprite;')
+    expect(helper.header.join('\n')).toContain('void g_Hero_Upload(u8 stripY);')
+    expect(helper.source.join('\n')).toContain('void g_Hero_Upload(u8 stripY)')
     expect(code).toContain('VDP_CommandLMMM(sx, stripY, x, y, w, h, VDP_OP_TIMP);')
     // Each object saves its background in its own column, or they eat each other's.
     expect(code).toContain('s->slot * G_HERO_BACKUP_PITCH')

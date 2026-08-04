@@ -5,7 +5,7 @@
  */
 
 import { packRlep } from './compress'
-import { defineName } from './emitC'
+import { defineName, type HelperC } from './emitC'
 import type { ExportBlock } from './resource'
 
 
@@ -155,7 +155,7 @@ export function mapExport(
  * unpack into a caller-supplied buffer first — `RLEp_UnpackToRAM` is MSXgl's
  * own, from the `compress` module.
  */
-export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): string[] {
+export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
   const prefix = defineName(name)
   const head = [
     '',
@@ -164,18 +164,21 @@ export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table
     '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.'
   ]
   if (!compressed) {
-    return [
+    const signature = `void ${name}_DrawLayer(const u8* layer, u8 x, u8 y)`
+    return {
+      header: [
       ...head,
       '//',
       '// Example:',
       `//   ${name}_DrawLayer(${table}, 0, 0);`,
-      `static void ${name}_DrawLayer(const u8* layer, u8 x, u8 y)`,
-      '{',
-      `\tVDP_WriteLayout_GM2(layer, x, y, ${prefix}_W, ${prefix}_H);`,
-      '}'
-    ]
+      `${signature};`
+      ],
+      source: ['', signature, '{', `\tVDP_WriteLayout_GM2(layer, x, y, ${prefix}_W, ${prefix}_H);`, '}']
+    }
   }
-  return [
+  const signature = `void ${name}_DrawLayer(const u8* layer, u8* buffer, u8 x, u8 y)`
+  return {
+    header: [
     ...head,
     '// The layers are RLEp-compressed, so this also needs the "compress" library',
     '// module and COMPRESS_USE_RLEP TRUE / COMPRESS_USE_RLEP_DEFAULT TRUE in',
@@ -187,10 +190,15 @@ export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table
     '// Example:',
     `//   u8 buffer[${defineName(table)}_UNPACKED_SIZE];`,
     `//   ${name}_DrawLayer(${table}, buffer, 0, 0);`,
-    `static void ${name}_DrawLayer(const u8* layer, u8* buffer, u8 x, u8 y)`,
-    '{',
-    '\tRLEp_UnpackToRAM(layer, buffer);',
-    `\tVDP_WriteLayout_GM2(buffer, x, y, ${prefix}_W, ${prefix}_H);`,
-    '}'
-  ]
+    `${signature};`
+    ],
+    source: [
+      '',
+      signature,
+      '{',
+      '\tRLEp_UnpackToRAM(layer, buffer);',
+      `\tVDP_WriteLayout_GM2(buffer, x, y, ${prefix}_W, ${prefix}_H);`,
+      '}'
+    ]
+  }
 }

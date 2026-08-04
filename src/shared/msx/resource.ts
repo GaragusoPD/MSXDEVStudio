@@ -8,7 +8,7 @@
  * disagree about what a `.tiles.json` becomes.
  */
 
-import { defineName, emitBin, emitCHeader, type EmitTable } from './emitC'
+import { defineName, emitBin, emitC, type EmitTable, type HelperC } from './emitC'
 import { normalizeMap, mapExport, mapHelperC, validateMap, type MapDoc } from './map'
 import { MODES } from './modes'
 import {
@@ -459,20 +459,32 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
   })
 }
 
+const NO_CODE: HelperC = { header: [], source: [] }
+
+const joinHelpers = (...parts: HelperC[]): HelperC => ({
+  header: parts.flatMap((part) => part.header),
+  source: parts.flatMap((part) => part.source)
+})
+
 /** The opt-in ready-made C for this resource; empty when the kind has none (yet). */
-function resourceCode(resource: ResourceDoc, name: string, compress?: ExportBlock['compress']): string[] {
+function resourceCode(resource: ResourceDoc, name: string, compress?: ExportBlock['compress']): HelperC {
   if (resource.kind === 'map') {
     const first = resource.doc.layers[0]
-    if (!first) return []
+    if (!first) return NO_CODE
     return mapHelperC(resource.doc, name, mapExport(resource.doc, compress).compressed, `${name}_${pascal(first.name)}`)
   }
   if (resource.kind === 'screen') {
-    const banded = screenDataExport(resource.doc, compress).geometry ? screenUnpackC(name) : []
-    return resource.doc.fragments.length ? [...banded, ...screenHelperC(resource.doc, name)] : banded
+    const banded = screenDataExport(resource.doc, compress).geometry ? screenUnpackC(name) : NO_CODE
+    return resource.doc.fragments.length ? joinHelpers(banded, screenHelperC(resource.doc, name)) : banded
   }
-  if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : []
-  if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
+  if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : NO_CODE
+  if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return NO_CODE
   return spriteHelperC(resource.doc, name)
+}
+
+/** `content/tiles.h` → `content/tiles.c`; the data half of a C export. */
+export function sourcePathFor(headerPath: string): string {
+  return headerPath.replace(/\.[^./\\]*$/, '') + '.c'
 }
 
 /**
@@ -481,17 +493,35 @@ function resourceCode(resource: ResourceDoc, name: string, compress?: ExportBloc
  * comment (never an absolute path — that would break byte-stability across
  * machines).
  */
-export function renderResource(resource: ResourceDoc, sourceName: string, block: ExportBlock): Uint8Array {
+/** The `format: 'bin'` export: one raw blob, no declarations to split out. */
+export function renderResourceBin(resource: ResourceDoc, block: ExportBlock): Uint8Array {
+  return emitBin(resourceTables(resource, block.compress))
+}
+
+/**
+ * Renders a resource into the files its `export` block asks for: a header of
+ * declarations and a source of definitions, or one raw blob for `format: 'bin'`.
+ *
+ * `sourceName` is the project-relative path of the editor file; it appears in
+ * the header comment (never an absolute path — that would break byte-stability
+ * across machines).
+ */
+export function renderResourceFiles(
+  resource: ResourceDoc,
+  sourceName: string,
+  block: ExportBlock
+): { header?: string; source?: string; bin?: Uint8Array } {
   const tables = resourceTables(resource, block.compress)
-  if (block.format === 'bin') return emitBin(tables)
+  if (block.format === 'bin') return { bin: emitBin(tables) }
   const name = block.name || defaultTableName(resourceBaseName(sourceName))
-  const text = emitCHeader({
+  const { header, source } = emitC({
     name,
+    headerFile: block.out.split('/').pop(),
     tables,
     notes: resourceNotes(resource, sourceName, block),
     defines: true,
     constants: resourceConstants(resource, name, block.compress),
-    code: block.helpers ? resourceCode(resource, name, block.compress) : []
+    code: block.helpers ? resourceCode(resource, name, block.compress) : undefined
   })
-  return new TextEncoder().encode(text)
+  return { header, source }
 }

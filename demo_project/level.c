@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  The level in RAM: what is where, what is solid, and where the view sits.
 // ─────────────────────────────────────────────────────────────────────────────
-// Part of main.c's translation unit — see the note there.
+#include "demo.h"
 
 
 /**

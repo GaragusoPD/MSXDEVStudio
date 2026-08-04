@@ -17,7 +17,11 @@
     "sprite_fx"
   ],
   "projModules": [
-    "main"
+    "main",
+    "level",
+    "view",
+    "player",
+    "screens"
   ],
   "build": {
     "optim": "Speed",

@@ -9,7 +9,7 @@ import { decodeAyfxBank, normalizeSfx, SFX_PRESETS } from '../../shared/msx/sfx'
 import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
 import { defaultExport, serializeResource } from '../../shared/msx/resource'
 import { BuildService, type BuildDeps } from './build-service'
-import { createProject, resolveNodeBinary, saveProject } from './project'
+import { createProject, resolveNodeBinary, saveProject, writeGeneratedConfig } from './project'
 import {
   exportAll,
   exportResourceFile,
@@ -17,7 +17,8 @@ import {
   msximgArgs,
   msximgPath,
   runImgRule,
-  summarize
+  summarize,
+  generatedSourceModules
 } from './resources'
 
 // The same real MSXgl checkout the other suites use. Never referenced from
@@ -57,7 +58,9 @@ function writeTileset(root: string, relative: string, out = 'content/hero.h'): v
       { pattern: [0xff, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xff], color: new Array(8).fill(mergeColorByte(6, 1)) }
     ]
   })
-  doc.export = { ...defaultExport(relative), out }
+  // Named explicitly: this fixture is about the export mechanics, not about
+  // whatever `defaultExport` currently names things.
+  doc.export = { ...defaultExport(relative), name: 'g_Hero', out }
   mkdirSync(join(root, relative, '..'), { recursive: true })
   writeFileSync(join(root, relative), serializeResource({ kind: 'tiles', doc }), 'utf-8')
 }
@@ -107,17 +110,31 @@ describe('exportResourceFile', () => {
     writeTileset(root, 'art/hero.tiles.json')
 
     const result = exportResourceFile(root, 'art/hero.tiles.json')
-    expect(result).toMatchObject({ kind: 'resource', input: 'art/hero.tiles.json', out: 'content/hero.h', status: 'converted' })
+    expect(result).toMatchObject({
+      kind: 'resource',
+      input: 'art/hero.tiles.json',
+      out: 'content/hero.h + content/hero.c',
+      status: 'converted'
+    })
 
-    const text = readFileSync(join(root, 'content/hero.h'), 'utf-8')
+    // Declarations in the header, data in the source: that split is what lets a
+    // second module include the header without a duplicate symbol.
+    const header = readFileSync(join(root, 'content/hero.h'), 'utf-8')
+    expect(header).toContain('extern const unsigned char g_Hero_Patterns[];')
+    expect(header).toContain('#pragma once')
+    expect(header).not.toContain('0x18,')
+    expect(header).toContain('//  - Source: art/hero.tiles.json')
+
+    const text = readFileSync(join(root, 'content/hero.c'), 'utf-8')
+    expect(text).toContain('#include "hero.h"')
     expect(text).toContain('const unsigned char g_Hero_Patterns[] =')
     expect(text).toContain('\t0x18, /* ...##... */')
     expect(text).toContain('const unsigned char g_Hero_Colors[] =')
-    expect(text).toContain('//  - Source: art/hero.tiles.json')
 
-    // Byte-stable: re-export (forced) must produce identical bytes.
+    // Byte-stable: re-export (forced) must produce identical bytes, both halves.
     expect(exportResourceFile(root, 'art/hero.tiles.json', { force: true }).status).toBe('converted')
-    expect(readFileSync(join(root, 'content/hero.h'), 'utf-8')).toBe(text)
+    expect(readFileSync(join(root, 'content/hero.h'), 'utf-8')).toBe(header)
+    expect(readFileSync(join(root, 'content/hero.c'), 'utf-8')).toBe(text)
   })
 
   it('exports a .sfx.json as an ayFX bank that decodes back to the authored effects', () => {
@@ -357,7 +374,10 @@ describe('generated headers compile into a ROM', () => {
     const lines: string[] = []
     const deps: BuildDeps = {
       getProject: () => open,
-      prepare: () => {},
+      // What ProjectService does before a build: rewrite the config, which is
+      // where the exporter's generated .c files get listed for compilation.
+      prepare: () =>
+        writeGeneratedConfig(open.root, open.projectFile, open.project, generatedSourceModules(open.root)),
       exportResources: () => exportAll(open.root, open.project, { msxglPath: REAL_MSXGL }),
       msxglPath: () => REAL_MSXGL,
       nodeOverride: () => null,
@@ -416,7 +436,7 @@ describe('generated headers compile into a ROM', () => {
       expect(existsSync(join(open.root, 'content/hero.h')), result.log).toBe(true)
       expect(result.ok, result.log).toBe(true)
       expect(statSync(join(open.root, 'emul/rom/tilerom.rom')).size).toBe(32768)
-      expect(result.log).toContain('Converted art/hero.tiles.json → content/hero.h')
+      expect(result.log).toContain('Converted art/hero.tiles.json → content/hero.h + content/hero.c')
     },
     BUILD_TIMEOUT
   )
