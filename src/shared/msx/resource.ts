@@ -26,7 +26,16 @@ import {
   validateSprites,
   type SpritesDoc
 } from './sprite'
-import { normalizeTiles, tileColorBytes, tilePatternBytes, validateTiles, type TilesDoc } from './tile'
+import {
+  blockBytes,
+  blockPlacements,
+  normalizeTiles,
+  tileColorBytes,
+  tileHelperC,
+  tilePatternBytes,
+  validateTiles,
+  type TilesDoc
+} from './tile'
 
 /** Every editor file carries one of these; null means "not exported". */
 export interface ExportBlock {
@@ -163,6 +172,16 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
           comment: 'Gameplay flags, one byte per tile (bit 0 = flag 1)'
         })
       }
+      if (doc.blocks.length) {
+        tables.push({
+          suffix: '_Blocks',
+          bytes: blockBytes(doc),
+          perLine: Math.min(16, Math.max(...doc.blocks.map((block) => block.width))),
+          comment: `Multi-tile blocks — tile indices row-major: ${doc.blocks
+            .map((block) => `${block.name} ${block.width}×${block.height}`)
+            .join(', ')}`
+        })
+      }
       return tables
     }
     case 'sprites': {
@@ -234,6 +253,9 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
   switch (resource.kind) {
     case 'tiles':
       notes.push(`Mode: ${MODES[resource.doc.mode].label}`, `Tiles: ${resource.doc.count}`)
+      if (resource.doc.blocks.length) {
+        notes.push(`Blocks: ${resource.doc.blocks.map((block) => `${block.name} ${block.width}×${block.height}`).join(', ')}`)
+      }
       if (resource.doc.flags.some((value) => value !== 0)) {
         notes.push(`Flagged tiles: ${resource.doc.flags.filter((value) => value !== 0).length}`)
       }
@@ -279,8 +301,18 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
  * one character out of a sheet: `..._BASE + frame * ..._PLANES`.
  */
 function resourceConstants(resource: ResourceDoc, name: string): string[] {
-  if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
   const prefix = defineName(name)
+  if (resource.kind === 'tiles') {
+    return blockPlacements(resource.doc).flatMap((placement) => {
+      const id = `${prefix}_${defineName(placement.name)}`
+      return [
+        `#define ${id}_BASE ${placement.base}`,
+        `#define ${id}_W ${placement.width}`,
+        `#define ${id}_H ${placement.height}`
+      ]
+    })
+  }
+  if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
   return spritePlacements(resource.doc).flatMap((placement) => {
     const id = `${prefix}_${defineName(placement.name)}`
     return [
@@ -293,6 +325,7 @@ function resourceConstants(resource: ResourceDoc, name: string): string[] {
 
 /** The opt-in ready-made C for this resource; empty when the kind has none (yet). */
 function resourceCode(resource: ResourceDoc, name: string): string[] {
+  if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : []
   if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
   return spriteHelperC(resource.doc, name)
 }

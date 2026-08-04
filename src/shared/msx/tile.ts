@@ -43,11 +43,36 @@ export interface TilesDoc {
    * lookup rather than a chain of comparisons.
    */
   flags: number[]
+  /** Named multi-tile designs over the tiles above. Empty in files that predate them. */
+  blocks: TileBlock[]
   export: ExportBlock | null
+}
+
+/**
+ * A design bigger than one tile — a door, a tree, a boss face — authored on
+ * one canvas instead of as N separate 8×8 cells the user has to assemble in
+ * their head.
+ *
+ * A block owns no pixels: it is `width × height` *references* into `tiles`,
+ * so painting a block paints the tiles it points at, and the same tile may
+ * appear in several blocks (or in none). Structurally this is `map-editor`'s
+ * `Stamp` plus a name, deliberately — a block can be handed to `applyStamp`
+ * as-is.
+ */
+export interface TileBlock {
+  name: string
+  /** In tiles, not pixels. */
+  width: number
+  height: number
+  /** `width * height` tile indices, row-major. */
+  tiles: number[]
 }
 
 /** How many gameplay bits a tile carries. Eight, so one byte per tile. */
 export const TILE_FLAG_COUNT = 8
+
+/** Tiles per axis in a block. 8 × 8 tiles = 64 × 64 px, past any practical design. */
+export const MAX_BLOCK = 8
 
 const zeros = (n: number): number[] => new Array<number>(n).fill(0)
 
@@ -105,8 +130,31 @@ export function normalizeTiles(raw: unknown): TilesDoc {
     tiles,
     groupColors,
     flags: Array.from({ length: count }, (_, i) => (Number(rawFlags[i]) || 0) & 0xff),
+    blocks: normalizeBlocks(input.blocks, count),
     export: (input.export as ExportBlock | undefined) ?? null
   }
+}
+
+/** Clamps a block list to the grid limits and to tiles that actually exist. */
+function normalizeBlocks(raw: unknown, count: number): TileBlock[] {
+  if (!Array.isArray(raw)) return []
+  const extent = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.min(MAX_BLOCK, Math.max(1, value | 0)) : 1
+  return raw.map((entry, index) => {
+    const block = (typeof entry === 'object' && entry !== null ? entry : {}) as Partial<TileBlock>
+    const width = extent(block.width)
+    const height = extent(block.height)
+    return {
+      name: String(block.name ?? `block_${index}`),
+      width,
+      height,
+      // A reference past the end of the bank would paint nothing; tile 0 is the blank one.
+      tiles: Array.from({ length: width * height }, (_, i) => {
+        const tile = Number(block.tiles?.[i]) || 0
+        return tile >= 0 && tile < count ? tile : 0
+      })
+    }
+  })
 }
 
 // ── color-pair access ───────────────────────────────────────────────────────
@@ -137,6 +185,29 @@ export function tilePixels(doc: TilesDoc, index: number): Uint8Array {
     for (let x = 0; x < TILE_SIZE; x++) out[y * TILE_SIZE + x] = bits & (0x80 >> x) ? fg : bg
   }
   return out
+}
+
+/** A block's pixels as one image, `width*8 × height*8` palette indices, row-major. */
+export function blockPixels(doc: TilesDoc, block: TileBlock): Uint8Array {
+  const width = block.width * TILE_SIZE
+  const out = new Uint8Array(width * block.height * TILE_SIZE)
+  for (let cy = 0; cy < block.height; cy++) {
+    for (let cx = 0; cx < block.width; cx++) {
+      const pixels = tilePixels(doc, block.tiles[cy * block.width + cx] ?? 0)
+      for (let y = 0; y < TILE_SIZE; y++) {
+        out.set(pixels.subarray(y * TILE_SIZE, y * TILE_SIZE + TILE_SIZE), (cy * TILE_SIZE + y) * width + cx * TILE_SIZE)
+      }
+    }
+  }
+  return out
+}
+
+/** The tile a block-space pixel belongs to, and where it lands inside it. Null outside the block. */
+export function blockTileAt(block: TileBlock, x: number, y: number): { tile: number; tx: number; ty: number } | null {
+  const cx = Math.floor(x / TILE_SIZE)
+  const cy = Math.floor(y / TILE_SIZE)
+  if (x < 0 || y < 0 || cx >= block.width || cy >= block.height) return null
+  return { tile: block.tiles[cy * block.width + cx] ?? 0, tx: x % TILE_SIZE, ty: y % TILE_SIZE }
 }
 
 /**
@@ -420,6 +491,58 @@ export function reorderTiles(doc: TilesDoc, from: number, to: number): { doc: Ti
 // ── validation ──────────────────────────────────────────────────────────────
 
 /** Structural check of a document. Empty array = valid. */
+// ── block export ────────────────────────────────────────────────────────────
+
+/** Where each block starts in the flat `_Blocks` table, for the emitted `#define`s. */
+export interface BlockPlacement {
+  name: string
+  base: number
+  width: number
+  height: number
+}
+
+export function blockPlacements(doc: TilesDoc): BlockPlacement[] {
+  let base = 0
+  return doc.blocks.map((block) => {
+    const placement = { name: block.name, base, width: block.width, height: block.height }
+    base += block.tiles.length
+    return placement
+  })
+}
+
+/** Every block's tile indices, row-major, concatenated in block order. */
+export function blockBytes(doc: TilesDoc): Uint8Array {
+  return Uint8Array.from(doc.blocks.flatMap((block) => block.tiles.map((tile) => tile & 0xff)))
+}
+
+/**
+ * The ready-made C for blocks: stamps a block's `width × height` tile indices
+ * into the name table in one call. Opt-in (`ExportBlock.helpers`) because it
+ * calls MSXgl's VDP module.
+ *
+ * `VDP_WriteLayout_GM2` is the engine's own rectangle writer — it walks the
+ * 32-column name table, so it serves sc1 as well as sc2/sc4, but it compiles
+ * only when the project enables `VDP_USE_MODE_G2` or `VDP_USE_MODE_G3`.
+ */
+export function tileHelperC(doc: TilesDoc, name: string): string[] {
+  const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
+  const first = doc.blocks[0]?.name ?? 'BLOCK'
+  const id = `${prefix}_${first.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`
+  return [
+    '',
+    `// Stamps one block of ${name} into the name table at tile column/row (x, y).`,
+    '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
+    '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.',
+    '//',
+    '// Example:',
+    `//   ${name}_DrawBlock(10, 5, ${id}_BASE, ${id}_W, ${id}_H);`,
+    `static void ${name}_DrawBlock(u8 x, u8 y, u8 base, u8 w, u8 h)`,
+    '{',
+    `\tVDP_WriteLayout_GM2(${name}_Blocks + base, x, y, w, h);`,
+    '}'
+  ]
+}
+
 export function validateTiles(doc: TilesDoc): string[] {
   const problems: string[] = []
   if (doc.version !== 1) problems.push(`Unsupported version ${doc.version}`)
@@ -448,6 +571,19 @@ export function validateTiles(doc: TilesDoc): string[] {
   } else if (doc.groupColors.length) {
     problems.push(`${doc.mode} does not use group colors`)
   }
+
+  doc.blocks.forEach((block, index) => {
+    const label = `Block ${index} (${block.name})`
+    if (block.width < 1 || block.width > MAX_BLOCK || block.height < 1 || block.height > MAX_BLOCK) {
+      problems.push(`${label}: ${block.width}×${block.height} outside 1..${MAX_BLOCK}`)
+    }
+    if (block.tiles.length !== block.width * block.height) {
+      problems.push(`${label}: ${block.width}×${block.height} needs ${block.width * block.height} tiles, found ${block.tiles.length}`)
+    }
+    if (block.tiles.some((tile) => tile < 0 || tile >= doc.count)) {
+      problems.push(`${label}: references a tile outside the bank`)
+    }
+  })
 
   if (doc.palette) {
     if (doc.mode !== 'sc4') problems.push(`${doc.mode} uses the fixed TMS9918A palette; palette must be null`)

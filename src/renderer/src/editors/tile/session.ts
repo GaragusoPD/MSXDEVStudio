@@ -11,19 +11,25 @@
 import { shallowReactive } from 'vue'
 import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import {
+  blockPixels,
   createTilesDoc,
   MAX_TILES,
   normalizeTiles,
   reorderTiles,
   swapRowColors,
+  TILE_SIZE,
   tilePixels,
   type PaintConflict,
+  type TileBlock,
   type TilesDoc
 } from '../../../../shared/msx/tile'
 import {
   applyRoleStroke,
   applyStroke,
   canRedo,
+  createBlock,
+  removeBlock,
+  splitBlockPoints,
   canUndo,
   emitTilesReordered,
   historyDoc,
@@ -62,6 +68,12 @@ export interface TileSession {
   /** Selected tiles in the grid; `active` is the one the canvas shows. */
   selection: number[]
   active: number
+  /**
+   * Index into `doc.blocks` when the canvas is editing a multi-tile design
+   * rather than a single tile. The tiles are the same tiles either way — a
+   * block is only a bigger window onto them.
+   */
+  block: number | null
   tool: TileTool
   filledRect: boolean
   /** Palette index the tools paint with. */
@@ -95,6 +107,7 @@ export function tileSession(path: string): TileSession {
     dirty: false,
     selection: [0],
     active: 0,
+    block: null,
     tool: 'pencil',
     filledRect: false,
     color: 15,
@@ -170,20 +183,28 @@ export function beginStroke(session: TileSession): void {
  */
 export function paint(session: TileSession, points: Point[], role?: 'fg' | 'bg'): void {
   if (session.conflict) return
-  if (role) {
-    session.doc = applyRoleStroke(session.doc, session.active, points, role)
-    return
-  }
-  const result = applyStroke(session.doc, session.active, points, session.color)
-  session.doc = result.doc
-  if (!result.ok) {
-    session.conflict = {
-      conflict: result.conflict,
-      pending: result.pending,
-      color: session.color,
-      tileIndex: session.active
+  // In block mode the points are in block space and can span several tiles, so
+  // the stroke becomes one stroke per tile. A conflict stops it there — the
+  // popover answers for one tile, and the rest of the stroke is dropped, the
+  // same as a single-tile stroke that gets interrupted.
+  for (const [tile, tilePoints] of strokesByTile(session, points)) {
+    if (role) {
+      session.doc = applyRoleStroke(session.doc, tile, tilePoints, role)
+      continue
+    }
+    const result = applyStroke(session.doc, tile, tilePoints, session.color)
+    session.doc = result.doc
+    if (!result.ok) {
+      session.conflict = { conflict: result.conflict, pending: result.pending, color: session.color, tileIndex: tile }
+      return
     }
   }
+}
+
+/** The active tile alone, or one entry per tile the block-space points touch. */
+function strokesByTile(session: TileSession, points: Point[]): Map<number, Point[]> {
+  const block = activeBlock(session)
+  return block ? splitBlockPoints(block, points) : new Map([[session.active, points]])
 }
 
 export function endStroke(session: TileSession, label: string): void {
@@ -219,8 +240,48 @@ export function cancelConflict(session: TileSession): void {
   session.strokeActive = false
 }
 
+/** The block the canvas is editing, or null when it's showing a single tile. */
+export function activeBlock(session: TileSession): TileBlock | null {
+  return session.block === null ? null : (session.doc.blocks[session.block] ?? null)
+}
+
+/** What the canvas draws and the tools flood-fill over: one tile, or a whole block. */
 export function activePixels(session: TileSession): Uint8Array {
-  return tilePixels(session.doc, session.active)
+  const block = activeBlock(session)
+  return block ? blockPixels(session.doc, block) : tilePixels(session.doc, session.active)
+}
+
+/** Canvas size in pixels — `8 × 8` for a tile, `w*8 × h*8` for a block. */
+export function activeExtent(session: TileSession): { width: number; height: number } {
+  const block = activeBlock(session)
+  return block
+    ? { width: block.width * TILE_SIZE, height: block.height * TILE_SIZE }
+    : { width: TILE_SIZE, height: TILE_SIZE }
+}
+
+/** Opens a block on the canvas (or `null` to go back to single-tile editing). */
+export function selectBlock(session: TileSession, index: number | null): void {
+  session.block = index === null || !session.doc.blocks[index] ? null : index
+  const block = activeBlock(session)
+  // Keep the single-tile controls (row colours, flags) pointed somewhere real.
+  if (block) select(session, block.tiles[0] ?? 0, block.tiles)
+}
+
+export function addBlock(session: TileSession, name: string, width: number, height: number): void {
+  const next = createBlock(session.doc, name, width, height)
+  if (next === session.doc) {
+    session.status = `No room for a ${width}×${height} block — the bank holds ${MAX_TILES} tiles.`
+    return
+  }
+  commit(session, next, 'add block')
+  selectBlock(session, next.blocks.length - 1)
+}
+
+export function deleteBlock(session: TileSession, index: number): void {
+  const next = removeBlock(session.doc, index)
+  if (next === session.doc) return
+  commit(session, next, 'remove block')
+  selectBlock(session, null)
 }
 
 // ── the rest of the toolbar ─────────────────────────────────────────────────

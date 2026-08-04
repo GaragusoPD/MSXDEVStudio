@@ -19,6 +19,7 @@ import { encodeIndices, normalizeScreen, packBitmap, palettePairBytes, screenPix
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS, type SfxDoc } from './sfx'
 import { createSpritesDoc } from './sprite'
 import { addLayer, setCharacterGrid } from '../sprite-editor'
+import { createBlock } from '../tile-editor'
 import { createTilesDoc, mergeColorByte, normalizeTiles } from './tile'
 
 const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
@@ -159,6 +160,25 @@ describe('tiles resource', () => {
     expect(tables.map((t) => t.suffix)).toEqual(['_Patterns', '_Colors', '_Flags'])
     // One byte per tile, so the game can index it straight with a tile id.
     expect([...tables[2].bytes]).toEqual([0, 0, 0b101, 0])
+  })
+
+  it('emits a blocks table with per-block offsets, and the stamper on request', () => {
+    const doc = createBlock(createTilesDoc('sc2', 2), 'door', 2, 3)
+    const resource: ResourceDoc = { kind: 'tiles', doc }
+    const tables = resourceTables(resource)
+    expect(tables.map((t) => t.suffix)).toEqual(['_Patterns', '_Colors', '_Blocks'])
+    expect([...tables[2].bytes]).toEqual([2, 3, 4, 5, 6, 7]) // row-major tile ids
+
+    const block = defaultExport('scenery.tiles.json')
+    const plain = decode(renderResource(resource, 'scenery.tiles.json', block))
+    expect(plain).toContain('#define G_SCENERY_DOOR_BASE 0')
+    expect(plain).toContain('#define G_SCENERY_DOOR_W 2')
+    expect(plain).toContain('#define G_SCENERY_DOOR_H 3')
+    expect(plain).not.toContain('DrawBlock')
+
+    const withCode = decode(renderResource(resource, 'scenery.tiles.json', { ...block, helpers: true }))
+    expect(withCode).toContain('static void g_Scenery_DrawBlock(u8 x, u8 y, u8 base, u8 w, u8 h)')
+    expect(withCode).toContain('VDP_WriteLayout_GM2(g_Scenery_Blocks + base, x, y, w, h);')
   })
 
   it('round-trips through JSON', () => {

@@ -2,9 +2,10 @@
 /**
  * Spec 08's right pane: the 16-color palette (fixed TMS9918A, or an editable
  * GRB333 picker on sc4 that snaps to the V9938's 512 colors), the per-row
- * FG/BG strip, and the export block Spec 07's converter reads.
+ * FG/BG strip, the multi-tile blocks, and the export block Spec 07's
+ * converter reads.
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { MODES } from '../../../../shared/msx/modes'
 import {
   fromHex,
@@ -17,9 +18,21 @@ import {
   unpackGrb
 } from '../../../../shared/msx/palette'
 import { defaultExport } from '../../../../shared/msx/resource'
-import { TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
+import { MAX_BLOCK, TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
 import { colorByteAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
-import { commit, setColor, setPalette, setRow, swapRow, toggleFlag, type TileSession } from './session'
+import { blockColorGroupWarning, renameBlock } from '../../../../shared/tile-editor'
+import {
+  addBlock,
+  commit,
+  deleteBlock,
+  selectBlock,
+  setColor,
+  setPalette,
+  setRow,
+  swapRow,
+  toggleFlag,
+  type TileSession
+} from './session'
 
 const props = defineProps<{ session: TileSession }>()
 
@@ -47,6 +60,24 @@ function grbLabel(index: number): string {
   if (packed === undefined) return MSX1_COLOR_NAMES[index]
   const { r, g, b } = unpackGrb(packed)
   return `GRB ${g}${r}${b}`
+}
+
+const newBlock = ref({ width: 2, height: 2 })
+
+/** sc1 shares one FG/BG per 8 tiles, so a block can end up recolouring its neighbours. */
+const blockWarning = computed(() => {
+  const block = props.session.block === null ? null : doc.value.blocks[props.session.block]
+  return block ? blockColorGroupWarning(doc.value, block) : null
+})
+
+function createNewBlock(): void {
+  const name = `block_${doc.value.blocks.length}`
+  addBlock(props.session, name, newBlock.value.width, newBlock.value.height)
+}
+
+function rename(index: number, event: Event): void {
+  const name = (event.target as HTMLInputElement).value.trim()
+  if (name) commit(props.session, renameBlock(doc.value, index, name), 'rename block')
 }
 
 function setupExport(): void {
@@ -179,6 +210,89 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         </button>
       </div>
 
+      <h3>Blocks</h3>
+      <p class="blurb">
+        A design bigger than one tile — drawn on one canvas, stored as the tiles it is made of.
+      </p>
+      <ul class="blocks">
+        <li>
+          <button
+            type="button"
+            class="block-row"
+            :class="{ active: session.block === null }"
+            @click="selectBlock(session, null)"
+          >
+            Single tile
+          </button>
+        </li>
+        <li
+          v-for="(block, index) in doc.blocks"
+          :key="index"
+        >
+          <div
+            class="block-row"
+            :class="{ active: session.block === index }"
+            @click="selectBlock(session, index)"
+          >
+            <input
+              class="block-name"
+              type="text"
+              spellcheck="false"
+              :value="block.name"
+              @click.stop
+              @change="rename(index, $event)"
+            >
+            <span class="dims">{{ block.width }}×{{ block.height }}</span>
+            <button
+              type="button"
+              title="Delete block (its tiles stay in the bank)"
+              @click.stop="deleteBlock(session, index)"
+            >
+              ×
+            </button>
+          </div>
+        </li>
+      </ul>
+      <p
+        v-if="blockWarning"
+        class="warn"
+      >
+        {{ blockWarning }}
+      </p>
+      <div class="new-block">
+        <select
+          v-model.number="newBlock.width"
+          title="Tiles across"
+        >
+          <option
+            v-for="w in MAX_BLOCK"
+            :key="w"
+            :value="w"
+          >
+            {{ w }}
+          </option>
+        </select>
+        <span>×</span>
+        <select
+          v-model.number="newBlock.height"
+          title="Tiles down"
+        >
+          <option
+            v-for="h in MAX_BLOCK"
+            :key="h"
+            :value="h"
+          >
+            {{ h }}
+          </option>
+        </select>
+        <button
+          type="button"
+          @click="createNewBlock"
+        >
+          + Block
+        </button>
+      </div>
+
       <h3>Export</h3>
       <template v-if="doc.export">
         <label>
@@ -209,6 +323,16 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
             <option value="bin">Raw binary</option>
           </select>
         </label>
+        <label class="inline">
+          <input
+            type="checkbox"
+            :checked="doc.export.helpers === true"
+            @change="patchExport({ helpers: ($event.target as HTMLInputElement).checked })"
+          >
+          <span title="Appends a _DrawBlock() that stamps a block into the name table. Needs msxgl.h included first.">
+            Export ready-made C
+          </span>
+        </label>
       </template>
       <button
         v-else
@@ -223,6 +347,91 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
 </template>
 
 <style scoped>
+.blurb {
+  margin: 0 0 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.blocks {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.block-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.block-row.active {
+  border-color: var(--color-accent);
+  background: var(--color-bg-active-item);
+}
+
+.block-name {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.block-row .dims {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.new-block {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 11px;
+}
+
+.new-block select,
+.new-block button {
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.warn {
+  margin: 0 0 6px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  background: rgba(230, 160, 30, 0.15);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
 .side {
   width: 220px;
   flex: none;

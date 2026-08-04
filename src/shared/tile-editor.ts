@@ -12,14 +12,20 @@
 
 import { MSX1_PALETTE_GRB } from './msx/palette'
 import {
+  blockTileAt,
+  MAX_BLOCK,
+  MAX_TILES,
   mergeColorByte,
+  normalizeTiles,
   paintPixel,
+  SC1_GROUP,
   TILE_SIZE,
   tileFromPixels,
   tilePixels,
   setPixelRole,
   TILE_FLAG_COUNT,
   type PaintConflict,
+  type TileBlock,
   type TilesDoc
 } from './msx/tile'
 
@@ -338,6 +344,97 @@ export function invertMapping(mapping: readonly number[]): number[] {
   const inverse = mapping.slice()
   mapping.forEach((to, from) => (inverse[to] = from))
   return inverse
+}
+
+// ── multi-tile blocks ───────────────────────────────────────────────────────
+
+const clampBlock = (value: number): number => Math.min(MAX_BLOCK, Math.max(1, value | 0))
+
+/**
+ * Appends `width × height` fresh tiles and names them as a block, so a design
+ * bigger than one tile is drawn on one canvas. Returns `doc` unchanged when the
+ * bank has no room left.
+ *
+ * In sc1 the block starts on a `SC1_GROUP` boundary: eight consecutive tiles
+ * share one FG/BG pair there, so a block starting mid-group would fight
+ * unrelated tiles over colour every time it's recoloured. Up to seven tiles are
+ * skipped to buy that; `blockColorGroupWarning` reports the case a block can't
+ * avoid.
+ */
+export function createBlock(doc: TilesDoc, name: string, width: number, height: number): TilesDoc {
+  const w = clampBlock(width)
+  const h = clampBlock(height)
+  const start = doc.mode === 'sc1' ? Math.ceil(doc.count / SC1_GROUP) * SC1_GROUP : doc.count
+  if (start + w * h > MAX_TILES) return doc
+  const grown = normalizeTiles({ ...doc, count: start + w * h })
+  const block: TileBlock = { name, width: w, height: h, tiles: Array.from({ length: w * h }, (_, i) => start + i) }
+  return { ...grown, blocks: [...grown.blocks, block] }
+}
+
+/** Names an existing rectangle of tiles as a block — the tile grid's marquee, kept. */
+export function blockFromTiles(doc: TilesDoc, name: string, width: number, height: number, tiles: readonly number[]): TilesDoc {
+  const w = clampBlock(width)
+  const h = clampBlock(height)
+  const block: TileBlock = {
+    name,
+    width: w,
+    height: h,
+    tiles: Array.from({ length: w * h }, (_, i) => {
+      const tile = tiles[i] ?? 0
+      return tile >= 0 && tile < doc.count ? tile : 0
+    })
+  }
+  return { ...doc, blocks: [...doc.blocks, block] }
+}
+
+/** Drops the block. The tiles it pointed at stay in the bank — other blocks or maps may use them. */
+export function removeBlock(doc: TilesDoc, index: number): TilesDoc {
+  if (!doc.blocks[index]) return doc
+  return { ...doc, blocks: doc.blocks.filter((_, i) => i !== index) }
+}
+
+export function renameBlock(doc: TilesDoc, index: number, name: string): TilesDoc {
+  if (!doc.blocks[index]) return doc
+  return { ...doc, blocks: doc.blocks.map((block, i) => (i === index ? { ...block, name } : block)) }
+}
+
+/**
+ * Splits block-space points into one stroke per tile, in tile-local
+ * coordinates. A tile that appears twice in the block collects both cells'
+ * points — that is the truth of it: they are one tile.
+ */
+export function splitBlockPoints(block: TileBlock, points: readonly Point[]): Map<number, Point[]> {
+  const out = new Map<number, Point[]>()
+  for (const point of points) {
+    const hit = blockTileAt(block, point.x, point.y)
+    if (!hit) continue
+    const list = out.get(hit.tile) ?? []
+    list.push({ x: hit.tx, y: hit.ty })
+    out.set(hit.tile, list)
+  }
+  return out
+}
+
+/**
+ * sc1 only: the colour-group collision the mode can't avoid. Eight consecutive
+ * tiles share one FG/BG pair, so a block that doesn't own every tile of every
+ * group it touches recolours tiles outside itself.
+ *
+ * Slots past the current `count` count as shared too: they are empty *today*,
+ * but the next tile added lands there and inherits the block's colours, which
+ * is the same surprise arriving later.
+ */
+export function blockColorGroupWarning(doc: TilesDoc, block: TileBlock): string | null {
+  if (doc.mode !== 'sc1') return null
+  const owned = new Set(block.tiles)
+  const shared: number[] = []
+  for (const group of new Set(block.tiles.map((tile) => Math.floor(tile / SC1_GROUP)))) {
+    for (let tile = group * SC1_GROUP; tile < (group + 1) * SC1_GROUP; tile++) {
+      if (!owned.has(tile)) shared.push(tile)
+    }
+  }
+  if (!shared.length) return null
+  return `sc1: eight tiles share one FG/BG pair. This block doesn't own tile${shared.length > 1 ? 's' : ''} ${shared.join(', ')} of the group${shared.length > 1 ? 's' : ''} it sits in, so recolouring a row here recolours those too. Size it to whole groups of 8 to avoid it.`
 }
 
 // ── tileset grid selection ──────────────────────────────────────────────────

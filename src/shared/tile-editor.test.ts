@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { quantize } from './msx/quantize'
 import { parseResource, renderResource, serializeResource } from './msx/resource'
 import {
+  blockPixels,
+  blockTileAt,
   createTilesDoc,
+  MAX_BLOCK,
   mergeColorByte,
   normalizeTiles,
   packTiles,
@@ -16,8 +19,11 @@ import {
 import {
   applyRoleStroke,
   applyStroke,
+  blockColorGroupWarning,
+  blockFromTiles,
   canRedo,
   canUndo,
+  createBlock,
   emitTilesReordered,
   fillPoints,
   historyDoc,
@@ -29,6 +35,8 @@ import {
   pushHistory,
   rectPoints,
   redoHistory,
+  removeBlock,
+  splitBlockPoints,
   setPaletteEntry,
   setTileFlagBit,
   setRowColors,
@@ -419,5 +427,98 @@ describe('image import → save → export round-trip', () => {
     }
     expect(validateTiles(edited)).toEqual([])
     expect([...tilePixels(edited, 0)].every((value) => value === 9)).toBe(true)
+  })
+})
+
+describe('multi-tile blocks', () => {
+  it('appends its own tiles and points at them, row-major', () => {
+    const doc = createBlock(createTilesDoc('sc2', 4), 'door', 2, 3)
+    expect(doc.count).toBe(4 + 6)
+    expect(doc.blocks).toHaveLength(1)
+    expect(doc.blocks[0]).toMatchObject({ name: 'door', width: 2, height: 3 })
+    expect(doc.blocks[0].tiles).toEqual([4, 5, 6, 7, 8, 9])
+    expect(validateTiles(doc)).toEqual([])
+  })
+
+  it('starts an sc1 block on a colour-group boundary so it owns its colours', () => {
+    // 5 tiles used, so a block starting at 5 would share group 0 with tiles 0-4.
+    const doc = createBlock(createTilesDoc('sc1', 5), 'sign', 2, 2)
+    expect(doc.blocks[0].tiles).toEqual([8, 9, 10, 11])
+    expect(blockColorGroupWarning(doc, doc.blocks[0])).toContain('12, 13, 14, 15')
+
+    // A block filling whole groups shares with nobody.
+    const clean = createBlock(createTilesDoc('sc1', 8), 'wall', 4, 2)
+    expect(clean.blocks[0].tiles).toEqual([8, 9, 10, 11, 12, 13, 14, 15])
+    expect(blockColorGroupWarning(clean, clean.blocks[0])).toBeNull()
+  })
+
+  it('never warns outside sc1, where colour is per row', () => {
+    const doc = createBlock(createTilesDoc('sc2', 3), 'x', 2, 2)
+    expect(blockColorGroupWarning(doc, doc.blocks[0])).toBeNull()
+  })
+
+  it('refuses a block the bank has no room for', () => {
+    const full = createTilesDoc('sc2', 250)
+    expect(createBlock(full, 'huge', 4, 4)).toBe(full)
+  })
+
+  it('clamps the grid and names an existing rectangle of tiles', () => {
+    const doc = blockFromTiles(createTilesDoc('sc2', 8), 'reused', 99, 2, [0, 1, 2, 3])
+    expect(doc.blocks[0].width).toBe(MAX_BLOCK)
+    // Short input pads with tile 0, and the tile count always matches w*h.
+    expect(doc.blocks[0].tiles).toHaveLength(MAX_BLOCK * 2)
+    expect(doc.count).toBe(8) // names existing tiles, adds none
+    expect(validateTiles(doc)).toEqual([])
+  })
+
+  it('drops a block without touching the tiles it pointed at', () => {
+    const doc = createBlock(createTilesDoc('sc2', 2), 'x', 2, 2)
+    const removed = removeBlock(doc, 0)
+    expect(removed.blocks).toEqual([])
+    expect(removed.count).toBe(doc.count)
+  })
+
+  it('maps block-space pixels to the tile that owns them', () => {
+    const doc = createBlock(createTilesDoc('sc2', 0 + 1), 'x', 2, 2)
+    const block = doc.blocks[0]
+    expect(blockTileAt(block, 0, 0)).toEqual({ tile: block.tiles[0], tx: 0, ty: 0 })
+    expect(blockTileAt(block, 9, 3)).toEqual({ tile: block.tiles[1], tx: 1, ty: 3 })
+    expect(blockTileAt(block, 4, 12)).toEqual({ tile: block.tiles[2], tx: 4, ty: 4 })
+    expect(blockTileAt(block, 16, 0)).toBeNull() // past the right edge
+  })
+
+  it('splits one stroke into per-tile strokes in tile-local coordinates', () => {
+    const doc = createBlock(createTilesDoc('sc2', 1), 'x', 2, 1)
+    const block = doc.blocks[0]
+    // A horizontal run crossing the seam at x = 8.
+    const points: Point[] = [6, 7, 8, 9].map((x) => ({ x, y: 2 }))
+    const split = splitBlockPoints(block, points)
+    expect([...split.keys()]).toEqual(block.tiles)
+    expect(split.get(block.tiles[0])).toEqual([{ x: 6, y: 2 }, { x: 7, y: 2 }])
+    expect(split.get(block.tiles[1])).toEqual([{ x: 0, y: 2 }, { x: 1, y: 2 }])
+  })
+
+  it('composes the block into one image, tile by tile', () => {
+    let doc = createBlock(createTilesDoc('sc2', 1), 'x', 2, 1)
+    const block = doc.blocks[0]
+    // Paint the whole of the right-hand tile's row 0.
+    doc = applyStroke(doc, block.tiles[1], Array.from({ length: 8 }, (_, x) => ({ x, y: 0 })), 6).doc
+    const pixels = blockPixels(doc, block)
+    expect(pixels).toHaveLength(16 * 8)
+    expect([...pixels.subarray(8, 16)]).toEqual(new Array(8).fill(6))
+    expect([...pixels.subarray(0, 8)]).not.toContain(6)
+  })
+
+  it('survives a save/load round-trip', () => {
+    const doc = createBlock(createTilesDoc('sc2', 2), 'door', 2, 2)
+    const reloaded = parseResource('x.tiles.json', serializeResource({ kind: 'tiles', doc }))
+    expect(reloaded.doc).toEqual(doc)
+  })
+
+  it('drops a block reference to a tile that no longer exists', () => {
+    const doc = createBlock(createTilesDoc('sc2', 2), 'x', 2, 1)
+    const shrunk = normalizeTiles({ ...doc, count: 2 })
+    expect(shrunk.blocks[0].tiles).toEqual([0, 0])
+    expect(validateTiles(shrunk)).toEqual([])
   })
 })
