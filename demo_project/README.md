@@ -27,8 +27,26 @@ guide](../docs/resources.md):
 | `res/intro.tiles.json` | Tile editor | `g_IntroTiles` | The title screen's own 256-tile bank — logo, lettering, rules |
 | `res/intro.map.json` | Map editor | `g_IntroMap` | The title screen itself, one screen exactly, drawn straight into the name table |
 
-The game code in `main.c` covers the techniques the
-[tutorials](../docs/tutorials/) explain, in one place:
+The game code covers the techniques the [tutorials](../docs/tutorials/)
+explain. It is split into chapters rather than one long file:
+
+| File | Lines | What it holds |
+|---|---|---|
+| `demo.h` | ~200 | The shared vocabulary: tile indices, flags, physics constants, and which file owns which global |
+| `level.c` | ~95 | The level in RAM — `TileAt`, collision, the camera, the door |
+| `view.c` | ~115 | Everything that reaches the name table — the composed view, the HUD, the coin spin |
+| `player.c` | ~140 | Moving, falling, collecting, and turning around |
+| `screens.c` | ~100 | The title picture and the text screens either side of the game |
+| `main.c` | ~250 | Setup, and the loop that drives the rest |
+
+The four chapters are `#include`d by `main.c` rather than compiled separately,
+which is how MSXgl composes its own modules too — its `input.c` ends with
+`#include "keyboard.c"`. One translation unit means the generated headers'
+tables are defined exactly once (they hold *data*, not declarations, so a
+second including file would be a duplicate symbol), no `extern` boilerplate for
+every global, and SDCC sees the whole program when it optimises.
+
+What the code demonstrates:
 
 - **Tiles**, loaded into all three SCREEN 2 banks with `VDP_LoadPattern_GM2` and
   `VDP_LoadColor_GM2`.
