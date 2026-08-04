@@ -11,8 +11,9 @@
 //                                            _Blocks + g_Tiles_DrawBlock)
 //    player.sprites.json -> content/player.h  (g_Player_Patterns / _Colors,
 //                                            _Layout + g_Player_SetMeta)
-//    level.map.json      -> content/level.h   (g_Level_Background, 64x24 cells,
-//                                            RLEp-compressed to 132 bytes)
+//    level.map.json      -> content/level.h   (g_Level_Background, 64x12 cells
+//                                            — the bottom half of the screen,
+//                                            RLEp-compressed to 86 bytes)
 //    background.map.json -> content/backdrop.h (g_Backdrop_Sky, 32x24, the
 //                                            static backdrop behind the level)
 //    sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
@@ -33,10 +34,11 @@
 //      table and no hardware layers, so the "layer" is one rule: a tile whose
 //      flag 8 is set is not drawn — the backdrop's tile at that screen position
 //      is (`ScreenTile()`). The backdrop does not scroll, so the holes slide
-//      across it. Nothing in the level carries flag 8 yet: set it on a tile in
-//      the tile editor, or paint tile 39 into the map, and it opens up.
+//      across it. The level covers only the bottom half of the screen for the
+//      same reason: everything above it was sky, so it is the backdrop's, and
+//      those rows are written once instead of on every scroll step.
 //    * The level is compressed. A name table is mostly runs of the same tile,
-//      so the map editor's "Compress (RLEp)" packs 1536 cells into 132 bytes of
+//      so the map editor's "Compress (RLEp)" packs 768 cells into 86 bytes of
 //      ROM — and it costs nothing at run time, because the game already keeps a
 //      writable copy of the level in RAM (coins vanish, the door opens). What
 //      was a Mem_Copy out of ROM is now an unpack into the same array.
@@ -69,9 +71,21 @@
 //──────────────────────────────────────────────────────────────────────────────
 
 #define MAP_W        64          // two screens wide
-#define MAP_H        24
 #define VIEW_W       32          // what fits on screen
+#define VIEW_H       24          // screen rows
 #define MAX_CAM      (MAP_W - VIEW_W)
+
+/**
+ * The level only covers the bottom of the screen. Everything above `LEVEL_TOP`
+ * was sky, so it is the backdrop's alone: those rows never scroll, which means
+ * they are written once and never redrawn, and a scroll step costs half the
+ * work it used to. Anything above the level counts as empty for collision.
+ */
+#define LEVEL_TOP    12
+#define LEVEL_H      (VIEW_H - LEVEL_TOP)
+
+/** The level cell at world tile (tx, ty). Only valid for ty >= LEVEL_TOP — `TileAt` is the guarded way in. */
+#define MapCell(tx, ty) (g_Map[((u16)((ty) - LEVEL_TOP) * MAP_W) + (u16)(tx)])
 
 // The screen column the player is drawn on while the map is scrolling. It is
 // where the centring camera puts them anyway, so the pin never moves them.
@@ -81,6 +95,7 @@
 // draws with are named; what a tile *does* is a flag, not an index.
 #define T_SKY        0
 #define T_COIN       6           // for the HUD icon, and the slot the spin animates
+#define T_TRANS      39          // carries flag 8: the backdrop shows here instead
 #define T_DIGIT_0    16          // digits live at 16..25, so tile = T_DIGIT_0 + value
 
 // Where the level's door stands, so the open one can be stamped over it.
@@ -146,7 +161,7 @@
  * the ROM copy and painting the collected coins out afterwards is what made
  * them flash back into view for a frame whenever the screen scrolled.
  */
-u8  g_Map[MAP_W * MAP_H];
+u8  g_Map[MAP_W * LEVEL_H];
 
 /**
  * The backdrop, one screen wide and pinned to the screen: it does not scroll,
@@ -154,10 +169,18 @@ u8  g_Map[MAP_W * MAP_H];
  * one name table and no hardware layers, so "behind" happens here — see
  * `ScreenTile()`. Unpacked from ROM once, like the level.
  */
-u8  g_Back[VIEW_W * MAP_H];
+u8  g_Back[VIEW_W * VIEW_H];
 
 /** One row of the composed view, so a scroll step is still one VDP write per row. */
 u8  g_Row[VIEW_W];
+
+/**
+ * Which level rows hold a transparent cell at all. The ground rows hold none,
+ * so they skip the merge and go to VRAM straight out of the level — the same
+ * blit the game did before it had a backdrop. Kept current by whoever writes a
+ * transparent tile into the level (see `CollectCoins`).
+ */
+u8  g_RowHasTrans[LEVEL_H];
 
 u8  g_Remaining;
 i16 g_PlayerX;       // pixels, top-left of the 16x16 sprite
@@ -180,10 +203,11 @@ const u8 g_WalkCycle[WALK_STEPS] = { 0, 1, 2, 0, 3, 4 };
 //──────────────────────────────────────────────────────────────────────────────
 
 // The level is a flat array of one byte per cell, straight from the map editor.
+// It starts at row LEVEL_TOP: everything above it is backdrop, and empty.
 u8 TileAt(i16 tx, i16 ty)
 {
-	if ((tx < 0) || (tx >= MAP_W) || (ty < 0) || (ty >= MAP_H)) return T_SKY;
-	return g_Map[(u16)ty * MAP_W + (u16)tx];
+	if ((tx < 0) || (tx >= MAP_W) || (ty < LEVEL_TOP) || (ty >= VIEW_H)) return T_SKY;
+	return MapCell(tx, ty);
 }
 
 bool IsSolid(u8 tile)
@@ -199,7 +223,7 @@ bool BoxHitsSolid(i16 px, i16 py)
 	i16 top    = py >> 3;
 	i16 bottom = (py + 15) >> 3;
 	// Below the last row counts as floor, so the player cannot fall out.
-	if (bottom >= MAP_H) return TRUE;
+	if (bottom >= VIEW_H) return TRUE;
 	for (i16 ty = top; ty <= bottom; ++ty)
 		for (i16 tx = left; tx <= right; ++tx)
 			if (IsSolid(TileAt(tx, ty))) return TRUE;
@@ -210,6 +234,23 @@ bool BoxHitsSolid(i16 px, i16 py)
 // Drawing
 //──────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The backdrop above the level, straight out of `g_Back` — no merge, because
+ * there is no level up there to see through. It does not scroll either, so
+ * this runs once per game rather than once per scroll step.
+ */
+void DrawBackdropTop()
+{
+	const u8* back = g_Back;
+	u16 dst = g_ScreenLayoutLow;
+	for (u8 row = 0; row < LEVEL_TOP; ++row)
+	{
+		VDP_WriteVRAM_16K(back, dst, VIEW_W);
+		back += VIEW_W;
+		dst  += VIEW_W;
+	}
+}
+
 // One VDP write per row: the visible 32 columns are contiguous in the map, so
 // a row is composed into `g_Row` and blitted in a single call.
 void DrawView()
@@ -219,17 +260,27 @@ void DrawView()
 	//
 	// All three addresses just step by a constant, so they are carried between
 	// rows rather than recomputed from `row`, which cost two calls to SDCC's
-	// 16-bit multiply per row. Worth the pennies: this redraw is 768 bytes and
-	// takes about half a frame, so it is the one piece of the loop on a
-	// deadline. The merge below adds a compare per cell and no VDP traffic.
+	// 16-bit multiply per row. Worth the pennies: this is the one piece of the
+	// loop on a deadline, and the merge below adds a compare per cell on top of
+	// it. Only the level's own rows are touched — the backdrop above them is
+	// already on screen and cannot have changed.
 	const u8* src  = g_Map + (u16)g_CamX;
-	const u8* back = g_Back;
-	u16 dst = g_ScreenLayoutLow;
-	for (u8 row = 0; row < MAP_H; ++row)
+	const u8* back = g_Back + (LEVEL_TOP * VIEW_W);
+	u16 dst = g_ScreenLayoutLow + (LEVEL_TOP * VIEW_W);
+	for (u8 row = 0; row < LEVEL_H; ++row)
 	{
-		for (u8 col = 0; col < VIEW_W; ++col)
-			g_Row[col] = ScreenTile(src[col], back[col]);
-		VDP_WriteVRAM_16K(g_Row, dst, VIEW_W);
+		if (g_RowHasTrans[row])
+		{
+			// The row is copied wholesale first (one LDIR) and only the
+			// transparent cells are patched afterwards, so the loop that runs
+			// per cell holds one index and two fixed bases instead of three
+			// live pointers — which SDCC spills to the stack frame.
+			Mem_Copy(src, g_Row, VIEW_W);
+			for (u8 col = 0; col < VIEW_W; ++col)
+				if (TileFlags(g_Row[col]) & FLAG_TRANS) g_Row[col] = back[col];
+			VDP_WriteVRAM_16K(g_Row, dst, VIEW_W);
+		}
+		else VDP_WriteVRAM_16K(src, dst, VIEW_W);
 		src  += MAP_W;
 		back += VIEW_W;
 		dst  += VIEW_W;
@@ -264,7 +315,7 @@ void OpenDoor()
 {
 	const u8* cells = g_Tiles_Blocks + G_TILES_DOOR_OPEN_BASE;
 	for (u8 row = 0; row < G_TILES_DOOR_OPEN_H; ++row)
-		g_Map[(u16)(DOOR_ROW + row) * MAP_W + DOOR_COL] = cells[row];
+		MapCell(DOOR_COL, DOOR_ROW + row) = cells[row];
 
 	i16 sx = (i16)DOOR_COL - (i16)g_CamX;
 	if ((sx >= 0) && (sx < VIEW_W))
@@ -423,6 +474,16 @@ void InitGame()
 	// it is unpacked into RAM because compressing it costs 127 bytes of ROM
 	// against 768, and the unpacker is already here for the level.
 	RLEp_UnpackToRAM(g_Backdrop_Sky, g_Back);
+
+	// Which rows need composing at all — see `g_RowHasTrans`.
+	for (u8 row = 0; row < LEVEL_H; ++row)
+	{
+		const u8* cell = g_Map + ((u16)row * MAP_W);
+		u8 any = 0;
+		for (u16 col = 0; col < MAP_W; ++col)
+			if (TileFlags(cell[col]) & FLAG_TRANS) { any = 1; break; }
+		g_RowHasTrans[row] = any;
+	}
 	g_Remaining = 0;
 	for (u16 i = 0; i < sizeof(g_Map); ++i)
 		if (TileFlags(g_Map[i]) & FLAG_COIN) g_Remaining++;
@@ -437,6 +498,9 @@ void InitGame()
 	g_CoinTick  = 0;
 	g_DoorOpen  = 0;
 
+	// The backdrop's own rows go up once: they do not scroll, so the redraw on
+	// a camera step never has to touch them again.
+	DrawBackdropTop();
 	DrawView();
 	DrawHUD();
 }
@@ -496,7 +560,8 @@ void CollectCoins()
 		{
 			if ((TileFlags(TileAt(tx, ty)) & FLAG_COIN) == 0) continue;
 
-			g_Map[(u16)ty * MAP_W + (u16)tx] = T_SKY;
+			MapCell(tx, ty) = T_TRANS;
+			g_RowHasTrans[ty - LEVEL_TOP] = 1;
 			g_Remaining--;
 			i16 sx = tx - (i16)g_CamX;
 			if ((sx >= 0) && (sx < VIEW_W))
@@ -504,7 +569,7 @@ void CollectCoins()
 				// Same rule as the full redraw: if sky is a transparent tile,
 				// the cell the coin leaves behind has to show the backdrop.
 				u16 at = ((u16)ty * VIEW_W) + (u16)sx;
-				VDP_Poke_16K(ScreenTile(T_SKY, g_Back[at]), g_ScreenLayoutLow + at);
+				VDP_Poke_16K(ScreenTile(T_TRANS, g_Back[at]), g_ScreenLayoutLow + at);
 			}
 			DrawHUD();
 			ayFX_PlayBank(0, 0);
@@ -548,6 +613,8 @@ bool AtExit()
 void PlayGame()
 {
 	InitGame();
+
+
 
 	while (1)
 	{

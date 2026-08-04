@@ -9,7 +9,7 @@ jumps.
 ![Gameplay](../docs/images/demo-gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
-(about 13.2 KB used) and boots in openMSX or WebMSX.
+(about 13.4 KB used) and boots in openMSX or WebMSX.
 
 ## What it demonstrates
 
@@ -21,7 +21,7 @@ guide](../docs/resources.md):
 |---|---|---|---|
 | `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
 | `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 character in mode 1, six poses, each drawn by **two superposed planes** so it can have two colours |
-| `level.map.json` | Map editor | `g_Level_Background` | A 64x24 map, exactly two screens wide, one byte per cell — **RLEp-compressed**, 1536 cells in 132 bytes |
+| `level.map.json` | Map editor | `g_Level_Background` | A 64x12 map, two screens wide and half a screen tall — the bottom half, where the level actually is. One byte per cell, **RLEp-compressed**: 768 cells in 86 bytes |
 | `background.map.json` | Map editor | `g_Backdrop_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
 | `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
 
@@ -30,7 +30,7 @@ The game code in `main.c` covers the techniques the
 
 - **Tiles**, loaded into all three SCREEN 2 banks with `VDP_LoadPattern_GM2` and
   `VDP_LoadColor_GM2`.
-- **Scrolling**, without the `scroll` module. The level is copied into RAM at
+- **Scrolling**, without the `scroll` module. The level is unpacked into RAM at
   startup, and the visible 32 columns of a 64 wide map are contiguous there, so
   each screen row is a single `VDP_WriteVRAM_16K`. The camera moves in whole
   tiles and only redraws when it actually changes, which on MSX1 is as smooth as
@@ -41,12 +41,12 @@ The game code in `main.c` covers the techniques the
   the tileset or add a new solid tile and the game keeps working, because
   nothing in it knows that grass happens to be tile 3.
 - **A level in RAM**, read from the same array the VDP is drawing, so there is
-  no second copy to keep in sync. Taking a coin writes sky into that map, which
-  is also how the coins are counted at startup.
+  no second copy to keep in sync. Taking a coin writes the transparent tile into
+  that map, which is also how the coins are counted at startup.
 - **A compressed level**, which the RAM copy above makes free. The map editor's
-  *Compress (RLEp)* packs 1536 cells into 132 bytes of ROM, and startup unpacks
+  *Compress (RLEp)* packs 768 cells into 86 bytes of ROM, and startup unpacks
   them into `g_Map` with MSXgl's own `RLEp_UnpackToRAM` — the same one line the
-  `Mem_Copy` used to be. Net saving after the unpacker is linked in: 1045 bytes.
+  `Mem_Copy` used to be. Net saving after the unpacker is linked in: about a kilobyte.
   Compression is worth having exactly when the data was going to be copied to
   RAM anyway; unpacking a map you meant to read straight out of ROM would cost
   you the RAM you were trying to save.
@@ -58,21 +58,43 @@ The game code in `main.c` covers the techniques the
   not drawn — the backdrop's tile at that screen position is. Because the
   backdrop does not scroll and the level does, the holes slide across it.
 
-  It costs a compare per cell inside `DrawView()`, which now composes a row into
-  `g_Row` before its single `VDP_WriteVRAM_16K` instead of blitting the level
-  row directly — no extra VDP traffic, and the redraw only happens when the
-  camera crosses a whole tile. The same rule is applied to the one other place a
-  cell reaches the screen on its own, the poke that clears a collected coin;
-  anywhere else would be a cell that ignores the backdrop.
+  The same rule applies at the one other place a cell reaches the screen on its
+  own — the poke that clears a collected coin, which leaves tile 39 behind so
+  the hole shows the backdrop too. Flags come from the *level's* tile, so a
+  transparent cell is still non-solid, still not a coin; the backdrop is
+  decoration and nothing reads its flags. Sampling `g_Back` at
+  `(camX / 2 + col) & 31` instead of `col` would make it scroll at half speed —
+  the same merge with a different index, and it wants tileable art.
 
-  Nothing in the level carries flag 8 yet — that part is yours to paint. Two
-  ways in: paint tile 39 (the checkered *transparent* tile) wherever you want a
-  hole, or set flag 8 on tile 0 in the tile editor and the entire sky becomes
-  the backdrop at once. Flags come from the *level's* tile, so a transparent
-  cell is still non-solid, still not a coin — the backdrop is decoration and
-  nothing reads its flags. Sampling `g_Back` at `(camX / 2 + col) & 31` instead
-  of `col` would make it scroll at half speed; that is the same merge with a
-  different index, and it wants tileable art.
+  **Composing costs about 95 µs per cell** (~340 Z80 cycles) once SDCC is done
+  with it, which is a lot next to a straight `VDP_WriteVRAM_16K` of the same
+  row. So the only lever that matters is *how many cells get composed*, and the
+  demo pulls it twice. One full redraw, measured in openMSX by breaking on
+  `DrawView` twice and subtracting the emulator's clock:
+
+  | Redraw | Frames (20 ms each) |
+  |---|---|
+  | No backdrop at all, 24 rows blitted straight from the level | 0.47 |
+  | Backdrop composed over all 24 rows | 4.45 |
+  | Level cut to the bottom 12 rows, opaque rows skipped | **1.67** |
+
+  The first cut is that **the level only covers the bottom half of the screen**:
+  everything above `LEVEL_TOP` was sky, so it belongs to the backdrop alone,
+  goes to VRAM once in `DrawBackdropTop()`, and is never touched again — it
+  cannot change, because it does not scroll. The second is `g_RowHasTrans`: a
+  level row holding no transparent cell needs no composing, so the ground rows
+  go straight to VRAM exactly as they did before the backdrop existed.
+
+  A redraw only happens when the camera crosses a whole tile, which at one pixel
+  per frame is every eighth frame. Two more levers are measured but not taken:
+  SDCC's *Ultra* compile complexity (Project Settings) buys 1.67 → 1.42 at the
+  cost of build time, and writing the patch loop in `__asm` would take most of
+  the rest, since what remains is SDCC keeping the loop's pointers in the stack
+  frame rather than in registers.
+
+  To open up more of the backdrop, paint tile 39 — the checkered *transparent*
+  tile — wherever you want a hole; flagging tile 0 instead turns the whole sky
+  into one.
 - **Superposed sprites**, placed with the sprite sheet's own
   `g_Player_SetMeta()`. A mode 1 sprite is a single colour, so a two-colour
   character means two hardware sprites on the same coordinate: the sprite editor
