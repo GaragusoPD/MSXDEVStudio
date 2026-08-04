@@ -9,7 +9,7 @@ jumps.
 ![Gameplay](../docs/images/demo-gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
-(about 10.8 KB used) and boots in openMSX or WebMSX.
+(about 13.6 KB used) and boots in openMSX or WebMSX.
 
 ## What it demonstrates
 
@@ -19,8 +19,8 @@ guide](../docs/resources.md):
 
 | Resource | Editor | Exports | Used for |
 |---|---|---|---|
-| `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags` | 32 SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, plus the flags that say which are solid |
-| `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors` | One 16x16 sprite in mode 1, six frames: standing, four walk poses, jumping |
+| `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
+| `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 character in mode 1, six poses, each drawn by **two superposed planes** so it can have two colours |
 | `level.map.json` | Map editor | `g_Level_Background` | A 64x24 map, exactly two screens wide, one byte per cell |
 | `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
 
@@ -42,9 +42,28 @@ The game code in `main.c` covers the techniques the
 - **A level in RAM**, read from the same array the VDP is drawing, so there is
   no second copy to keep in sync. Taking a coin writes sky into that map, which
   is also how the coins are counted at startup.
-- **Sprites**, placed with `VDP_SetSpriteSM1`. The walk is a six step cycle
-  (`g_WalkCycle` in `main.c`) rather than two poses flipping back and forth,
-  which is the difference between a stride and a flicker.
+- **Superposed sprites**, placed with the sprite sheet's own
+  `g_Player_SetMeta()`. A mode 1 sprite is a single colour, so a two-colour
+  character means two hardware sprites on the same coordinate: the sprite editor
+  holds both planes and their colours, and one call writes both attribute
+  entries. It costs two of the four sprites the VDP will draw on one line, which
+  the editor shows per character. The walk is a six step cycle (`g_WalkCycle` in
+  `main.c`) rather than two poses flipping back and forth, which is the
+  difference between a stride and a flicker.
+- **Animation through the pattern table.** The coins turn without the map being
+  touched at all. The four poses are the cells of a 4x1 block in the tileset —
+  a design drawn on one canvas rather than as four separate tiles — and
+  `SpinCoins()` copies one pose's eight pattern bytes over the coin tile's slot.
+  `VDP_LoadPattern_GM2` writes all three SCREEN 2 banks, so a step costs 24
+  bytes and turns *every* coin on screen, the HUD icon included, because the
+  name table still says "tile 6" in all those places. Re-pointing each coin at
+  another tile would cost a name-table write per coin per step and would not
+  animate the ones off screen at all.
+- **Stamping a block**, in `OpenDoor()`. The open doorway is a 1x2 block, and
+  when the last coin is taken its two cells go into the level array and
+  `g_Tiles_DrawBlock()` puts them on screen — MSXgl's `VDP_WriteLayout_GM2`
+  underneath. Both steps, because the screen shows the change now and the map
+  keeps it when the view scrolls back over it.
 - **Sound**, an ayFX bank played with `ayFX_PlayBank`, updated once per frame by
   `ayFX_Update()` and pushed to the chip with `PSG_Apply()`.
 - **Text screens**, drawn in SCREEN 1 with MSXgl's `g_Font_MGL_Sample8`, so the
@@ -57,7 +76,16 @@ The game code in `main.c` covers the techniques the
   `ColorChars()` tints the box frame cyan, capitals yellow, digits green and the
   logo cyan, which is why SPACE and the coin count stand out in a sentence.
 
-## Six things worth knowing
+## Seven things worth knowing
+
+**Animate patterns, not the map.** A tile-based animation has two shapes: change
+which tile each cell points at, or change what that tile *looks like*. The second
+is almost always the one you want — it is a fixed cost no matter how many of the
+thing are on screen, it reaches copies that are scrolled off, and it leaves the
+map alone so collision and the coin count keep reading the same array. The only
+catch is that every cell using that tile animates, which is exactly why the HUD
+coin spins along with the ones in the level here. If you need one of them still,
+give it its own tile.
 
 **Use the `_16K` VRAM calls on MSX1.** The four-argument `VDP_WriteVRAM(src,
 destLow, destHigh, count)` form is meant for the 17-bit addressing MSX2 uses.

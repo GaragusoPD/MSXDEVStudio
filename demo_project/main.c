@@ -7,10 +7,25 @@
 //  Every graphic and sound in here was made with MSXStudio's own editors and
 //  exported to the headers included below:
 //
-//    tiles.tiles.json    -> content/tiles.h   (g_Tiles_Patterns / _Colors)
-//    player.sprites.json -> content/player.h  (g_Player_Patterns / _Colors)
+//    tiles.tiles.json    -> content/tiles.h   (g_Tiles_Patterns / _Colors,
+//                                            _Blocks + g_Tiles_DrawBlock)
+//    player.sprites.json -> content/player.h  (g_Player_Patterns / _Colors,
+//                                            _Layout + g_Player_SetMeta)
 //    level.map.json      -> content/level.h   (g_Level_Background, 64x24 cells)
 //    sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
+//
+//  Three of MSXStudio's editor features carry their weight here:
+//
+//    * The coins spin without the map being touched. The four poses are a 4x1
+//      *block* in the tileset — a multi-tile design drawn on one canvas — and
+//      the game copies one pose's eight pattern bytes over the coin's tile.
+//      Every coin on screen turns at once, for 24 bytes a step, because the
+//      name table still says "tile 6" everywhere.
+//    * The player is two superposed hardware sprites, which is the only way to
+//      get a two-colour character on an MSX1. The sprite editor holds the
+//      planes and their colours; g_Player_SetMeta places both from one x/y.
+//    * The doorway opens when the last coin is taken, stamped from a 1x2 block
+//      by g_Tiles_DrawBlock.
 //
 //  Built with MSXStudio by P.D. Garaguso.
 //  Powered by MSXgl and MSXtk by Guillaume "Aoineko" Blanchard (CC BY-SA 4.0),
@@ -50,8 +65,17 @@
 // Tile indices, matching the order of tiles.tiles.json. Only the ones the code
 // draws with are named; what a tile *does* is a flag, not an index.
 #define T_SKY        0
-#define T_COIN       6           // for the HUD icon
+#define T_COIN       6           // for the HUD icon, and the slot the spin animates
 #define T_DIGIT_0    16          // digits live at 16..25, so tile = T_DIGIT_0 + value
+
+// Where the level's door stands, so the open one can be stamped over it.
+#define DOOR_COL     60
+#define DOOR_ROW     18
+
+// The coin spin: the block's cells are the poses, in order. Holding each for a
+// few frames is what makes it read as a turn rather than a flicker.
+#define COIN_POSES   G_TILES_COIN_SPIN_W
+#define COIN_RATE    10
 
 // The tile editor's eight flag squares, as this game reads them. Set flag 1 on
 // a tile and it becomes solid, anywhere it appears in any map; nothing here
@@ -67,10 +91,10 @@
 #define MSX_GL       "\x02\x03\x04\x05"
 
 
-// Sprite frames are 16x16, so each one occupies 4 pattern slots, and the shape
-// passed to the VDP is the frame index times four.
+// Each pose is one frame of the sprite sheet; a frame is two superposed
+// planes, and g_Player_SetMeta works out the patterns and colours for both.
 #define FRAME_STAND  0
-#define FRAME_JUMP   20
+#define FRAME_JUMP   5
 // Six poses per stride: legs together, two steps out on one side, together
 // again, then two on the other. Small differences between neighbouring poses
 // are what makes it read as walking rather than flicker.
@@ -104,10 +128,14 @@ i16 g_VelY;          // 1/8th pixels per frame
 u8  g_OnGround;
 u8  g_CamX;          // leftmost visible column, in tiles
 u8  g_Frame;
+u8  g_CoinPhase;     // which pose of the spin is currently in the pattern table
+u8  g_CoinTick;
+u8  g_DoorOpen;
 
-// The stride, as sprite shape values. Frames 1/2 step out one way and 3/4 the
-// other, with the legs-together pose in between each pair.
-const u8 g_WalkCycle[WALK_STEPS] = { 0, 4, 8, 0, 12, 16 };
+// The stride, as sprite *frame* numbers now rather than raw shape values:
+// g_Player_SetMeta turns a frame into the right pattern for each of its planes.
+// Frames 1/2 step out one way and 3/4 the other, legs together in between.
+const u8 g_WalkCycle[WALK_STEPS] = { 0, 1, 2, 0, 3, 4 };
 
 //──────────────────────────────────────────────────────────────────────────────
 // Map helpers
@@ -163,6 +191,46 @@ void DrawView()
 		src += MAP_W;
 		dst += VIEW_W;
 	}
+}
+
+/**
+ * Advances the coin spin. The map is not touched: the four poses are the cells
+ * of the tileset's `coin_spin` block, and this copies the chosen pose's eight
+ * pattern bytes over tile T_COIN's slot. VDP_LoadPattern_GM2 writes all three
+ * SCREEN 2 banks, so that is 24 bytes a step to turn every coin on screen —
+ * against 8 bytes *per coin* if each one were re-pointed at another tile, and
+ * without a single name-table write.
+ */
+void SpinCoins()
+{
+	if (++g_CoinTick < COIN_RATE) return;
+	g_CoinTick = 0;
+	if (++g_CoinPhase >= COIN_POSES) g_CoinPhase = 0;
+
+	u8 pose = g_Tiles_Blocks[G_TILES_COIN_SPIN_BASE + g_CoinPhase];
+	VDP_LoadPattern_GM2(g_Tiles_Patterns + ((u16)pose * 8), 1, T_COIN);
+}
+
+/**
+ * Swings the door open once the last coin is in. The open doorway is a 1x2
+ * block, so it goes into the level as its two tiles and onto the screen with
+ * the tileset's own stamper — the same two steps taking a coin already does,
+ * which is what keeps it there when the view scrolls back over it.
+ */
+void OpenDoor()
+{
+	const u8* cells = g_Tiles_Blocks + G_TILES_DOOR_OPEN_BASE;
+	for (u8 row = 0; row < G_TILES_DOOR_OPEN_H; ++row)
+		g_Map[(u16)(DOOR_ROW + row) * MAP_W + DOOR_COL] = cells[row];
+
+	i16 sx = (i16)DOOR_COL - (i16)g_CamX;
+	if ((sx >= 0) && (sx < VIEW_W))
+		g_Tiles_DrawBlock((u8)sx, DOOR_ROW, G_TILES_DOOR_OPEN_BASE, G_TILES_DOOR_OPEN_W, G_TILES_DOOR_OPEN_H);
+
+	// No sound of its own: the last coin's chime is still playing this very
+	// frame, and effect 2 is the win fanfare, which has not been earned yet —
+	// the door has to be walked into first.
+	g_DoorOpen = 1;
 }
 
 // Coins left, drawn with the digit tiles built into the tileset.
@@ -288,13 +356,17 @@ void InitGame()
 	VDP_SetColor(COLOR_BLACK);
 
 	// Tiles go into all three SCREEN 2 banks, so they look the same everywhere.
-	VDP_LoadPattern_GM2(g_Tiles_Patterns, 32, 0);
-	VDP_LoadColor_GM2(g_Tiles_Colors, 32, 0);
+	// The whole sheet goes up, blocks included: the open door has to be in VRAM
+	// before it can be stamped, and the spin poses cost nothing to carry along.
+	VDP_LoadPattern_GM2(g_Tiles_Patterns, G_TILES_PATTERNS_SIZE / 8, 0);
+	VDP_LoadColor_GM2(g_Tiles_Colors, G_TILES_COLORS_SIZE / 8, 0);
 
-	// One 16x16 sprite, three frames: standing, walking, jumping.
+	// The player is two superposed planes per pose, so the pattern table holds
+	// frames x planes shapes and the character costs two of the four sprites
+	// the VDP will draw on one line.
 	VDP_SetSpriteFlag(VDP_SPRITE_SIZE_16);
-	VDP_LoadSpritePattern(g_Player_Patterns, 0, 6 * 4);
-	VDP_DisableSpritesFrom(1);
+	VDP_LoadSpritePattern(g_Player_Patterns, 0, G_PLAYER_PATTERNS_SIZE / 8);
+	VDP_DisableSpritesFrom(G_PLAYER_PLAYER_PLANES);
 
 	ayFX_InitBank((void*)g_Sfx);
 	ayFX_SetChannel(PSG_CHANNEL_A);
@@ -312,6 +384,9 @@ void InitGame()
 	g_OnGround  = 1;
 	g_CamX      = 0;
 	g_Frame     = 0;
+	g_CoinPhase = 0;
+	g_CoinTick  = 0;
+	g_DoorOpen  = 0;
 
 	DrawView();
 	DrawHUD();
@@ -439,22 +514,24 @@ void PlayGame()
 
 		ApplyGravity();
 		CollectCoins();
+		SpinCoins();
+		if (!g_DoorOpen && (g_Remaining == 0)) OpenDoor();
 		bool scrolled = UpdateCamera();
 
 		// Airborne wins; on the ground, alternate the two walk poses while
 		// moving. The counter only runs while walking, so stopping always
 		// leaves the character standing rather than mid-stride.
-		u8 shape = FRAME_STAND;
+		u8 pose = FRAME_STAND;
 		if (!g_OnGround)
 		{
-			shape = FRAME_JUMP;
+			pose = FRAME_JUMP;
 			g_Frame = 0;
 		}
 		else if (walking)
 		{
 			g_Frame++;
 			if (g_Frame >= WALK_STEPS * WALK_RATE) g_Frame = 0;
-			shape = g_WalkCycle[g_Frame / WALK_RATE];
+			pose = g_WalkCycle[g_Frame / WALK_RATE];
 		}
 		else g_Frame = 0;
 
@@ -476,7 +553,11 @@ void PlayGame()
 		// lets `sx` past PLAYER_PIN_X once it has stopped scrolling.
 		if ((sx > PLAYER_PIN_X) && (g_CamX < MAX_CAM)) sx = PLAYER_PIN_X;
 
-		VDP_SetSpriteSM1(0, (u8)sx, (u8)(g_PlayerY - 1), shape, COLOR_LIGHT_RED);
+		// One call, one coordinate, both planes — and their colours come from
+		// the sprite sheet rather than from a constant in here.
+		g_Player_SetMeta(0, (u8)sx, (u8)(g_PlayerY - 1),
+		                 G_PLAYER_PLAYER_BASE + pose * G_PLAYER_PLAYER_PLANES,
+		                 G_PLAYER_PLAYER_PLANES);
 
 		if (scrolled) { DrawView(); DrawHUD(); }
 
