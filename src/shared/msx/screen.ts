@@ -26,6 +26,23 @@ export interface ConvertedScreen {
   indices: string
 }
 
+/**
+ * A named rectangle of the converted image — the bitmap-mode counterpart of a
+ * tileset's block, and what a software sprite's frames are made of. Bitmap
+ * modes have no name table, so a "tile" here is just a patch of pixels
+ * stamped into the screen at any size.
+ *
+ * Like a block, a fragment owns no pixels: it is a window onto the image, so
+ * retouching the image updates every fragment over it.
+ */
+export interface ScreenFragment {
+  name: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface ScreenDoc {
   version: 1
   mode: BitmapMode
@@ -38,6 +55,8 @@ export interface ScreenDoc {
    * ~160 KB of JSON. Switch to run-length or per-tool records if that bites.
    */
   retouch: number[]
+  /** Named cut-outs: bitmap blocks, and the frames of software sprites. */
+  fragments: ScreenFragment[]
   converted: ConvertedScreen | null
   export: ExportBlock | null
 }
@@ -64,9 +83,27 @@ export function normalizeScreen(raw: unknown): ScreenDoc {
       palette
     },
     retouch: Array.isArray(input.retouch) ? input.retouch.map((value) => Number(value) || 0) : [],
+    fragments: normalizeFragments(input.fragments),
     converted: input.converted ?? null,
     export: input.export ?? null
   }
+}
+
+/** Absent in files written before fragments existed, so default to none. */
+function normalizeFragments(raw: unknown): ScreenFragment[] {
+  if (!Array.isArray(raw)) return []
+  const at = (value: unknown, min = 0): number =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.max(min, value | 0) : min
+  return raw.map((entry, index) => {
+    const fragment = (typeof entry === 'object' && entry !== null ? entry : {}) as Partial<ScreenFragment>
+    return {
+      name: String(fragment.name ?? `fragment_${index}`),
+      x: at(fragment.x),
+      y: at(fragment.y),
+      width: at(fragment.width, 1),
+      height: at(fragment.height, 1)
+    }
+  })
 }
 
 // ── base64 for the cached index buffer ──────────────────────────────────────
@@ -119,6 +156,150 @@ export function packBitmap(indices: Uint8Array, width: number, height: number, m
     }
   }
   return out
+}
+
+// ── fragments: the strip, and the code that draws it ────────────────────────
+
+/**
+ * Fragments are exported as **one image**, laid side by side left to right —
+ * the layout MSXgl's own software-sprite sample uses, because a single
+ * `HMMC` then uploads them all into one off-screen VRAM strip and each frame
+ * is a plain `(x, 0, w, h)` rectangle inside it.
+ */
+export interface FragmentStrip {
+  width: number
+  height: number
+  /** Per fragment, in document order: its x offset inside the strip. */
+  offsets: number[]
+}
+
+export function fragmentStrip(doc: ScreenDoc): FragmentStrip {
+  let width = 0
+  const offsets = doc.fragments.map((fragment) => {
+    const offset = width
+    width += fragment.width
+    return offset
+  })
+  return { width, height: Math.max(0, ...doc.fragments.map((fragment) => fragment.height)), offsets }
+}
+
+/** The strip's pixels, cut out of the converted image. Empty when nothing is converted yet. */
+export function fragmentStripPixels(doc: ScreenDoc): Uint8Array {
+  const strip = fragmentStrip(doc)
+  const source = screenPixels(doc)
+  const out = new Uint8Array(strip.width * strip.height)
+  if (!source || !strip.width) return out
+  doc.fragments.forEach((fragment, index) => {
+    const offset = strip.offsets[index]
+    for (let y = 0; y < fragment.height; y++) {
+      const sy = fragment.y + y
+      if (sy >= source.height) break
+      for (let x = 0; x < fragment.width; x++) {
+        const sx = fragment.x + x
+        if (sx >= source.width) break
+        out[y * strip.width + offset + x] = source.indices[sy * source.width + sx]
+      }
+    }
+  })
+  return out
+}
+
+export function fragmentStripBytes(doc: ScreenDoc): Uint8Array {
+  const strip = fragmentStrip(doc)
+  return packBitmap(fragmentStripPixels(doc), strip.width, strip.height, doc.mode)
+}
+
+/** Per fragment: `xLo, xHi, width, height` — the rectangle inside the strip, for the runtime's frame table. */
+export function fragmentRectBytes(doc: ScreenDoc): Uint8Array {
+  const strip = fragmentStrip(doc)
+  return Uint8Array.from(
+    doc.fragments.flatMap((fragment, index) => [
+      strip.offsets[index] & 0xff,
+      (strip.offsets[index] >> 8) & 0xff,
+      fragment.width & 0xff,
+      fragment.height & 0xff
+    ])
+  )
+}
+
+/**
+ * The ready-made software-sprite runtime. MSXgl has no software-sprite module
+ * — only the `s_swsprt` sample — so this is that sample's cycle, generalised:
+ * upload the frames to an off-screen VRAM strip once, then per object
+ * restore the old background, save the new one, and blit the frame over it.
+ *
+ * Opt-in (`ExportBlock.helpers`); needs MSXgl's VDP command engine, so MSX2+
+ * with `VDP_USE_COMMAND`.
+ */
+export function screenHelperC(doc: ScreenDoc, name: string): string[] {
+  const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
+  const first = doc.fragments[0]?.name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase() ?? 'FRAGMENT'
+  return [
+    '',
+    `// ── ${name}: software sprites ─────────────────────────────────────────`,
+    '//',
+    '// Software sprites are drawn *into* the screen, so they escape the VDP\'s',
+    '// 4/8-sprites-per-line limit — at the price of putting back what they',
+    `// covered. The frames live side by side in ${name}_Strip; upload it once`,
+    '// into VRAM the screen never shows (below the visible lines is the usual',
+    '// spot), then move each object with Restore/Draw.',
+    '//',
+    '// Needs MSXgl\'s VDP command engine: MSX2 or later with VDP_USE_COMMAND,',
+    '// and "msxgl.h" included before this header.',
+    '//',
+    '// Two rules:',
+    '//  - Give every object its own slot (0, 1, 2 …). Backgrounds are saved',
+    `//    side by side in the row under the strip, ${prefix}_BACKUP_PITCH dots apart,`,
+    '//    and two objects sharing a slot would eat each other\'s background.',
+    '//  - When objects can overlap, Restore them all in *reverse* draw order',
+    '//    first, then Draw them all in order. Restoring one at a time rubs out',
+    '//    whatever was drawn on top of it.',
+    '//',
+    '// Example:',
+    `//   ${name}_Upload(212);                  // strip parked at VRAM row 212`,
+    `//   ${name}_SwSprite hero = { 0 };        // slot 0`,
+    '//   // every frame:',
+    `//   ${name}_Restore(&hero, 212);`,
+    `//   ${name}_Draw(&hero, ${prefix}_${first}, x, y, 212);`,
+    'typedef struct',
+    '{',
+    '\tu8  slot; // which backup column this object owns',
+    '\tu16 bx;   // the saved background rectangle; bw = 0 means nothing is on screen',
+    '\tu8  by, bw, bh;',
+    `} ${name}_SwSprite;`,
+    '',
+    '// Copies every frame into the off-screen strip at VRAM row `stripY`.',
+    `static void ${name}_Upload(u8 stripY)`,
+    '{',
+    `\tVDP_CommandHMMC(${name}_Strip, 0, stripY, ${prefix}_STRIP_W, ${prefix}_STRIP_H);`,
+    '}',
+    '',
+    '// Puts back what the object was covering. Safe before the first draw.',
+    `static void ${name}_Restore(${name}_SwSprite* s, u8 stripY)`,
+    '{',
+    '\tif(s->bw == 0)',
+    '\t\treturn;',
+    `\tVDP_CommandHMMM(s->slot * ${prefix}_BACKUP_PITCH, stripY + ${prefix}_STRIP_H, s->bx, s->by, s->bw, s->bh);`,
+    '\ts->bw = 0;',
+    '}',
+    '',
+    '// Saves the background at the new position, then blits `frame` over it.',
+    `static void ${name}_Draw(${name}_SwSprite* s, u8 frame, u16 x, u8 y, u8 stripY)`,
+    '{',
+    `\tconst u8* rect = ${name}_Rects + ((u16)frame * 4);`,
+    '\tu16 sx = rect[0] + ((u16)rect[1] << 8);',
+    '\tu8  w  = rect[2];',
+    '\tu8  h  = rect[3];',
+    '\t// HMMM copies whole bytes, so the backup starts a couple of dots early',
+    '\t// and runs wider — otherwise the sprite leaves its edges behind.',
+    '\ts->bx = (x > 2) ? x - 2 : 0;',
+    '\ts->by = y;',
+    '\ts->bw = w + 4;',
+    '\ts->bh = h;',
+    `\tVDP_CommandHMMM(s->bx, y, s->slot * ${prefix}_BACKUP_PITCH, stripY + ${prefix}_STRIP_H, s->bw, h);`,
+    '\tVDP_CommandLMMM(sx, stripY, x, y, w, h, VDP_OP_TIMP);',
+    '}'
+  ]
 }
 
 /** Palette table bytes in V9938 write order: `[0RRR0BBB, 00000GGG]` per entry. */

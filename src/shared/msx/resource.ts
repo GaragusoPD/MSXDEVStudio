@@ -11,7 +11,18 @@
 import { defineName, emitBin, emitCHeader, type EmitTable } from './emitC'
 import { normalizeMap, mapLayerBytes, validateMap, type MapDoc } from './map'
 import { MODES } from './modes'
-import { palettePairBytes, normalizeScreen, packBitmap, screenPixels, validateScreen, type ScreenDoc } from './screen'
+import {
+  fragmentRectBytes,
+  fragmentStrip,
+  fragmentStripBytes,
+  palettePairBytes,
+  normalizeScreen,
+  packBitmap,
+  screenHelperC,
+  screenPixels,
+  validateScreen,
+  type ScreenDoc
+} from './screen'
 import { encodeAyfxBank, normalizeSfx, validateSfx, type SfxDoc } from './sfx'
 import {
   hasMetasprite,
@@ -233,6 +244,22 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
         bytes: packBitmap(pixels.indices, pixels.width, pixels.height, doc.mode),
         comment: `${MODES[doc.mode].label} bitmap ${pixels.width}×${pixels.height}`
       })
+      if (doc.fragments.length) {
+        const strip = fragmentStrip(doc)
+        tables.push({
+          suffix: '_Strip',
+          bytes: fragmentStripBytes(doc),
+          comment: `Fragments as one ${strip.width}×${strip.height} image: ${doc.fragments
+            .map((fragment) => `${fragment.name} ${fragment.width}×${fragment.height}`)
+            .join(', ')}`
+        })
+        tables.push({
+          suffix: '_Rects',
+          bytes: fragmentRectBytes(doc),
+          perLine: 4,
+          comment: 'Fragment rectangles inside the strip — xLo, xHi, width, height'
+        })
+      }
       return tables
     }
     // One table: the whole ayFX bank, exactly the bytes `ayFX_InitBank` wants a pointer to.
@@ -284,6 +311,11 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
       break
     case 'screen':
       notes.push(`Mode: ${MODES[resource.doc.mode].label}`, `Dither: ${resource.doc.convert.dither}`)
+      if (resource.doc.fragments.length) {
+        notes.push(
+          `Fragments: ${resource.doc.fragments.map((fragment) => `${fragment.name} ${fragment.width}×${fragment.height}`).join(', ')}`
+        )
+      }
       break
     case 'sfx':
       notes.push(
@@ -302,6 +334,19 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
  */
 function resourceConstants(resource: ResourceDoc, name: string): string[] {
   const prefix = defineName(name)
+  if (resource.kind === 'screen') {
+    const { doc } = resource
+    if (!doc.fragments.length) return []
+    const strip = fragmentStrip(doc)
+    return [
+      `#define ${prefix}_STRIP_W ${strip.width}`,
+      `#define ${prefix}_STRIP_H ${strip.height}`,
+      // Backgrounds are saved side by side under the strip; the widest frame
+      // plus the HMMM byte-alignment margin is how far apart they have to sit.
+      `#define ${prefix}_BACKUP_PITCH ${Math.max(0, ...doc.fragments.map((fragment) => fragment.width)) + 4}`,
+      ...doc.fragments.map((fragment, index) => `#define ${prefix}_${defineName(fragment.name)} ${index}`)
+    ]
+  }
   if (resource.kind === 'tiles') {
     return blockPlacements(resource.doc).flatMap((placement) => {
       const id = `${prefix}_${defineName(placement.name)}`
@@ -325,6 +370,7 @@ function resourceConstants(resource: ResourceDoc, name: string): string[] {
 
 /** The opt-in ready-made C for this resource; empty when the kind has none (yet). */
 function resourceCode(resource: ResourceDoc, name: string): string[] {
+  if (resource.kind === 'screen') return resource.doc.fragments.length ? screenHelperC(resource.doc, name) : []
   if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : []
   if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
   return spriteHelperC(resource.doc, name)

@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { isValidGrb } from './msx/palette'
 import { quantize, type RgbaImage } from './msx/quantize'
-import { createScreenDoc, screenPixels } from './msx/screen'
+import {
+  createScreenDoc,
+  encodeIndices,
+  fragmentRectBytes,
+  fragmentStrip,
+  fragmentStripBytes,
+  fragmentStripPixels,
+  normalizeScreen,
+  screenHelperC,
+  screenPixels,
+  type ScreenDoc
+} from './msx/screen'
 import {
   applyConversion,
   canRedo,
@@ -152,5 +163,87 @@ describe('undo/redo', () => {
     let history = createHistory(start)
     history = pushHistory(history, start)
     expect(canUndo(history)).toBe(false)
+  })
+})
+
+describe('bitmap fragments', () => {
+  /** A 64×32 sc5 screen whose pixel (x, y) is a recognisable value. */
+  function screen(fragments: { name: string; x: number; y: number; width: number; height: number }[]): ScreenDoc {
+    const width = 64
+    const height = 32
+    const indices = new Uint8Array(width * height)
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) indices[y * width + x] = (x + y) % 16
+    return normalizeScreen({
+      mode: 'sc5',
+      source: 'art/hero.png',
+      fragments,
+      converted: { width, height, palette: new Array(16).fill(0), indices: encodeIndices(indices) }
+    })
+  }
+
+  it('lays fragments side by side into one strip, tallest first setting the height', () => {
+    const doc = screen([
+      { name: 'idle', x: 0, y: 0, width: 16, height: 16 },
+      { name: 'jump', x: 20, y: 4, width: 8, height: 24 }
+    ])
+    expect(fragmentStrip(doc)).toEqual({ width: 24, height: 24, offsets: [0, 16] })
+  })
+
+  it('cuts each fragment out of the converted image at its own offset', () => {
+    const doc = screen([{ name: 'a', x: 3, y: 2, width: 4, height: 2 }])
+    const strip = fragmentStripPixels(doc)
+    // Source pixel (x, y) is (x + y) % 16, so the fragment's first row starts at 3 + 2.
+    expect([...strip.subarray(0, 4)]).toEqual([5, 6, 7, 8])
+    expect([...strip.subarray(4, 8)]).toEqual([6, 7, 8, 9])
+  })
+
+  it('leaves the short fragments transparent where the strip is taller', () => {
+    const doc = screen([
+      { name: 'short', x: 0, y: 0, width: 2, height: 1 },
+      { name: 'tall', x: 0, y: 0, width: 2, height: 3 }
+    ])
+    const strip = fragmentStripPixels(doc)
+    expect(strip).toHaveLength(4 * 3)
+    expect([...strip.subarray(4, 6)]).toEqual([0, 0]) // row 1 under 'short'
+  })
+
+  it('clips a fragment that runs off the image instead of reading past it', () => {
+    const doc = screen([{ name: 'edge', x: 62, y: 30, width: 8, height: 8 }])
+    const strip = fragmentStripPixels(doc)
+    expect(strip).toHaveLength(8 * 8)
+    expect(strip[2]).toBe(0) // past the right edge of a 64-wide image
+  })
+
+  it('packs the strip for the mode and describes each rect for the runtime', () => {
+    const doc = screen([
+      { name: 'idle', x: 0, y: 0, width: 16, height: 16 },
+      { name: 'jump', x: 20, y: 4, width: 8, height: 16 }
+    ])
+    // sc5 is 2 pixels per byte: a 24×16 strip is 12 bytes per row.
+    expect(fragmentStripBytes(doc)).toHaveLength(12 * 16)
+    expect([...fragmentRectBytes(doc)]).toEqual([0, 0, 16, 16, 16, 0, 8, 16])
+  })
+
+  it('carries a 16-bit strip offset once the frames run past 255 dots', () => {
+    const doc = screen(
+      Array.from({ length: 20 }, (_, i) => ({ name: `f${i}`, x: 0, y: 0, width: 16, height: 8 }))
+    )
+    const rects = fragmentRectBytes(doc)
+    expect(fragmentStrip(doc).width).toBe(320)
+    expect([...rects.subarray(19 * 4, 19 * 4 + 2)]).toEqual([304 & 0xff, 1]) // 304 = 0x130
+  })
+
+  it('emits the software-sprite runtime only for the fragments it has', () => {
+    const doc = screen([{ name: 'idle', x: 0, y: 0, width: 16, height: 16 }])
+    const code = screenHelperC(doc, 'g_Hero').join('\n')
+    expect(code).toContain('static void g_Hero_Upload(u8 stripY)')
+    expect(code).toContain('VDP_CommandLMMM(sx, stripY, x, y, w, h, VDP_OP_TIMP);')
+    // Each object saves its background in its own column, or they eat each other's.
+    expect(code).toContain('s->slot * G_HERO_BACKUP_PITCH')
+  })
+
+  it('survives a save/load round-trip', () => {
+    const doc = screen([{ name: 'idle', x: 1, y: 2, width: 3, height: 4 }])
+    expect(normalizeScreen(JSON.parse(JSON.stringify(doc)))).toEqual(doc)
   })
 })

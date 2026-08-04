@@ -40,7 +40,7 @@ import {
 } from '../../../../shared/screen-editor'
 import { useTabsStore } from '../../stores/tabsStore'
 
-export type ScreenTool = 'pencil' | 'fill'
+export type ScreenTool = 'pencil' | 'fill' | 'cut'
 
 export interface ScreenSession {
   path: string
@@ -231,6 +231,33 @@ export function setPalette(session: ScreenSession, index: number, grb: number): 
 
 export function setTool(session: ScreenSession, tool: ScreenTool): void {
   session.tool = tool
+}
+
+/**
+ * Names a rectangle of the converted image as a fragment — a bitmap-mode
+ * block, and the frame of a software sprite. The pixels stay where they are;
+ * a fragment is only a window onto them.
+ */
+export function addFragment(session: ScreenSession, rect: { x: number; y: number; width: number; height: number }): void {
+  const current = doc(session)
+  const fragment = { name: `fragment_${current.fragments.length}`, ...rect }
+  commit(session, { ...current, fragments: [...current.fragments, fragment] })
+  session.status = `Cut ${fragment.name} — ${rect.width}×${rect.height}`
+}
+
+export function removeFragment(session: ScreenSession, index: number): void {
+  const current = doc(session)
+  if (!current.fragments[index]) return
+  commit(session, { ...current, fragments: current.fragments.filter((_, i) => i !== index) })
+}
+
+export function renameFragment(session: ScreenSession, index: number, name: string): void {
+  const current = doc(session)
+  if (!current.fragments[index]) return
+  commit(session, {
+    ...current,
+    fragments: current.fragments.map((fragment, i) => (i === index ? { ...fragment, name } : fragment))
+  })
 }
 
 export function setColor(session: ScreenSession, index: number): void {

@@ -11,13 +11,16 @@ import { paletteToRgb } from '../../../../shared/msx/palette'
 import { rgb332Palette } from '../../../../shared/msx/quantize'
 import { screenPixels, type ScreenDoc } from '../../../../shared/msx/screen'
 import { linePoints, type Point } from '../../../../shared/tile-editor'
-import { doc, fillAt, finishDrag, paintDrag, type ScreenSession } from './session'
+import { addFragment, doc, fillAt, finishDrag, paintDrag, type ScreenSession } from './session'
 
 const props = defineProps<{ session: ScreenSession }>()
 
 const originalCanvas = ref<HTMLCanvasElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 let last: Point | null = null
+/** Drag rectangle of the cut tool, in image pixels. */
+const cutFrom = ref<Point | null>(null)
+const cutTo = ref<Point | null>(null)
 
 const modeInfo = computed(() => MODES[doc(props.session).mode])
 const convertedPixels = computed(() => screenPixels(doc(props.session)))
@@ -63,6 +66,11 @@ function onDown(event: PointerEvent): void {
   if (!convertedPixels.value) return
   const cell = pixelAt(event)
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
+  if (props.session.tool === 'cut') {
+    cutFrom.value = cell
+    cutTo.value = cell
+    return
+  }
   if (props.session.tool === 'fill') {
     fillAt(props.session, cell)
     return
@@ -72,6 +80,10 @@ function onDown(event: PointerEvent): void {
 }
 
 function onMove(event: PointerEvent): void {
+  if (cutFrom.value) {
+    cutTo.value = pixelAt(event)
+    return
+  }
   if (!last || props.session.tool !== 'pencil') return
   const cell = pixelAt(event)
   if (cell.x === last.x && cell.y === last.y) return
@@ -80,10 +92,59 @@ function onMove(event: PointerEvent): void {
 }
 
 function onUp(): void {
+  if (cutFrom.value && cutTo.value) {
+    const rect = cutRect.value
+    // A click without a drag is a mis-click, not a 1×1 fragment.
+    if (rect && rect.width > 1 && rect.height > 1) addFragment(props.session, rect)
+    cutFrom.value = null
+    cutTo.value = null
+    return
+  }
   if (!last) return
   finishDrag(props.session)
   last = null
 }
+
+/** The drag rectangle, normalised so it can be dragged in any direction. */
+const cutRect = computed(() => {
+  const from = cutFrom.value
+  const to = cutTo.value
+  if (!from || !to) return null
+  const x = Math.min(from.x, to.x)
+  const y = Math.min(from.y, to.y)
+  return { x, y, width: Math.abs(to.x - from.x) + 1, height: Math.abs(to.y - from.y) + 1 }
+})
+
+/** Overlay boxes: the live drag, then every fragment already cut. */
+const overlays = computed(() => {
+  const zoom = props.session.zoom
+  const boxes = doc(props.session).fragments.map((fragment, index) => ({
+    key: `f${index}`,
+    live: false,
+    label: fragment.name,
+    style: {
+      left: `${fragment.x * zoom}px`,
+      top: `${fragment.y * zoom}px`,
+      width: `${fragment.width * zoom}px`,
+      height: `${fragment.height * zoom}px`
+    }
+  }))
+  const rect = cutRect.value
+  if (rect) {
+    boxes.push({
+      key: 'live',
+      live: true,
+      label: `${rect.width}×${rect.height}`,
+      style: {
+        left: `${rect.x * zoom}px`,
+        top: `${rect.y * zoom}px`,
+        width: `${rect.width * zoom}px`,
+        height: `${rect.height * zoom}px`
+      }
+    })
+  }
+  return boxes
+})
 
 watchEffect(() => {
   const element = originalCanvas.value
@@ -144,22 +205,64 @@ watchEffect(() => {
         >
           Not converted yet.
         </p>
-        <canvas
+        <div
           v-else
-          ref="canvas"
-          class="preview interactive"
+          class="stage"
           :style="convertedStyle"
-          @pointerdown="onDown"
-          @pointermove="onMove"
-          @pointerup="onUp"
-          @pointercancel="onUp"
-        />
+        >
+          <canvas
+            ref="canvas"
+            class="preview interactive"
+            :style="convertedStyle"
+            @pointerdown="onDown"
+            @pointermove="onMove"
+            @pointerup="onUp"
+            @pointercancel="onUp"
+          />
+          <span
+            v-for="box in overlays"
+            :key="box.key"
+            class="cut-box"
+            :class="{ live: box.live }"
+            :style="box.style"
+          ><i>{{ box.label }}</i></span>
+        </div>
       </div>
     </figure>
   </div>
 </template>
 
 <style scoped>
+.stage {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.cut-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed rgba(120, 170, 255, 0.9);
+  pointer-events: none;
+}
+
+.cut-box.live {
+  border-style: solid;
+  background: rgba(120, 170, 255, 0.18);
+}
+
+.cut-box i {
+  position: absolute;
+  top: -13px;
+  left: 0;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: rgba(120, 170, 255, 0.9);
+  color: #08121f;
+  font-size: 9px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
 .canvas-pane {
   flex: 1;
   min-width: 0;

@@ -11,7 +11,19 @@ import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex, unpackGrb } from '../
 import type { DitherMode } from '../../../../shared/msx/quantize'
 import { rgb332Palette } from '../../../../shared/msx/quantize'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
-import { commit, doc, reconvertNow, reconvertWith, setColor, setPalette, setTool, type ScreenSession, type ScreenTool } from './session'
+import {
+  commit,
+  doc,
+  reconvertNow,
+  reconvertWith,
+  removeFragment,
+  renameFragment,
+  setColor,
+  setPalette,
+  setTool,
+  type ScreenSession,
+  type ScreenTool
+} from './session'
 
 const props = defineProps<{ session: ScreenSession }>()
 
@@ -27,7 +39,8 @@ const convertedPalette = computed(() => screenDoc.value.converted?.palette ?? nu
 
 const TOOLS: { id: ScreenTool; label: string; title: string }[] = [
   { id: 'pencil', label: '✎', title: 'Pencil' },
-  { id: 'fill', label: '🪣', title: 'Fill (flood)' }
+  { id: 'fill', label: '🪣', title: 'Fill (flood)' },
+  { id: 'cut', label: '⛶', title: 'Cut a fragment — drag a rectangle on the converted image' }
 ]
 
 function grbLabel(index: number): string {
@@ -124,6 +137,39 @@ function patchExport(patch: Partial<ExportBlock>): void {
           {{ tool.label }}
         </button>
       </div>
+    </section>
+
+    <section>
+      <h3>Fragments</h3>
+      <p class="blurb">
+        Named cut-outs of the converted image: bitmap-mode blocks, and the frames of a software
+        sprite. Pick the ⛶ tool and drag a rectangle to cut one.
+      </p>
+      <ul
+        v-if="screenDoc.fragments.length"
+        class="fragments"
+      >
+        <li
+          v-for="(fragment, index) in screenDoc.fragments"
+          :key="index"
+        >
+          <input
+            class="fragment-name"
+            type="text"
+            spellcheck="false"
+            :value="fragment.name"
+            @change="renameFragment(session, index, ($event.target as HTMLInputElement).value.trim() || fragment.name)"
+          >
+          <span class="dims">{{ fragment.width }}×{{ fragment.height }}</span>
+          <button
+            type="button"
+            title="Remove fragment"
+            @click="removeFragment(session, index)"
+          >
+            ×
+          </button>
+        </li>
+      </ul>
     </section>
 
     <section>
@@ -229,6 +275,19 @@ function patchExport(patch: Partial<ExportBlock>): void {
             </option>
           </select>
         </label>
+        <label
+          v-if="screenDoc.fragments.length"
+          class="inline"
+        >
+          <input
+            type="checkbox"
+            :checked="screenDoc.export.helpers === true"
+            @change="patchExport({ helpers: ($event.target as HTMLInputElement).checked })"
+          >
+          <span title="Appends the software-sprite runtime: upload the frames once, then restore/draw each object. Needs msxgl.h included first.">
+            Export ready-made C
+          </span>
+        </label>
       </template>
       <button
         v-else
@@ -243,6 +302,53 @@ function patchExport(patch: Partial<ExportBlock>): void {
 </template>
 
 <style scoped>
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.blurb {
+  margin: 0 0 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.fragments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fragments li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.fragment-name {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 3px;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.fragments .dims {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
 .side {
   width: 240px;
   flex: none;
