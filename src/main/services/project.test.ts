@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { REAL_MSXGL, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
 import {
   createProject,
   evaluateProjectConfig,
@@ -17,13 +17,11 @@ import {
 
 // The same real MSXgl checkout `toolchain.test.ts` uses. Never referenced from
 // product code — ProjectService gets the root from ToolchainService.
-const REAL_MSXGL = '/tmp/claude-1000/-home-pablo-Development-MSXStudio/b16afaee-93f6-41b7-bbba-1f23c075314a/scratchpad/MSXgl'
-const hasMsxgl = existsSync(join(REAL_MSXGL, 'projects/template/template.c'))
 const NODE = resolveNodeBinary(REAL_MSXGL)
 
 const tmpDirs: string[] = []
 function makeTmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  const dir = mkdtempSync(join(scratchRoot(), prefix))
   tmpDirs.push(dir)
   return dir
 }

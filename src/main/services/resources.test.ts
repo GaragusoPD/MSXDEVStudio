@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, uti
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { REAL_MSXGL, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
 import type { IpcEvents, OpenProject } from '../../shared/ipc'
 import type { ImgRule, MsxProject } from '../../shared/msxproj'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS } from '../../shared/msx/sfx'
@@ -21,9 +22,7 @@ import {
 
 // The same real MSXgl checkout the other suites use. Never referenced from
 // product code — services get the root from ToolchainService.
-const REAL_MSXGL = '/tmp/claude-1000/-home-pablo-Development-MSXStudio/b16afaee-93f6-41b7-bbba-1f23c075314a/scratchpad/MSXgl'
 const SAMPLE_PNG = join(REAL_MSXGL, 'projects/samples/datasrc/img/city.png')
-const hasMsxgl = existsSync(join(REAL_MSXGL, 'projects/template/template.c'))
 const hasMsximg = existsSync(msximgPath(REAL_MSXGL)) && existsSync(SAMPLE_PNG)
 const runsBuilds = hasMsxgl && resolveNodeBinary(REAL_MSXGL) !== null
 const BUILD_TIMEOUT = 300_000
@@ -38,7 +37,7 @@ afterEach(() => {
 })
 
 function scratch(name: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `${name}-`))
+  const dir = mkdtempSync(join(scratchRoot(), `${name}-`))
   tmpDirs.push(dir)
   return dir
 }

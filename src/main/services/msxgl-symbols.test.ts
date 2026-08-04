@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { REAL_MSXGL } from './__fixtures__/msxgl'
 import { indexMsxglSymbols, parseHeaderSymbols } from './msxgl-symbols'
 
 /** A real MSXgl checkout, when one is available — the parser's actual input. */
-const REAL_MSXGL = '/home/pablo/MSXgl'
 
 /** MSXgl's headers are CRLF; the fixtures below are too, deliberately. */
 const crlf = (lines: string[]): string => lines.join('\r\n')

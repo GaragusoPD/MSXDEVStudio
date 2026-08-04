@@ -1,16 +1,14 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { REAL_MSXGL, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
 import type { BuildFinished, IpcEvents, OpenProject } from '../../shared/ipc'
 import { BuildService, type BuildDeps } from './build-service'
 import { createProject, resolveNodeBinary, saveProject } from './project'
 
 // The same real MSXgl checkout the other suites use. Never referenced from
 // product code — BuildService gets the root from ToolchainService.
-const REAL_MSXGL = '/tmp/claude-1000/-home-pablo-Development-MSXStudio/b16afaee-93f6-41b7-bbba-1f23c075314a/scratchpad/MSXgl'
-const hasMsxgl = existsSync(join(REAL_MSXGL, 'projects/template/template.c'))
 const runsBuilds = hasMsxgl && resolveNodeBinary(REAL_MSXGL) !== null
 const BUILD_TIMEOUT = 300_000
 
@@ -18,7 +16,7 @@ const tmpDirs: string[] = []
 const services: BuildService[] = []
 
 function makeProject(name: string, patch: (project: OpenProject['project']) => void = () => {}): OpenProject {
-  const location = mkdtempSync(join(tmpdir(), `build-${name}-`))
+  const location = mkdtempSync(join(scratchRoot(), `build-${name}-`))
   tmpDirs.push(location)
   const opened = createProject(
     { name, location, machine: '1', target: 'ROM_32K', libModules: ['system', 'bios', 'vdp', 'print', 'input', 'memory'] },

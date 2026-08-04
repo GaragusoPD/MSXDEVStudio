@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { REAL_MSXGL, scratchRoot } from './__fixtures__/msxgl'
 import type { NewProjectRequest } from '../../shared/ipc'
 import type { ConfigGlobals } from '../../shared/msxproj'
 import {
@@ -18,7 +18,6 @@ import { evaluateProjectConfig, resolveNodeBinary } from './project'
 
 // The same real MSXgl checkout the other suites use. Never referenced from
 // product code — ExamplesService gets the root from ToolchainService.
-const REAL_MSXGL = '/tmp/claude-1000/-home-pablo-Development-MSXStudio/b16afaee-93f6-41b7-bbba-1f23c075314a/scratchpad/MSXgl'
 const hasMsxgl = existsSync(join(REAL_MSXGL, 'projects/samples/s_hello.c'))
 const NODE = resolveNodeBinary(REAL_MSXGL)
 const SAMPLES = samplesDir(REAL_MSXGL)
@@ -26,7 +25,7 @@ const BUILD_TIMEOUT = 600_000
 
 const tmpDirs: string[] = []
 function makeTmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  const dir = mkdtempSync(join(scratchRoot(), prefix))
   tmpDirs.push(dir)
   return dir
 }

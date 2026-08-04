@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { REAL_MSXGL } from './__fixtures__/msxgl'
 import {
   chmodExtractedToolchain,
   cloneMsxgl,
@@ -20,7 +21,6 @@ import {
 // A real MSXgl checkout used as a fast, offline git-clone source (`file://` URL)
 // and as ground truth for sentinel-file validation. Never referenced from
 // product code — only from this test.
-const REAL_MSXGL = '/tmp/claude-1000/-home-pablo-Development-MSXStudio/b16afaee-93f6-41b7-bbba-1f23c075314a/scratchpad/MSXgl'
 
 function commandExists(cmd: string): boolean {
   try {

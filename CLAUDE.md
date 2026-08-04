@@ -17,7 +17,7 @@ npx vitest run src/main/services/build.test.ts -t 'stamp'  # filter by test name
 npx electron-builder --dir # unpacked package for this platform
 ```
 
-Some `src/main/services` tests (`build-service`, `resources`, `toolchain`, `project`, `examples`) use a **real MSXgl checkout** hard-coded as `REAL_MSXGL` in the test files — the build ones run real compiles — they take ~40s each and fail if that checkout is missing. The pure-logic tests are fast.
+Some `src/main/services` tests (`build-service`, `resources`, `toolchain`, `project`, `examples`, `msxgl-symbols`) use a **real MSXgl checkout** — the build ones run real compiles, ~40s each, and skip when it's missing. Its path and their scratch root live in `src/main/services/__fixtures__/msxgl.ts`; override with `MSXGL_PATH=/your/clone`. Scratch projects go *beside* the checkout, not in `/tmp`: MSXgl's compile step renames `.rel` files out of the engine dir, which fails with EXDEV across filesystems. The pure-logic tests are fast.
 
 ## Architecture
 
