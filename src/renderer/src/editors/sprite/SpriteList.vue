@@ -4,10 +4,17 @@
  * `compositeFrame`), add/duplicate/delete/rename, and the PNG-strip import
  * entry point.
  */
-import { ref, watchEffect } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { compositeFrame, type SpriteFrame, type SpritesDoc } from '../../../../shared/msx/sprite'
-import { addSprite, duplicateSprite, removeSprite, renameSprite } from '../../../../shared/sprite-editor'
+import {
+  addSprite,
+  characterPlaneCost,
+  duplicateSprite,
+  removeSprite,
+  renameSprite,
+  scanlineBudget
+} from '../../../../shared/sprite-editor'
 import { drawIndices } from './draw'
 import SpriteImportDialog from './SpriteImportDialog.vue'
 
@@ -17,6 +24,8 @@ const emit = defineEmits<{ select: [index: number]; mutate: [doc: SpritesDoc] }>
 const THUMB = 48
 const thumbRefs = ref<(HTMLCanvasElement | null)[]>([])
 const importVisible = ref(false)
+/** Hardware sprites the VDP draws per scanline — 4 in mode 1, 8 in mode 2. */
+const limit = computed(() => scanlineBudget(props.doc).limit)
 
 function redrawThumbs(): void {
   const rgb = paletteToRgb(props.doc.palette)
@@ -78,6 +87,12 @@ function onImported(frames: SpriteFrame[], palette: number[] | null): void {
           @click.stop
           @change="rename(index, $event)"
         >
+        <span
+          v-if="characterPlaneCost(sprite) > 1"
+          class="cost"
+          :class="{ over: characterPlaneCost(sprite) > limit }"
+          :title="`Costs ${characterPlaneCost(sprite)} of the ${limit} hardware sprites the VDP draws per scanline`"
+        >{{ characterPlaneCost(sprite) }}/{{ limit }}</span>
         <button
           type="button"
           title="Duplicate"
@@ -175,6 +190,21 @@ ul {
   flex-shrink: 0;
   background-color: var(--color-bg-tab-inactive);
   border: 1px solid var(--color-border);
+}
+
+.cost {
+  flex-shrink: 0;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.cost.over {
+  background: rgba(230, 160, 30, 0.25);
+  color: var(--color-text);
 }
 
 .name {

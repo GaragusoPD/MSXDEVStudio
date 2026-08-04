@@ -15,6 +15,7 @@ import { palettePairBytes, normalizeScreen, packBitmap, screenPixels, validateSc
 import { encodeAyfxBank, normalizeSfx, validateSfx, type SfxDoc } from './sfx'
 import {
   hasMetasprite,
+  hasSpriteGroups,
   normalizeSprites,
   serializeSprites,
   spriteColorBytes,
@@ -35,9 +36,9 @@ export interface ExportBlock {
   /** Project-relative output path, e.g. `content/mytiles.h`. */
   out: string
   /**
-   * Append the ready-made C for this resource (sprites: the metasprite
-   * placer). Off by default — it calls into MSXgl, so a header carrying it
-   * must be included after `msxgl.h`. Ignored by the `bin` format.
+   * Append the ready-made C for this resource (sprites: the group placer).
+   * Off by default — it calls into MSXgl, so a header carrying it must be
+   * included after `msxgl.h`. Ignored by the `bin` format.
    */
   helpers?: boolean
 }
@@ -173,13 +174,13 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
       if (doc.palette) {
         tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
       }
-      // Only a character spanning several hardware sprites needs placement data.
-      if (hasMetasprite(doc)) {
+      // Only a character drawn by several hardware sprites needs placement data.
+      if (hasSpriteGroups(doc)) {
         tables.push({
           suffix: '_Layout',
           bytes: spriteLayoutBytes(doc),
           perLine: 2,
-          comment: 'Metasprite layout — dx, dy per plane, in pattern order'
+          comment: 'Sprite group layout — dx, dy per plane, in pattern order (0, 0 for stacked planes)'
         })
       }
       return tables
@@ -278,7 +279,7 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
  * one character out of a sheet: `..._BASE + frame * ..._PLANES`.
  */
 function resourceConstants(resource: ResourceDoc, name: string): string[] {
-  if (resource.kind !== 'sprites' || !hasMetasprite(resource.doc)) return []
+  if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
   const prefix = defineName(name)
   return spritePlacements(resource.doc).flatMap((placement) => {
     const id = `${prefix}_${defineName(placement.name)}`
@@ -292,7 +293,7 @@ function resourceConstants(resource: ResourceDoc, name: string): string[] {
 
 /** The opt-in ready-made C for this resource; empty when the kind has none (yet). */
 function resourceCode(resource: ResourceDoc, name: string): string[] {
-  if (resource.kind !== 'sprites' || !hasMetasprite(resource.doc)) return []
+  if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
   return spriteHelperC(resource.doc, name)
 }
 

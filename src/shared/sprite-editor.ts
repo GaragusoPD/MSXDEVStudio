@@ -405,21 +405,26 @@ export interface ScanlineBudget {
 }
 
 /**
+ * What one character costs on the scanline it crosses: the planes of its
+ * busiest *cell row*, in its resting pose. Stacked planes (superposition) all
+ * land on the same lines and each cost one; a second row of cells sits `size`
+ * dots lower and never shares a scanline with the first, so rows don't add up.
+ */
+export function characterPlaneCost(sprite: SpriteCharacter): number {
+  const perRow = new Map<number, number>()
+  for (const layer of sprite.frames[0]?.layers ?? []) perRow.set(layer.cy, (perRow.get(layer.cy) ?? 0) + 1)
+  return Math.max(0, ...perRow.values())
+}
+
+/**
  * ponytail: the editor has no notion of on-screen placement, so this sums every
- * character's resting-pose (frame 0) worst case — the number of hardware sprite
- * planes you'd burn if every character were placed on the same scanline.
- * Within a character only the busiest *cell row* counts: a metasprite's second
- * row of cells sits `size` dots lower and never shares a scanline with the first.
- * Upgrade to real placement tracking if a scene/map editor ever knows actual
- * sprite Y coordinates.
+ * character's `characterPlaneCost` — what you'd burn if every character were
+ * placed on the same scanline. Upgrade to real placement tracking if a
+ * scene/map editor ever knows actual sprite Y coordinates.
  */
 export function scanlineBudget(doc: SpritesDoc): ScanlineBudget {
   const limit = doc.mode === 1 ? 4 : 8
-  const total = doc.sprites.reduce((sum, sprite) => {
-    const perRow = new Map<number, number>()
-    for (const layer of sprite.frames[0]?.layers ?? []) perRow.set(layer.cy, (perRow.get(layer.cy) ?? 0) + 1)
-    return sum + Math.max(0, ...perRow.values())
-  }, 0)
+  const total = doc.sprites.reduce((sum, sprite) => sum + characterPlaneCost(sprite), 0)
   return { limit, total, exceeded: total > limit }
 }
 

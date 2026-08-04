@@ -391,9 +391,21 @@ export function spritePlacements(doc: SpritesDoc): SpritePlacement[] {
   })
 }
 
-/** True once a character spans more than one hardware sprite — the only case that needs a layout table. */
+/** True once a character spans more than one cell of the grid. */
 export function hasMetasprite(doc: SpritesDoc): boolean {
   return doc.sprites.some((sprite) => sprite.cols * sprite.rows > 1)
+}
+
+/**
+ * True once some character is drawn by more than one hardware sprite — by
+ * spanning cells, by stacking planes on one cell (superposition, the only way
+ * to get a multi-color character in sprite mode 1), or both. That is exactly
+ * the case where placing the character means writing several attribute
+ * entries from one coordinate, so it's what the layout table and the
+ * `_SetMeta` helper are emitted for.
+ */
+export function hasSpriteGroups(doc: SpritesDoc): boolean {
+  return doc.sprites.some((sprite) => sprite.cols * sprite.rows > 1 || (sprite.frames[0]?.layers.length ?? 0) > 1)
 }
 
 /**

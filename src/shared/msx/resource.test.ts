@@ -18,7 +18,7 @@ import {
 import { encodeIndices, normalizeScreen, packBitmap, palettePairBytes, screenPixels } from './screen'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS, type SfxDoc } from './sfx'
 import { createSpritesDoc } from './sprite'
-import { setCharacterGrid } from '../sprite-editor'
+import { addLayer, setCharacterGrid } from '../sprite-editor'
 import { createTilesDoc, mergeColorByte, normalizeTiles } from './tile'
 
 const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
@@ -200,9 +200,15 @@ describe('sprites resource', () => {
     expect(parseResource('x.sprites.json', serializeResource(resource))).toEqual(resource)
   })
 
-  it('adds a layout table only once a character spans several hardware sprites', () => {
+  it('adds a layout table only once a character takes several hardware sprites', () => {
     const plain = { kind: 'sprites', doc: createSpritesDoc(2, 16) } as ResourceDoc
     expect(resourceTables(plain).map((t) => t.suffix)).toEqual(['_Patterns', '_Colors'])
+
+    // Superposition: planes stacked on one cell also need placing from one x/y.
+    const stacked = { kind: 'sprites', doc: addLayer(createSpritesDoc(1, 16), 0) } as ResourceDoc
+    const stackedTables = resourceTables(stacked)
+    expect(stackedTables.map((t) => t.suffix)).toEqual(['_Patterns', '_Colors', '_Layout'])
+    expect([...stackedTables[2].bytes]).toEqual([0, 0, 0, 0])
 
     const tables = resourceTables(metaResource())
     expect(tables.map((t) => t.suffix)).toEqual(['_Patterns', '_Colors', '_Layout'])

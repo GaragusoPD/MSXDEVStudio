@@ -65,16 +65,16 @@ sprite blitters are what the bitmap-mode work stands on.
       Export adds a `_Layout` table (dx, dy per plane) plus per-character
       `BASE`/`PLANES`/`FRAMES` defines, and an opt-in `_SetMeta()` places the whole
       group from one coordinate. **Still to check by hand: the editor UI in the app.**
-- [ ] **2. Superposition of sprites.** Stack several hardware sprites on the same
-      coordinates to get a multi-color character. This is the only way to do it in
-      sprite mode 1 (MSX1), where a sprite is a single color. Item 1 already emits the
-      planes and ships the runtime that writes N attribute entries from one x/y — what
-      is left is the editor side: a plane→color assignment, and widening the `_Layout`
-      table + helper to characters that stack planes without spanning cells (today
-      both are emitted only when a character is a metasprite). Watch the
-      4-sprites-per-scanline limit — a 3-layer character costs 3 of the 4, and a
-      metasprite multiplies that, so the editor should warn (the hint already counts
-      the busiest cell row).
+- [x] **2. Superposition of sprites.** Stack several hardware sprites on the same
+      coordinates to get a multi-color character — the only way to do it in sprite
+      mode 1 (MSX1), where a sprite is a single color. *Done (dev14):* item 1 already
+      emitted the planes and the runtime that writes N attribute entries from one x/y;
+      this widened the `_Layout` table, the per-character defines and `_SetMeta` from
+      "spans cells" to "takes more than one hardware sprite", so a stacked character
+      exports the same way. The plane→color assignment was already the layer panel's
+      mode-1 color picker / mode-2 line colors. Each character now carries its own
+      cost badge (`characterPlaneCost` = the busiest cell row) next to the sheet-wide
+      scanline hint, so a 3-layer character visibly spends 3 of mode 1's 4.
 - [ ] **3. Software sprites and animation.** Characters drawn into the screen surface
       instead of the sprite attribute table, so there is no per-scanline limit. Needs
       background save/restore per object, a draw order, and dirty-rect redraw. On MSX2

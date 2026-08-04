@@ -16,6 +16,7 @@ import {
   addFrame,
   addLayer,
   addSprite,
+  characterPlaneCost,
   cloneFrame,
   convertSpriteSize,
   createHistory,
@@ -262,6 +263,17 @@ describe('scanline budget hint', () => {
 
   it('mode 2’s limit is 8', () => {
     expect(scanlineBudget(createSpritesDoc(2, 16)).limit).toBe(8)
+  })
+
+  it('charges a superposed character one hardware sprite per stacked plane', () => {
+    let doc = createSpritesDoc(1, 16) // mode 1: a plane is one colour, so colours mean planes
+    expect(characterPlaneCost(doc.sprites[0])).toBe(1)
+    doc = addLayer(doc, 0)
+    doc = addLayer(doc, 0)
+    doc = addLayer(doc, 0) // MAX_LAYERS: a 4-colour character spends the whole mode-1 line
+    expect(characterPlaneCost(doc.sprites[0])).toBe(4)
+    expect(scanlineBudget(doc)).toMatchObject({ total: 4, limit: 4, exceeded: false })
+    expect(scanlineBudget(addSprite(doc)).exceeded).toBe(true) // anything else beside it drops
   })
 
   it('charges a metasprite only its busiest cell row — the other rows sit on other scanlines', () => {
