@@ -29,6 +29,10 @@ export interface EmitOptions {
   notes?: string[]
   /** Also emit `#define <NAME>_SIZE …` for each table. */
   defines?: boolean
+  /** Extra `#define`s emitted before the tables, as raw `#define NAME value` lines. */
+  constants?: string[]
+  /** Ready-made C appended after the tables — the opt-in helpers, verbatim. */
+  code?: string[]
 }
 
 const BANNER = [
@@ -74,6 +78,7 @@ export function emitCHeader(options: EmitOptions): string {
     for (const note of options.notes) lines.push(`//  - ${note}`)
   }
   lines.push('')
+  if (options.constants?.length) lines.push(...options.constants, '')
 
   let total = 0
   for (const table of options.tables) {
@@ -83,6 +88,7 @@ export function emitCHeader(options: EmitOptions): string {
     total += table.bytes.length
   }
   if (options.tables.length > 1) lines.push(`// Total size: ${total} Bytes`)
+  if (options.code?.length) lines.push(...options.code)
   return `${lines.join('\n').replace(/\n+$/, '')}\n`
 }
 

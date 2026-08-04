@@ -18,6 +18,7 @@ import {
 import { encodeIndices, normalizeScreen, packBitmap, palettePairBytes, screenPixels } from './screen'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS, type SfxDoc } from './sfx'
 import { createSpritesDoc } from './sprite'
+import { setCharacterGrid } from '../sprite-editor'
 import { createTilesDoc, mergeColorByte, normalizeTiles } from './tile'
 
 const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
@@ -181,6 +182,11 @@ describe('tiles resource', () => {
   })
 })
 
+/** One 2×2 metasprite of 16×16 sprites — four planes, one per cell. */
+function metaResource(): ResourceDoc {
+  return { kind: 'sprites', doc: setCharacterGrid(createSpritesDoc(2, 16), 0, 2, 2) }
+}
+
 describe('sprites resource', () => {
   it('emits patterns and 16-byte line colors in mode 2', () => {
     const tables = resourceTables({ kind: 'sprites', doc: createSpritesDoc(2, 16) })
@@ -192,6 +198,41 @@ describe('sprites resource', () => {
   it('round-trips through the on-disk shape', () => {
     const resource: ResourceDoc = { kind: 'sprites', doc: createSpritesDoc(2, 16) }
     expect(parseResource('x.sprites.json', serializeResource(resource))).toEqual(resource)
+  })
+
+  it('adds a layout table only once a character spans several hardware sprites', () => {
+    const plain = { kind: 'sprites', doc: createSpritesDoc(2, 16) } as ResourceDoc
+    expect(resourceTables(plain).map((t) => t.suffix)).toEqual(['_Patterns', '_Colors'])
+
+    const tables = resourceTables(metaResource())
+    expect(tables.map((t) => t.suffix)).toEqual(['_Patterns', '_Colors', '_Layout'])
+    // 2×2 grid of 16×16 sprites: one plane per cell, dx/dy in dots.
+    expect([...tables[2].bytes]).toEqual([0, 0, 16, 0, 0, 16, 16, 16])
+  })
+
+  it('emits per-character offsets so one character can be addressed out of a sheet', () => {
+    const text = decode(renderResource(metaResource(), 'hero.sprites.json', defaultExport('hero.sprites.json')))
+    expect(text).toContain('#define G_HERO_SPRITE_0_BASE 0')
+    expect(text).toContain('#define G_HERO_SPRITE_0_PLANES 4')
+    expect(text).toContain('#define G_HERO_SPRITE_0_FRAMES 1')
+  })
+
+  it('appends the placement helper only when the export opts in', () => {
+    const block = defaultExport('hero.sprites.json')
+    expect(decode(renderResource(metaResource(), 'hero.sprites.json', block))).not.toContain('g_Hero_SetMeta')
+
+    const text = decode(renderResource(metaResource(), 'hero.sprites.json', { ...block, helpers: true }))
+    expect(text).toContain('static void g_Hero_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)')
+    // Mode 2 drives the per-line color table; 16×16 patterns step by 4.
+    expect(text).toContain('VDP_SetSpriteExMultiColor(index + i, px, py, plane * 4, g_Hero_Colors + ((u16)plane * 16));')
+  })
+
+  it('uses the mode-1 setter and 8×8 pattern step when that is what the sheet is', () => {
+    const doc = setCharacterGrid(createSpritesDoc(1, 8), 0, 2, 1)
+    const text = decode(
+      renderResource({ kind: 'sprites', doc }, 'hero.sprites.json', { ...defaultExport('hero.sprites.json'), helpers: true })
+    )
+    expect(text).toContain('VDP_SetSpriteSM1(index + i, px, py, plane * 1, g_Hero_Colors[plane]);')
   })
 })
 

@@ -105,6 +105,11 @@ function changeMode(mode: SpriteMode): void {
   emit('mutate', convertSpriteMode(props.doc, mode))
 }
 
+function setHelpers(helpers: boolean): void {
+  if (!props.doc.export) return
+  emit('mutate', { ...props.doc, export: { ...props.doc.export, helpers } })
+}
+
 function changeGrid(cols: number, rows: number): void {
   if (
     gridShrinkLossy(props.doc, props.target.sprite, cols, rows) &&
@@ -165,6 +170,19 @@ function changeSize(size: SpriteSize): void {
         Click a cell on the canvas to paint it. Each cell is one hardware sprite, and each of its
         layers costs another — the 4/8-per-scanline limit counts them all.
       </p>
+      <label
+        v-if="doc.export"
+        class="inline helpers"
+      >
+        <input
+          type="checkbox"
+          :checked="doc.export.helpers === true"
+          @change="setHelpers(($event.target as HTMLInputElement).checked)"
+        >
+        <span title="Appends a _SetMeta() that places a whole character from one coordinate. Needs msxgl.h included first.">
+          Export ready-made C
+        </span>
+      </label>
     </section>
 
     <section>
@@ -464,6 +482,10 @@ ul {
 
 .grid-pick .dims {
   color: var(--color-text-muted);
+}
+
+.helpers {
+  margin-top: 6px;
 }
 
 .hint {

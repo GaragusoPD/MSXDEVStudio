@@ -8,16 +8,20 @@
  * disagree about what a `.tiles.json` becomes.
  */
 
-import { emitBin, emitCHeader, type EmitTable } from './emitC'
+import { defineName, emitBin, emitCHeader, type EmitTable } from './emitC'
 import { normalizeMap, mapLayerBytes, validateMap, type MapDoc } from './map'
 import { MODES } from './modes'
 import { palettePairBytes, normalizeScreen, packBitmap, screenPixels, validateScreen, type ScreenDoc } from './screen'
 import { encodeAyfxBank, normalizeSfx, validateSfx, type SfxDoc } from './sfx'
 import {
+  hasMetasprite,
   normalizeSprites,
   serializeSprites,
   spriteColorBytes,
+  spriteHelperC,
+  spriteLayoutBytes,
   spritePatternBytes,
+  spritePlacements,
   validateSprites,
   type SpritesDoc
 } from './sprite'
@@ -30,6 +34,12 @@ export interface ExportBlock {
   format: 'c' | 'bin'
   /** Project-relative output path, e.g. `content/mytiles.h`. */
   out: string
+  /**
+   * Append the ready-made C for this resource (sprites: the metasprite
+   * placer). Off by default — it calls into MSXgl, so a header carrying it
+   * must be included after `msxgl.h`. Ignored by the `bin` format.
+   */
+  helpers?: boolean
 }
 
 export type ResourceKind = 'tiles' | 'sprites' | 'map' | 'screen' | 'sfx'
@@ -163,6 +173,15 @@ export function resourceTables(resource: ResourceDoc): EmitTable[] {
       if (doc.palette) {
         tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
       }
+      // Only a character spanning several hardware sprites needs placement data.
+      if (hasMetasprite(doc)) {
+        tables.push({
+          suffix: '_Layout',
+          bytes: spriteLayoutBytes(doc),
+          perLine: 2,
+          comment: 'Metasprite layout — dx, dy per plane, in pattern order'
+        })
+      }
       return tables
     }
     case 'map':
@@ -224,6 +243,14 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
         `Size: ${resource.doc.size}×${resource.doc.size}`,
         `Characters: ${resource.doc.sprites.length}`
       )
+      if (hasMetasprite(resource.doc)) {
+        notes.push(
+          `Metasprites: ${resource.doc.sprites
+            .filter((sprite) => sprite.cols * sprite.rows > 1)
+            .map((sprite) => `${sprite.name} ${sprite.cols}×${sprite.rows}`)
+            .join(', ')}`
+        )
+      }
       break
     case 'map':
       notes.push(
@@ -247,6 +274,29 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
 }
 
 /**
+ * Where each character starts in the flat plane order, so game code can place
+ * one character out of a sheet: `..._BASE + frame * ..._PLANES`.
+ */
+function resourceConstants(resource: ResourceDoc, name: string): string[] {
+  if (resource.kind !== 'sprites' || !hasMetasprite(resource.doc)) return []
+  const prefix = defineName(name)
+  return spritePlacements(resource.doc).flatMap((placement) => {
+    const id = `${prefix}_${defineName(placement.name)}`
+    return [
+      `#define ${id}_BASE ${placement.base}`,
+      `#define ${id}_PLANES ${placement.planes}`,
+      `#define ${id}_FRAMES ${placement.frames}`
+    ]
+  })
+}
+
+/** The opt-in ready-made C for this resource; empty when the kind has none (yet). */
+function resourceCode(resource: ResourceDoc, name: string): string[] {
+  if (resource.kind !== 'sprites' || !hasMetasprite(resource.doc)) return []
+  return spriteHelperC(resource.doc, name)
+}
+
+/**
  * Renders a resource into the bytes its `export` block asks for. `sourceName`
  * is the project-relative path of the editor file; it appears in the header
  * comment (never an absolute path — that would break byte-stability across
@@ -255,11 +305,14 @@ function resourceNotes(resource: ResourceDoc, sourceName: string): string[] {
 export function renderResource(resource: ResourceDoc, sourceName: string, block: ExportBlock): Uint8Array {
   const tables = resourceTables(resource)
   if (block.format === 'bin') return emitBin(tables)
+  const name = block.name || defaultTableName(resourceBaseName(sourceName))
   const text = emitCHeader({
-    name: block.name || defaultTableName(resourceBaseName(sourceName)),
+    name,
     tables,
     notes: resourceNotes(resource, sourceName),
-    defines: true
+    defines: true,
+    constants: resourceConstants(resource, name),
+    code: block.helpers ? resourceCode(resource, name) : []
   })
   return new TextEncoder().encode(text)
 }

@@ -367,6 +367,88 @@ export function spriteColorBytes(doc: SpritesDoc): Uint8Array {
   return Uint8Array.from(out)
 }
 
+/**
+ * Where each character sits in the flat plane order the pattern, color and
+ * layout tables share — what the emitted `#define`s carry so game code can
+ * address one character out of a sheet.
+ */
+export interface SpritePlacement {
+  name: string
+  /** Plane index of the character's first frame. */
+  base: number
+  /** Planes per frame (identical across a character's frames — `validateSprites` checks it). */
+  planes: number
+  frames: number
+}
+
+export function spritePlacements(doc: SpritesDoc): SpritePlacement[] {
+  let base = 0
+  return doc.sprites.map((sprite) => {
+    const planes = sprite.frames[0]?.layers.length ?? 0
+    const placement = { name: sprite.name, base, planes, frames: sprite.frames.length }
+    base += sprite.frames.reduce((sum, frame) => sum + frame.layers.length, 0)
+    return placement
+  })
+}
+
+/** True once a character spans more than one hardware sprite — the only case that needs a layout table. */
+export function hasMetasprite(doc: SpritesDoc): boolean {
+  return doc.sprites.some((sprite) => sprite.cols * sprite.rows > 1)
+}
+
+/**
+ * Two bytes per plane — `dx, dy` in dots from the character's top-left — in
+ * the same plane order as the pattern table. Everything else a plane needs
+ * (its pattern number, its slice of the color table) follows from that index,
+ * so the table stays two bytes wide.
+ */
+export function spriteLayoutBytes(doc: SpritesDoc): Uint8Array {
+  const out: number[] = []
+  eachLayer(doc, (layer) => out.push((layer.cx * doc.size) & 0xff, (layer.cy * doc.size) & 0xff))
+  return Uint8Array.from(out)
+}
+
+/**
+ * The ready-made C the export can carry alongside the tables: one function
+ * that writes a whole character's hardware sprites from a single coordinate.
+ * Opt-in (`ExportBlock.helpers`) because it calls into MSXgl's VDP module,
+ * which a data-only header must not depend on.
+ */
+export function spriteHelperC(doc: SpritesDoc, name: string): string[] {
+  const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
+  // 16×16 sprites take four VRAM patterns each; 8×8 take one.
+  const step = doc.size === 16 ? 4 : 1
+  const setSprite =
+    doc.mode === 1
+      ? `VDP_SetSpriteSM1(index + i, px, py, plane * ${step}, ${name}_Colors[plane]);`
+      : `VDP_SetSpriteExMultiColor(index + i, px, py, plane * ${step}, ${name}_Colors + ((u16)plane * 16));`
+  return [
+    '',
+    `// Places one character of ${name} as a group of hardware sprites, from a single`,
+    '// coordinate. Needs MSXgl\'s VDP module (#include "msxgl.h" before this header),',
+    `// and the patterns loaded at VRAM pattern 0:`,
+    `//   VDP_LoadSpritePattern(${name}_Patterns, 0, ${prefix}_PATTERNS_SIZE / 8);`,
+    '//',
+    '// Parameters:',
+    '//   index  - first hardware sprite plane to write [0:31]',
+    '//   x, y   - screen position of the character\'s top-left corner',
+    `//   base   - first plane of the frame to show: ${prefix}_<CHARACTER>_BASE + frame * ..._PLANES`,
+    '//   planes - ..._PLANES for that character',
+    `static void ${name}_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)`,
+    '{',
+    `\tconst u8* rec = ${name}_Layout + ((u16)base * 2);`,
+    '\tfor(u8 i = 0; i < planes; ++i)',
+    '\t{',
+    '\t\tu8 plane = base + i;',
+    '\t\tu8 px = x + rec[0];',
+    '\t\tu8 py = y + rec[1];',
+    '\t\trec += 2;',
+    `\t\t${setSprite}`,
+    '\t}',
+    '}'
+  ]
+}
+
 export function validateSprites(doc: SpritesDoc): string[] {
   const problems: string[] = []
   if (doc.version !== 1) problems.push(`Unsupported version ${doc.version}`)
@@ -375,6 +457,11 @@ export function validateSprites(doc: SpritesDoc): string[] {
   const length = patternBytesFor(doc.size)
   doc.sprites.forEach((sprite, s) => {
     if (!sprite.frames.length) problems.push(`Sprite ${s} (${sprite.name}) has no frames`)
+    // The emitted per-character offsets are `base + frame * planes`, which only
+    // holds while every frame spends the same number of planes.
+    if (sprite.frames.some((frame) => frame.layers.length !== sprite.frames[0].layers.length)) {
+      problems.push(`${sprite.name}: frames don't all have the same layer count`)
+    }
     if (sprite.cols < 1 || sprite.cols > MAX_GRID || sprite.rows < 1 || sprite.rows > MAX_GRID) {
       problems.push(`${sprite.name}: grid ${sprite.cols}×${sprite.rows} outside 1..${MAX_GRID}`)
     }
