@@ -9,7 +9,7 @@ jumps.
 ![Gameplay](../docs/images/demo-gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
-(about 13.6 KB used) and boots in openMSX or WebMSX.
+(about 12.6 KB used) and boots in openMSX or WebMSX.
 
 ## What it demonstrates
 
@@ -21,7 +21,7 @@ guide](../docs/resources.md):
 |---|---|---|---|
 | `tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
 | `player.sprites.json` | Sprite editor | `g_Player_Patterns`, `g_Player_Colors`, `g_Player_Layout` + `g_Player_SetMeta()` | A 16x16 character in mode 1, six poses, each drawn by **two superposed planes** so it can have two colours |
-| `level.map.json` | Map editor | `g_Level_Background` | A 64x24 map, exactly two screens wide, one byte per cell |
+| `level.map.json` | Map editor | `g_Level_Background` | A 64x24 map, exactly two screens wide, one byte per cell — **RLEp-compressed**, 1536 cells in 132 bytes |
 | `sfx.sfx.json` | SFX editor | `g_Sfx` | An ayFX bank: coin (id 0), jump (id 1), win fanfare (id 2) |
 
 The game code in `main.c` covers the techniques the
@@ -42,6 +42,13 @@ The game code in `main.c` covers the techniques the
 - **A level in RAM**, read from the same array the VDP is drawing, so there is
   no second copy to keep in sync. Taking a coin writes sky into that map, which
   is also how the coins are counted at startup.
+- **A compressed level**, which the RAM copy above makes free. The map editor's
+  *Compress (RLEp)* packs 1536 cells into 132 bytes of ROM, and startup unpacks
+  them into `g_Map` with MSXgl's own `RLEp_UnpackToRAM` — the same one line the
+  `Mem_Copy` used to be. Net saving after the unpacker is linked in: 1045 bytes.
+  Compression is worth having exactly when the data was going to be copied to
+  RAM anyway; unpacking a map you meant to read straight out of ROM would cost
+  you the RAM you were trying to save.
 - **Superposed sprites**, placed with the sprite sheet's own
   `g_Player_SetMeta()`. A mode 1 sprite is a single colour, so a two-colour
   character means two hardware sprites on the same coordinate: the sprite editor

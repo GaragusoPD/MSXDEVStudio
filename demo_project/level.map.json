@@ -1551,6 +1551,7 @@
   "export": {
     "name": "g_Level",
     "format": "c",
-    "out": "content/level.h"
+    "out": "content/level.h",
+    "compress": "rlep"
   }
 }

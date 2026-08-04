@@ -13,7 +13,8 @@
     "keyboard",
     "memory",
     "psg",
-    "ayfx/ayfx_player"
+    "ayfx/ayfx_player",
+    "compress"
   ],
   "projModules": [
     "main"

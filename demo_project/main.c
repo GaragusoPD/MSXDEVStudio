@@ -11,10 +11,11 @@
 //                                            _Blocks + g_Tiles_DrawBlock)
 //    player.sprites.json -> content/player.h  (g_Player_Patterns / _Colors,
 //                                            _Layout + g_Player_SetMeta)
-//    level.map.json      -> content/level.h   (g_Level_Background, 64x24 cells)
+//    level.map.json      -> content/level.h   (g_Level_Background, 64x24 cells,
+//                                            RLEp-compressed to 132 bytes)
 //    sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
 //
-//  Three of MSXStudio's editor features carry their weight here:
+//  Four of MSXStudio's editor features carry their weight here:
 //
 //    * The coins spin without the map being touched. The four poses are a 4x1
 //      *block* in the tileset — a multi-tile design drawn on one canvas — and
@@ -26,6 +27,11 @@
 //      planes and their colours; g_Player_SetMeta places both from one x/y.
 //    * The doorway opens when the last coin is taken, stamped from a 1x2 block
 //      by g_Tiles_DrawBlock.
+//    * The level is compressed. A name table is mostly runs of the same tile,
+//      so the map editor's "Compress (RLEp)" packs 1536 cells into 132 bytes of
+//      ROM — and it costs nothing at run time, because the game already keeps a
+//      writable copy of the level in RAM (coins vanish, the door opens). What
+//      was a Mem_Copy out of ROM is now an unpack into the same array.
 //
 //  Built with MSXStudio by P.D. Garaguso.
 //  Powered by MSXgl and MSXtk by Guillaume "Aoineko" Blanchard (CC BY-SA 4.0),
@@ -373,7 +379,9 @@ void InitGame()
 
 	// Restart from the pristine level, and trust the map for the coin count so
 	// that painting a coin in the map editor is all it takes to add one.
-	Mem_Copy(g_Level_Background, g_Map, sizeof(g_Map));
+	// The ROM copy is RLEp-compressed (132 bytes for 1536 cells); unpacking it
+	// straight into the working array is the same one line the copy used to be.
+	RLEp_UnpackToRAM(g_Level_Background, g_Map);
 	g_Remaining = 0;
 	for (u16 i = 0; i < sizeof(g_Map); ++i)
 		if (TileFlags(g_Map[i]) & FLAG_COIN) g_Remaining++;
