@@ -9,15 +9,19 @@
  */
 
 import { shallowReactive } from 'vue'
+import type { TileMode } from '../../../../shared/msx/modes'
 import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import {
   blockPixels,
   createTilesDoc,
   MAX_TILES,
+  convertTileMode,
   normalizeTiles,
+  removeTile,
   reorderTiles,
   swapRowColors,
   TILE_SIZE,
+  tileModeConversionLossy,
   tilePixels,
   type PaintConflict,
   type TileBlock,
@@ -310,6 +314,35 @@ export function addTile(session: TileSession): void {
   if (session.doc.count >= MAX_TILES) return
   commit(session, normalizeTiles({ ...session.doc, count: session.doc.count + 1 }), 'add tile')
   select(session, session.doc.count - 1)
+}
+
+/**
+ * Deletes a tile and renumbers the rest, publishing the remap on the same seam
+ * a reorder uses so open maps follow. Cells that pointed at it fall back to
+ * tile 0.
+ */
+export function deleteTile(session: TileSession, index: number): void {
+  const { doc, mapping } = removeTile(session.doc, index)
+  if (doc === session.doc) {
+    session.status = 'A tileset needs at least one tile.'
+    return
+  }
+  publishRemap(session, mapping)
+  commit(session, doc, `delete tile ${index}`, mapping)
+  selectBlock(session, null)
+  select(session, Math.min(index, doc.count - 1))
+}
+
+/**
+ * Switches the tileset's colour model. Returns false when the caller should
+ * confirm first: going to sc1 collapses per-row colours onto one pair per
+ * group of eight tiles.
+ */
+export function changeMode(session: TileSession, mode: TileMode, force = false): boolean {
+  if (mode === session.doc.mode) return true
+  if (!force && tileModeConversionLossy(session.doc, mode)) return false
+  commit(session, convertTileMode(session.doc, mode), `mode ${mode}`)
+  return true
 }
 
 /** Flips one of the active tile's eight gameplay bits (the flag squares). */

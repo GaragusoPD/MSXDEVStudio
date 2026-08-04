@@ -16,6 +16,7 @@
 
 import { cellIndex, getCell, remapTiles, type MapDoc, type MapLayer } from './msx/map'
 import { linePoints, rectPoints, type Point, type TilesReorderEvent } from './tile-editor'
+import type { History } from './history'
 
 export type { Point }
 
@@ -204,44 +205,11 @@ export function toggleLayerVisible(doc: MapDoc, index: number): MapDoc {
   return { ...doc, layers }
 }
 
-// ── undo/redo (same past/present/future shape as `shared/sprite-editor.ts`) ──
+// ── undo/redo ───────────────────────────────────────────────────────────────
 
-export interface MapHistory {
-  past: MapDoc[]
-  present: MapDoc
-  future: MapDoc[]
-}
-
-const HISTORY_LIMIT = 200
-
-export function createHistory(doc: MapDoc): MapHistory {
-  return { past: [], present: doc, future: [] }
-}
-
-export function pushHistory(history: MapHistory, next: MapDoc): MapHistory {
-  if (next === history.present) return history
-  return { past: [...history.past, history.present].slice(-HISTORY_LIMIT), present: next, future: [] }
-}
-
-export function undo(history: MapHistory): MapHistory {
-  if (!history.past.length) return history
-  const present = history.past[history.past.length - 1]
-  return { past: history.past.slice(0, -1), present, future: [history.present, ...history.future] }
-}
-
-export function redo(history: MapHistory): MapHistory {
-  if (!history.future.length) return history
-  const [present, ...future] = history.future
-  return { past: [...history.past, history.present], present, future }
-}
-
-export function canUndo(history: MapHistory): boolean {
-  return history.past.length > 0
-}
-
-export function canRedo(history: MapHistory): boolean {
-  return history.future.length > 0
-}
+/** The shared past/present/future stack, over this editor's document. */
+export type MapHistory = History<MapDoc>
+export { createHistory, pushHistory, undo, redo, canUndo, canRedo } from './history'
 
 // ── the Spec 08 reorder-replay seam ──────────────────────────────────────────
 

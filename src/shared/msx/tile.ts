@@ -11,6 +11,7 @@
  *   shares that FG/BG pair.
  */
 
+import { MSX1_PALETTE_GRB } from './palette'
 import { isTileMode, type TileMode } from './modes'
 import type { ExportBlock } from './resource'
 
@@ -480,12 +481,99 @@ export function reorderTiles(doc: TilesDoc, from: number, to: number): { doc: Ti
   const tiles = doc.tiles.slice()
   const [moved] = tiles.splice(from, 1)
   tiles.splice(to, 0, moved)
+  const flags = doc.flags.slice()
+  const [movedFlag] = flags.splice(from, 1)
+  flags.splice(to, 0, movedFlag)
   const mapping = doc.tiles.map((_, index) => {
     if (index === from) return to
     if (from < to) return index > from && index <= to ? index - 1 : index
     return index >= to && index < from ? index + 1 : index
   })
-  return { doc: { ...doc, tiles }, mapping }
+  // Flags travel with the tile — that is the whole point of them, so a
+  // re-arranged tileset doesn't break the game. `groupColors` deliberately
+  // stay put: in sc1 the colour belongs to the *position*, not the tile.
+  return { doc: applyTileMapping({ ...doc, tiles, flags }, mapping), mapping }
+}
+
+/**
+ * Deletes a tile and renumbers everything above it. The tiles that referenced
+ * the deleted one — map cells, block cells — fall back to tile 0, the blank
+ * one, since there is nothing else honest to point them at.
+ *
+ * Returns `mapping[oldIndex] = newIndex` for the same Spec 10 remap seam a
+ * reorder uses, so open maps renumber the same way.
+ */
+export function removeTile(doc: TilesDoc, index: number): { doc: TilesDoc; mapping: number[] } {
+  const identity = doc.tiles.map((_, i) => i)
+  if (doc.count <= 1 || !doc.tiles[index]) return { doc, mapping: identity }
+  const mapping = identity.map((i) => (i === index ? 0 : i > index ? i - 1 : i))
+  // Remap *before* normalizing: normalizeTiles clamps block references against
+  // the new, smaller count, so an un-remapped reference to the last tile would
+  // be clamped to 0 instead of following the tile down a slot.
+  const remapped = applyTileMapping(doc, mapping)
+  return {
+    doc: normalizeTiles({
+      ...remapped,
+      count: doc.count - 1,
+      tiles: doc.tiles.filter((_, i) => i !== index),
+      flags: doc.flags.filter((_, i) => i !== index),
+      // sc1 colours belong to positions, so the tail slides up a slot with the tiles.
+      groupColors: doc.groupColors
+    }),
+    mapping
+  }
+}
+
+/** Rewrites every tile reference inside the document itself — today that means blocks. */
+function applyTileMapping(doc: TilesDoc, mapping: readonly number[]): TilesDoc {
+  if (!doc.blocks.length) return doc
+  return {
+    ...doc,
+    blocks: doc.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => mapping[tile] ?? 0) }))
+  }
+}
+
+// ── mode conversion ─────────────────────────────────────────────────────────
+
+/**
+ * True when the target mode can't hold what this tileset already says about
+ * colour: sc2/sc4 give every row its own pair, sc1 gives one pair per group of
+ * eight tiles, so going to sc1 keeps one row's colours per group and drops the
+ * rest.
+ */
+export function tileModeConversionLossy(doc: TilesDoc, mode: TileMode): boolean {
+  if (doc.mode === mode || mode !== 'sc1') return false
+  return doc.tiles.some((tile, index) => {
+    const first = tile.color[0]
+    // Differs down the tile, or differs from the tile that will own the group.
+    return tile.color.some((value) => value !== first) || first !== doc.tiles[index - (index % SC1_GROUP)].color[0]
+  })
+}
+
+/**
+ * Switches the tileset's mode, keeping every pattern byte. Colour follows the
+ * target's model: sc1 → sc2/sc4 spreads each group's pair over its tiles' rows,
+ * sc2/sc4 → sc1 keeps the first tile of each group's row 0 (see
+ * `tileModeConversionLossy`), and sc2 ↔ sc4 differ only by the palette.
+ */
+export function convertTileMode(doc: TilesDoc, mode: TileMode): TilesDoc {
+  if (doc.mode === mode) return doc
+  const toGroups = mode === 'sc1'
+  const tiles = doc.tiles.map((tile, index) => ({
+    pattern: tile.pattern.slice(),
+    color: toGroups ? [] : doc.mode === 'sc1' ? zeros(TILE_SIZE).map(() => colorByteAt(doc, index, 0)) : tile.color.slice()
+  }))
+  const groupColors = toGroups
+    ? Array.from({ length: Math.ceil(doc.count / SC1_GROUP) }, (_, group) => doc.tiles[group * SC1_GROUP]?.color[0] ?? 0xf1)
+    : []
+  return normalizeTiles({
+    ...doc,
+    mode,
+    tiles,
+    groupColors,
+    // sc4 is the only mode with a programmable palette; the MSX1 modes drop it.
+    palette: mode === 'sc4' ? (doc.palette ?? [...MSX1_PALETTE_GRB]) : null
+  })
 }
 
 // ── validation ──────────────────────────────────────────────────────────────

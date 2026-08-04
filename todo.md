@@ -128,8 +128,13 @@ sprite blitters are what the bitmap-mode work stands on.
 
 ## Small debt (marked `ponytail:` in code — harvest with /ponytail-debt)
 
-- Three editors now carry near-identical undo-stack code → hoist a generic `History<T>`.
-- Tile editor: tile delete + mode conversion not implemented (needs the same remap seam
-  as reorder).
+- ~~Three editors carry near-identical undo-stack code~~ — hoisted into
+  `src/shared/history.ts` as `History<T>` (dev14). The tile editor keeps its own: its
+  entries carry a label and a tile-renumbering map.
+- ~~Tile editor: tile delete + mode conversion~~ — both landed (dev14). Delete publishes
+  a remap on the same seam as reorder; conversion warns before collapsing per-row
+  colours onto sc1's per-group pair. Fixed alongside: `reorderTiles` was leaving
+  `flags` behind, so re-arranging a tileset handed a tile's gameplay bits to whatever
+  slid into its slot — exactly what flags exist to prevent.
 - Monaco import shim is generated — re-run `npm run monaco:shim` after monaco upgrades.
 - Screen retouch stores flat pixel triples (size ceiling documented in code).

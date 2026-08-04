@@ -6,7 +6,7 @@
  * converter reads.
  */
 import { computed, ref } from 'vue'
-import { MODES } from '../../../../shared/msx/modes'
+import { MODES, TILE_MODES, type TileMode } from '../../../../shared/msx/modes'
 import {
   fromHex,
   grbToRgb,
@@ -23,6 +23,7 @@ import { colorByteAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/t
 import { blockColorGroupWarning, renameBlock } from '../../../../shared/tile-editor'
 import {
   addBlock,
+  changeMode,
   commit,
   deleteBlock,
   selectBlock,
@@ -69,6 +70,17 @@ const blockWarning = computed(() => {
   const block = props.session.block === null ? null : doc.value.blocks[props.session.block]
   return block ? blockColorGroupWarning(doc.value, block) : null
 })
+
+function switchMode(mode: TileMode): void {
+  if (changeMode(props.session, mode)) return
+  if (
+    window.confirm(
+      'SCREEN 1 gives one FG/BG pair per group of 8 tiles. Converting keeps the first tile of each group’s top row and drops the rest. Continue?'
+    )
+  ) {
+    changeMode(props.session, mode, true)
+  }
+}
 
 function createNewBlock(): void {
   const name = `block_${doc.value.blocks.length}`
@@ -210,6 +222,22 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         </button>
       </div>
 
+      <h3>Mode</h3>
+      <select
+        class="mode-pick"
+        :value="doc.mode"
+        title="Colour model — converting to SCREEN 1 is lossy"
+        @change="switchMode(($event.target as HTMLSelectElement).value as TileMode)"
+      >
+        <option
+          v-for="id in TILE_MODES"
+          :key="id"
+          :value="id"
+        >
+          {{ MODES[id].label }}
+        </option>
+      </select>
+
       <h3>Blocks</h3>
       <p class="blurb">
         A design bigger than one tile — drawn on one canvas, stored as the tiles it is made of.
@@ -347,6 +375,17 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
 </template>
 
 <style scoped>
+.mode-pick {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 2px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
 .blurb {
   margin: 0 0 6px;
   font-size: 10px;

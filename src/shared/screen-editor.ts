@@ -13,6 +13,7 @@
 
 import { encodeIndices, screenPixels, type ConvertedScreen, type ScreenDoc } from './msx/screen'
 import type { Point } from './tile-editor'
+import type { History } from './history'
 
 export type { Point }
 
@@ -92,41 +93,8 @@ export function clearRetouch(doc: ScreenDoc): ScreenDoc {
   return doc.retouch.length ? { ...doc, retouch: [] } : doc
 }
 
-// ── undo/redo (same past/present/future shape as `shared/sprite-editor.ts`) ──
+// ── undo/redo ───────────────────────────────────────────────────────────────
 
-export interface ScreenHistory {
-  past: ScreenDoc[]
-  present: ScreenDoc
-  future: ScreenDoc[]
-}
-
-const HISTORY_LIMIT = 200
-
-export function createHistory(doc: ScreenDoc): ScreenHistory {
-  return { past: [], present: doc, future: [] }
-}
-
-export function pushHistory(history: ScreenHistory, next: ScreenDoc): ScreenHistory {
-  if (next === history.present) return history
-  return { past: [...history.past, history.present].slice(-HISTORY_LIMIT), present: next, future: [] }
-}
-
-export function undo(history: ScreenHistory): ScreenHistory {
-  if (!history.past.length) return history
-  const present = history.past[history.past.length - 1]
-  return { past: history.past.slice(0, -1), present, future: [history.present, ...history.future] }
-}
-
-export function redo(history: ScreenHistory): ScreenHistory {
-  if (!history.future.length) return history
-  const [present, ...future] = history.future
-  return { past: [...history.past, history.present], present, future }
-}
-
-export function canUndo(history: ScreenHistory): boolean {
-  return history.past.length > 0
-}
-
-export function canRedo(history: ScreenHistory): boolean {
-  return history.future.length > 0
-}
+/** The shared past/present/future stack, over this editor's document. */
+export type ScreenHistory = History<ScreenDoc>
+export { createHistory, pushHistory, undo, redo, canUndo, canRedo } from './history'

@@ -4,13 +4,16 @@ import { parseResource, renderResource, serializeResource } from './msx/resource
 import {
   blockPixels,
   blockTileAt,
+  convertTileMode,
   createTilesDoc,
   MAX_BLOCK,
   mergeColorByte,
   normalizeTiles,
   packTiles,
+  removeTile,
   reorderTiles,
   rowColorViolations,
+  tileModeConversionLossy,
   splitColorByte,
   tilePixels,
   validateTiles,
@@ -520,5 +523,85 @@ describe('multi-tile blocks', () => {
     const shrunk = normalizeTiles({ ...doc, count: 2 })
     expect(shrunk.blocks[0].tiles).toEqual([0, 0])
     expect(validateTiles(shrunk)).toEqual([])
+  })
+})
+
+describe('delete and mode conversion', () => {
+  it('carries a tile’s flags with it through a reorder', () => {
+    let doc = createTilesDoc('sc2', 4)
+    doc = setTileFlagBit(doc, 2, 0, true) // tile 2 is solid
+    const { doc: moved, mapping } = reorderTiles(doc, 2, 0)
+    expect(mapping[2]).toBe(0)
+    // The flag belongs to the tile, not to the slot it used to sit in.
+    expect(moved.flags[0]).toBe(1)
+    expect(moved.flags[3]).toBe(0)
+  })
+
+  it('renumbers blocks through a reorder so they keep pointing at their own tiles', () => {
+    const doc = createBlock(createTilesDoc('sc2', 2), 'x', 2, 1) // tiles 2, 3
+    const { doc: moved } = reorderTiles(doc, 3, 0)
+    expect(moved.blocks[0].tiles).toEqual([3, 0])
+  })
+
+  it('deletes a tile, shifting everything above it down', () => {
+    let doc = createTilesDoc('sc2', 4)
+    doc = setTileFlagBit(doc, 3, 1, true)
+    const { doc: next, mapping } = removeTile(doc, 1)
+    expect(next.count).toBe(3)
+    expect(mapping).toEqual([0, 0, 1, 2]) // the deleted one falls back to tile 0
+    expect(next.flags[2]).toBe(2) // tile 3's flags followed it down to index 2
+    expect(validateTiles(next)).toEqual([])
+  })
+
+  it('points a block cell at tile 0 when the tile under it is deleted', () => {
+    const doc = createBlock(createTilesDoc('sc2', 2), 'x', 2, 1) // tiles 2, 3
+    const { doc: next } = removeTile(doc, 2)
+    expect(next.blocks[0].tiles).toEqual([0, 2])
+    expect(validateTiles(next)).toEqual([])
+  })
+
+  it('refuses to empty the bank', () => {
+    const solo = createTilesDoc('sc2', 1)
+    expect(removeTile(solo, 0).doc).toBe(solo)
+  })
+
+  it('spreads sc1 group colours over rows going to sc2, keeping patterns', () => {
+    let doc = createTilesDoc('sc1', 16)
+    doc = { ...doc, groupColors: [mergeColorByte(7, 1), mergeColorByte(2, 3)] }
+    // Painting in sc1 rewrites the whole group's pair, so read it back rather
+    // than assuming it survived.
+    doc = applyStroke(doc, 9, [{ x: 0, y: 0 }], 15).doc // a pattern bit in group 1
+    const converted = convertTileMode(doc, 'sc2')
+    expect(converted.mode).toBe('sc2')
+    expect(converted.tiles[0].color).toEqual(new Array(8).fill(mergeColorByte(7, 1)))
+    expect(converted.tiles[9].color).toEqual(new Array(8).fill(doc.groupColors[1]))
+    expect(converted.tiles[9].pattern).toEqual(doc.tiles[9].pattern)
+    expect(converted.groupColors).toEqual([])
+    expect(validateTiles(converted)).toEqual([])
+  })
+
+  it('collapses to one pair per group going to sc1, and says so first', () => {
+    let doc = createTilesDoc('sc2', 16)
+    doc = setRowColors(doc, 0, 0, 7, 1)
+    expect(tileModeConversionLossy(doc, 'sc1')).toBe(true)
+    const converted = convertTileMode(doc, 'sc1')
+    expect(converted.groupColors).toHaveLength(2)
+    expect(converted.groupColors[0]).toBe(mergeColorByte(7, 1)) // tile 0's row 0 owns the group
+    expect(converted.tiles[0].color).toEqual([])
+    expect(validateTiles(converted)).toEqual([])
+  })
+
+  it('calls sc2 → sc1 lossless when every tile already agrees', () => {
+    const doc = createTilesDoc('sc2', 16) // uniform white-on-black
+    expect(tileModeConversionLossy(doc, 'sc1')).toBe(false)
+    expect(tileModeConversionLossy(doc, 'sc4')).toBe(false)
+  })
+
+  it('sc2 ↔ sc4 differ only by the palette', () => {
+    const doc = createTilesDoc('sc2', 8)
+    const sc4 = convertTileMode(doc, 'sc4')
+    expect(sc4.palette).toHaveLength(16)
+    expect(sc4.tiles).toEqual(doc.tiles)
+    expect(convertTileMode(sc4, 'sc2').palette).toBeNull()
   })
 })

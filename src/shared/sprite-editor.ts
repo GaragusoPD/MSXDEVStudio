@@ -11,6 +11,7 @@
  * here.
  */
 
+import type { History } from './history'
 import {
   cellLayers,
   createLayer,
@@ -29,36 +30,9 @@ import {
 
 // ── undo/redo ────────────────────────────────────────────────────────────
 
-export interface SpriteHistory {
-  past: SpritesDoc[]
-  present: SpritesDoc
-  future: SpritesDoc[]
-}
-
-/** Undo entries kept per document — plenty for one editing session without unbounded memory growth. */
-const HISTORY_LIMIT = 200
-
-export function createHistory(doc: SpritesDoc): SpriteHistory {
-  return { past: [], present: doc, future: [] }
-}
-
-/** Records `next` as the new present; no-ops when nothing actually changed (reference-equal). */
-export function pushHistory(history: SpriteHistory, next: SpritesDoc): SpriteHistory {
-  if (next === history.present) return history
-  return { past: [...history.past, history.present].slice(-HISTORY_LIMIT), present: next, future: [] }
-}
-
-export function undo(history: SpriteHistory): SpriteHistory {
-  if (!history.past.length) return history
-  const present = history.past[history.past.length - 1]
-  return { past: history.past.slice(0, -1), present, future: [history.present, ...history.future] }
-}
-
-export function redo(history: SpriteHistory): SpriteHistory {
-  if (!history.future.length) return history
-  const [present, ...future] = history.future
-  return { past: [...history.past, history.present], present, future }
-}
+/** The shared past/present/future stack, over this editor's document. */
+export type SpriteHistory = History<SpritesDoc>
+export { createHistory, pushHistory, undo, redo } from './history'
 
 // ── active-target helper ─────────────────────────────────────────────────
 

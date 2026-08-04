@@ -11,9 +11,20 @@ import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
 import { marqueeIndices } from '../../../../shared/tile-editor'
-import { addTile, reorder, select, zoom, type TileSession } from './session'
+import { addTile, deleteTile, reorder, select, zoom, type TileSession } from './session'
 
 const props = defineProps<{ session: TileSession }>()
+
+/**
+ * Deleting renumbers every tile above it, which rewrites open maps through the
+ * Spec 10 remap seam — worth one confirmation.
+ */
+function confirmDelete(): void {
+  const index = props.session.active
+  if (window.confirm(`Delete tile ${index}? Maps and blocks using it fall back to tile 0, and every tile above it is renumbered.`)) {
+    deleteTile(props.session, index)
+  }
+}
 
 const COLUMNS = 16
 
@@ -184,6 +195,14 @@ watchEffect(() => {
         @click="addTile(session)"
       >
         +tile
+      </button>
+      <button
+        type="button"
+        title="Delete the selected tile — maps and blocks using it fall back to tile 0"
+        :disabled="session.doc.count <= 1"
+        @click="confirmDelete"
+      >
+        −tile
       </button>
     </header>
     <div class="scroller">
