@@ -150,10 +150,8 @@ function onKeydown(event: KeyboardEvent): void {
   if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return
   if (event.ctrlKey) {
     const key = event.key.toLowerCase()
-    if (key === 's') {
-      event.preventDefault()
-      void save()
-    } else if (key === 'z' && !event.shiftKey) {
+    // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.
+    if (key === 'z' && !event.shiftKey) {
       event.preventDefault()
       undo(session.value)
     } else if (key === 'y' || (key === 'z' && event.shiftKey)) {

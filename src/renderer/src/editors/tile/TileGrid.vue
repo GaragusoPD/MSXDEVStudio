@@ -1,17 +1,17 @@
 <script setup lang="ts">
 /**
- * Spec 08's left pane: the whole bank, 16 tiles per row, zoomable, with single
- * and marquee selection and drag-to-reorder.
+ * Spec 08's left pane: the whole bank, wrapped to however many tiles fit across
+ * the pane, zoomable, with marquee selection and drag-to-reorder.
  *
  * ponytail: the sheet is redrawn whole on every document change (256 tiles =
  * one ImageData of 16 384 pixels plus a `drawImage` per tile row). If that ever
  * shows up while painting, cache the sheet and repaint only the edited tile.
  */
-import { computed, ref, watchEffect } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
-import { marqueeIndices } from '../../../../shared/tile-editor'
-import { addTile, deleteTile, reorder, select, zoom, type TileSession } from './session'
+import { fitColumns, marqueeIndices } from '../../../../shared/tile-editor'
+import { addTile, deleteTile, reorder, select, setColumns, zoom, type TileSession } from './session'
 
 const props = defineProps<{ session: TileSession }>()
 
@@ -26,17 +26,39 @@ function confirmDelete(): void {
   }
 }
 
-const COLUMNS = 16
-
 const canvas = ref<HTMLCanvasElement | null>(null)
+const scroller = ref<HTMLElement | null>(null)
 const dropTarget = ref<number | null>(null)
 const hover = ref<number | null>(null)
+/** Set only while Alt+dragging, which is the reorder gesture; a plain drag selects. */
 let dragFrom: number | null = null
+/** The tile a marquee drag started on; the rectangle grows from it. */
+let anchor: number | null = null
 
 const cell = computed(() => props.session.gridZoom)
 const labelled = computed(() => cell.value >= 32)
 const cellHeight = computed(() => cell.value + (labelled.value ? 11 : 0))
-const rows = computed(() => Math.ceil(props.session.doc.count / COLUMNS))
+
+/**
+ * The sheet wraps into the pane rather than scrolling sideways, so the column
+ * count is measured. `.scroller` reserves its scrollbar gutter, which is what
+ * keeps this from oscillating: fewer columns → more rows → a scrollbar → a
+ * narrower box → fewer columns again.
+ */
+const paneWidth = ref(0)
+const COLUMNS = computed(() => fitColumns(paneWidth.value, cell.value, props.session.doc.count))
+const rows = computed(() => Math.ceil(props.session.doc.count / COLUMNS.value))
+
+let observer: ResizeObserver | null = null
+onMounted(() => {
+  observer = new ResizeObserver(([entry]) => {
+    paneWidth.value = entry.contentRect.width
+  })
+  if (scroller.value) observer.observe(scroller.value)
+})
+onBeforeUnmount(() => observer?.disconnect())
+
+watchEffect(() => setColumns(props.session, COLUMNS.value))
 
 const hex = (index: number): string => `0x${index.toString(16).toUpperCase().padStart(2, '0')}`
 
@@ -44,33 +66,46 @@ function indexAt(event: PointerEvent): number | null {
   const rect = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
   const x = Math.floor((event.clientX - rect.left) / cell.value)
   const y = Math.floor((event.clientY - rect.top) / cellHeight.value)
-  if (x < 0 || x >= COLUMNS || y < 0) return null
-  const index = y * COLUMNS + x
+  if (x < 0 || x >= COLUMNS.value || y < 0) return null
+  const index = y * COLUMNS.value + x
   return index < props.session.doc.count ? index : null
+}
+
+/** Extends the marquee to `focus`; `active` stays on the anchor, so the row and flag controls don't jump. */
+function marqueeTo(focus: number): void {
+  const from = anchor as number
+  select(props.session, from, marqueeIndices(from, focus, COLUMNS.value, props.session.doc.count))
 }
 
 function onDown(event: PointerEvent): void {
   const index = indexAt(event)
   if (index === null) return
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
-  if (event.shiftKey) {
-    select(props.session, index, marqueeIndices(props.session.active, index, COLUMNS, props.session.doc.count))
+  // Alt is the reorder gesture: it renumbers the bank, so it stays behind a
+  // modifier and a confirmation, and a plain drag is free to select.
+  if (event.altKey) {
+    select(props.session, index)
+    dragFrom = index
     return
   }
-  select(props.session, index)
-  dragFrom = index
+  anchor = event.shiftKey ? props.session.active : index
+  marqueeTo(index)
 }
 
 function onMove(event: PointerEvent): void {
   hover.value = indexAt(event)
-  if (dragFrom === null) return
-  dropTarget.value = hover.value
+  if (dragFrom !== null) {
+    dropTarget.value = hover.value
+    return
+  }
+  if (anchor !== null && hover.value !== null) marqueeTo(hover.value)
 }
 
 function onUp(): void {
   const from = dragFrom
   const to = dropTarget.value
   dragFrom = null
+  anchor = null
   dropTarget.value = null
   if (from === null || to === null || from === to) return
   // Renumbering breaks every map drawn with this set; Spec 10 replays the
@@ -93,7 +128,7 @@ watchEffect(() => {
   const { doc, selection, active } = props.session
   const size = cell.value
   const height = cellHeight.value
-  element.width = COLUMNS * size
+  element.width = COLUMNS.value * size
   element.height = Math.max(1, rows.value) * height
   const context = element.getContext('2d')
   if (!context) return
@@ -101,11 +136,11 @@ watchEffect(() => {
 
   // One 8-bit-per-pixel sheet, then one scaled blit per tile row.
   const rgb = paletteToRgb(doc.palette)
-  const sheet = new ImageData(COLUMNS * TILE_SIZE, Math.max(1, rows.value) * TILE_SIZE)
+  const sheet = new ImageData(COLUMNS.value * TILE_SIZE, Math.max(1, rows.value) * TILE_SIZE)
   for (let index = 0; index < doc.count; index++) {
     const pixels = tilePixels(doc, index)
-    const ox = (index % COLUMNS) * TILE_SIZE
-    const oy = Math.floor(index / COLUMNS) * TILE_SIZE
+    const ox = (index % COLUMNS.value) * TILE_SIZE
+    const oy = Math.floor(index / COLUMNS.value) * TILE_SIZE
     for (let y = 0; y < TILE_SIZE; y++) {
       for (let x = 0; x < TILE_SIZE; x++) {
         const value = pixels[y * TILE_SIZE + x]
@@ -132,7 +167,7 @@ watchEffect(() => {
       TILE_SIZE,
       0,
       row * height,
-      COLUMNS * size,
+      COLUMNS.value * size,
       size
     )
   }
@@ -141,28 +176,42 @@ watchEffect(() => {
     context.font = '9px monospace'
     context.fillStyle = 'rgba(180, 180, 180, 0.9)'
     for (let index = 0; index < doc.count; index++) {
-      const x = (index % COLUMNS) * size
-      const y = Math.floor(index / COLUMNS) * height
+      const x = (index % COLUMNS.value) * size
+      const y = Math.floor(index / COLUMNS.value) * height
       context.fillText(`${index} ${hex(index)}`, x + 2, y + size + 9, size - 4)
     }
   }
 
+  // The marquee: a tint on every selected cell, and one outline around the
+  // rectangle they span — that rectangle is what the canvas is editing.
+  const xs = selection.map((index) => index % COLUMNS.value)
+  const ys = selection.map((index) => Math.floor(index / COLUMNS.value))
+  if (selection.length > 1) {
+    context.fillStyle = 'rgba(120, 170, 255, 0.25)'
+    for (const index of selection) {
+      context.fillRect((index % COLUMNS.value) * size, Math.floor(index / COLUMNS.value) * height, size, size)
+    }
+  }
   context.lineWidth = 2
-  for (const index of selection) {
-    context.strokeStyle = index === active ? '#ffffff' : 'rgba(255, 255, 255, 0.45)'
-    context.strokeRect(
-      (index % COLUMNS) * size + 1,
-      Math.floor(index / COLUMNS) * height + 1,
-      size - 2,
-      size - 2
-    )
+  context.strokeStyle = '#ffffff'
+  context.strokeRect(
+    Math.min(...xs) * size + 1,
+    Math.min(...ys) * height + 1,
+    (Math.max(...xs) - Math.min(...xs)) * size + size - 2,
+    (Math.max(...ys) - Math.min(...ys)) * height + size - 2
+  )
+  if (selection.length > 1) {
+    // Which tile the row colours, flags and transforms act on.
+    context.strokeStyle = 'rgba(255, 255, 255, 0.5)'
+    context.lineWidth = 1
+    context.strokeRect((active % COLUMNS.value) * size + 2, Math.floor(active / COLUMNS.value) * height + 2, size - 4, size - 4)
   }
 
   if (dropTarget.value !== null && dropTarget.value !== dragFrom) {
     context.strokeStyle = '#007acc'
     context.strokeRect(
-      (dropTarget.value % COLUMNS) * size + 1,
-      Math.floor(dropTarget.value / COLUMNS) * height + 1,
+      (dropTarget.value % COLUMNS.value) * size + 1,
+      Math.floor(dropTarget.value / COLUMNS.value) * height + 1,
       size - 2,
       size - 2
     )
@@ -205,7 +254,10 @@ watchEffect(() => {
         −tile
       </button>
     </header>
-    <div class="scroller">
+    <div
+      ref="scroller"
+      class="scroller"
+    >
       <canvas
         ref="canvas"
         class="sheet"
@@ -217,7 +269,8 @@ watchEffect(() => {
       />
     </div>
     <p class="hint">
-      Click to select · Shift+click for a rectangle · drag a tile onto another to reorder.
+      Drag a rectangle to edit those tiles as one image · Shift+click extends it · Alt+drag a tile
+      onto another to reorder.
     </p>
   </div>
 </template>
@@ -228,6 +281,10 @@ watchEffect(() => {
   flex: none;
   flex-direction: column;
   min-height: 0;
+  /* A definite width, not one derived from the canvas: the canvas derives its
+     column count from this pane, and content-sized would make that circular. */
+  width: 34%;
+  min-width: 140px;
   max-width: 45%;
   border-right: 1px solid var(--color-border);
 }
@@ -262,7 +319,10 @@ header button {
 .scroller {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Reserved so the scrollbar appearing can't narrow the box the columns were measured from. */
+  scrollbar-gutter: stable;
   padding: 8px;
 }
 

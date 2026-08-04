@@ -30,11 +30,13 @@ Three Electron layers plus a shared core:
 
 Adding an IPC channel: one line in `IpcApi` (or `IpcEvents`) in `shared/ipc.ts`, implement in a main service, call from a renderer store.
 
+The application menu (`main/menu.ts`) owns no behaviour: each item sends a `MenuCommand` over `menu:command`, and `renderer/src/commands.ts` runs it through the store action the equivalent button uses. Its accelerators are **labels only** (`registerAccelerator: false`) because the shortcuts are already bound in the renderer — registering them there too fires both handlers. Save/undo/redo reach an arbitrary tab through optional hooks on `EditorRegistration` (`editors/registry.ts`), so "save the active tab" works without knowing which editor it is; a new editor that skips them gets the Monaco text path.
+
 ### Groups: the one idea in three editors
 
 A design bigger than the hardware's unit is modelled the same way every time — **a named group that owns no pixels**, only references to something that does. Painting the group paints what it points at, so there is no second copy to keep in sync.
 
-- **`TileBlock`** (`msx/tile.ts`) — `width × height` references into the tile bank. Structurally `map-editor.ts`'s `Stamp`, deliberately, so a block can be handed to `applyStamp` unchanged. sc1 blocks are group-aligned (`SC1_GROUP`) because eight tiles share one FG/BG pair there.
+- **`TileBlock`** (`msx/tile.ts`) — `width × height` references into the tile bank. Structurally `map-editor.ts`'s `Stamp`, deliberately, so a block can be handed to `applyStamp` unchanged. sc1 blocks are group-aligned (`SC1_GROUP`) because eight tiles share one FG/BG pair there. The tile grid's marquee is the *same* type, built on the fly by `selectionBlock()` — selecting a rectangle is all it takes to edit those tiles as one image, and `blockFromTiles` is what names one when the user wants to keep it. Both pickers wrap to their pane (`fitColumns`), so the column count a selection is read against is measured, not fixed: it lives on the tile session and `setColumns` collapses a stale marquee when it changes.
 - **`SpriteCharacter.cols/rows` + `SpriteLayer.cx/cy`** (`msx/sprite.ts`) — a metasprite. `compositePixel` works in *character* space and each plane only answers for its own cell, so one composite serves canvas, thumbnails and filmstrip. `MAX_LAYERS` is the OR-color stack **per cell**, not per character.
 - **`ScreenFragment`** (`msx/screen.ts`) — a rectangle of the converted bitmap. Exported as one side-by-side strip, which is what lets a single `HMMC` upload every software-sprite frame.
 

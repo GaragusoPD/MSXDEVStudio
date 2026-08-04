@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   COMPILE_COMPLEXITY,
   CURATED_TARGETS,
@@ -44,15 +44,9 @@ const projModulesText = computed({
 
 const defines = computed(() => Object.entries(project.value?.build.defines ?? {}))
 
-// EditorArea's Ctrl+S only knows about Monaco models, so this tab handles its own.
-function onKeydown(event: KeyboardEvent): void {
-  if (event.ctrlKey && (event.key === 's' || event.key === 'S')) void save()
-}
-
 onMounted(() => {
   void projectStore.loadLibModules()
   void resourcesStore.refresh()
-  window.addEventListener('keydown', onKeydown)
 })
 
 /** imgRule args are stored as an array; edited here as one raw command-line string. */
@@ -65,8 +59,6 @@ function setRuleArgs(index: number, value: string): void {
 function openMsximgHelp(): void {
   if (resourcesStore.msximgHelp) void window.api.invoke('shell:open', { target: resourcesStore.msximgHelp })
 }
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
-
 // One listener on the form: input/change both bubble, so every field dirties the project.
 function markDirty(): void {
   if (!readOnly.value) projectStore.dirty = true

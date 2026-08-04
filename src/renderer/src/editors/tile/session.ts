@@ -14,6 +14,7 @@ import { parseResource, serializeResource } from '../../../../shared/msx/resourc
 import {
   blockPixels,
   createTilesDoc,
+  MAX_BLOCK,
   MAX_TILES,
   convertTileMode,
   normalizeTiles,
@@ -30,9 +31,12 @@ import {
 import {
   applyRoleStroke,
   applyStroke,
+  blockFromTiles,
   canRedo,
   createBlock,
+  GRID_COLUMNS,
   removeBlock,
+  selectionBlock,
   splitBlockPoints,
   canUndo,
   emitTilesReordered,
@@ -69,9 +73,11 @@ export interface TileSession {
   loading: boolean
   error: string | null
   dirty: boolean
-  /** Selected tiles in the grid; `active` is the one the canvas shows. */
+  /** Selected tiles in the grid; `active` is the one the row/flag controls act on. */
   selection: number[]
   active: number
+  /** Tiles per row in the sheet — the grid wraps to its pane, so this is measured, not fixed. */
+  columns: number
   /**
    * Index into `doc.blocks` when the canvas is editing a multi-tile design
    * rather than a single tile. The tiles are the same tiles either way — a
@@ -111,6 +117,7 @@ export function tileSession(path: string): TileSession {
     dirty: false,
     selection: [0],
     active: 0,
+    columns: GRID_COLUMNS,
     block: null,
     tool: 'pencil',
     filledRect: false,
@@ -244,9 +251,16 @@ export function cancelConflict(session: TileSession): void {
   session.strokeActive = false
 }
 
-/** The block the canvas is editing, or null when it's showing a single tile. */
+/**
+ * The block the canvas is editing: a named one when the user opened it, and
+ * otherwise the grid marquee itself — selecting a rectangle of tiles is all it
+ * takes to edit them as one image. Null when a single tile is selected.
+ */
 export function activeBlock(session: TileSession): TileBlock | null {
-  return session.block === null ? null : (session.doc.blocks[session.block] ?? null)
+  if (session.block !== null) return session.doc.blocks[session.block] ?? null
+  const marquee = selectionBlock(session.selection, session.columns)
+  // Undo can shrink the bank under a selection made before it.
+  return marquee?.tiles.every((tile) => tile < session.doc.count) ? marquee : null
 }
 
 /** What the canvas draws and the tools flood-fill over: one tile, or a whole block. */
@@ -263,12 +277,32 @@ export function activeExtent(session: TileSession): { width: number; height: num
     : { width: TILE_SIZE, height: TILE_SIZE }
 }
 
-/** Opens a block on the canvas (or `null` to go back to single-tile editing). */
+/** Opens a named block on the canvas (or `null` to go back to the marquee). */
 export function selectBlock(session: TileSession, index: number | null): void {
-  session.block = index === null || !session.doc.blocks[index] ? null : index
-  const block = activeBlock(session)
-  // Keep the single-tile controls (row colours, flags) pointed somewhere real.
-  if (block) select(session, block.tiles[0] ?? 0, block.tiles)
+  const block = index === null ? null : session.doc.blocks[index]
+  if (!block) {
+    session.block = null
+    return
+  }
+  // `select` clears `session.block`, so the open block is set after it.
+  select(session, block.tiles[0] ?? 0, block.tiles)
+  session.block = index
+}
+
+/**
+ * Names the current marquee as a block, so it survives the selection and can be
+ * exported. The tiles stay where they are — nothing is copied.
+ */
+export function nameSelection(session: TileSession): void {
+  const marquee = activeBlock(session)
+  if (!marquee) return
+  if (marquee.width > MAX_BLOCK || marquee.height > MAX_BLOCK) {
+    session.status = `Blocks are at most ${MAX_BLOCK}×${MAX_BLOCK} tiles; this selection is ${marquee.width}×${marquee.height}.`
+    return
+  }
+  const name = `block_${session.doc.blocks.length}`
+  commit(session, blockFromTiles(session.doc, name, marquee.width, marquee.height, marquee.tiles), 'name block')
+  selectBlock(session, session.doc.blocks.length - 1)
 }
 
 export function addBlock(session: TileSession, name: string, width: number, height: number): void {
@@ -365,9 +399,28 @@ export function zoom(session: TileSession, target: 'zoom' | 'gridZoom', delta: n
   session[target] = Math.max(8, Math.min(64, session[target] + delta))
 }
 
+/**
+ * Picks what the canvas edits. A selection of one tile shows that tile, several
+ * show the rectangle they span — and either way it leaves the named-block view,
+ * so a click in the grid is never swallowed by a block someone opened earlier.
+ */
 export function select(session: TileSession, index: number, indices?: number[]): void {
   session.active = index
   session.selection = indices ?? [index]
+  session.block = null
+}
+
+/**
+ * The sheet wraps to its pane, so the view measures the column count and tells
+ * the session: `activeBlock` reads the selection as a rectangle that many tiles
+ * wide. A rewrap changes what a marquee spans, so it collapses to the active
+ * tile rather than leaving one the user never drew. An open block owns explicit
+ * tiles and doesn't care.
+ */
+export function setColumns(session: TileSession, columns: number): void {
+  if (session.columns === columns) return
+  session.columns = columns
+  if (session.block === null && session.selection.length > 1) select(session, session.active)
 }
 
 /**

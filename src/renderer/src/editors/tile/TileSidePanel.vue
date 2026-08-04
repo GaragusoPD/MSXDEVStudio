@@ -22,10 +22,12 @@ import { MAX_BLOCK, TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
 import { colorByteAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
 import { blockColorGroupWarning, renameBlock } from '../../../../shared/tile-editor'
 import {
+  activeBlock,
   addBlock,
   changeMode,
   commit,
   deleteBlock,
+  nameSelection,
   selectBlock,
   setColor,
   setPalette,
@@ -65,9 +67,12 @@ function grbLabel(index: number): string {
 
 const newBlock = ref({ width: 2, height: 2 })
 
-/** sc1 shares one FG/BG per 8 tiles, so a block can end up recolouring its neighbours. */
+/** The unnamed marquee, when that's what the canvas is showing — what "from selection" would name. */
+const marquee = computed(() => (props.session.block === null ? activeBlock(props.session) : null))
+
+/** sc1 shares one FG/BG per 8 tiles, so a multi-tile canvas can recolour its neighbours — named or not. */
 const blockWarning = computed(() => {
-  const block = props.session.block === null ? null : doc.value.blocks[props.session.block]
+  const block = activeBlock(props.session)
   return block ? blockColorGroupWarning(doc.value, block) : null
 })
 
@@ -240,7 +245,8 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
 
       <h3>Blocks</h3>
       <p class="blurb">
-        A design bigger than one tile — drawn on one canvas, stored as the tiles it is made of.
+        Any rectangle you drag in the grid is already one canvas. Name it here to keep it — a block
+        is that selection, stored as the tiles it is made of, and exported with them.
       </p>
       <ul class="blocks">
         <li>
@@ -250,7 +256,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
             :class="{ active: session.block === null }"
             @click="selectBlock(session, null)"
           >
-            Single tile
+            Selection
           </button>
         </li>
         <li
@@ -315,11 +321,25 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         </select>
         <button
           type="button"
+          title="Append that many blank tiles as a new block"
           @click="createNewBlock"
         >
           + Block
         </button>
       </div>
+      <button
+        type="button"
+        class="from-selection"
+        :disabled="!marquee"
+        :title="
+          marquee
+            ? `Name the ${marquee.width}×${marquee.height} selection as a block — the tiles stay where they are`
+            : 'Drag a rectangle in the grid first'
+        "
+        @click="nameSelection(session)"
+      >
+        + Block from selection
+      </button>
 
       <h3>Export</h3>
       <template v-if="doc.export">
@@ -440,8 +460,23 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   font-size: 11px;
+}
+
+.from-selection {
+  width: 100%;
+  padding: 3px 6px;
+  margin-bottom: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.from-selection:disabled {
+  opacity: 0.4;
 }
 
 .new-block select,

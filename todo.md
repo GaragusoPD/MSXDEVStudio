@@ -18,6 +18,16 @@
       filmstrip and playback preview all show the whole character.
 - [ ] **Tile blocks (dev14)**: make a 2×2 block in the tile editor, draw across a seam,
       check the stroke lands on both tiles and that undo takes the whole stroke back.
+- [ ] **Marquee editing**: drag a rectangle in the tile grid and draw across the seams
+      without naming a block; check Alt+drag still reorders (with its confirmation), that
+      **+ Block from selection** keeps the rectangle, and that narrowing the pane rewraps
+      the sheet instead of scrolling sideways — in the map picker too.
+- [ ] **Emptied metasprite cell**: delete a cell's only plane, then click that cell on the
+      canvas and confirm it gets a plane back and can be drawn on.
+- [ ] **Menu bar**: File ▸ Save on each editor kind (text, tile, sprite, map, screen, sfx,
+      project settings) and Save All with several dirty tabs; Edit ▸ Undo in Monaco and in
+      a canvas editor; check Ctrl+S still saves exactly once (the accelerators in the menu
+      are labels only — see `main/menu.ts`).
 - [ ] **Fragments (dev14)**: in the screen editor, pick ⛶ and drag a rectangle on the
       converted image; check the overlay boxes and that the export writes a `_Strip`.
 - [x] **Ready-made C on an emulator**: all three generated helpers were built into ROMs
@@ -54,9 +64,10 @@ make it public when the work in progress is ready to show.
 
 ## Sprite composition and software sprites (planned)
 
-Four related features. Each one wants the same two deliverables: **editor support in
-the UI**, and **ready-made C** the IDE can drop into a project as a script/snippet, so
-a user gets a working character without writing the VDP plumbing by hand.
+Four related features, each wanting the same two deliverables: **editor support in the
+UI**, and **ready-made C** the IDE can drop into a project as a script/snippet, so a
+user gets a working character without writing the VDP plumbing by hand. Item 5 is the
+fifth thing they all turned out to need: gestures that reach them.
 
 Where this already starts: `src/shared/msx/sprite.ts` models a sprite as up to
 `MAX_LAYERS` (4) `SpriteLayer`s per frame and already composites them for the mode-2
@@ -122,6 +133,18 @@ sprite blitters are what the bitmap-mode work stands on.
       **Not done:** the map editor still targets tiled modes only. Composing a whole
       bitmap screen out of fragments would be a bitmap map editor — the fragments and
       the stamping runtime it would need already exist, so it is additive.
+
+- [x] **5. Reaching all of the above without ceremony.** The features above landed but
+      the gestures didn't: editing several tiles together meant *naming a block first*,
+      and a named block swallowed later grid clicks, so multi-select looked broken.
+      *Done (dev14):* dragging a rectangle in the tile grid **is** the canvas — the
+      marquee is built into a transient `TileBlock` by `selectionBlock()`, so nothing is
+      copied and no block has to exist; **+ Block from selection** names one when it's
+      worth keeping. Reorder moved to Alt+drag, and selecting anything leaves an open
+      block. On the sprite side, a cell whose last plane was deleted was unreachable
+      forever (`+ Layer` aims at the *active* plane's cell) — clicking an empty cell now
+      gives it a plane back. Both tile sheets wrap to their pane (`fitColumns`) instead
+      of scrolling sideways. **Still to check by hand — see the two entries at the top.**
 
 ## Deferred features (add when wanted, specs/00-overview.md)
 

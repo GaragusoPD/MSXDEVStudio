@@ -65,10 +65,8 @@ function onKeydown(event: KeyboardEvent): void {
   const active = session.value
   if (event.ctrlKey) {
     const key = event.key.toLowerCase()
-    if (key === 's') {
-      event.preventDefault()
-      void save()
-    } else if (key === 'z' && !event.shiftKey) {
+    // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.
+    if (key === 'z' && !event.shiftKey) {
       event.preventDefault()
       undo(active)
     } else if (key === 'y' || (key === 'z' && event.shiftKey)) {

@@ -49,13 +49,21 @@ That turns collision into a table lookup rather than a list of tile numbers in
 your code, so re-arranging a tileset does not break the game. See
 [`demo_project`](../demo_project/) for it in use.
 
-**Tile blocks** — a door, a tree or a boss face is bigger than one tile, so the
-tile editor lets you name a **block**: a W×H design you draw on one canvas.
-A block holds no pixels of its own, only references to tiles in the same bank,
-so painting a block paints those tiles. Pick a size in the side panel and press
-**+ Block**; the seams between tiles are drawn in blue. In SCREEN 1 a new block
-starts on a colour-group boundary, because eight consecutive tiles share one
-FG/BG pair there — the panel warns when a block can't own its whole group.
+**Editing several tiles at once** — drag a rectangle in the tile grid and the
+canvas shows those tiles as one image, seams drawn in blue. Nothing is copied:
+you are painting the tiles themselves, across their boundaries. Shift+click
+extends the rectangle from the current tile, and a plain click goes back to
+editing one. (Reordering a tile is **Alt**+drag, because it renumbers the bank.)
+
+**Tile blocks** — a door, a tree or a boss face is bigger than one tile, and
+once you have drawn one you can keep it: **+ Block from selection** names the
+rectangle you have selected. A block holds no pixels of its own, only references
+to tiles in the same bank, so painting a block still paints those tiles — it is
+the selection made permanent, and it is what the exporter writes out (see
+*Blocks* under Export). **+ Block** instead appends that many blank tiles as a
+new block, for starting from nothing. In SCREEN 1 a new block starts on a
+colour-group boundary, because eight consecutive tiles share one FG/BG pair
+there — the panel warns when a block can't own its whole group.
 
 **Sprites** — mode 1 gives each sprite one colour; mode 2 gives a colour per
 line, plus the EC/CC/IC bits. Sprites are 8×8 or 16×16 and can stack up to 4
@@ -63,9 +71,11 @@ layers for multicolour characters. The animation bar previews frames.
 
 **Metasprites** — a character can span a grid of hardware sprites (the
 *Character grid* control): 2×2 of 16×16 sprites is a 32×32 Metal Gear-style
-hero that moves as one. Each cell is a separate hardware sprite and each of its
-layers costs another, so every character shows what it spends of the VDP's
-4 (mode 1) or 8 (mode 2) sprites per scanline.
+hero that moves as one — sprites side by side rather than stacked. Click a cell
+on the canvas to draw on it; a cell you emptied gets a plane back when you click
+it. Each cell is a separate hardware sprite and each of its layers costs
+another, so every character shows what it spends of the VDP's 4 (mode 1) or
+8 (mode 2) sprites per scanline.
 
 **Map** — pick a tileset first (dropdown in the side panel), then paint with
 stamp, fill, rectangle and erase. Shift+click or drag in the tile picker takes

@@ -5,23 +5,42 @@
  * rectangular multi-tile stamp — same marquee gesture `TileGrid.vue` uses for
  * its own selection, built into a `Stamp` via `stampFromMarquee`.
  */
-import { computed, ref, watchEffect } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
 import { singleStamp, stampFromMarquee } from '../../../../shared/map-editor'
+import { fitColumns } from '../../../../shared/tile-editor'
 import { pickTile, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
-const COLUMNS = 16
-
 const canvas = ref<HTMLCanvasElement | null>(null)
+const scroller = ref<HTMLElement | null>(null)
 const hover = ref<number | null>(null)
 let dragAnchor: number | null = null
 
 const cell = computed(() => props.session.pickerZoom)
 const count = computed(() => props.session.tileset?.count ?? 0)
-const rows = computed(() => Math.max(1, Math.ceil(count.value / COLUMNS)))
+
+/** Same as `TileGrid.vue`: the sheet wraps into the pane instead of scrolling off the side of it. */
+const paneWidth = ref(0)
+const COLUMNS = computed(() => fitColumns(paneWidth.value, cell.value, count.value))
+const rows = computed(() => Math.max(1, Math.ceil(count.value / COLUMNS.value)))
+
+// The scroller only exists once a tileset has loaded, so this follows the ref
+// rather than grabbing it on mount.
+const observer = new ResizeObserver(([entry]) => {
+  paneWidth.value = entry.contentRect.width
+})
+watch(
+  scroller,
+  (element) => {
+    observer.disconnect()
+    if (element) observer.observe(element)
+  },
+  { flush: 'post' }
+)
+onBeforeUnmount(() => observer.disconnect())
 
 const hex = (index: number): string => `0x${index.toString(16).toUpperCase().padStart(2, '0')}`
 
@@ -29,8 +48,8 @@ function indexAt(event: PointerEvent): number | null {
   const rect = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
   const x = Math.floor((event.clientX - rect.left) / cell.value)
   const y = Math.floor((event.clientY - rect.top) / cell.value)
-  if (x < 0 || x >= COLUMNS || y < 0) return null
-  const index = y * COLUMNS + x
+  if (x < 0 || x >= COLUMNS.value || y < 0) return null
+  const index = y * COLUMNS.value + x
   return index < count.value ? index : null
 }
 
@@ -39,7 +58,7 @@ function pick(anchor: number, focus: number): void {
     pickTile(props.session, focus, [focus], singleStamp(focus))
     return
   }
-  const stamp = stampFromMarquee(anchor, focus, COLUMNS, count.value)
+  const stamp = stampFromMarquee(anchor, focus, COLUMNS.value, count.value)
   const indices: number[] = []
   for (let y = 0; y < stamp.height; y++) {
     for (let x = 0; x < stamp.width; x++) indices.push(stamp.tiles[y * stamp.width + x])
@@ -70,18 +89,18 @@ watchEffect(() => {
   const tileset = props.session.tileset
   if (!element || !tileset) return
   const size = cell.value
-  element.width = COLUMNS * size
+  element.width = COLUMNS.value * size
   element.height = rows.value * size
   const context = element.getContext('2d')
   if (!context) return
   context.clearRect(0, 0, element.width, element.height)
 
   const rgb = paletteToRgb(tileset.palette)
-  const sheet = new ImageData(COLUMNS * TILE_SIZE, rows.value * TILE_SIZE)
+  const sheet = new ImageData(COLUMNS.value * TILE_SIZE, rows.value * TILE_SIZE)
   for (let index = 0; index < tileset.count; index++) {
     const pixels = tilePixels(tileset, index)
-    const ox = (index % COLUMNS) * TILE_SIZE
-    const oy = Math.floor(index / COLUMNS) * TILE_SIZE
+    const ox = (index % COLUMNS.value) * TILE_SIZE
+    const oy = Math.floor(index / COLUMNS.value) * TILE_SIZE
     for (let y = 0; y < TILE_SIZE; y++) {
       for (let x = 0; x < TILE_SIZE; x++) {
         const value = pixels[y * TILE_SIZE + x]
@@ -100,13 +119,13 @@ watchEffect(() => {
   source.getContext('2d')?.putImageData(sheet, 0, 0)
   context.imageSmoothingEnabled = false
   for (let row = 0; row < rows.value; row++) {
-    context.drawImage(source, 0, row * TILE_SIZE, sheet.width, TILE_SIZE, 0, row * size, COLUMNS * size, size)
+    context.drawImage(source, 0, row * TILE_SIZE, sheet.width, TILE_SIZE, 0, row * size, COLUMNS.value * size, size)
   }
 
   context.lineWidth = 2
   for (const index of props.session.pickerSelection) {
     context.strokeStyle = index === props.session.pickerActive ? '#ffffff' : 'rgba(255, 255, 255, 0.45)'
-    context.strokeRect((index % COLUMNS) * size + 1, Math.floor(index / COLUMNS) * size + 1, size - 2, size - 2)
+    context.strokeRect((index % COLUMNS.value) * size + 1, Math.floor(index / COLUMNS.value) * size + 1, size - 2, size - 2)
   }
 })
 </script>
@@ -125,6 +144,7 @@ watchEffect(() => {
     </p>
     <div
       v-else
+      ref="scroller"
       class="scroller"
     >
       <canvas
@@ -175,7 +195,10 @@ header {
 .scroller {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Reserved so the scrollbar appearing can't narrow the box the columns were measured from. */
+  scrollbar-gutter: stable;
   padding: 8px;
 }
 

@@ -29,6 +29,8 @@ import {
   createBlock,
   emitTilesReordered,
   fillPoints,
+  fitColumns,
+  GRID_COLUMNS,
   historyDoc,
   initHistory,
   invertMapping,
@@ -39,6 +41,7 @@ import {
   rectPoints,
   redoHistory,
   removeBlock,
+  selectionBlock,
   splitBlockPoints,
   setPaletteEntry,
   setTileFlagBit,
@@ -349,6 +352,52 @@ describe('marqueeIndices', () => {
     expect(marqueeIndices(0, 17, 16, 256)).toEqual([0, 1, 16, 17])
     expect(marqueeIndices(17, 0, 16, 256)).toEqual([0, 1, 16, 17])
     expect(marqueeIndices(0, 17, 16, 17)).toEqual([0, 1, 16])
+  })
+})
+
+describe('selectionBlock', () => {
+  it('reads a marquee as the block the canvas edits', () => {
+    expect(selectionBlock(marqueeIndices(0, 17, 16, 256), 16)).toEqual({
+      name: 'selection',
+      width: 2,
+      height: 2,
+      tiles: [0, 1, 16, 17]
+    })
+  })
+
+  it('is null for a single tile, which the canvas shows the plain way', () => {
+    expect(selectionBlock([5], 16)).toBeNull()
+  })
+
+  it('follows the column count, so a rewrapped sheet spans different tiles', () => {
+    expect(selectionBlock([0, 1, 8, 9], 8)).toEqual({ name: 'selection', width: 2, height: 2, tiles: [0, 1, 8, 9] })
+    // The same indices at 16 columns are one row with a hole in it, which is no rectangle at all.
+    expect(selectionBlock([0, 1, 8, 9], 16)).toBeNull()
+  })
+
+  it('drops the ragged tail a short last row leaves', () => {
+    // 20 tiles, 16 per row: the marquee's second row only has columns 0..3.
+    expect(selectionBlock(marqueeIndices(0, 17, 16, 20), 16)).toEqual({
+      name: 'selection',
+      width: 2,
+      height: 2,
+      tiles: [0, 1, 16, 17]
+    })
+    expect(selectionBlock(marqueeIndices(4, 21, 16, 20), 16)).toEqual({
+      name: 'selection',
+      width: 2,
+      height: 1,
+      tiles: [4, 5]
+    })
+  })
+})
+
+describe('fitColumns', () => {
+  it('wraps the sheet into the pane instead of running off the side of it', () => {
+    expect(fitColumns(200, 24, 256)).toBe(8)
+    expect(fitColumns(0, 24, 256)).toBe(GRID_COLUMNS) // not measured yet
+    expect(fitColumns(20, 24, 256)).toBe(1) // narrower than one tile
+    expect(fitColumns(400, 24, 3)).toBe(3) // never more columns than tiles
   })
 })
 

@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { useBuildStore } from '../stores/buildStore'
 import { useTabsStore } from '../stores/tabsStore'
 import { getEditorFor } from '../editors/registry'
-import { disposeModel, saveModel } from '../editors/monaco-models'
+import { closeTabWithPrompt, saveAllTabs, saveTab } from '../commands'
 import BuildToolbar from './BuildToolbar.vue'
 import WelcomeTab from './WelcomeTab.vue'
 
@@ -18,16 +18,8 @@ const activeComponent = computed(() => {
   return tab.extension ? getEditorFor(tab.extension)?.component : undefined
 })
 
-async function closeWithPrompt(id: string): Promise<void> {
-  const tab = tabsStore.tabs.find((t) => t.id === id)
-  if (!tab) return
-  if (tab.dirty && !window.confirm(`"${tab.title}" has unsaved changes. Close without saving?`)) return
-  disposeModel(id)
-  tabsStore.close(id)
-}
-
 function onTabAuxClick(event: MouseEvent, id: string): void {
-  if (event.button === 1) void closeWithPrompt(id) // middle-click
+  if (event.button === 1) closeTabWithPrompt(id) // middle-click
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -46,11 +38,11 @@ function onKeydown(event: KeyboardEvent): void {
   if (!event.ctrlKey) return
   if (event.key === 's' || event.key === 'S') {
     event.preventDefault()
-    const tab = tabsStore.activeTab
-    if (tab?.filePath) void saveModel(tab)
+    // Shift saves every dirty tab; both go through the same command the File menu uses.
+    void (event.shiftKey ? saveAllTabs() : saveTab(tabsStore.activeTab))
   } else if (event.key === 'w' || event.key === 'W') {
     event.preventDefault()
-    if (tabsStore.activeTabId) void closeWithPrompt(tabsStore.activeTabId)
+    if (tabsStore.activeTabId) closeTabWithPrompt(tabsStore.activeTabId)
   } else if (event.key === 'Tab') {
     event.preventDefault()
     tabsStore.cycleMru()
@@ -81,7 +73,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         <span
           v-if="tab.closable"
           class="close"
-          @click.stop="closeWithPrompt(tab.id)"
+          @click.stop="closeTabWithPrompt(tab.id)"
         >×</span>
       </button>
       <div class="tab-spacer" />

@@ -1,6 +1,12 @@
 import { registerEditor } from './registry'
 import { registerMsxglCompletions } from './msxgl-completions'
 import { setupMonacoEnvironment } from './monaco-setup'
+import { useProjectStore } from '../stores/projectStore'
+import * as map from './map/session'
+import * as screen from './screen/session'
+import * as sfx from './sfx/session'
+import * as sprite from './sprite/session'
+import * as tile from './tile/session'
 import ExampleViewerTab from './ExampleViewerTab.vue'
 import GitDiffTab from './GitDiffTab.vue'
 import MapEditorTab from './map/MapEditorTab.vue'
@@ -20,10 +26,13 @@ registerEditor({
   component: MonacoEditorTab
 })
 
-// Opening the project's `.msxproj` from the explorer is the settings UI.
+// Opening the project's `.msxproj` from the explorer is the settings UI. Its
+// document is the project store rather than a per-path session, but Save is
+// still Save.
 registerEditor({
   extensions: ['msxproj'],
-  component: ProjectSettingsTab
+  component: ProjectSettingsTab,
+  save: () => useProjectStore().save()
 })
 
 // Synthetic tabs opened by gitStore.openDiff() — not a real file extension.
@@ -38,31 +47,50 @@ registerEditor({
   component: ExampleViewerTab
 })
 
+// The resource editors all keep their document in a per-path session module, so
+// save/undo/redo is the same three lines each time — see `registry.ts` for why
+// they are registered rather than left inside the tab component.
+//
 // Spec 08: `file-kind.ts` gives resource files a compound extension, so this
 // claims `*.tiles.json` without stealing plain `.json` from Monaco.
 registerEditor({
   extensions: ['tiles.json'],
-  component: TileEditorTab
+  component: TileEditorTab,
+  save: (path) => tile.saveSession(tile.tileSession(path)),
+  undo: (path) => tile.undo(tile.tileSession(path)),
+  redo: (path) => tile.redo(tile.tileSession(path))
 })
 
 // Spec 09: same compound-extension trick, for `*.sprites.json`.
 registerEditor({
   extensions: ['sprites.json'],
-  component: SpriteEditorTab
+  component: SpriteEditorTab,
+  save: (path) => sprite.saveSession(sprite.spriteSession(path)),
+  undo: (path) => sprite.undo(sprite.spriteSession(path)),
+  redo: (path) => sprite.redo(sprite.spriteSession(path))
 })
 
 // Spec 11: the ayFX sound-effect bank editor.
 registerEditor({
   extensions: ['sfx.json'],
-  component: SfxEditorTab
+  component: SfxEditorTab,
+  save: (path) => sfx.saveSession(sfx.sfxSession(path)),
+  undo: (path) => sfx.undo(sfx.sfxSession(path)),
+  redo: (path) => sfx.redo(sfx.sfxSession(path))
 })
 
 // Spec 10: same compound-extension trick, for `*.map.json` and `*.screen.json`.
 registerEditor({
   extensions: ['map.json'],
-  component: MapEditorTab
+  component: MapEditorTab,
+  save: (path) => map.saveSession(map.mapSession(path)),
+  undo: (path) => map.undo(map.mapSession(path)),
+  redo: (path) => map.redo(map.mapSession(path))
 })
 registerEditor({
   extensions: ['screen.json'],
-  component: ScreenEditorTab
+  component: ScreenEditorTab,
+  save: (path) => screen.saveSession(screen.screenSession(path)),
+  undo: (path) => screen.undo(screen.screenSession(path)),
+  redo: (path) => screen.redo(screen.screenSession(path))
 })

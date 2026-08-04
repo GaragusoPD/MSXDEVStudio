@@ -12,7 +12,7 @@ import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { compositeFrame } from '../../../../shared/msx/sprite'
 import type { SpritesDoc } from '../../../../shared/msx/sprite'
-import { floodFill, layerAtCell, paintLine, updateLayer, type SpriteTarget, type SpriteTool } from '../../../../shared/sprite-editor'
+import { addLayer, floodFill, layerAtCell, paintLine, updateLayer, type SpriteTarget, type SpriteTool } from '../../../../shared/sprite-editor'
 import { drawGrid, drawIndices } from './draw'
 
 const props = defineProps<{ doc: SpritesDoc; target: SpriteTarget; tool: SpriteTool; onionSkin: boolean }>()
@@ -76,6 +76,10 @@ function paintTo(cell: { x: number; y: number }): void {
  * Clicking another cell of a metasprite switches to that cell's first plane
  * rather than painting nothing — the active plane is what says which hardware
  * sprite a stroke lands on.
+ *
+ * A cell whose planes were all removed gets one back on the click. Nothing else
+ * can reach it: "+ Layer" aims at the *active* plane's cell, so an empty cell
+ * you can't select is an empty cell you can never draw on again.
  */
 function selectCellUnder(cell: { x: number; y: number }): boolean {
   const size = props.doc.size
@@ -83,9 +87,15 @@ function selectCellUnder(cell: { x: number; y: number }): boolean {
   const cy = Math.floor(cell.y / size)
   if (cx === origin.value.x / size && cy === origin.value.y / size) return false
   const frame = character.value?.frames[props.target.frame]
-  const index = frame ? layerAtCell(frame, cx, cy) : -1
-  if (index >= 0) emit('selectLayer', index)
-  // Either way the click is spent: it moved the selection, or the cell is empty.
+  if (!frame) return true
+  const index = layerAtCell(frame, cx, cy)
+  if (index >= 0) {
+    emit('selectLayer', index)
+  } else {
+    emit('commit', addLayer(props.doc, props.target.sprite, cx, cy))
+    emit('selectLayer', frame.layers.length)
+  }
+  // Either way the click is spent moving the selection, not painting.
   return true
 }
 

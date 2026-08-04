@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { join } from 'node:path'
 import icon from '../../resources/icon.png?asset'
 import { BuildService } from './services/build-service'
@@ -6,12 +6,13 @@ import { ExamplesService } from './services/examples-service'
 import { FsService } from './services/fs-service'
 import { GitService } from './services/git-service'
 import { extractProjectPath } from './services/launch-args'
+import { menuTemplate } from './menu'
 import { indexMsxglSymbols } from './services/msxgl-symbols'
 import { ProjectService } from './services/project-service'
 import { ResourceService } from './services/resource-service'
 import { StateService } from './services/state-service'
 import { ToolchainService } from './services/toolchain-service'
-import type { AppState, BuildCommand, MsxglSymbol } from '../shared/ipc'
+import type { AppState, BuildCommand, MenuCommand, MsxglSymbol } from '../shared/ipc'
 
 // Single-instance lock: a second `.msxproj` double-click while MSXStudio is
 // already running should focus the existing window and open the file there,
@@ -107,13 +108,34 @@ function broadcastState(state: AppState): void {
   mainWindow?.webContents.send('app:stateChanged', state)
 }
 
+const DOCS_URL = 'https://github.com/GaragusoPD/MSXStudio/tree/main/docs'
+const MSXGL_DOCS_URL = 'https://github.com/aoineko-fr/MSXgl/wiki'
+
+/**
+ * Menu items either open something the main process owns (the Help links, the
+ * About box) or go to the renderer, which runs them through the same store
+ * actions its buttons use.
+ */
+function onMenuCommand(command: MenuCommand): void {
+  if (command === 'help.docs') void shell.openExternal(DOCS_URL)
+  else if (command === 'help.msxgl') void shell.openExternal(MSXGL_DOCS_URL)
+  else if (command === 'help.about') {
+    void dialog.showMessageBox({
+      type: 'info',
+      title: 'About MSXStudio',
+      message: `MSXStudio ${app.getVersion()}`,
+      detail: `An IDE for MSX game development, built around MSXgl.\n\nElectron ${process.versions.electron} · Chromium ${process.versions.chrome} · Node ${process.versions.node}`,
+      buttons: ['OK']
+    })
+  } else mainWindow?.webContents.send('menu:command', command)
+}
+
 function createWindow(): void {
   const { windowBounds } = stateService.get()
 
   mainWindow = new BrowserWindow({
     ...windowBounds,
     show: false,
-    autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -154,6 +176,7 @@ ipcMain.handle('app:setState', (_event, partial: Partial<AppState>): AppState =>
 // instance can never race a window into existence before it exits.
 if (gotSingleInstanceLock) {
   app.whenReady().then(() => {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(onMenuCommand)))
     createWindow()
 
     app.on('activate', () => {

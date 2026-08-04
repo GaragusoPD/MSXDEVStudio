@@ -3,7 +3,7 @@ import * as monaco from './monaco-full'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAppStore } from '../stores/appStore'
 import { useTabsStore } from '../stores/tabsStore'
-import { getOrCreateModel, restoreViewState, saveViewState } from './monaco-models'
+import { getOrCreateModel, restoreViewState, saveViewState, setMountedEditor } from './monaco-models'
 
 const tabsStore = useTabsStore()
 const appStore = useAppStore()
@@ -45,6 +45,7 @@ onMounted(() => {
     minimap: { enabled: true },
     theme: appStore.theme === 'light' ? 'vs' : 'vs-dark'
   })
+  setMountedEditor(editor)
   void attachActiveTab()
 })
 
@@ -56,6 +57,7 @@ watch(
 
 onBeforeUnmount(() => {
   if (editor && attachedTabId) saveViewState(editor, attachedTabId)
+  setMountedEditor(null)
   editor?.dispose() // disposes the widget only; models outlive it (see monaco-models.ts)
 })
 </script>

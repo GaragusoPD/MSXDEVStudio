@@ -93,6 +93,26 @@ export function disposeModel(tabId: string): void {
   viewStates.delete(tabId)
 }
 
+/**
+ * The live Monaco widget, so a caller outside it — the application menu's
+ * Edit ▸ Undo — can reach the text editor's own undo stack. There is only ever
+ * one widget: `EditorArea` renders the active tab's editor and Monaco tabs
+ * share it by swapping models.
+ */
+let mounted: monaco.editor.IStandaloneCodeEditor | null = null
+
+export function setMountedEditor(editor: monaco.editor.IStandaloneCodeEditor | null): void {
+  mounted = editor
+}
+
+/** Runs a Monaco action on the mounted widget; false when no text editor is up. */
+export function triggerMonaco(action: 'undo' | 'redo'): boolean {
+  if (!mounted) return false
+  mounted.focus()
+  mounted.trigger('menu', action, null)
+  return true
+}
+
 export function saveViewState(editor: monaco.editor.IStandaloneCodeEditor, tabId: string): void {
   const state = editor.saveViewState()
   if (state) viewStates.set(tabId, state)

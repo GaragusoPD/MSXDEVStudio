@@ -167,8 +167,9 @@ function changeSize(size: SpriteSize): void {
         v-if="isMeta"
         class="hint"
       >
-        Click a cell on the canvas to paint it. Each cell is one hardware sprite, and each of its
-        layers costs another — the 4/8-per-scanline limit counts them all.
+        Click a cell on the canvas to paint it — an empty one gets a plane back. Each cell is one
+        hardware sprite, and each of its layers costs another: the 4/8-per-scanline limit counts
+        them all.
       </p>
       <label
         v-if="doc.export"

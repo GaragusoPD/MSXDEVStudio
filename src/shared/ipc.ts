@@ -352,7 +352,44 @@ export interface IpcEvents {
   'build:finished': BuildFinished
   /** Pushed after every mutating `git:*` call and on out-of-band `.git/HEAD`/`.git/index` changes. */
   'git:changed': GitStatus
+  /** An application-menu item was clicked — see `MenuCommand`. */
+  'menu:command': MenuCommand
 }
+
+/**
+ * What the application menu can ask for. `main/menu.ts` builds the menu from
+ * these and `renderer/src/menu-commands.ts` runs each one through the store
+ * action the equivalent button already uses, so a menu item is never a second
+ * implementation of anything. `help.*` is answered in the main process.
+ */
+export type MenuCommand =
+  | 'file.newProject'
+  | 'file.openProject'
+  | 'file.save'
+  | 'file.saveAll'
+  | 'file.projectSettings'
+  | 'file.toolchainSettings'
+  | 'file.closeTab'
+  | 'edit.undo'
+  | 'edit.redo'
+  | 'edit.findInFiles'
+  | 'build.build'
+  | 'build.rebuild'
+  | 'build.clean'
+  | 'build.run'
+  | 'build.stop'
+  | 'view.explorer'
+  | 'view.search'
+  | 'view.git'
+  | 'view.resources'
+  | 'view.examples'
+  | 'view.toggleSide'
+  | 'view.toggleBottom'
+  | 'view.output'
+  | 'view.problems'
+  | 'help.docs'
+  | 'help.msxgl'
+  | 'help.about'
 
 /** Shape of the single preload bridge exposed as `window.api`. */
 export interface WindowApi {

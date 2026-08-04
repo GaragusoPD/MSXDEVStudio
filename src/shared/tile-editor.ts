@@ -439,6 +439,48 @@ export function blockColorGroupWarning(doc: TilesDoc, block: TileBlock): string 
 
 // ── tileset grid selection ──────────────────────────────────────────────────
 
+/** Tiles per row in the tileset sheet before it has been measured — the shape a marquee is a rectangle of. */
+export const GRID_COLUMNS = 16
+
+/**
+ * How many tiles fit across `width` px at `cell` px each: the sheet wraps into
+ * the pane it's given instead of running off the side of it. Never more columns
+ * than the bank has tiles, and never fewer than one.
+ */
+export function fitColumns(width: number, cell: number, count: number): number {
+  if (width <= 0) return GRID_COLUMNS
+  return Math.max(1, Math.min(Math.max(1, count), Math.floor(width / Math.max(1, cell))))
+}
+
+/**
+ * The marquee, as a block the canvas can edit directly: select a rectangle of
+ * tiles in the sheet and they *are* one image, with no naming step and no copy.
+ * Like every group here it owns no pixels, so painting across it paints the
+ * tiles themselves — `blockPixels` and `splitBlockPoints` don't care that this
+ * one is transient.
+ *
+ * Null for a single tile, which the canvas shows the plain way. Only the sheet's
+ * last row can be short, so a marquee that runs into it keeps the rows it has
+ * whole and drops the ragged tail.
+ */
+export function selectionBlock(selection: readonly number[], columns = GRID_COLUMNS): TileBlock | null {
+  if (selection.length < 2) return null
+  const xs = selection.map((index) => index % columns)
+  const ys = selection.map((index) => Math.floor(index / columns))
+  const left = Math.min(...xs)
+  const width = Math.max(...xs) - left + 1
+  const has = new Set(selection)
+  const tiles: number[] = []
+  let height = 0
+  for (let y = Math.min(...ys); y <= Math.max(...ys); y++) {
+    const row = Array.from({ length: width }, (_, i) => y * columns + left + i)
+    if (!row.every((tile) => has.has(tile))) break
+    tiles.push(...row)
+    height++
+  }
+  return height && tiles.length > 1 ? { name: 'selection', width, height, tiles } : null
+}
+
 /** Every index inside the rectangle spanned by two tiles in a `columns`-wide grid. */
 export function marqueeIndices(anchor: number, focus: number, columns: number, count: number): number[] {
   const ax = anchor % columns

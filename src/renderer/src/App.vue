@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
+import { runMenuCommand } from './commands'
 import { useAppStore } from './stores/appStore'
 import { useBuildStore } from './stores/buildStore'
 import { useExamplesStore } from './stores/examplesStore'
@@ -32,8 +33,11 @@ let unsubscribeState: (() => void) | undefined
 
 let unsubscribeProgress: (() => void) | undefined
 
+let unsubscribeMenu: (() => void) | undefined
+
 onMounted(async () => {
   await appStore.load()
+  unsubscribeMenu = window.api.on('menu:command', (command) => runMenuCommand(command))
   unsubscribeState = window.api.on('app:stateChanged', (state) => appStore.applyRemoteState(state))
   unsubscribeProgress = window.api.on('toolchain:progress', (progress) =>
     toolchainStore.applyProgress(progress)
@@ -54,6 +58,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubscribeState?.()
   unsubscribeProgress?.()
+  unsubscribeMenu?.()
 })
 </script>
 
