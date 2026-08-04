@@ -23,12 +23,29 @@ Some `src/main/services` tests (`build-service`, `resources`, `toolchain`, `proj
 
 Three Electron layers plus a shared core:
 
-- `src/shared/` — `ipc.ts` (the entire IPC contract) plus dependency-free logic that runs in main, renderer, and Vitest unchanged: `.msxproj` model/config generation (`msxproj.ts`), MSX hardware and formats (`msx/`: palettes, tiles, sprites, screen modes, ayFX SFX, image quantization), editor logic (`tile-editor.ts`, `map-editor.ts`, …).
+- `src/shared/` — `ipc.ts` (the entire IPC contract) plus dependency-free logic that runs in main, renderer, and Vitest unchanged: `.msxproj` model/config generation (`msxproj.ts`), MSX hardware and formats (`msx/`: palettes, tiles, sprites, screen modes, ayFX SFX, image quantization), editor logic (`tile-editor.ts`, `map-editor.ts`, …). The sprite, map and screen editors share one undo stack, `history.ts`'s `History<T>`, re-exported under their own names so call sites name their own module; the tile editor keeps its own, because its entries carry a label and a tile-renumbering map.
 - `src/main/services/` — each domain is split in two: a **pure, Electron-free module** (`build.ts`, `toolchain.ts`, `project.ts`, `git.ts`, `resources.ts`, `examples.ts`) holding all testable logic, and a `*-service.ts` class that wires it to Electron/IPC with dependencies injected (see `BuildDeps`). Keep new logic in the pure module; the service stays thin. `src/main/index.ts` supplies real implementations.
 - `src/preload/index.ts` — the single typed bridge (`window.api.invoke`/`window.api.on`). Never call `ipcRenderer` anywhere else.
 - `src/renderer/` — Vue app; Pinia stores call `window.api`, components/editors are thin shells over the logic in `src/shared/`.
 
 Adding an IPC channel: one line in `IpcApi` (or `IpcEvents`) in `shared/ipc.ts`, implement in a main service, call from a renderer store.
+
+### Groups: the one idea in three editors
+
+A design bigger than the hardware's unit is modelled the same way every time — **a named group that owns no pixels**, only references to something that does. Painting the group paints what it points at, so there is no second copy to keep in sync.
+
+- **`TileBlock`** (`msx/tile.ts`) — `width × height` references into the tile bank. Structurally `map-editor.ts`'s `Stamp`, deliberately, so a block can be handed to `applyStamp` unchanged. sc1 blocks are group-aligned (`SC1_GROUP`) because eight tiles share one FG/BG pair there.
+- **`SpriteCharacter.cols/rows` + `SpriteLayer.cx/cy`** (`msx/sprite.ts`) — a metasprite. `compositePixel` works in *character* space and each plane only answers for its own cell, so one composite serves canvas, thumbnails and filmstrip. `MAX_LAYERS` is the OR-color stack **per cell**, not per character.
+- **`ScreenFragment`** (`msx/screen.ts`) — a rectangle of the converted bitmap. Exported as one side-by-side strip, which is what lets a single `HMMC` upload every software-sprite frame.
+
+Deleting or reordering tiles renumbers blocks and flags through the same Spec 10 remap seam maps use (`reorderTiles`/`removeTile` → `TilesReorderEvent`).
+
+### Export: tables, constants, ready-made C
+
+`resourceTables()` emits data; `resourceConstants()` emits `#define`s locating each group in it (`..._BASE/_W/_H`, `..._BASE/_PLANES/_FRAMES`); `resourceCode()` emits working C, gated on `ExportBlock.helpers` (a checkbox per editor, off by default) because it calls MSXgl and a data-only header must not. The emitted C calls **MSXgl's own API, never a reimplementation** — `VDP_SetSpriteExMultiColor`/`VDP_SetSpriteSM1`, `VDP_WriteLayout_GM2`, `VDP_CommandHMMC`/`HMMM`/`LMMM`. The one exception is software sprites: MSXgl ships no module for them, only the `s_swsprt` sample, so `screenHelperC` generalises that sample's save/restore/blit cycle.
+
+Emitted C is not verified by compiling it in your head. Build a scratch project from `~/MSXgl/projects/template{,_msx2}` **outside `/tmp`** (MSXgl renames `.rel` files across directories and `rename(2)` will not cross filesystems), then boot the ROM:
+`OPENMSX_SYSTEM_DATA=<openmsx>/share <openmsx>/bin/openmsx -machine C-BIOS_MSX2_EU -cart <rom> -script <tcl>` with `after time 12 { screenshot -raw <png>; exit }` — C-BIOS needs ~10s before the cartridge runs.
 
 ### The build pipeline (the core of the app)
 

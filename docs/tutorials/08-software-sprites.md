@@ -413,14 +413,34 @@ layout entirely. There's no export path from the Tile editor to the format
 `Tile_LoadBank` needs, you'd have to build or convert that cell data
 yourself, the way the engine's own sample content does.
 
-Software sprites have a narrower gap. MSXStudio's Screen editor exports a
-full-screen bitmap in the packed native pixel format for SCREEN 5-8, which
-is exactly what `VDP_CommandHMMM`/`VDP_CommandLMMM` read and write. You
-could draw your sprite frames side by side inside a Screen-editor canvas,
-`VDP_WriteVRAM` that strip into an offscreen VRAM area once at startup, and
-blit from it with the same commands `DisplaySprite()` uses above , 
-skipping `VDP_CommandLMMC` and the unpack step entirely. `s_swsprt.c` uses
-`LMMC` only because its source art ships as a plain C array rather than a
-full packed screen image. Neither the Screen nor the Sprite editor produces
-the one-byte-per-pixel form `LMMC` itself needs, so if you go that route,
-plan to write your own unpack loop like the sample does.
+Software sprites have no gap at all: MSXStudio does the whole of the above
+for you. Cut your frames out of a converted image as **fragments** (the ⛶
+tool in the Screen editor), and the export lays them side by side into one
+`_Strip` in the packed native format for the mode — exactly what
+`VDP_CommandHMMC` uploads and `VDP_CommandLMMM` blits. Tick **Export
+ready-made C** and the header also carries the runtime this page has been
+building by hand:
+
+```c
+g_Actors_Upload(212);              // strip parked below the visible lines
+g_Actors_SwSprite hero = { 0 };    // slot 0 — one backup column per object
+// every frame:
+g_Actors_Restore(&hero, 212);
+g_Actors_Draw(&hero, G_ACTORS_HERO_IDLE, x, y, 212);
+```
+
+It is `s_swsprt.c`'s cycle — restore the old background, save the new one,
+blit the frame with `VDP_OP_TIMP` — generalised past the one thing the
+sample never had to face: more than one object. Each gets its own backup
+column (`slot`), and when objects can overlap you restore them all in
+reverse draw order before drawing them all in order, or one restore rubs out
+what was drawn over it.
+
+Two things it deliberately does not do. `VDP_CommandLMMC` wants
+one-byte-per-pixel source data, which neither editor produces, so the
+generated code stages the frames in VRAM and blits with `LMMM` instead —
+faster anyway, and pixel-exact in X. And it is MSX2-only, because the
+command engine is: for pixel-precise software sprites on an MSX1 you are
+back to CPU blits into the pattern table, which nothing here generates.
+Tile-aligned MSX1 animation is a different and much cheaper trick — see the
+pattern-table note in [tutorial 3](03-tiles-and-maps.md).

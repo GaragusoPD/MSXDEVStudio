@@ -228,3 +228,25 @@ including multi-layer maps and MSX2 palettes.
 - Load the tileset before writing the layout table (or before enabling
   display), or the screen will briefly show the map through the wrong
   patterns.
+
+## Two things MSXStudio adds
+
+**Designs bigger than one tile.** A door or a tree is several tiles, and
+assembling it mentally from 8x8 cells is the tedious part of tile art. The tile
+editor lets you name a **block** and draw it on one canvas; it is stored as the
+tiles it is made of, so nothing about the hardware changes. On export you get a
+`_Blocks` table of tile indices plus `..._BASE/_W/_H` defines, and — with
+**Export ready-made C** ticked — a `_DrawBlock()` that stamps one into the name
+table through MSXgl's `VDP_WriteLayout_GM2`. See the [resources
+guide](../resources.md).
+
+**Animate the pattern, not the map.** To make every coin in a level spin, you
+have two options: change which tile each cell points at, or change what that
+tile *looks like*. Prefer the second. `VDP_LoadPattern_GM2(src, 1, tile)` writes
+eight bytes into all three SCREEN 2 banks — 24 bytes, once — and every cell
+using that tile animates, including the ones scrolled off screen. Re-pointing
+cells costs a name-table write per copy per step and leaves the off-screen ones
+behind. The catch is that it is all-or-nothing: every use of that tile animates,
+so anything that must hold still needs its own tile. The
+[demo game](../../demo_project/) spins its coins this way, keeping the four
+poses as a 4x1 block.

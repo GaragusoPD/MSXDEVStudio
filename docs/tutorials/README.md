@@ -13,12 +13,12 @@ memory.
 |---|---|---|---|
 | 1 | [Hello world](01-hello-world.md) | Program entry point, screen modes, printing, the main loop | MSX1 and up |
 | 2 | [Printing text](02-printing-text.md) | The Print module: fonts, positioning, numbers, colors | MSX1 and up |
-| 3 | [Tiles and maps](03-tiles-and-maps.md) | Pattern modes, the three VDP tables, loading a tileset, drawing a map | MSX1 and up |
-| 4 | [Sprites on MSX1](04-sprites-mode1.md) | Sprite mode 1, patterns, placement, the 4-per-line limit | MSX1 and up |
+| 3 | [Tiles and maps](03-tiles-and-maps.md) | Pattern modes, the three VDP tables, loading a tileset, drawing a map, multi-tile blocks, animating a pattern | MSX1 and up |
+| 4 | [Sprites on MSX1](04-sprites-mode1.md) | Sprite mode 1, patterns, placement, the 4-per-line limit, superposition and metasprites | MSX1 and up |
 | 5 | [Sprites on MSX2](05-sprites-mode2.md) | Sprite mode 2, per-line colors, layering for multicolor characters | MSX2 and up |
 | 6 | [Scrolling](06-scrolling.md) | The scroll module, its compile-time configuration, maps bigger than one screen | MSX1 and up |
-| 7 | [Bitmap graphics](07-bitmap-graphics.md) | SCREEN 5 to 8, palettes, showing an image, the VDP command engine | MSX2 and up |
-| 8 | [Software sprites and tiles](08-software-sprites.md) | Drawing objects without the sprite hardware, and its CPU cost | MSX2 and up |
+| 7 | [Bitmap graphics](07-bitmap-graphics.md) | SCREEN 5 to 8, palettes, showing an image, the VDP command engine, cutting fragments | MSX2 and up |
+| 8 | [Software sprites and tiles](08-software-sprites.md) | Drawing objects without the sprite hardware, its CPU cost, and the runtime MSXStudio generates for it | MSX2 and up |
 
 ## Before you start
 

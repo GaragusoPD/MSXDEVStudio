@@ -37,12 +37,24 @@ shipped in 1983.
   library's own headers.
 - **Tile editor** for SCREEN 1, 2 and 4 pattern modes, with per-row and
   per-group colors, and PNG import that converts an image into a tileset.
+  Designs bigger than one tile — a door, a tree, a boss face — are drawn on
+  **one canvas** as a named block, not as loose 8x8 cells you assemble in your
+  head.
 - **Sprite editor** for sprite modes 1 and 2, 8x8 and 16x16, with per-line
-  colors and up to four stacked layers for multicolor characters.
+  colors, up to four stacked layers for multicolor characters, and
+  **metasprites**: a character can span a grid of hardware sprites, so a 32x32
+  Metal Gear-style hero moves as one. Each character shows what it spends of
+  the VDP's 4 or 8 sprites per scanline.
 - **Map editor** with a tile picker, multi-tile stamps, flood fill, layers,
   collision flags, and a screen-size overlay for designing scrolling worlds.
 - **Screen editor** for the MSX2 bitmap modes, converting a PNG into SCREEN 5
-  to 8 data with an editable palette and pencil-and-fill retouching.
+  to 8 data with an editable palette and pencil-and-fill retouching. Drag a
+  rectangle to cut a named **fragment** — a bitmap-mode block, and the frame of
+  a software sprite.
+- **Ready-made C, on request.** Tick a box and the exported header carries
+  working code for what you drew: one call places a whole metasprite, stamps a
+  block into the name table, or runs a software sprite — background save,
+  restore and blit — so you are not writing VDP plumbing by hand.
 - **Sound effect editor** producing ayFX banks, with per-frame tone, noise and
   volume lanes, presets, and import of `.afx` / `.afb` files.
 - **Build and run** with one keystroke: incremental compilation, compiler
@@ -135,9 +147,13 @@ the fastest way to see what the editors actually produce. Open its
 
 Collect eight coins across a two-screen scrolling level, then reach the door.
 Every graphic and sound in it came from a resource editor: a SCREEN 2 tileset,
-a six-frame sprite, a 64x24 map and an ayFX bank. It builds to about 13 KB of a
-32 KB ROM, and its [README](demo_project/README.md) explains how each piece is
-loaded, along with a few MSX gotchas worth knowing before you hit them yourself.
+a six-pose sprite, a 64x24 map and an ayFX bank. The coins spin without the map
+being touched, the player is two superposed hardware sprites so it can have two
+colours on an MSX1, and the doorway opens when the last coin is taken — the
+three techniques the editors' generated C exists for. It builds to about 14 KB
+of a 32 KB ROM, and its [README](demo_project/README.md) explains how each piece
+is loaded, along with a few MSX gotchas worth knowing before you hit them
+yourself.
 
 It is also the worked example of the attribution this project's
 [license](#license) asks for: the credit appears on the title screen and again
@@ -145,8 +161,9 @@ on a credits screen at the end.
 
 ## Documentation
 
-- **[Resources guide](docs/resources.md)** — the five asset editors, how
-  exporting works, and how to use the generated tables from C.
+- **[Resources guide](docs/resources.md)** — the five asset editors, blocks,
+  metasprites and fragments, how exporting works, and how to use the generated
+  tables and ready-made C from your game.
 - **[Tutorials](docs/tutorials/)** — eight walkthroughs of the MSXgl graphics
   samples: hello world, printing text, tiles and maps, sprites on MSX1 and
   MSX2, scrolling, bitmap modes, and software sprites. Each one ends with a

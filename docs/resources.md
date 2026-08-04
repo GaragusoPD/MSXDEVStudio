@@ -21,10 +21,18 @@ it later — or open the file from the Explorer.
 ## The editors
 
 **Tiles** — draw with pencil, line, rectangle and fill. Shift, mirror and
-rotate the current tile. Colors depend on the mode: SCREEN 2/4 give you two
-colors per 8-pixel row, SCREEN 1 gives one pair per group of 8 tiles. SCREEN 4
-adds an editable 16-colour palette. **Import image…** converts a PNG into a
+rotate the current tile; `+tile` and `−tile` grow and shrink the bank.
+Colors depend on the mode: SCREEN 2/4 give you two colors per 8-pixel row,
+SCREEN 1 gives one pair per group of 8 tiles. SCREEN 4 adds an editable
+16-colour palette. The **Mode** dropdown converts between them, warning first
+when the target can't hold what you have — going to SCREEN 1 keeps one pair
+per group of eight and drops the rest. **Import image…** converts a PNG into a
 whole tileset.
+
+Deleting or dragging a tile renumbers the ones after it, and MSXStudio rewrites
+every map drawn with the tileset to match — open ones immediately, closed ones
+when you next open them. The tile's flags and any block using it follow too, so
+re-arranging a tileset never quietly changes what a level means.
 
 **Tile flags** — eight numbered squares in the tile editor, in the manner of
 PICO-8's sprite flags. They say what a tile *means* to your game rather than how

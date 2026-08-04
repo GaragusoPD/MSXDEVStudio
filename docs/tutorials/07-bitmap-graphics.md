@@ -287,3 +287,16 @@ Project Settings, paste this into `main.c`, and press Run.
 - All of this is guarded by `MSX_VERSION >= MSX_2` in `vdp.h`, so it compiles
   out entirely on an MSX1 target. Set **Machine** to MSX2 or higher in
   Project Settings.
+
+## Cutting pieces out of a converted image
+
+Bitmap modes have no name table, so there is no "tile" to place — a piece of art
+is just a rectangle of pixels stamped wherever you want it. MSXStudio's screen
+editor makes those explicit: pick the ⛶ tool, drag a rectangle, and you have a
+named **fragment**. Fragments hold no pixels of their own, only the rectangle,
+so retouching the image updates every fragment over it.
+
+On export they are laid side by side into one `_Strip` image with a `_Rects`
+table describing each one — the layout MSXgl's own `s_swsprt` sample uses,
+because a single `VDP_CommandHMMC` then uploads all of them into off-screen
+VRAM. That is exactly what the next tutorial needs.
