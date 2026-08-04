@@ -10,6 +10,9 @@
 - [ ] **WebMSX**: switch the run target, confirm the ROM boots in the browser.
 - [ ] **Editors visual pass**: tile conflict popover, sprite OR-color preview + animation,
       map stamps + flags painting, screen import/retouch, git panel flow.
+- [ ] **Metasprites (dev14)**: set a character to 2×2 in the sprite panel, paint each
+      cell, check the canvas outline follows the selected cell and that the list,
+      filmstrip and playback preview all show the whole character.
 - [ ] **SFX audition**: play the 5 presets (laser/jump/explosion/pickup/hit) — do they
       sound right? 50 Hz playback smooth?
 - [ ] Try-it on a few samples (`s_scroll`, `s_arkos`) from the Examples panel.
@@ -53,22 +56,25 @@ Listed in build order, which is not the order they were asked for: the multi-spr
 character shape constrains superposition, so it is designed first, and the software
 sprite blitters are what the bitmap-mode work stands on.
 
-- [ ] **1. Multi-sprite characters (Metal Gear style).** A character built from a grid
+- [x] **1. Multi-sprite characters (Metal Gear style).** A character built from a grid
       of hardware sprites, side by side as well as stacked — 16x32 or 32x32 from two or
-      four 16x16 sprites, each of which may itself be layered per the next item. Needs a
-      "metasprite" concept above the current flat sprite list: cell offsets, a combined
-      canvas in the editor, and emitted code that places the whole group from one
-      coordinate. First because it is the item that most changes the sprite document
-      shape — built after superposition, it would mean undoing a one-sprite-per-
-      character assumption.
+      four 16x16 sprites, each of which may itself be layered per the next item.
+      *Done (dev14):* `SpriteCharacter` carries a `cols`/`rows` grid and every
+      `SpriteLayer` its `cx`/`cy` cell, so the composite, canvas, thumbnails and
+      filmstrip all work in character space; `MAX_LAYERS` is now the stack per cell.
+      Export adds a `_Layout` table (dx, dy per plane) plus per-character
+      `BASE`/`PLANES`/`FRAMES` defines, and an opt-in `_SetMeta()` places the whole
+      group from one coordinate. **Still to check by hand: the editor UI in the app.**
 - [ ] **2. Superposition of sprites.** Stack several hardware sprites on the same
       coordinates to get a multi-color character. This is the only way to do it in
-      sprite mode 1 (MSX1), where a sprite is a single color. Needs: the layer stack
-      emitted as N sprite planes rather than one composite (`emitC.ts`), a plane→color
-      assignment in the editor, and a runtime helper that writes N attribute entries
-      from one x/y. Watch the 4-sprites-per-scanline limit — a 3-layer character costs
-      3 of the 4, and a metasprite from item 1 multiplies that, so the editor should
-      warn.
+      sprite mode 1 (MSX1), where a sprite is a single color. Item 1 already emits the
+      planes and ships the runtime that writes N attribute entries from one x/y — what
+      is left is the editor side: a plane→color assignment, and widening the `_Layout`
+      table + helper to characters that stack planes without spanning cells (today
+      both are emitted only when a character is a metasprite). Watch the
+      4-sprites-per-scanline limit — a 3-layer character costs 3 of the 4, and a
+      metasprite multiplies that, so the editor should warn (the hint already counts
+      the busiest cell row).
 - [ ] **3. Software sprites and animation.** Characters drawn into the screen surface
       instead of the sprite attribute table, so there is no per-scanline limit. Needs
       background save/restore per object, a draw order, and dirty-rect redraw. On MSX2
