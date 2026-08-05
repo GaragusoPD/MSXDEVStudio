@@ -21,9 +21,6 @@
 #define G_MIST_PALETTE_SIZE 32
 extern const unsigned char g_Mist_Palette[];
 
-#define G_MIST_DATA_SIZE 960
-extern const unsigned char g_Mist_Data[];
-
 #define G_MIST_STRIP_SIZE 960
 extern const unsigned char g_Mist_Strip[];
 

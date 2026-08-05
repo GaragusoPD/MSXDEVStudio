@@ -184,13 +184,20 @@ function pascal(name: string): string {
   )
 }
 
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 /**
  * The tables one resource exports, in MSXgl's expected order.
  *
  * - tiles → `_Patterns`, `_Colors` (+ `_Palette` on sc4)
  * - sprites → `_Patterns`, `_Colors` (+ `_Palette` in mode 2)
  * - map → one table per layer, named after the layer (RLEp-packed when asked)
- * - screen → `_Palette` (when the mode has one) then the packed bitmap
+ * - screen → `_Palette` (when the mode has one), the bitmap, then `_Strip` and
+ *   `_Rects` for its fragments — minus the bitmap when the fragments *are* it
  */
 export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['compress']): EmitTable[] {
   switch (resource.kind) {
@@ -278,19 +285,42 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       }
       const picture = screenDataExport(doc, compress)
       const geometry = picture.geometry
-      tables.push({
-        // A compressed picture always takes `_Data`, because `_Bands` sits next
-        // to it and a bare `g_Title` reading as "the packed one" helps nobody.
-        suffix: tables.length || geometry ? '_Data' : '',
-        bytes: picture.bytes,
-        unpacked: picture.unpacked,
-        perLine: geometry ? 16 : undefined,
-        comment: geometry
-          ? `${MODES[doc.mode].label} bitmap ${pixels.width}×${pixels.height} — RLEp in ${geometry.count} bands of ` +
-            `${geometry.rows} lines, ${picture.unpacked} → ${picture.bytes.length} bytes. Unpack a band at a time ` +
-            'with MSXgl\'s RLEp_UnpackToRAM.'
-          : `${MODES[doc.mode].label} bitmap ${pixels.width}×${pixels.height}`
-      })
+      const stripBytes = doc.fragments.length ? fragmentStripBytes(doc) : null
+
+      // A sheet whose fragments tile the whole picture — a HUD strip, the frames
+      // of a software sprite — otherwise emits those pixels twice: once as the
+      // picture, once as the strip. Nothing reads the picture in that case, so
+      // it goes. `_Strip` is what `_Upload` uploads and what `_Rects` indexes,
+      // and it is the one the helpers name.
+      //
+      // This is worth real ROM rather than a few bytes. In MSXStudio's own
+      // MSX2 demo the boss, HUD and mist sheets carried five kilobytes of exact
+      // duplicate between them, inside the 32 KB the code shares — enough, in
+      // the end, to push live functions into the ROM-paging window and hang the
+      // machine.
+      //
+      // Byte equality is the test, not "do the fragments cover the image": it is
+      // the thing that actually matters, and it cannot be fooled by fragments
+      // that tile the picture in a different order from the strip.
+      const pictureIsStrip = stripBytes !== null && !geometry && sameBytes(stripBytes, picture.bytes)
+
+      // A packed picture is never the strip, and always keeps `_Data`: `_Bands`
+      // indexes it and `_Unpack` reads it by that name.
+      if (!pictureIsStrip) {
+        tables.push({
+          // A compressed picture always takes `_Data`, because `_Bands` sits next
+          // to it and a bare `g_Title` reading as "the packed one" helps nobody.
+          suffix: tables.length || geometry ? '_Data' : '',
+          bytes: picture.bytes,
+          unpacked: picture.unpacked,
+          perLine: geometry ? 16 : undefined,
+          comment: geometry
+            ? `${MODES[doc.mode].label} bitmap ${pixels.width}×${pixels.height} — RLEp in ${geometry.count} bands of ` +
+              `${geometry.rows} lines, ${picture.unpacked} → ${picture.bytes.length} bytes. Unpack a band at a time ` +
+              'with MSXgl\'s RLEp_UnpackToRAM.'
+            : `${MODES[doc.mode].label} bitmap ${pixels.width}×${pixels.height}`
+        })
+      }
       if (picture.offsets && geometry) {
         tables.push({
           suffix: '_Bands',
@@ -299,11 +329,11 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
           comment: `Where each band starts in _Data — u16 little-endian, ${geometry.count} of them`
         })
       }
-      if (doc.fragments.length) {
+      if (stripBytes) {
         const strip = fragmentStrip(doc)
         tables.push({
           suffix: '_Strip',
-          bytes: fragmentStripBytes(doc),
+          bytes: stripBytes,
           comment: `Fragments as one ${strip.width}×${strip.height} image: ${doc.fragments
             .map((fragment) => `${fragment.name} ${fragment.width}×${fragment.height}`)
             .join(', ')}`

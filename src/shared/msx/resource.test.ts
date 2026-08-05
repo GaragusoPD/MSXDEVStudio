@@ -413,6 +413,36 @@ describe('screen resource', () => {
     expect(tables[1].bytes[1]).toBe(0x23)
   })
 
+  it('drops the picture when the fragments tile it — the strip is the same pixels', () => {
+    const sheet = normalizeScreen({
+      ...doc,
+      fragments: [
+        { name: 'left', x: 0, y: 0, width: 2, height: 4 },
+        { name: 'right', x: 2, y: 0, width: 2, height: 4 }
+      ]
+    })
+    const tables = resourceTables({ kind: 'screen', doc: sheet })
+    expect(tables.map((table) => table.suffix)).toEqual(['_Palette', '_Strip', '_Rects'])
+    // …and what is left really is the picture, not a re-ordering of it.
+    expect([...tables[1].bytes]).toEqual([...resourceTables({ kind: 'screen', doc })[1].bytes])
+  })
+
+  it('keeps the picture when the fragments are only cut-outs of it', () => {
+    const sheet = normalizeScreen({ ...doc, fragments: [{ name: 'corner', x: 0, y: 0, width: 2, height: 2 }] })
+    const tables = resourceTables({ kind: 'screen', doc: sheet })
+    expect(tables.map((table) => table.suffix)).toEqual(['_Palette', '_Data', '_Strip', '_Rects'])
+  })
+
+  it('keeps the picture when it is packed, because _Bands indexes it', () => {
+    const flat = normalizeScreen({
+      mode: 'sc5',
+      source: './flat.png',
+      converted: { width: 64, height: 8, palette: null, indices: encodeIndices(new Uint8Array(64 * 8)) },
+      fragments: [{ name: 'all', x: 0, y: 0, width: 64, height: 8 }]
+    })
+    expect(resourceTables({ kind: 'screen', doc: flat }, 'rlep').map((t) => t.suffix)).toContain('_Data')
+  })
+
   it('packs sc6 at four pixels per byte and sc8 at one', () => {
     expect([...packBitmap(Uint8Array.from([3, 2, 1, 0]), 4, 1, 'sc6')]).toEqual([0xe4])
     expect([...packBitmap(Uint8Array.from([200, 5]), 2, 1, 'sc8')]).toEqual([200, 5])

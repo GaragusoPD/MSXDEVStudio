@@ -26,9 +26,6 @@
 #define G_HUD_PALETTE_SIZE 32
 extern const unsigned char g_Hud_Palette[];
 
-#define G_HUD_DATA_SIZE 1792
-extern const unsigned char g_Hud_Data[];
-
 #define G_HUD_STRIP_SIZE 1792
 extern const unsigned char g_Hud_Strip[];
 
