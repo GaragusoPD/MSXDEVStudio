@@ -2,11 +2,13 @@ import { registerEditor } from './registry'
 import { registerMsxglCompletions } from './msxgl-completions'
 import { setupMonacoEnvironment } from './monaco-setup'
 import { useProjectStore } from '../stores/projectStore'
+import * as btiles from './btiles/session'
 import * as map from './map/session'
 import * as screen from './screen/session'
 import * as sfx from './sfx/session'
 import * as sprite from './sprite/session'
 import * as tile from './tile/session'
+import BitmapTileEditorTab from './btiles/BitmapTileEditorTab.vue'
 import ExampleViewerTab from './ExampleViewerTab.vue'
 import GitDiffTab from './GitDiffTab.vue'
 import MapEditorTab from './map/MapEditorTab.vue'
@@ -59,6 +61,17 @@ registerEditor({
   save: (path) => tile.saveSession(tile.tileSession(path)),
   undo: (path) => tile.undo(tile.tileSession(path)),
   redo: (path) => tile.redo(tile.tileSession(path))
+})
+
+// The bitmap-mode tileset: same role as `*.tiles.json` in a pattern mode, and
+// registered the same way. `file-kind.ts` lists `btiles.json` before
+// `tiles.json` so the longer suffix wins the match.
+registerEditor({
+  extensions: ['btiles.json'],
+  component: BitmapTileEditorTab,
+  save: (path) => btiles.saveSession(btiles.bitmapTileSession(path)),
+  undo: (path) => btiles.undo(btiles.bitmapTileSession(path)),
+  redo: (path) => btiles.redo(btiles.bitmapTileSession(path))
 })
 
 // Spec 09: same compound-extension trick, for `*.sprites.json`.

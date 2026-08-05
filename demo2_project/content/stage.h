@@ -3,7 +3,7 @@
 //
 // Generation parameters:
 //  - Source: res/stage.map.json
-//  - Tileset: res/canyon.screen.json
+//  - Tileset: res/canyon.btiles.json
 //  - Size: 16×160
 //  - Layers: terrain
 //  - Cell: 16×16 dots, atlas 16 cells per row (bitmap mode — cells are copied, not indexed)

@@ -18,6 +18,8 @@
 #include "canyon.h"
 
 u8 g_Palette[32];
+/** One byte per atlas tile, read out of the tileset blob at boot. See canyon.h. */
+u8 g_TileFlags[ATLAS_TILES];
 u8 g_VBlank;
 u8 g_Frame;
 GameState g_State;

@@ -186,17 +186,26 @@
 #define VEIN_FIRST 8
 #define VEIN_COUNT 3
 
-// ── the atlas, by name ──────────────────────────────────────────────────────
+// ── what a cell *means* ─────────────────────────────────────────────────────
 //
-// Cell numbers, matching the order in datasrc/make-art.mjs. Only the ranges the
-// game actually asks questions about are named.
+// One byte per tile, carried by the tileset itself (`res/canyon.btiles.json`,
+// bit 0 solid, bit 1 pit) and exported at the tail of the atlas blob.
+//
+// This used to be a range check — cells 16 to 31 were the walls, because that
+// is where they happened to sit in the atlas. It worked, and it made the atlas
+// *order* load-bearing: every tile added in the middle renumbered the map, and
+// a tile could not be made solid without moving it into the range. A flag byte
+// says what a tile is rather than where it is, so the atlas can be rearranged
+// freely and a new wall is a checkbox in the tile editor.
 
-#define CELL_WALL_FIRST 16
-#define CELL_WALL_LAST 31
-#define CELL_PIT_FIRST 32
-#define CELL_PIT_LAST 40
+#define TILE_SOLID 0x01
+#define TILE_PIT 0x02
+/** How many tiles the atlas holds; the flag table is one byte each. */
+#define ATLAS_TILES 48
 
-#define IsWall(cell) ((cell) >= CELL_WALL_FIRST && (cell) <= CELL_WALL_LAST)
+extern u8 g_TileFlags[ATLAS_TILES];
+
+#define IsWall(cell) (g_TileFlags[cell] & TILE_SOLID)
 
 // ── state ───────────────────────────────────────────────────────────────────
 

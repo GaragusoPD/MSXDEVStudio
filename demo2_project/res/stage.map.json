@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "tileset": "res/canyon.screen.json",
+  "tileset": "res/canyon.btiles.json",
   "width": 16,
   "height": 160,
   "cell": {

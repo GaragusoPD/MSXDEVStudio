@@ -274,6 +274,15 @@ export function sliceImage(
 
 // ── editing the bank ────────────────────────────────────────────────────────
 
+/** Appends a blank tile. The bank grows at the end, so nothing renumbers. */
+export function addBitmapTile(doc: BitmapTilesDoc): BitmapTilesDoc {
+  if (doc.count >= MAX_BITMAP_TILES) return doc
+  const per = doc.width * doc.height
+  const pixels = new Uint8Array((doc.count + 1) * per)
+  pixels.set(tilePixels(doc))
+  return { ...doc, count: doc.count + 1, pixels: encodeIndices(pixels), flags: [...doc.flags, 0] }
+}
+
 /**
  * Removes a tile, and takes the flags and blocks with it — the same remap seam
  * `tile.ts` uses, for the same reason: an index that moved and a reference that

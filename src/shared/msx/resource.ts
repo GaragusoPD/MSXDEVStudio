@@ -250,18 +250,19 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
     case 'btiles': {
       const { doc } = resource
       const sheet = sheetPixels(doc)
-      const tables: EmitTable[] = [
-        {
-          suffix: '_Tiles',
-          bytes: bitmapTileBytes(doc),
-          comment:
-            `${doc.count} tiles of ${doc.width}×${doc.height}, as one ${sheet.width}×${sheet.height} sheet ` +
-            `${sheetCols(doc)} across — upload it whole, then blit a tile at a time`
-        }
-      ]
+      // Palette first, exactly as a screen emits it: a `bin` export is read by
+      // offset, and every blob in a project should start the same way.
+      const tables: EmitTable[] = []
       if (doc.palette) {
         tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
       }
+      tables.push({
+        suffix: '_Tiles',
+        bytes: bitmapTileBytes(doc),
+        comment:
+          `${doc.count} tiles of ${doc.width}×${doc.height}, as one ${sheet.width}×${sheet.height} sheet ` +
+          `${sheetCols(doc)} across — upload it whole, then blit a tile at a time`
+      })
       // Same rule as pattern tiles: only worth the ROM once a tile carries a bit.
       if (doc.flags.some((value) => value !== 0)) {
         tables.push({

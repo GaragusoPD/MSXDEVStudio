@@ -88,6 +88,14 @@ void Screens_LoadArt(void)
 	VDP_CommandHMMC(blob + 32, 0, ATLAS_Y, VIEW_W, 48);
 	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
 
+	// The tile flags ride at the tail of the same blob — 48 bytes, copied into
+	// RAM once so a collision test is an array read rather than a page-in.
+	SET_BANK_SEGMENT(BANK_WINDOW, ATLAS_BIN_SEG);
+	const u8* flags = BANK_ADDR + ATLAS_BIN_REL + 32 + (ATLAS_TILES * CELL * CELL / 2);
+	for(u8 i = 0; i < ATLAS_TILES; ++i)
+		g_TileFlags[i] = flags[i];
+	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
+
 	LoadSheet(BLOB_SEG(BOSS_BIN_ABS), BLOB_REL(BOSS_BIN_ABS), BOSS_Y, BOSS_W * BOSS_FRAMES, BOSS_H);
 	LoadSheet(BLOB_SEG(ENDINGS_BIN_ABS), BLOB_REL(ENDINGS_BIN_ABS), ENDINGS_Y, MSG_W * 2, MSG_H);
 }

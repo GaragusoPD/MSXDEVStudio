@@ -158,7 +158,7 @@ describe('bitmap tileset', () => {
 
   it('exports the sheet, and flags only once a tile carries one', () => {
     const doc = createBitmapTilesDoc('sc5', 16, 16, 4)
-    expect(resourceTables({ kind: 'btiles', doc }).map((t) => t.suffix)).toEqual(['_Tiles', '_Palette'])
+    expect(resourceTables({ kind: 'btiles', doc }).map((t) => t.suffix)).toEqual(['_Palette', '_Tiles'])
     const flagged = { ...doc, flags: [0, 1, 0, 0] }
     expect(resourceTables({ kind: 'btiles', doc: flagged }).map((t) => t.suffix)).toContain('_Flags')
   })
