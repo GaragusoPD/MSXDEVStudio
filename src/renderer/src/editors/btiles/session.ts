@@ -66,6 +66,12 @@ export interface BitmapTileSession {
   filled: boolean
   status: string
 
+  /**
+   * A rectangle of the bank grid, in tiles — what "block from selection" names.
+   * Null when only one tile is picked, which is the ordinary case.
+   */
+  selection: { start: number; width: number; height: number } | null
+
   /** The doc a drag is writing into; `doc()` prefers it over `history.present`. */
   preview: BitmapTilesDoc | null
   /** Where the current drag started, in tile pixels. */
@@ -89,6 +95,7 @@ export function bitmapTileSession(path: string): BitmapTileSession {
     zoom: 12,
     filled: false,
     status: '',
+    selection: null,
     preview: null,
     dragFrom: null
   })
@@ -219,6 +226,18 @@ export function moveTile(session: BitmapTileSession, from: number, to: number): 
   session.selected = Math.max(0, Math.min(next.count - 1, to))
 }
 
+/** The grid marquee. Goes through the session like every other bit of tab state. */
+export function setSelection(
+  session: BitmapTileSession,
+  selection: { start: number; width: number; height: number } | null
+): void {
+  session.selection = selection
+}
+
+export function selectTile(session: BitmapTileSession, index: number): void {
+  session.selected = index
+}
+
 export function setFlagBit(session: BitmapTileSession, bit: number, on: boolean): void {
   commit(session, setBitmapTileFlagBit(doc(session), session.selected, bit, on))
 }
@@ -237,15 +256,23 @@ export function addBlock(session: BitmapTileSession, name: string, width: number
   commit(session, createBitmapBlock(doc(session), name, width, height))
 }
 
-export function addBlockFromGrid(
-  session: BitmapTileSession,
-  name: string,
-  cols: number,
-  start: number,
-  width: number,
-  height: number
-): void {
-  commit(session, blockFromSelection(doc(session), name, cols, start, width, height))
+/**
+ * Names the grid marquee and keeps it — the way a block is actually made.
+ *
+ * Auto-named rather than asking for a name first, exactly as the pattern tile
+ * editor does: the useful moment is while the rectangle is selected, and a name
+ * typed before the thing exists is a name typed twice. Rename it in the list.
+ */
+export function addBlockFromGrid(session: BitmapTileSession, cols: number): void {
+  const selection = session.selection
+  if (!selection) {
+    session.status = 'Drag across the bank to select tiles first.'
+    return
+  }
+  const current = doc(session)
+  const name = `block_${current.blocks.length}`
+  commit(session, blockFromSelection(current, name, cols, selection.start, selection.width, selection.height))
+  session.status = `Kept ${selection.width}×${selection.height} as ${name}`
 }
 
 export function dropBlock(session: BitmapTileSession, index: number): void {

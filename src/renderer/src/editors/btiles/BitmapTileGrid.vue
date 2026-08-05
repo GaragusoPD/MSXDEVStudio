@@ -10,10 +10,51 @@
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { sheetCols, sheetPixels } from '../../../../shared/msx/bitmap-tile'
-import { doc, type BitmapTileSession } from './session'
+import { doc, setSelection, type BitmapTileSession } from './session'
 
 const props = defineProps<{ session: BitmapTileSession }>()
 const emit = defineEmits<{ select: [index: number] }>()
+
+/** Grid coordinates under the pointer, clamped to the bank. */
+function cellAt(event: PointerEvent): { col: number; row: number; index: number } | null {
+  const box = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
+  const col = Math.floor((event.clientX - box.left) / (tileset.value.width * scale.value))
+  const row = Math.floor((event.clientY - box.top) / (tileset.value.height * scale.value))
+  if (col < 0 || row < 0 || col >= cols.value) return null
+  const index = row * cols.value + col
+  return index < tileset.value.count ? { col, row, index } : null
+}
+
+let anchor: { col: number; row: number } | null = null
+
+function down(event: PointerEvent): void {
+  const cell = cellAt(event)
+  if (!cell) return
+  ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
+  anchor = { col: cell.col, row: cell.row }
+  setSelection(props.session, null)
+  emit('select', cell.index)
+}
+
+/**
+ * Dragging marks a rectangle of the bank. It is the same idea as the pattern
+ * tile editor's marquee: a block is almost always a group of tiles that are
+ * already next to each other, so selecting them is the whole authoring step.
+ */
+function move(event: PointerEvent): void {
+  if (!anchor) return
+  const cell = cellAt(event)
+  if (!cell) return
+  const col0 = Math.min(anchor.col, cell.col)
+  const row0 = Math.min(anchor.row, cell.row)
+  const width = Math.abs(cell.col - anchor.col) + 1
+  const height = Math.abs(cell.row - anchor.row) + 1
+  setSelection(props.session, width === 1 && height === 1 ? null : { start: row0 * cols.value + col0, width, height })
+}
+
+function up(): void {
+  anchor = null
+}
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const tileset = computed(() => doc(props.session))
@@ -25,14 +66,6 @@ const scale = computed(() => Math.max(1, step.value))
 const sheet = computed(() => sheetPixels(tileset.value))
 const width = computed(() => sheet.value.width * scale.value)
 const height = computed(() => sheet.value.height * scale.value)
-
-function click(event: MouseEvent): void {
-  const box = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
-  const x = Math.floor((event.clientX - box.left) / (tileset.value.width * scale.value))
-  const y = Math.floor((event.clientY - box.top) / (tileset.value.height * scale.value))
-  const index = y * cols.value + x
-  if (index >= 0 && index < tileset.value.count) emit('select', index)
-}
 
 watchEffect(() => {
   const element = canvas.value
@@ -72,6 +105,18 @@ watchEffect(() => {
   ctx.strokeStyle = '#4ea1ff'
   ctx.lineWidth = 2
   ctx.strokeRect((selected % cols.value) * cw + 1, Math.floor(selected / cols.value) * ch + 1, cw - 2, ch - 2)
+
+  const marquee = props.session.selection
+  if (marquee) {
+    ctx.strokeStyle = '#ffd24e'
+    ctx.lineWidth = 2
+    ctx.strokeRect(
+      (marquee.start % cols.value) * cw + 1,
+      Math.floor(marquee.start / cols.value) * ch + 1,
+      marquee.width * cw - 2,
+      marquee.height * ch - 2
+    )
+  }
 })
 </script>
 
@@ -83,7 +128,10 @@ watchEffect(() => {
       :width="width"
       :height="height"
       :style="{ width: `${width}px`, height: `${height}px` }"
-      @click="click"
+      @pointerdown="down"
+      @pointermove="move"
+      @pointerup="up"
+      @pointercancel="up"
     />
   </div>
 </template>
@@ -95,6 +143,7 @@ watchEffect(() => {
 }
 .grid {
   image-rendering: pixelated;
+  touch-action: none;
   background: #000;
   border: 1px solid var(--border, #333);
   cursor: pointer;

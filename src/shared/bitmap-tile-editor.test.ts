@@ -97,4 +97,15 @@ describe('bitmap tile editing', () => {
     const next = blockFromSelection(doc, 'edge', 16, 3, 2, 1)
     expect(next.blocks[0].tiles).toEqual([3, 0])
   })
+
+  it('names a marquee that runs past the end of a grid row', () => {
+    const doc = createBitmapTilesDoc('sc5', 16, 16, 48)
+    // 2×2 from tile 30 of a 16-wide grid: 30, 31, 46, 47 — the wrap is the grid's.
+    expect(blockFromSelection(doc, 'edge', 16, 30, 2, 2).blocks[0].tiles).toEqual([30, 31, 46, 47])
+  })
+
+  it('falls back to a default name when none is given', () => {
+    const doc = createBitmapTilesDoc('sc5', 8, 8, 4)
+    expect(createBitmapBlock(doc, '   ', 1, 1).blocks[0].name).toBe('block1')
+  })
 })

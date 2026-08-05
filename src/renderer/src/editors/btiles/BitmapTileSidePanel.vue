@@ -10,8 +10,10 @@
 import { computed, ref } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { MAX_TILE_SIZE } from '../../../../shared/msx/bitmap-tile'
+import { sheetCols } from '../../../../shared/msx/bitmap-tile'
 import {
   addBlock,
+  addBlockFromGrid,
   doc,
   dropBlock,
   renameBlock,
@@ -32,9 +34,20 @@ const flags = computed(() => tileset.value.flags[props.session.selected] ?? 0)
 
 const tileW = ref(0)
 const tileH = ref(0)
-const blockName = ref('')
 const blockW = ref(2)
 const blockH = ref(2)
+
+/** The marquee, described for the button that would keep it. */
+const marquee = computed(() => props.session.selection)
+
+function keepSelection(): void {
+  addBlockFromGrid(props.session, sheetCols(tileset.value))
+}
+
+/** Auto-named like the pattern tile editor's; rename it in the list above. */
+function newBlock(): void {
+  addBlock(props.session, `block_${tileset.value.blocks.length}`, blockW.value, blockH.value)
+}
 
 function applySize(): void {
   const w = tileW.value || tileset.value.width
@@ -140,7 +153,9 @@ function applySize(): void {
     <section>
       <h3>Blocks</h3>
       <p class="hint">
-        Named groups of tiles — a door, a tree. They own no pixels, only references.
+        Named groups of tiles — a door, a tree. They own no pixels, only
+        references. Drag across the bank to select a rectangle, then keep it;
+        rename it in the list.
       </p>
       <ul class="blocks">
         <li
@@ -160,11 +175,15 @@ function applySize(): void {
           </button>
         </li>
       </ul>
+      <button
+        class="wide"
+        :disabled="!marquee"
+        @click="keepSelection"
+      >
+        {{ marquee ? `Keep ${marquee.width}×${marquee.height} selection as a block` : 'Drag the bank to select tiles' }}
+      </button>
       <div class="row">
-        <input
-          v-model="blockName"
-          placeholder="name"
-        >
+        <span class="dim">empty</span>
         <input
           v-model.number="blockW"
           type="number"
@@ -178,7 +197,7 @@ function applySize(): void {
           min="1"
           max="16"
         >
-        <button @click="addBlock(session, blockName, blockW, blockH); blockName = ''">
+        <button @click="newBlock">
           Add
         </button>
       </div>
@@ -242,8 +261,12 @@ h3 {
   margin-top: 6px;
 }
 .row input {
+  flex: 1;
+  min-width: 3.5em;
+}
+.wide {
   width: 100%;
-  min-width: 0;
+  margin-top: 6px;
 }
 .blocks {
   list-style: none;
@@ -260,7 +283,7 @@ h3 {
 }
 .blocks input {
   flex: 1;
-  min-width: 0;
+  min-width: 4em;
 }
 .dim {
   opacity: 0.6;
