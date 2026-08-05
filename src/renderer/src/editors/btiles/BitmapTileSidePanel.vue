@@ -8,7 +8,7 @@
  * exported as a table indexed by tile so collision is a lookup.
  */
 import { computed, ref } from 'vue'
-import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
+import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex } from '../../../../shared/msx/palette'
 import { MAX_TILE_SIZE } from '../../../../shared/msx/bitmap-tile'
 import { sheetCols } from '../../../../shared/msx/bitmap-tile'
 import {
@@ -39,6 +39,11 @@ const tileW = ref(0)
 const tileH = ref(0)
 const blockW = ref(2)
 const blockH = ref(2)
+
+/** A picked colour, snapped to the V9938's 3 bits per channel. */
+function pickColor(index: number, hex: string): void {
+  setPaletteEntry(props.session, index, rgbToGrb(fromHex(hex)))
+}
 
 /** The marquee, described for the button that would keep it. */
 const marquee = computed(() => props.session.selection)
@@ -88,14 +93,13 @@ function applySize(): void {
       <label
         v-if="tileset.palette"
         class="row"
+        :title="`Entry ${session.color} — snapped to the V9938's three bits per channel`"
       >
         <span>Entry {{ session.color }}</span>
         <input
-          type="number"
-          min="0"
-          max="1911"
-          :value="tileset.palette[session.color] ?? 0"
-          @change="setPaletteEntry(session, session.color, Number(($event.target as HTMLInputElement).value))"
+          type="color"
+          :value="toHex(grbToRgb(tileset.palette[session.color] ?? 0))"
+          @input="pickColor(session.color, ($event.target as HTMLInputElement).value)"
         >
       </label>
     </section>

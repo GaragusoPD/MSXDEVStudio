@@ -21,6 +21,7 @@ import { normalizeMap, resizeMap, type MapCell, type MapDoc } from '../../../../
 import type { ScreenDoc } from '../../../../shared/msx/screen'
 import type { TilesDoc } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
+import type { TileBlock } from '../../../../shared/msx/tile'
 import { parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { screenPixels } from '../../../../shared/msx/screen'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
@@ -360,6 +361,11 @@ export function pickTile(session: MapSession, index: number, indices: number[], 
   session.brushBlock = null
 }
 
+/** The blocks of whichever tileset is loaded. Both kinds carry the same type. */
+export function tilesetBlocks(session: MapSession): TileBlock[] {
+  return (session.tileset ?? session.bitmapTileset)?.blocks ?? []
+}
+
 /**
  * Loads one of the tileset's named blocks as the brush. A `TileBlock` *is* a
  * `Stamp` — same width/height/tiles, deliberately — so the design the tile
@@ -368,7 +374,7 @@ export function pickTile(session: MapSession, index: number, indices: number[], 
  * a reload replaces it.
  */
 export function pickBlock(session: MapSession, index: number): void {
-  const block = session.tileset?.blocks[index]
+  const block = tilesetBlocks(session)[index]
   if (!block) return
   session.brush = { width: block.width, height: block.height, tiles: [...block.tiles] }
   session.pickerActive = block.tiles[0] ?? 0

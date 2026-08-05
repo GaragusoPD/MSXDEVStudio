@@ -11,7 +11,7 @@
 import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { singleStamp, stampFromMarquee } from '../../../../shared/map-editor'
 import { fitColumns } from '../../../../shared/tile-editor'
-import { pickBlock, pickTile, sheet, type MapSession } from './session'
+import { tilesetBlocks, pickBlock, pickTile, sheet, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
@@ -20,8 +20,12 @@ const scroller = ref<HTMLElement | null>(null)
 const hover = ref<number | null>(null)
 let dragAnchor: number | null = null
 
-/** The tileset's named blocks — a stamp bigger than one tile, picked the same way. An atlas has none. */
-const blocks = computed(() => props.session.tileset?.blocks ?? [])
+/**
+ * The tileset's named blocks — a stamp bigger than one tile, picked the same
+ * way. Either kind of tileset carries them; only a screen read as a grid has
+ * none, because its cells are anonymous.
+ */
+const blocks = computed(() => tilesetBlocks(props.session))
 
 const cells = computed(() => sheet(props.session))
 const cell = computed(() => props.session.pickerZoom)

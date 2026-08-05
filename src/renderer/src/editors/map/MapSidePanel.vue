@@ -7,7 +7,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
-import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
+import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
 import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setCell, setTileset, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
@@ -24,8 +24,14 @@ const heightInput = computed({ get: () => mapDoc.value.height, set: (v) => resiz
  * map: its converted image is read as a grid of cells and the game copies them
  * with the VDP rather than writing a name table (see `MapCell`).
  */
+/**
+ * Everything a map can draw with: a pattern tileset, a bitmap tileset, or a
+ * screen read as a grid — the older bitmap path, kept for maps that still point
+ * at one.
+ */
+const TILESET_KINDS: ResourceKind[] = ['tiles', 'btiles', 'screen']
 const tilesetOptions = computed(() =>
-  resourcesStore.entries.filter((entry) => entry.kind === 'tiles' || entry.kind === 'screen').map((entry) => entry.path)
+  resourcesStore.entries.filter((entry) => TILESET_KINDS.includes(entry.kind)).map((entry) => entry.path)
 )
 
 const cell = computed(() => mapDoc.value.cell)
