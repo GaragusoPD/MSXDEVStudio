@@ -200,8 +200,31 @@
 
 #define TILE_SOLID 0x01
 #define TILE_PIT 0x02
-/** How many tiles the atlas holds; the flag table is one byte each. */
-#define ATLAS_TILES 48
+
+/**
+ * The shape of `data/atlas.bin`, which the tileset editor decides and this has
+ * to agree with: palette, then the tile sheet padded to whole rows of sixteen,
+ * then one flag byte per tile, then the blocks table.
+ *
+ * The sheet is padded, so its size follows the *rows* rather than the tile
+ * count — a bank of 60 tiles still occupies four full rows of sixteen. Both are
+ * spelled out here and checked against the blob below, because getting them
+ * wrong reads the flags out of the middle of the artwork and says nothing.
+ */
+#define ATLAS_TILES 60
+#define ATLAS_ROWS 4
+#define ATLAS_COLS 16
+#define ATLAS_SHEET_BYTES (ATLAS_ROWS * ATLAS_COLS * CELL * CELL / 2)
+/** Where the flag table starts, once the sheet is behind it. */
+#define ATLAS_FLAGS_ABS (ATLAS_BIN_ABS + 32 + ATLAS_SHEET_BYTES)
+
+// The build tool sizes the blob from the file on disk before anything is
+// compiled, so this is an honest check rather than a guess: palette + sheet +
+// flags is the minimum, and the blocks table is the only slack above it.
+#if (ATLAS_BIN_SIZE < 32 + ATLAS_SHEET_BYTES + ATLAS_TILES) || \
+	(ATLAS_BIN_SIZE > 32 + ATLAS_SHEET_BYTES + ATLAS_TILES + 512)
+#error "ATLAS_TILES/ATLAS_ROWS do not match data/atlas.bin — open res/canyon.btiles.json, note its tile count, and update canyon.h."
+#endif
 
 extern u8 g_TileFlags[ATLAS_TILES];
 

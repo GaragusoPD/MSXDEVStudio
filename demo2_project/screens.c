@@ -53,11 +53,35 @@ static void DrawPicture(u8 seg, u8 lines)
 	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
 }
 
-/** One sheet out of its ROM segment and into VRAM, palette skipped. */
+/** One small sheet out of its ROM segment and into VRAM, palette skipped. */
 static void LoadSheet(u8 seg, u16 rel, UY y, u16 w, u8 h)
 {
 	SET_BANK_SEGMENT(BANK_WINDOW, seg);
 	VDP_CommandHMMC(BANK_ADDR + rel + 32, 0, y, w, h);
+	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
+}
+
+/**
+ * The tile sheet, which is the one blob big enough to outgrow a segment.
+ *
+ * Same shape as `DrawPicture`: a segment holds 64 rows of 256 dots, so the
+ * upload walks segment by segment. That is why the atlas is placed with its
+ * sheet *on* a segment boundary — the palette in front of it sits in the tail
+ * of the previous segment, where nothing reads it.
+ */
+static void LoadTileSheet(void)
+{
+	u8 seg = BITMAP_SEG(ATLAS_BIN_ABS);
+	UY y = ATLAS_Y;
+	u8 rows = ATLAS_ROWS * CELL;
+	while(rows)
+	{
+		u8 chunk = (rows > LINES_PER_SEG) ? LINES_PER_SEG : rows;
+		SET_BANK_SEGMENT(BANK_WINDOW, seg++);
+		VDP_CommandHMMC(BANK_ADDR, 0, y, VIEW_W, chunk);
+		y += chunk;
+		rows -= chunk;
+	}
 	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
 }
 
@@ -80,18 +104,21 @@ static void LoadSheet(u8 seg, u16 rel, UY y, u16 w, u8 h)
  */
 void Screens_LoadArt(void)
 {
-	SET_BANK_SEGMENT(BANK_WINDOW, ATLAS_BIN_SEG);
-	const u8* blob = BANK_ADDR + ATLAS_BIN_REL;
+	// The palette sits in the 32 bytes before the sheet, in the tail of the
+	// segment ahead of it.
+	SET_BANK_SEGMENT(BANK_WINDOW, BLOB_SEG(ATLAS_BIN_ABS));
+	const u8* blob = BANK_ADDR + BLOB_REL(ATLAS_BIN_ABS);
 	for(u8 i = 0; i < 32; ++i)
 		g_Palette[i] = blob[i];
-	VDP_SetPalette(g_Palette);
-	VDP_CommandHMMC(blob + 32, 0, ATLAS_Y, VIEW_W, 48);
 	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
+	VDP_SetPalette(g_Palette);
 
-	// The tile flags ride at the tail of the same blob — 48 bytes, copied into
-	// RAM once so a collision test is an array read rather than a page-in.
-	SET_BANK_SEGMENT(BANK_WINDOW, ATLAS_BIN_SEG);
-	const u8* flags = BANK_ADDR + ATLAS_BIN_REL + 32 + (ATLAS_TILES * CELL * CELL / 2);
+	LoadTileSheet();
+
+	// The flags follow the sheet — one byte a tile, copied into RAM once so a
+	// collision test is an array read rather than a page-in.
+	SET_BANK_SEGMENT(BANK_WINDOW, BLOB_SEG(ATLAS_FLAGS_ABS));
+	const u8* flags = BANK_ADDR + BLOB_REL(ATLAS_FLAGS_ABS);
 	for(u8 i = 0; i < ATLAS_TILES; ++i)
 		g_TileFlags[i] = flags[i];
 	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);

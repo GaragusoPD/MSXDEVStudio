@@ -39,8 +39,8 @@
   "files": {
     "rawFiles": [
       {
-        "segment": 4,
-        "file": "data/atlas.bin"
+        "file": "data/atlas.bin",
+        "offset": 106464
       },
       {
         "offset": 39008,

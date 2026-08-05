@@ -18,4 +18,4 @@ CustomISR = "VHBLANK";
 CompileSkipOld = true;
 
 //-- Files
-RawFiles = [ { segment:4, file:"data/atlas.bin" }, { offset:0x9860, file:"data/endings.bin" }, { offset:0x9FE0, file:"data/title.bin" }, { offset:0x11FE0, file:"data/credits.bin" }, { offset:0x18A00, file:"data/boss.bin" } ];
+RawFiles = [ { offset:0x19FE0, file:"data/atlas.bin" }, { offset:0x9860, file:"data/endings.bin" }, { offset:0x9FE0, file:"data/title.bin" }, { offset:0x11FE0, file:"data/credits.bin" }, { offset:0x18A00, file:"data/boss.bin" } ];
