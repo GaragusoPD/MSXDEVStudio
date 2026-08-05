@@ -22,7 +22,16 @@ import { GRB } from './palette.mjs'
 const RES = join(dirname(fileURLToPath(import.meta.url)), '..', 'res')
 mkdirSync(RES, { recursive: true })
 
+// Which resources to write. `node make-data.mjs stage` regenerates the map
+// alone — and that matters, because every one of these is editable in
+// MSXStudio afterwards. A blanket run puts the generated version back over the
+// top of whatever was done in the editor, which is exactly how a hand-drawn
+// sprite sheet gets lost.
+const only = process.argv.slice(2)
+const wanted = (name) => only.length === 0 || only.includes(name.replace(/\..*$/, ''))
+
 const write = (name, value) => {
+  if (!wanted(name)) return
   writeFileSync(join(RES, name), `${JSON.stringify(value, null, 2)}\n`)
   console.log(name)
 }
@@ -174,7 +183,7 @@ for (let dy = 0; dy < 1; dy++) cells[(ROWS - 4 + dy) * COLS + 7] = PAD
 
 write('stage.map.json', {
   version: 1,
-  tileset: 'res/canyon.screen.json',
+  tileset: 'res/canyon.btiles.json',
   width: COLS,
   height: ROWS,
   cell: { width: 16, height: 16, cols: 16 },
