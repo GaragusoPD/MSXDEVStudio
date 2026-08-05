@@ -18,11 +18,27 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #include "canyon.h"
 
-#define BOSS_W 68
-#define BOSS_H 40
 #define BOSS_HEALTH 14
 /** Dots per move, at one move every second frame — the drift rate is the product. */
 #define BOSS_STEP 1
+
+/**
+ * The death: six bursts walked across the hull, then the hull gone.
+ *
+ * They are the drone explosion and the drones' own sprite planes — both are
+ * free by now, because `Enemy_Hide` cleared the sky when the fight started. So
+ * a boss coming apart costs no new artwork, no new planes and no software
+ * sprite work at all: six coordinates and a stagger.
+ */
+#define DEATH_BURSTS 6
+#define DEATH_STAGGER 5
+#define DEATH_LEN (DEATH_STAGGER * DEATH_BURSTS + BOOM_TOTAL + 8)
+
+/** Where each burst goes, as an offset into the boss's own rectangle. */
+static const u8 g_DeathAt[DEATH_BURSTS * 2] =
+{
+	2, 4,   26, 0,   50, 6,   10, 20,   36, 22,   52, 24
+};
 /** Screen row the boss holds station on; the page row is this plus g_ViewY. */
 #define BOSS_Y_POS (PLAY_TOP + 12)
 /**
@@ -43,6 +59,8 @@ static u8 g_DrawnX;
 static u8 g_DrawnFrame;
 /** Whether BOSS_BG_Y holds this stage's arena band yet. Zeroed on purpose. */
 static u8 g_HasBg = 0;
+/** Frames left of the death sequence; zero when the boss is not dying. */
+static u8 g_Dying = 0;
 /** Set once the boss has been written to the picture at least once. */
 static u8 g_OnPicture = 0;
 
@@ -80,7 +98,6 @@ void Boss_Start(void)
 	g_Dx = 1;
 	g_Flash = 0;
 	g_Alive = 1;
-	g_Boss_Upload(BOSS_Y);
 }
 
 bool Boss_Update(void)
@@ -106,6 +123,7 @@ bool Boss_Update(void)
 		{
 			g_Alive = 0;
 			PlaySfx(4);
+			g_Dying = DEATH_LEN;
 			g_State = STATE_WIN;
 			return FALSE;
 		}
@@ -116,15 +134,15 @@ bool Boss_Update(void)
 
 	// The second frame is the same hull with its wings dropped and its eye lit;
 	// flying it on a hit is what makes a hit readable without a health bar.
-	u8 frame = G_BOSS_REST;
+	u8 frame = BOSS_REST;
 	if(g_Flash)
 	{
-		frame = G_BOSS_FLEX;
+		frame = BOSS_FLEX;
 		g_Flash--;
 	}
 	else if((g_Frame & 31) < 8)
 	{
-		frame = G_BOSS_FLEX;
+		frame = BOSS_FLEX;
 	}
 
 	// Nothing moved, nothing to draw. Assembling and writing the boss is a few
@@ -153,8 +171,7 @@ bool Boss_Update(void)
 	// The raster can still catch that one blit halfway — but both halves have a
 	// boss in them, one dot apart. There is no frame in which he is missing.
 	const u8 cx = (g_X > BOSS_MARGIN) ? g_X - BOSS_MARGIN : 0;
-	const u8* rect = g_Boss_Rects + ((u16)frame * 4);
-	const UX sx = rect[0] + ((u16)rect[1] << 8);
+	const UX sx = (UX)frame * BOSS_W;
 
 	VDP_CommandHMMM(cx, BOSS_BG_Y, 0, BOSS_COMP_Y, BOSS_RECT_W, BOSS_H);
 	VDP_CommandLMMM(sx, BOSS_Y, g_X - cx, BOSS_COMP_Y, BOSS_W, BOSS_H, VDP_OP_TIMP);
@@ -163,5 +180,37 @@ bool Boss_Update(void)
 	g_DrawnX = g_X;
 	g_DrawnFrame = frame;
 	g_OnPicture = 1;
+	return TRUE;
+}
+
+bool Boss_Exploding(void)
+{
+	if(g_Dying == 0)
+		return FALSE;
+	g_Dying--;
+	const u8 t = DEATH_LEN - g_Dying; // 1 .. DEATH_LEN
+
+	for(u8 i = 0; i < DEATH_BURSTS; ++i)
+	{
+		const u8 start = i * DEATH_STAGGER;
+		if(t <= start || t > start + BOOM_TOTAL)
+		{
+			Scroll_HideSprite(SPR_DRONE + i);
+			continue;
+		}
+		if(t == start + 1)
+			PlaySfx(1);
+		const u8 f = (t - start - 1) / BOOM_HOLD;
+		g_Fleet_SetMeta(SPR_DRONE + i, g_X + g_DeathAt[i * 2], Scroll_SpriteY(BOSS_Y_POS + g_DeathAt[i * 2 + 1]),
+			G_FLEET_BOOM_BASE + f * G_FLEET_BOOM_PLANES, G_FLEET_BOOM_PLANES);
+	}
+
+	// The hull goes while the bursts are at their brightest, so it is never seen
+	// to vanish — the same clean band the redraw has been reading from all along.
+	if(t == DEATH_STAGGER * 2 && g_OnPicture)
+	{
+		VDP_CommandHMMM(0, BOSS_BG_Y, 0, BandRow(), VIEW_W, BOSS_H);
+		g_OnPicture = 0;
+	}
 	return TRUE;
 }

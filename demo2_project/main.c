@@ -151,7 +151,7 @@ static void SetupVideo(void)
 	VDP_LoadSpritePattern(g_Fleet_Patterns, 0, G_FLEET_PATTERNS_SIZE / 8);
 	VDP_EnableSprite(TRUE);
 
-	Screens_LoadAtlas();
+	Screens_LoadArt();
 	g_Mist_Upload(MIST_Y);
 	g_Hud_Upload(HUD_STRIP_Y);
 }
@@ -308,9 +308,24 @@ void main(void)
 				StartLife();
 		}
 
-		// Only now, on the way to a full-screen picture, does the split go away.
+		// The boss comes apart before anything else happens — it is the last
+		// thing the player did, so it gets the screen to itself.
+		while(Boss_Exploding())
+			WaitFrame();
+
+		// Only now, on the way to the ending, does the split go away.
 		Scroll_ShowBand(FALSE);
 		VDP_SetPage(0);
-		Screens_Credits();
+		if(g_State == STATE_WIN)
+		{
+			Screens_Message(MSG_VICTORY);
+			Screens_Credits();
+		}
+		else
+		{
+			// Out of lives: the offer to go again, and then the title, which is
+			// where going again starts.
+			Screens_Message(MSG_GAMEOVER);
+		}
 	}
 }

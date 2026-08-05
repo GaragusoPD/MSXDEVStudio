@@ -24,22 +24,7 @@
     ]
   },
   "retouch": [],
-  "fragments": [
-    {
-      "name": "rest",
-      "x": 0,
-      "y": 0,
-      "width": 68,
-      "height": 40
-    },
-    {
-      "name": "flex",
-      "x": 68,
-      "y": 0,
-      "width": 68,
-      "height": 40
-    }
-  ],
+  "fragments": [],
   "converted": {
     "width": 136,
     "height": 40,
@@ -65,8 +50,7 @@
   },
   "export": {
     "name": "g_Boss",
-    "format": "c",
-    "out": "content/boss.h",
-    "helpers": true
+    "format": "bin",
+    "out": "data/boss.bin"
   }
 }

@@ -15,7 +15,6 @@
 #include "content/stage.h"
 #include "content/fleet.h"
 #include "content/mist.h"
-#include "content/boss.h"
 #include "content/hud.h"
 #include "content/sfx.h"
 // Written by MSXgl's build tool from the RawFiles list in the .msxproj: where
@@ -53,11 +52,30 @@
 #define MIST_Y 320 // page 1: the mist strip, and its backups 16 rows below
 #define ATLAS_Y 512 // page 2: the tile atlas, 256×48
 #define HUD_STRIP_Y 576 // page 2: the HUD artwork, blitted into the band when it changes
-#define BOSS_Y 608 // page 2: the boss frames, and its backup 40 rows below
+#define BOSS_Y 608 // page 2: the boss frames, side by side
+
+// ── the art that lives in ROM segments, not in the 32 KB the code shares ─────
+//
+// The atlas, the two pictures, the boss and the ending panels are all blobs the
+// build tool places by absolute offset, and all of them reach VRAM the same
+// way: page the segment into the window, one HMMC, page it back. Keeping them
+// out of `_CODE` is not tidiness — it is what leaves bank 3 free to *be* the
+// window. See screens.c.
+#define BOSS_W 68
+#define BOSS_H 40
+#define BOSS_FRAMES 2
+#define BOSS_REST 0
+#define BOSS_FLEX 1
+
+#define MSG_W 96
+#define MSG_H 18
+#define MSG_VICTORY 0
+#define MSG_GAMEOVER 1
 // Page 3, which nothing else uses. The boss is assembled here rather than on the
 // picture — see bossfight.c.
 #define BOSS_BG_Y 768 // the arena band, as it looks with no boss standing on it
 #define BOSS_COMP_Y 816 // where the next frame of the boss is put together
+#define ENDINGS_Y 864 // the two ending panels, side by side
 
 //
 // The sprite attribute address has to be **1 KB-aligned plus 0x200**, and
@@ -140,11 +158,22 @@
  */
 #define HUD_SPLIT_DELAY 12
 
+/** Display row the ending panels sit on — centred in the play area. */
+#define MSG_Y ((VIEW_H - MSG_H) / 2)
+
 /** A few painted rows past the join, so a switch landing late still lands on band. */
 #define HUD_PAINT_H (HUD_H + 8)
 
 #define MAX_SHOTS 4
 #define MAX_DRONES 8
+
+/**
+ * How long each frame of an explosion is held. The whole burst is this times
+ * `G_FLEET_BOOM_FRAMES`, so adding a frame in the sprite editor lengthens it
+ * without anything here changing.
+ */
+#define BOOM_HOLD 4
+#define BOOM_TOTAL (G_FLEET_BOOM_FRAMES * BOOM_HOLD)
 
 /** Hits the hull takes before a life is lost. */
 #define MAX_ENERGY 3
@@ -234,6 +263,11 @@ void Enemy_Hide(void);
 
 // boss.c
 void Boss_Start(void);
+/**
+ * Drives the boss's death one frame at a time; FALSE once it is over. The
+ * caller owns the frame, so this stays out of the business of waiting.
+ */
+bool Boss_Exploding(void);
 /** Forgets the saved arena band, because a new stage draws a different one. */
 void Boss_Reset(void);
 /** FALSE once the boss is gone. */
@@ -242,4 +276,7 @@ bool Boss_Update(void);
 // screens.c
 void Screens_Title(void);
 void Screens_Credits(void);
-void Screens_LoadAtlas(void);
+/** A panel over whatever is on screen — MSG_VICTORY or MSG_GAMEOVER. */
+void Screens_Message(u8 panel);
+/** Uploads every ROM-resident sheet into the pages the display never shows. */
+void Screens_LoadArt(void);

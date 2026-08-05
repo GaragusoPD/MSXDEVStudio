@@ -31,6 +31,9 @@
 
 /** The segment a raw blob's *bitmap* starts in, skipping the palette in front of it. */
 #define BITMAP_SEG(abs) (u8)(((abs) + 32) / SEG_SIZE)
+/** …and for the small sheets, which are read whole rather than a segment at a time. */
+#define BLOB_SEG(abs) (u8)((abs) / SEG_SIZE)
+#define BLOB_REL(abs) (u16)((abs) & (SEG_SIZE - 1))
 
 /**
  * Blits `lines` lines of a picture into page 0, one segment at a time. `seg` is
@@ -50,13 +53,32 @@ static void DrawPicture(u8 seg, u8 lines)
 	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
 }
 
+/** One sheet out of its ROM segment and into VRAM, palette skipped. */
+static void LoadSheet(u8 seg, u16 rel, UY y, u16 w, u8 h)
+{
+	SET_BANK_SEGMENT(BANK_WINDOW, seg);
+	VDP_CommandHMMC(BANK_ADDR + rel + 32, 0, y, w, h);
+	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
+}
+
 /**
- * The tile atlas into the page the display never shows, and the palette into
- * both the VDP and RAM. The RAM copy is what the vein animation rotates: it
- * runs every eighth frame and paging a segment in to read two bytes would be a
- * silly price for that.
+ * Every sheet that lives in a ROM segment, into the pages the display never
+ * shows — and the palette into both the VDP and RAM.
+ *
+ * The RAM copy of the palette is what the vein animation rotates: it runs every
+ * eighth frame, and paging a segment in to read two bytes would be a silly
+ * price for that.
+ *
+ * The boss and the ending panels are here rather than in `content/` as C arrays
+ * for one reason, and it is the reason this whole file works: the paging window
+ * is bank 3, 0xA000–0xBFFF, and paging it out has to be safe. It only is while
+ * nothing the program needs lives up there — so the moment the code and its
+ * constant tables grow past 0xA000, `SET_BANK_SEGMENT` starts swapping live
+ * functions out from under the CPU and the machine hangs on the next call.
+ * Every kilobyte of artwork kept out of `_CODE` is a kilobyte of headroom
+ * against that.
  */
-void Screens_LoadAtlas(void)
+void Screens_LoadArt(void)
 {
 	SET_BANK_SEGMENT(BANK_WINDOW, ATLAS_BIN_SEG);
 	const u8* blob = BANK_ADDR + ATLAS_BIN_REL;
@@ -65,20 +87,14 @@ void Screens_LoadAtlas(void)
 	VDP_SetPalette(g_Palette);
 	VDP_CommandHMMC(blob + 32, 0, ATLAS_Y, VIEW_W, 48);
 	SET_BANK_SEGMENT(BANK_WINDOW, BANK_WINDOW);
+
+	LoadSheet(BLOB_SEG(BOSS_BIN_ABS), BLOB_REL(BOSS_BIN_ABS), BOSS_Y, BOSS_W * BOSS_FRAMES, BOSS_H);
+	LoadSheet(BLOB_SEG(ENDINGS_BIN_ABS), BLOB_REL(ENDINGS_BIN_ABS), ENDINGS_Y, MSG_W * 2, MSG_H);
 }
 
-/** A picture, and then wait for SPACE — with a release first, so one press is one press. */
-static void ShowUntilSpace(u8 seg)
+/** Waits for SPACE, with a release first so one press is one press. */
+static void WaitSpace(void)
 {
-	Scroll_Reset();
-	// Nothing on a picture screen is a sprite, and the ones the stage left
-	// behind are parked at 213 *plus the scroll offset* — which the reset above
-	// has just thrown away, so they would slide back into view. Y = 216 in plane
-	// 0 tells the VDP to stop looking at the table at all; the next Player_Start
-	// overwrites it.
-	VDP_DisableSpritesFrom(0);
-	DrawPicture(seg, VIEW_H);
-
 	while(Keyboard_IsKeyPressed(KEY_SPACE))
 		;
 	while(!Keyboard_IsKeyPressed(KEY_SPACE))
@@ -94,6 +110,56 @@ static void ShowUntilSpace(u8 seg)
 		ayFX_Update();
 		PSG_Apply();
 	}
+}
+
+/**
+ * A message panel, put down on the play screen exactly where it stands.
+ *
+ * The endings are a strip rather than two more full-screen pictures — one more
+ * picture would fit in the ROM and two would not — but that is not the only
+ * reason. Leaving the canyon behind the message is the better reading: the
+ * player can still see where they got to, and nothing jumps at the moment the
+ * run ends.
+ *
+ * Keeping it there is the whole of the work below. The panel goes into page 0,
+ * whose rows the scroll has walked round to somewhere arbitrary, so the *page*
+ * row is the screen row plus the offset — and a panel low enough on the screen
+ * runs off the bottom of the page. The VDP command engine does not wrap there;
+ * it carries straight on into page 1, which is the status band. So the blit is
+ * cut at the seam and the remainder goes to page row 0, which is the row the
+ * display shows immediately below it. Two blits, one continuous panel.
+ */
+void Screens_Message(u8 panel)
+{
+	VDP_DisableSpritesFrom(0);
+	const UX sx = (UX)panel * MSG_W;
+	const u8 w = MSG_W;
+	const u8 h = MSG_H;
+	const u8 x = (VIEW_W - w) / 2;
+	const u8 row = Scroll_PageRow(MSG_Y);
+	// 16-bit: with `row` at 0 the whole panel fits, and `256 - row` in eight
+	// bits is zero — which the command engine reads as 1024 rows, not none.
+	const u16 avail = 256u - row;
+	const u8 fits = (avail < h) ? (u8)avail : h;
+
+	VDP_CommandHMMM(sx, ENDINGS_Y, x, row, w, fits);
+	if(fits < h)
+		VDP_CommandHMMM(sx, ENDINGS_Y + fits, x, 0, w, h - fits);
+	WaitSpace();
+}
+
+/** A picture, and then wait for SPACE. */
+static void ShowUntilSpace(u8 seg)
+{
+	Scroll_Reset();
+	// Nothing on a picture screen is a sprite, and the ones the stage left
+	// behind are parked at 213 *plus the scroll offset* — which the reset above
+	// has just thrown away, so they would slide back into view. Y = 216 in plane
+	// 0 tells the VDP to stop looking at the table at all; the next Player_Start
+	// overwrites it.
+	VDP_DisableSpritesFrom(0);
+	DrawPicture(seg, VIEW_H);
+	WaitSpace();
 }
 
 void Screens_Title(void)

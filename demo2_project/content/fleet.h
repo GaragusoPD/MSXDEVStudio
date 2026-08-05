@@ -20,18 +20,18 @@
 #define G_FLEET_DRONE_FRAMES 2
 #define G_FLEET_BOOM_BASE 7
 #define G_FLEET_BOOM_PLANES 1
-#define G_FLEET_BOOM_FRAMES 3
+#define G_FLEET_BOOM_FRAMES 4
 
-#define G_FLEET_PATTERNS_SIZE 320
+#define G_FLEET_PATTERNS_SIZE 352
 extern const unsigned char g_Fleet_Patterns[];
 
-#define G_FLEET_COLORS_SIZE 160
+#define G_FLEET_COLORS_SIZE 176
 extern const unsigned char g_Fleet_Colors[];
 
 #define G_FLEET_PALETTE_SIZE 32
 extern const unsigned char g_Fleet_Palette[];
 
-#define G_FLEET_LAYOUT_SIZE 20
+#define G_FLEET_LAYOUT_SIZE 22
 extern const unsigned char g_Fleet_Layout[];
 
 

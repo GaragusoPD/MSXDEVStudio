@@ -25,9 +25,6 @@ static u16 g_Seed;
 
 #define DRONE_FALL 1
 #define SPAWN_EVERY 44
-/** How long each frame of the burst is held, and so how long the whole thing lasts. */
-#define BOOM_HOLD 4
-#define BOOM_TOTAL (G_FLEET_BOOM_FRAMES * BOOM_HOLD)
 
 /** Small xorshift — Math_GetRandom8 would pull in the maths module for this alone. */
 static u8 Random(void)

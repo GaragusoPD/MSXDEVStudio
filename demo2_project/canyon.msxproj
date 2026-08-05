@@ -43,12 +43,20 @@
         "file": "data/atlas.bin"
       },
       {
+        "offset": 38944,
+        "file": "data/endings.bin"
+      },
+      {
         "offset": 40928,
         "file": "data/title.bin"
       },
       {
         "offset": 73696,
         "file": "data/credits.bin"
+      },
+      {
+        "offset": 100864,
+        "file": "data/boss.bin"
       }
     ],
     "diskFiles": [],

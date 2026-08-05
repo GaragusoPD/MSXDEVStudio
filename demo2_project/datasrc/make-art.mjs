@@ -580,6 +580,33 @@ function buildCredits() {
   return picture
 }
 
+// ── the ending panels ───────────────────────────────────────────────────────
+//
+// Two messages the game puts up over the frozen picture: one for the boss going
+// down, one for the last life going. They are a strip rather than two more
+// full-screen pictures because a SCREEN 5 picture is 27 KB and the ROM has room
+// for one more, not two — and a panel over the canyon reads better anyway.
+
+const MSG_W = 96
+const MSG_H = 18
+
+/** One message panel: the same near-black slab the HUD uses, with a rule top and bottom. */
+function messagePanel(headline) {
+  const panel = canvas(MSG_W, MSG_H, BLACK)
+  hLine(panel, 0, 0, MSG_W, ROCK_LIT)
+  hLine(panel, 0, MSG_H - 1, MSG_W, ROCK_LIT)
+  textCentered(panel, 2, headline, WHITE, MSG_W)
+  textCentered(panel, 10, 'PRESS SPACE', MIST_LIT, MSG_W)
+  return panel
+}
+
+function buildEndings() {
+  const pieces = [messagePanel('VICTORY'), messagePanel('GAME OVER')]
+  const sheet = canvas(MSG_W * pieces.length, MSG_H)
+  pieces.forEach((piece, i) => stamp(sheet, piece, i * MSG_W, 0))
+  return sheet
+}
+
 // ── output ──────────────────────────────────────────────────────────────────
 
 function save(name, target) {
@@ -604,6 +631,9 @@ save('boss.png', boss.sheet)
 const hud = buildHud()
 save('hud.png', hud.sheet)
 
+const endings = buildEndings()
+save('endings.png', endings)
+
 save('title.png', buildTitle())
 save('credits.png', buildCredits())
 
@@ -611,4 +641,5 @@ console.log(`\natlas: ${ATLAS_CELLS.length} cells of ${CELL}×${CELL}, ${ATLAS_C
 console.log(`mist fragments: ${mist.widths.join(', ')} wide`)
 console.log(`boss frames: 2 × ${boss.width}×${boss.height}`)
 console.log(`hud strip: ${hud.width}×${HUD_H} (4 bar states + 4 life counts)`)
+console.log(`endings strip: ${endings.width}×${MSG_H} (victory, game over)`)
 console.log(`vein cycle: palette entries ${VEIN_CYCLE.join(', ')}`)

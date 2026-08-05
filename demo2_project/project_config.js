@@ -3,7 +3,7 @@
 
 //-- Project
 ProjName = "canyon";
-ProjModules = ["main", "scroll", "player", "enemy", "bossfight", "screens", "content/boss", "content/fleet", "content/hud", "content/mist", "content/sfx", "content/stage"];
+ProjModules = ["main", "scroll", "player", "enemy", "bossfight", "screens", "content/fleet", "content/hud", "content/mist", "content/sfx", "content/stage"];
 LibModules = ["system", "bios", "vdp", "keyboard", "memory", "psg", "ayfx/ayfx_player"];
 
 //-- Target
@@ -18,4 +18,4 @@ CustomISR = "VHBLANK";
 CompileSkipOld = true;
 
 //-- Files
-RawFiles = [ { segment:4, file:"data/atlas.bin" }, { offset:0x9FE0, file:"data/title.bin" }, { offset:0x11FE0, file:"data/credits.bin" } ];
+RawFiles = [ { segment:4, file:"data/atlas.bin" }, { offset:0x9820, file:"data/endings.bin" }, { offset:0x9FE0, file:"data/title.bin" }, { offset:0x11FE0, file:"data/credits.bin" }, { offset:0x18A00, file:"data/boss.bin" } ];
