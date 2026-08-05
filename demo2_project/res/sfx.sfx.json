@@ -1,0 +1,589 @@
+{
+  "version": 1,
+  "rate": 50,
+  "effects": [
+    {
+      "name": "shoot",
+      "frames": [
+        {
+          "toneOn": true,
+          "tone": 180,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 206,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 11
+        },
+        {
+          "toneOn": true,
+          "tone": 232,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 10
+        },
+        {
+          "toneOn": true,
+          "tone": 258,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 8
+        },
+        {
+          "toneOn": true,
+          "tone": 284,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 7
+        },
+        {
+          "toneOn": true,
+          "tone": 310,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 5
+        },
+        {
+          "toneOn": true,
+          "tone": 336,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 3
+        },
+        {
+          "toneOn": true,
+          "tone": 362,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 2
+        }
+      ]
+    },
+    {
+      "name": "boom",
+      "frames": [
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 15
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 14
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 13
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 12
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 11
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 10
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 8
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 7
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 6
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 5
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 4
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 3
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 2
+        },
+        {
+          "toneOn": false,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 18,
+          "volume": 1
+        }
+      ]
+    },
+    {
+      "name": "crash",
+      "frames": [
+        {
+          "toneOn": true,
+          "tone": 900,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 15
+        },
+        {
+          "toneOn": true,
+          "tone": 990,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 14
+        },
+        {
+          "toneOn": true,
+          "tone": 1080,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 14
+        },
+        {
+          "toneOn": true,
+          "tone": 1170,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 1260,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 1350,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 1440,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 11
+        },
+        {
+          "toneOn": true,
+          "tone": 1530,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 10
+        },
+        {
+          "toneOn": true,
+          "tone": 1620,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 9
+        },
+        {
+          "toneOn": true,
+          "tone": 1710,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 9
+        },
+        {
+          "toneOn": true,
+          "tone": 1800,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 8
+        },
+        {
+          "toneOn": true,
+          "tone": 1890,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 7
+        },
+        {
+          "toneOn": true,
+          "tone": 1980,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 7
+        },
+        {
+          "toneOn": true,
+          "tone": 2070,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 6
+        },
+        {
+          "toneOn": true,
+          "tone": 2160,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 5
+        },
+        {
+          "toneOn": true,
+          "tone": 2250,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 5
+        },
+        {
+          "toneOn": true,
+          "tone": 2340,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 4
+        },
+        {
+          "toneOn": true,
+          "tone": 2430,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 3
+        },
+        {
+          "toneOn": true,
+          "tone": 2520,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 2
+        },
+        {
+          "toneOn": true,
+          "tone": 2610,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 2
+        },
+        {
+          "toneOn": true,
+          "tone": 2700,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 1
+        },
+        {
+          "toneOn": true,
+          "tone": 2790,
+          "noiseOn": true,
+          "noise": 26,
+          "volume": 0
+        }
+      ]
+    },
+    {
+      "name": "hit",
+      "frames": [
+        {
+          "toneOn": true,
+          "tone": 90,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 84,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 10
+        },
+        {
+          "toneOn": true,
+          "tone": 78,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 7
+        },
+        {
+          "toneOn": true,
+          "tone": 72,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 5
+        },
+        {
+          "toneOn": true,
+          "tone": 66,
+          "noiseOn": false,
+          "noise": 0,
+          "volume": 2
+        }
+      ]
+    },
+    {
+      "name": "victory",
+      "frames": [
+        {
+          "toneOn": true,
+          "tone": 1200,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 15
+        },
+        {
+          "toneOn": true,
+          "tone": 1130,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 15
+        },
+        {
+          "toneOn": true,
+          "tone": 1060,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 14
+        },
+        {
+          "toneOn": true,
+          "tone": 990,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 14
+        },
+        {
+          "toneOn": true,
+          "tone": 920,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 850,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 13
+        },
+        {
+          "toneOn": true,
+          "tone": 780,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 710,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 12
+        },
+        {
+          "toneOn": true,
+          "tone": 640,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 11
+        },
+        {
+          "toneOn": true,
+          "tone": 570,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 11
+        },
+        {
+          "toneOn": true,
+          "tone": 500,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 10
+        },
+        {
+          "toneOn": true,
+          "tone": 430,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 10
+        },
+        {
+          "toneOn": true,
+          "tone": 360,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 9
+        },
+        {
+          "toneOn": true,
+          "tone": 290,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 9
+        },
+        {
+          "toneOn": true,
+          "tone": 220,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 8
+        },
+        {
+          "toneOn": true,
+          "tone": 150,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 8
+        },
+        {
+          "toneOn": true,
+          "tone": 80,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 7
+        },
+        {
+          "toneOn": true,
+          "tone": 10,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 7
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 6
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 6
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 5
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 5
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 4
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 4
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 3
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 3
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 2
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 2
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 1
+        },
+        {
+          "toneOn": true,
+          "tone": 1,
+          "noiseOn": true,
+          "noise": 12,
+          "volume": 1
+        }
+      ]
+    }
+  ],
+  "export": {
+    "name": "g_Sfx",
+    "format": "c",
+    "out": "content/sfx.h"
+  }
+}

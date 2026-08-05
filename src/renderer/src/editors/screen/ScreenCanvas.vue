@@ -7,9 +7,7 @@
  */
 import { computed, ref, watchEffect } from 'vue'
 import { MODES } from '../../../../shared/msx/modes'
-import { paletteToRgb } from '../../../../shared/msx/palette'
-import { rgb332Palette } from '../../../../shared/msx/quantize'
-import { screenPixels, type ScreenDoc } from '../../../../shared/msx/screen'
+import { screenPixels, screenRgb } from '../../../../shared/msx/screen'
 import { linePoints, type Point } from '../../../../shared/tile-editor'
 import { addFragment, doc, fillAt, finishDrag, paintDrag, type ScreenSession } from './session'
 
@@ -44,13 +42,6 @@ const convertedStyle = computed(() => {
   if (!pixels) return {}
   return { width: `${pixels.width * props.session.zoom}px`, height: `${pixels.height * props.session.zoom}px` }
 })
-
-/** sc8/10/12 use a fixed 256-entry (approximated) palette; sc5/6/7 use the doc's own baked GRB333 entries. */
-function paletteFor(current: ScreenDoc): ReturnType<typeof paletteToRgb> {
-  const info = MODES[current.mode]
-  if (info.palette === 'rgb332' || info.palette === 'yjk') return rgb332Palette()
-  return paletteToRgb(current.converted?.palette ?? null)
-}
 
 function pixelAt(event: PointerEvent): Point {
   const rect = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
@@ -164,7 +155,7 @@ watchEffect(() => {
   element.height = pixels.height
   const ctx = element.getContext('2d')
   if (!ctx) return
-  const rgb = paletteFor(current)
+  const rgb = screenRgb(current)
   const image = new ImageData(pixels.width, pixels.height)
   for (let i = 0; i < pixels.indices.length; i++) {
     const color = rgb[pixels.indices[i]] ?? { r: 255, g: 0, b: 255 }

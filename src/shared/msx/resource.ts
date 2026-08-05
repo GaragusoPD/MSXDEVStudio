@@ -372,6 +372,12 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
         `Size: ${resource.doc.width}×${resource.doc.height}`,
         `Layers: ${resource.doc.layers.map((layer) => layer.name).join(', ')}`
       )
+      if (resource.doc.cell) {
+        notes.push(
+          `Cell: ${resource.doc.cell.width}×${resource.doc.cell.height} dots, ` +
+            `atlas ${resource.doc.cell.cols} cells per row (bitmap mode — cells are copied, not indexed)`
+        )
+      }
       break
     case 'screen':
       notes.push(`Mode: ${MODES[resource.doc.mode].label}`, `Dither: ${resource.doc.convert.dither}`)
@@ -412,16 +418,22 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
   if (resource.kind === 'screen') {
     const { doc } = resource
     const geometry = screenDataExport(doc, compress).geometry
-    const banded = geometry
-      ? [
-          `#define ${prefix}_W ${geometry.width}`,
-          `#define ${prefix}_H ${geometry.height}`,
-          `#define ${prefix}_STRIDE ${geometry.stride}`,
-          `#define ${prefix}_BANDS ${geometry.count}`,
-          `#define ${prefix}_BAND_ROWS ${geometry.rows}`,
-          `#define ${prefix}_BAND_BYTES ${geometry.bufferBytes}`
-        ]
-      : []
+    // Every picture carries its size, packed or not: anything that blits one
+    // has to tell the VDP how big it is, and an atlas is read as a grid of that
+    // size. `screenPixels` cannot be null here — `resourceTables` already threw.
+    const pixels = screenPixels(doc)
+    const banded = [
+      `#define ${prefix}_W ${pixels?.width ?? 0}`,
+      `#define ${prefix}_H ${pixels?.height ?? 0}`,
+      ...(geometry
+        ? [
+            `#define ${prefix}_STRIDE ${geometry.stride}`,
+            `#define ${prefix}_BANDS ${geometry.count}`,
+            `#define ${prefix}_BAND_ROWS ${geometry.rows}`,
+            `#define ${prefix}_BAND_BYTES ${geometry.bufferBytes}`
+          ]
+        : [])
+    ]
     if (!doc.fragments.length) return banded
     const strip = fragmentStrip(doc)
     return [
@@ -436,7 +448,19 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
   }
   if (resource.kind === 'map') {
     // The helper C needs the map's shape, and so does anything that walks a layer.
-    return [`#define ${prefix}_W ${resource.doc.width}`, `#define ${prefix}_H ${resource.doc.height}`]
+    const { cell } = resource.doc
+    return [
+      `#define ${prefix}_W ${resource.doc.width}`,
+      `#define ${prefix}_H ${resource.doc.height}`,
+      // A bitmap-mode map also needs what a cell *is*, since nothing else knows.
+      ...(cell
+        ? [
+            `#define ${prefix}_CELL_W ${cell.width}`,
+            `#define ${prefix}_CELL_H ${cell.height}`,
+            `#define ${prefix}_ATLAS_COLS ${cell.cols}`
+          ]
+        : [])
+    ]
   }
   if (resource.kind === 'tiles') {
     return blockPlacements(resource.doc).flatMap((placement) => {

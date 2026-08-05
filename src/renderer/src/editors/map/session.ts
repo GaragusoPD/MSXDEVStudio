@@ -17,9 +17,12 @@
  */
 
 import { shallowReactive } from 'vue'
-import { normalizeMap, resizeMap, type MapDoc } from '../../../../shared/msx/map'
+import { normalizeMap, resizeMap, type MapCell, type MapDoc } from '../../../../shared/msx/map'
+import type { ScreenDoc } from '../../../../shared/msx/screen'
 import type { TilesDoc } from '../../../../shared/msx/tile'
-import { parseResource, serializeResource } from '../../../../shared/msx/resource'
+import { parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { screenPixels } from '../../../../shared/msx/screen'
+import { atlasSheet, tilesetSheet, type Sheet } from './sheet'
 import {
   addLayer as addLayerPure,
   applyStamp,
@@ -62,6 +65,8 @@ export interface MapSession {
   dirty: boolean
 
   tileset: TilesDoc | null
+  /** Set instead of `tileset` when the map draws in a bitmap mode — see `MapCell`. */
+  atlas: ScreenDoc | null
   tilesetError: string | null
   /** Last tileset `reorderLog` entry (by `at`) this map has folded in; null = never replayed. */
   tilesetReorderSeen: number | null
@@ -108,6 +113,7 @@ export function mapSession(path: string): MapSession {
     error: null,
     dirty: false,
     tileset: null,
+    atlas: null,
     tilesetError: null,
     tilesetReorderSeen: null,
     activeLayer: 0,
@@ -162,22 +168,39 @@ async function load(session: MapSession): Promise<void> {
   }
 }
 
+/**
+ * Loads whichever kind of tileset the map points at. A `.tiles.json` is the
+ * name-table case and carries blocks and a reorder log; a `.screen.json` is a
+ * bitmap atlas, which has neither — its cells are anonymous rectangles, so
+ * there is nothing to reorder and nothing to name.
+ */
 async function loadTileset(session: MapSession): Promise<void> {
   const tilesetPath = doc(session).tileset
   if (!tilesetPath) {
     session.tileset = null
+    session.atlas = null
     session.tilesetError = 'No tileset set — pick one below.'
     return
   }
   try {
     const text = await window.api.invoke('fs:read', { path: tilesetPath })
     const parsed = parseResource(tilesetPath, text)
-    if (parsed.kind !== 'tiles') throw new Error(`${tilesetPath} is not a tileset`)
+    if (parsed.kind === 'screen') {
+      session.tileset = null
+      session.atlas = parsed.doc
+      session.tilesetError = parsed.doc.converted
+        ? null
+        : `${tilesetPath} has no converted image yet — open it and run the conversion once.`
+      return
+    }
+    if (parsed.kind !== 'tiles') throw new Error(`${tilesetPath} is neither a tileset nor a screen`)
     session.tileset = parsed.doc
+    session.atlas = null
     session.tilesetError = null
     await replayPersistedReorders(session, text)
   } catch (error) {
     session.tileset = null
+    session.atlas = null
     session.tilesetError = `Couldn't load tileset ${tilesetPath}: ${String(error)}`
   }
 }
@@ -261,10 +284,38 @@ export function commit(session: MapSession, next: MapDoc): void {
   markDirty(session)
 }
 
+/**
+ * Points the map at a tileset, and switches it between the name-table and
+ * bitmap worlds if the kind changed — `cell` is what tells every other part of
+ * the app which one this is, so it has to move with the reference rather than
+ * be set separately and forgotten.
+ */
 export async function setTileset(session: MapSession, tilesetPath: string): Promise<void> {
-  commit(session, { ...doc(session), tileset: tilesetPath })
+  const bitmap = resourceKindOf(tilesetPath) === 'screen'
+  const current = doc(session)
+  commit(session, {
+    ...current,
+    tileset: tilesetPath,
+    cell: bitmap ? (current.cell ?? { width: 16, height: 16, cols: 16 }) : null
+  })
   session.tilesetReorderSeen = null
   await loadTileset(session)
+  // The atlas image says how many cells fit across it; only its size is a guess.
+  const pixels = session.atlas && screenPixels(session.atlas)
+  const cell = doc(session).cell
+  if (pixels && cell) setCell(session, { ...cell, cols: Math.max(1, Math.floor(pixels.width / cell.width)) })
+}
+
+/** Cell geometry for a bitmap map. `cols` follows the width unless the caller sets it too. */
+export function setCell(session: MapSession, cell: MapCell): void {
+  commit(session, { ...doc(session), cell })
+}
+
+/** What the canvas and the picker draw cells from, whichever kind of tileset loaded. */
+export function sheet(session: MapSession): Sheet | null {
+  const cell = doc(session).cell
+  if (session.atlas && cell) return atlasSheet(session.atlas, cell)
+  return session.tileset ? tilesetSheet(session.tileset) : null
 }
 
 // ── tool state ───────────────────────────────────────────────────────────

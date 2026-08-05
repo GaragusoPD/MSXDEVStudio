@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { isValidGrb } from './msx/palette'
 import { quantize, type RgbaImage } from './msx/quantize'
 import {
+  blankConverted,
   createScreenDoc,
   encodeIndices,
   fragmentRectBytes,
@@ -239,8 +240,8 @@ describe('bitmap fragments', () => {
     const code = [...helper.header, ...helper.source].join('\n')
     // The struct and the prototypes are the header's; the bodies are the .c's.
     expect(helper.header.join('\n')).toContain('} g_Hero_SwSprite;')
-    expect(helper.header.join('\n')).toContain('void g_Hero_Upload(u8 stripY);')
-    expect(helper.source.join('\n')).toContain('void g_Hero_Upload(u8 stripY)')
+    expect(helper.header.join('\n')).toContain('void g_Hero_Upload(UY stripY);')
+    expect(helper.source.join('\n')).toContain('void g_Hero_Upload(UY stripY)')
     expect(code).toContain('VDP_CommandLMMM(sx, stripY, x, y, w, h, VDP_OP_TIMP);')
     // Each object saves its background in its own column, or they eat each other's.
     expect(code).toContain('s->slot * G_HERO_BACKUP_PITCH')
@@ -249,5 +250,31 @@ describe('bitmap fragments', () => {
   it('survives a save/load round-trip', () => {
     const doc = screen([{ name: 'idle', x: 1, y: 2, width: 3, height: 4 }])
     expect(normalizeScreen(JSON.parse(JSON.stringify(doc)))).toEqual(doc)
+  })
+})
+
+describe('a blank canvas', () => {
+  it('is drawable and exportable without a source image', () => {
+    const doc = createScreenDoc('sc5')
+    // Nothing to draw on until one is asked for — a doc with no source has not
+    // been converted, and that is not the same as being empty.
+    expect(screenPixels(doc)).toBeNull()
+
+    const blank: ScreenDoc = { ...doc, converted: blankConverted('sc5') }
+    const pixels = screenPixels(blank)
+    expect(pixels).not.toBeNull()
+    expect(pixels!.width).toBe(256)
+    expect(pixels!.height).toBe(212)
+    expect(pixels!.indices.every((value) => value === 0)).toBe(true)
+    // sc5 has a programmable palette, so the canvas starts on the one the machine boots with.
+    expect(blank.converted!.palette).toHaveLength(16)
+
+    // Retouch reaches it like any conversion would.
+    const painted = paintRetouch(blank, [{ x: 4, y: 5 }], 7)
+    expect(screenPixels(painted)!.indices[5 * 256 + 4]).toBe(7)
+  })
+
+  it('has no palette in the modes whose index is the color', () => {
+    expect(blankConverted('sc8').palette).toBeNull()
   })
 })

@@ -8,7 +8,7 @@
 import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
-import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, resize, selectLayer, setTileset, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, resize, selectLayer, setCell, setTileset, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 
@@ -19,7 +19,21 @@ const mapDoc = computed(() => doc(props.session))
 const widthInput = computed({ get: () => mapDoc.value.width, set: (v) => resize(props.session, v, mapDoc.value.height) })
 const heightInput = computed({ get: () => mapDoc.value.height, set: (v) => resize(props.session, mapDoc.value.width, v) })
 
-const tilesetOptions = computed(() => resourcesStore.entries.filter((entry) => entry.kind === 'tiles').map((entry) => entry.path))
+/**
+ * Tilesets and screens both qualify. A `.screen.json` makes this a bitmap-mode
+ * map: its converted image is read as a grid of cells and the game copies them
+ * with the VDP rather than writing a name table (see `MapCell`).
+ */
+const tilesetOptions = computed(() =>
+  resourcesStore.entries.filter((entry) => entry.kind === 'tiles' || entry.kind === 'screen').map((entry) => entry.path)
+)
+
+const cell = computed(() => mapDoc.value.cell)
+
+function patchCell(patch: Partial<NonNullable<typeof cell.value>>): void {
+  const current = cell.value
+  if (current) setCell(props.session, { ...current, ...patch })
+}
 
 /** "Reloaded" only stays up until the next edit, so it can't be mistaken for live state. */
 const reloading = ref(false)
@@ -104,6 +118,49 @@ const packing = computed(() => {
         class="hint"
       >
         Tileset reloaded.
+      </p>
+    </section>
+
+    <section v-if="cell">
+      <h3>Cell</h3>
+      <div class="size-row">
+        <label>
+          <span>W</span>
+          <input
+            :value="cell.width"
+            type="number"
+            min="2"
+            step="2"
+            @change="patchCell({ width: Number(($event.target as HTMLInputElement).value) })"
+          >
+        </label>
+        <label>
+          <span>H</span>
+          <input
+            :value="cell.height"
+            type="number"
+            min="1"
+            @change="patchCell({ height: Number(($event.target as HTMLInputElement).value) })"
+          >
+        </label>
+        <label>
+          <span>Cols</span>
+          <input
+            :value="cell.cols"
+            type="number"
+            min="1"
+            @change="patchCell({ cols: Number(($event.target as HTMLInputElement).value) })"
+          >
+        </label>
+      </div>
+      <p class="hint">
+        This map draws in a bitmap mode, where there is no name table: a cell is
+        a rectangle of dots the game copies out of the atlas image, not an index
+        the VDP resolves. <strong>Cols</strong> is how many cells fit across that
+        image — cell <em>n</em> is the <em>n</em>th block, read left to right and
+        top to bottom. Keep it a power of two and the helper's divide becomes a
+        shift. Width must be even: the VDP copies whole bytes, and every bitmap
+        mode packs at least two dots into one.
       </p>
     </section>
 

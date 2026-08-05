@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "name": "canyon",
+  "machine": "2",
+  "target": "ROM_ASCII8",
+  "romSize": 128,
+  "libModules": [
+    "system",
+    "bios",
+    "vdp",
+    "keyboard",
+    "memory",
+    "psg",
+    "ayfx/ayfx_player"
+  ],
+  "projModules": [
+    "main",
+    "scroll",
+    "player",
+    "enemy",
+    "bossfight",
+    "screens"
+  ],
+  "build": {
+    "optim": "Speed",
+    "debug": false,
+    "allowUndocumented": false,
+    "compileComplexity": "Default",
+    "defines": {}
+  },
+  "rom": {
+    "checkVersion": true,
+    "delayBoot": false,
+    "signature": false,
+    "installRamIsr": "RAMISR_PAGE3",
+    "customIsr": "VBLANK",
+    "bankedCall": false
+  },
+  "files": {
+    "rawFiles": [
+      {
+        "segment": 4,
+        "file": "data/atlas.bin"
+      },
+      {
+        "offset": 40928,
+        "file": "data/title.bin"
+      },
+      {
+        "offset": 73696,
+        "file": "data/credits.bin"
+      }
+    ],
+    "diskFiles": [],
+    "diskSize": "720K"
+  },
+  "emulator": {
+    "preferred": "openmsx",
+    "openmsxMachine": null,
+    "ext": {
+      "scc": false,
+      "msxMusic": false,
+      "msxAudio": false,
+      "opl4": false,
+      "psg2": false,
+      "v9990": false,
+      "ram": false,
+      "pac": false
+    },
+    "portA": "",
+    "portB": "",
+    "hz60": false,
+    "fullscreen": false,
+    "mute": false
+  },
+  "resources": {
+    "imgRules": []
+  },
+  "customConfig": false
+}

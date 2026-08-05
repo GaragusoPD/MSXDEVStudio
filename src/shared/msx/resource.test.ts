@@ -357,6 +357,44 @@ describe('map resource', () => {
     expect(header).not.toContain('RLEp_UnpackToRAM')
     expect(header).toContain('VDP_WriteLayout_GM2(layer, x, y, G_LEVEL_W, G_LEVEL_H)')
   })
+
+  it('draws a bitmap-mode map by copying cells out of an atlas, not by writing a name table', () => {
+    const doc = normalizeMap({
+      tileset: 'res/canyon.screen.json',
+      width: 16,
+      height: 4,
+      cell: { width: 16, height: 16, cols: 16 },
+      layers: [{ name: 'terrain', data: new Array(64).fill(0).map((_, i) => i) }]
+    })
+    expect(validateResource({ kind: 'map', doc })).toEqual([])
+
+    const header = rendered(
+      { kind: 'map', doc }, 'res/stage.map.json', {
+        name: 'g_Stage',
+        format: 'c',
+        out: 'content/stage.h',
+        helpers: true
+      })
+
+    // The cell geometry has to reach C: nothing else in the header knows it.
+    expect(header).toContain('#define G_STAGE_CELL_W 16')
+    expect(header).toContain('#define G_STAGE_CELL_H 16')
+    expect(header).toContain('#define G_STAGE_ATLAS_COLS 16')
+    expect(header).toContain('void g_Stage_DrawRow(const u8* layer, u8 row, UY atlasY, UY destY)')
+    expect(header).toContain('VDP_CommandHMMM((u16)(cell % G_STAGE_ATLAS_COLS) * G_STAGE_CELL_W')
+    // There is no name table in a bitmap mode — emitting one would compile and
+    // draw nothing.
+    expect(header).not.toContain('VDP_WriteLayout_GM2')
+  })
+
+  it('rejects a cell the VDP cannot copy', () => {
+    // Every bitmap mode packs at least two dots per byte, and HMMM moves bytes.
+    const doc = normalizeMap({
+      tileset: 'res/canyon.screen.json',
+      cell: { width: 15, height: 16, cols: 16 }
+    })
+    expect(validateResource({ kind: 'map', doc }).join(' ')).toContain('odd')
+  })
 })
 
 describe('screen resource', () => {

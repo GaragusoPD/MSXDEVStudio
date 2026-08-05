@@ -2,6 +2,9 @@
  * `*.map.json` (Spec 10 A): a tilemap over a `*.tiles.json` tileset. Layers
  * are flat `width * height` arrays — either tile indices or per-cell bit
  * layers — which is exactly what gets exported.
+ *
+ * A map can also be drawn in a **bitmap** mode, where the tileset is a
+ * `*.screen.json` instead: see `MapCell`.
  */
 
 import { packRlep } from './compress'
@@ -18,12 +21,33 @@ export interface MapLayer {
   visible: boolean
 }
 
+/**
+ * What a cell is when the map is drawn in a **bitmap** mode (SCREEN 5 and up),
+ * where `tileset` names a `*.screen.json` rather than a `*.tiles.json`.
+ *
+ * There is no name table in those modes, so a cell is not an index the VDP
+ * resolves — it is a rectangle of pixels the game copies. The atlas is the
+ * screen's converted image read as a plain grid: cell `n` sits at
+ * `(n % cols * width, n / cols * height)`. That is deliberately *not* the
+ * fragment machinery `ScreenFragment` provides — fragments are named cut-outs
+ * of arbitrary size, and a tilemap wants the opposite: anonymous cells that
+ * are all the same size, addressed by number.
+ */
+export interface MapCell {
+  width: number
+  height: number
+  /** Cells per row in the atlas image. A power of two turns the helper's divide into a shift. */
+  cols: number
+}
+
 export interface MapDoc {
   version: 1
-  /** Project-relative path of the tileset this map draws with. */
+  /** Project-relative path of the tileset this map draws with — `.tiles.json`, or `.screen.json` when `cell` is set. */
   tileset: string
   width: number
   height: number
+  /** Pixel geometry for a bitmap-mode map; null means the 8×8 name-table cell of SCREEN 1/2/4. */
+  cell: MapCell | null
   layers: MapLayer[]
   export: ExportBlock | null
 }
@@ -61,9 +85,19 @@ export function normalizeMap(raw: unknown): MapDoc {
     tileset: String(input.tileset ?? ''),
     width,
     height,
+    cell: normalizeCell(input.cell),
     layers,
     export: input.export ?? null
   }
+}
+
+/** Absent in every map written before bitmap modes were supported, so default to the name table. */
+function normalizeCell(raw: unknown): MapCell | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const cell = raw as Partial<MapCell>
+  const at = (value: unknown, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 1 ? value | 0 : fallback
+  return { width: at(cell.width, 16), height: at(cell.height, 16), cols: at(cell.cols, 16) }
 }
 
 export function cellIndex(doc: MapDoc, x: number, y: number): number {
@@ -106,6 +140,14 @@ export function validateMap(doc: MapDoc): string[] {
   if (doc.version !== 1) problems.push(`Unsupported version ${doc.version}`)
   if (!doc.tileset) problems.push('No tileset referenced')
   if (!doc.layers.length) problems.push('Map has no layers')
+  // HMMM addresses whole bytes, and every bitmap mode packs at least two dots
+  // into one, so an odd cell width cannot be copied at all.
+  if (doc.cell && doc.cell.width % 2 !== 0) {
+    problems.push(`Cell width ${doc.cell.width} is odd — VDP copies whole bytes, so it must be even (4 in SCREEN 6)`)
+  }
+  if (doc.cell && doc.cell.cols * doc.cell.width > 512) {
+    problems.push(`Atlas would be ${doc.cell.cols * doc.cell.width} dots wide — wider than VRAM allows`)
+  }
   const cells = doc.width * doc.height
   doc.layers.forEach((layer) => {
     if (layer.data.length !== cells) {
@@ -156,6 +198,7 @@ export function mapExport(
  * own, from the `compress` module.
  */
 export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
+  if (doc.cell) return bitmapMapHelperC(doc, name, compressed, table)
   const prefix = defineName(name)
   const head = [
     '',
@@ -199,6 +242,81 @@ export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table
       '\tRLEp_UnpackToRAM(layer, buffer);',
       `\tVDP_WriteLayout_GM2(buffer, x, y, ${prefix}_W, ${prefix}_H);`,
       '}'
+    ]
+  }
+}
+
+/**
+ * The bitmap-mode counterpart: a row of cells copied out of an atlas already
+ * sitting in VRAM, one `HMMM` per cell.
+ *
+ * A row at a time rather than a whole layer, because that is the unit a
+ * scrolling game actually draws — SCREEN 5's page is 256 lines tall against
+ * 212 displayed, so a vertical scroller fills the hidden lines one row ahead
+ * of the display and never redraws anything else.
+ *
+ * Coordinates are `UX`/`UY`, MSXgl's own aliases for whatever `VDP_UNIT` was
+ * configured as, so the atlas can sit in a VRAM page the screen never shows
+ * (which needs `VDP_UNIT_U16` — a `u8` Y cannot name a row past 255).
+ */
+function bitmapMapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
+  const prefix = defineName(name)
+  const cell = doc.cell!
+  const signature = `void ${name}_DrawRow(const u8* layer, u8 row, UY atlasY, UY destY)`
+  return {
+    header: [
+    '',
+    `// ── ${name}: a tilemap in a bitmap mode ───────────────────────────────`,
+    '//',
+    `// Draws map row \`row\` as ${doc.width} cells of ${cell.width}×${cell.height} dots, starting at`,
+    '// dot column 0 of VRAM row `destY`. Cells come from an atlas image parked',
+    '// at (0, `atlasY`) in VRAM — upload it once with a single HMMC:',
+    '//',
+    `//   VDP_CommandHMMC(g_Atlas, 0, atlasY, ATLAS_W, ATLAS_H);`,
+    '//',
+    `// Cell n is the atlas's nth ${cell.width}×${cell.height} block, read left to right and top to`,
+    `// bottom, ${cell.cols} to a row. There is no name table in these modes, so this`,
+    '// copies pixels: the map is the same bytes it always was, but a cell is a',
+    '// rectangle rather than an index the VDP resolves for you.',
+    '//',
+    '// A vertical scroller calls this for the one row about to scroll into the',
+    '// hidden lines below the display, and leaves the rest alone. Mask `destY`',
+    '// yourself if you want it to wrap inside a page — the VDP addresses all of',
+    '// VRAM as one tall column, so 256 is the next page, not row 0 again.',
+    '//',
+    '// Needs MSXgl\'s VDP command engine: MSX2 or later with VDP_USE_COMMAND,',
+    '// and "msxgl.h" included before this header.',
+    ...(compressed
+      ? [
+          '//',
+          `// The layers are RLEp-packed, so \`layer\` must be a RAM buffer of`,
+          `// ..._UNPACKED_SIZE bytes you filled with RLEp_UnpackToRAM first — this`,
+          '// reads rows in any order and cannot unpack per call.'
+        ]
+      : []),
+    '//',
+    '// Example:',
+    `//   ${name}_DrawRow(${table}, row, ATLAS_Y, (u8)(row * ${cell.height}));`,
+    `${signature};`
+    ],
+    source: [
+    '',
+    signature,
+    '{',
+    `\tconst u8* src = layer + ((u16)row * ${prefix}_W);`,
+    '\tu16 dx = 0;',
+    `\tu8 col = ${prefix}_W;`,
+    '\twhile(col--)',
+    '\t{',
+    '\t\tu8 cell = *src++;',
+    // cols is a literal, so a power-of-two atlas costs a shift and a mask here
+    // rather than SDCC's division routine.
+    `\t\tVDP_CommandHMMM((u16)(cell % ${prefix}_ATLAS_COLS) * ${prefix}_CELL_W,`,
+    `\t\t                atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${prefix}_CELL_H),`,
+    `\t\t                dx, destY, ${prefix}_CELL_W, ${prefix}_CELL_H);`,
+    `\t\tdx += ${prefix}_CELL_W;`,
+    '\t}',
+    '}'
     ]
   }
 }

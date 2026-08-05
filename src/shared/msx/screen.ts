@@ -10,8 +10,9 @@
 import { packRlep } from './compress'
 import type { HelperC } from './emitC'
 import { isBitmapMode, MODES, type BitmapMode } from './modes'
+import { MSX1_PALETTE_GRB, paletteToRgb, type Rgb } from './palette'
 import type { ExportBlock } from './resource'
-import type { DitherMode } from './quantize'
+import { rgb332Palette, type DitherMode } from './quantize'
 
 export interface ScreenConvert {
   dither: DitherMode
@@ -65,6 +66,26 @@ export interface ScreenDoc {
 
 export function createScreenDoc(mode: BitmapMode = 'sc5', source = ''): ScreenDoc {
   return normalizeScreen({ mode, source })
+}
+
+/**
+ * A converted image with nothing in it, so a screen can be drawn from scratch
+ * instead of converted from a PNG. Everything downstream — retouch, fragments,
+ * the export — reads `converted` and does not care where it came from; only
+ * re-running the conversion would replace this, and there is no source to
+ * re-run it from.
+ *
+ * The palette is the one the machine boots with, so what the editor shows and
+ * what an un-`VDP_SetPalette`d game shows are the same sixteen colors.
+ */
+export function blankConverted(mode: BitmapMode): ConvertedScreen {
+  const info = MODES[mode]
+  return {
+    width: info.width,
+    height: info.height,
+    palette: info.palette === 'grb333' ? [...MSX1_PALETTE_GRB] : null,
+    indices: encodeIndices(new Uint8Array(info.width * info.height))
+  }
 }
 
 export function normalizeScreen(raw: unknown): ScreenDoc {
@@ -330,24 +351,25 @@ export function screenHelperC(doc: ScreenDoc, name: string): HelperC {
     'typedef struct',
     '{',
     '\tu8  slot; // which backup column this object owns',
-    '\tu16 bx;   // the saved background rectangle; bw = 0 means nothing is on screen',
-    '\tu8  by, bw, bh;',
+    '\tUX  bx;   // the saved background rectangle; bw = 0 means nothing is on screen',
+    '\tUY  by;',
+    '\tu8  bw, bh;',
     `} ${name}_SwSprite;`,
     '',
-    `void ${name}_Upload(u8 stripY);`,
-    `void ${name}_Restore(${name}_SwSprite* s, u8 stripY);`,
-    `void ${name}_Draw(${name}_SwSprite* s, u8 frame, u16 x, u8 y, u8 stripY);`
+    `void ${name}_Upload(UY stripY);`,
+    `void ${name}_Restore(${name}_SwSprite* s, UY stripY);`,
+    `void ${name}_Draw(${name}_SwSprite* s, u8 frame, UX x, UY y, UY stripY);`
     ],
     source: [
     '',
     '// Copies every frame into the off-screen strip at VRAM row `stripY`.',
-    `void ${name}_Upload(u8 stripY)`,
+    `void ${name}_Upload(UY stripY)`,
     '{',
     `\tVDP_CommandHMMC(${name}_Strip, 0, stripY, ${prefix}_STRIP_W, ${prefix}_STRIP_H);`,
     '}',
     '',
     '// Puts back what the object was covering. Safe before the first draw.',
-    `void ${name}_Restore(${name}_SwSprite* s, u8 stripY)`,
+    `void ${name}_Restore(${name}_SwSprite* s, UY stripY)`,
     '{',
     '\tif(s->bw == 0)',
     '\t\treturn;',
@@ -356,10 +378,10 @@ export function screenHelperC(doc: ScreenDoc, name: string): HelperC {
     '}',
     '',
     '// Saves the background at the new position, then blits `frame` over it.',
-    `void ${name}_Draw(${name}_SwSprite* s, u8 frame, u16 x, u8 y, u8 stripY)`,
+    `void ${name}_Draw(${name}_SwSprite* s, u8 frame, UX x, UY y, UY stripY)`,
     '{',
     `\tconst u8* rect = ${name}_Rects + ((u16)frame * 4);`,
-    '\tu16 sx = rect[0] + ((u16)rect[1] << 8);',
+    '\tUX sx = rect[0] + ((u16)rect[1] << 8);',
     '\tu8  w  = rect[2];',
     '\tu8  h  = rect[3];',
     '\t// HMMM copies whole bytes, so the backup starts a couple of dots early',
@@ -383,7 +405,7 @@ export function screenHelperC(doc: ScreenDoc, name: string): HelperC {
  */
 export function screenUnpackC(name: string): HelperC {
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
-  const signature = `void ${name}_Unpack(u8* buffer, u8 y)`
+  const signature = `void ${name}_Unpack(u8* buffer, UY y)`
   return {
     header: [
     '',
@@ -416,6 +438,17 @@ export function screenUnpackC(name: string): HelperC {
     '}'
     ]
   }
+}
+
+/**
+ * The RGB an editor draws this screen's indices with. sc8/10/12 have no
+ * palette of their own — their index *is* the color — so they get the fixed
+ * table approximated; sc5/6/7 use whatever the conversion baked.
+ */
+export function screenRgb(doc: ScreenDoc): Rgb[] {
+  const info = MODES[doc.mode]
+  if (info.palette === 'rgb332' || info.palette === 'yjk') return rgb332Palette()
+  return paletteToRgb(doc.converted?.palette ?? null)
 }
 
 /** Palette table bytes in V9938 write order: `[0RRR0BBB, 00000GGG]` per entry. */

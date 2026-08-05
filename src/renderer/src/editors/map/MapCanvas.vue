@@ -12,8 +12,7 @@
  */
 import { computed, ref, watchEffect } from 'vue'
 import { SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
-import { paletteToRgb } from '../../../../shared/msx/palette'
-import { tilePixels, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
+import { MODES } from '../../../../shared/msx/modes'
 import { type Point } from '../../../../shared/map-editor'
 import { rectPoints } from '../../../../shared/tile-editor'
 import {
@@ -27,52 +26,35 @@ import {
   paintDrag,
   pasteClipboard,
   setSelection,
+  sheet,
   type MapSession
 } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
-const SHEET_COLUMNS = 16
 const canvas = ref<HTMLCanvasElement | null>(null)
 const rectPreview = ref<Point[]>([])
-
-let sheetSource: TilesDoc | null = null
-const sheetCanvas = document.createElement('canvas')
 
 let origin: Point | null = null
 let last: Point | null = null
 let selecting = false
 let selectAnchor: Point | null = null
 
-function ensureSheet(tileset: TilesDoc): HTMLCanvasElement {
-  if (sheetSource === tileset) return sheetCanvas
-  sheetSource = tileset
-  const rows = Math.max(1, Math.ceil(tileset.count / SHEET_COLUMNS))
-  sheetCanvas.width = SHEET_COLUMNS * TILE_SIZE
-  sheetCanvas.height = rows * TILE_SIZE
-  const ctx = sheetCanvas.getContext('2d')
-  if (!ctx) return sheetCanvas
-  const rgb = paletteToRgb(tileset.palette)
-  const image = new ImageData(sheetCanvas.width, sheetCanvas.height)
-  for (let index = 0; index < tileset.count; index++) {
-    const pixels = tilePixels(tileset, index)
-    const ox = (index % SHEET_COLUMNS) * TILE_SIZE
-    const oy = Math.floor(index / SHEET_COLUMNS) * TILE_SIZE
-    for (let y = 0; y < TILE_SIZE; y++) {
-      for (let x = 0; x < TILE_SIZE; x++) {
-        const value = pixels[y * TILE_SIZE + x]
-        const at = ((oy + y) * image.width + ox + x) * 4
-        const color = rgb[value] ?? { r: 0, g: 0, b: 0 }
-        image.data[at] = color.r
-        image.data[at + 1] = color.g
-        image.data[at + 2] = color.b
-        image.data[at + 3] = 255
-      }
-    }
+/**
+ * One screenful, in map cells — what the outline overlay steps by. A name-table
+ * map is always 32×24 characters, but a bitmap map's cell is a size in dots, so
+ * how many fit on a screen depends on the mode the atlas was converted for.
+ */
+const screenSpan = computed(() => {
+  const cell = doc(props.session).cell
+  const atlas = props.session.atlas
+  if (!cell || !atlas) return { cols: SCREEN_COLS, rows: SCREEN_ROWS }
+  const info = MODES[atlas.mode]
+  return {
+    cols: Math.max(1, Math.floor(info.width / cell.width)),
+    rows: Math.max(1, Math.floor(info.height / cell.height))
   }
-  ctx.putImageData(image, 0, 0)
-  return sheetCanvas
-}
+})
 
 function cellAt(event: PointerEvent): Point {
   const rect = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
@@ -164,9 +146,8 @@ watchEffect(() => {
   ctx.fillStyle = '#2a2a2a'
   ctx.fillRect(0, 0, element.width, element.height)
 
-  const tileset = props.session.tileset
-  if (tileset) {
-    const sheet = ensureSheet(tileset)
+  const cells = sheet(props.session)
+  if (cells) {
     // The first tiles layer is the base: hardware draws every cell, so tile 0
     // renders like any other. On overlay layers 0 stays transparent — it's
     // what erase writes and what a fresh layer is filled with.
@@ -180,9 +161,9 @@ watchEffect(() => {
         for (let x = 0; x < current.width; x++) {
           const index = layer.data[y * current.width + x]
           if (!index && skipZero) continue
-          const sx = (index % SHEET_COLUMNS) * TILE_SIZE
-          const sy = Math.floor(index / SHEET_COLUMNS) * TILE_SIZE
-          ctx.drawImage(sheet, sx, sy, TILE_SIZE, TILE_SIZE, x * zoom, y * zoom, zoom, zoom)
+          const sx = (index % cells.cols) * cells.cellW
+          const sy = Math.floor(index / cells.cols) * cells.cellH
+          ctx.drawImage(cells.canvas, sx, sy, cells.cellW, cells.cellH, x * zoom, y * zoom, zoom, zoom)
         }
       }
     }
@@ -213,13 +194,13 @@ watchEffect(() => {
   if (props.session.screenOutline) {
     ctx.strokeStyle = 'rgba(0, 200, 255, 0.6)'
     ctx.lineWidth = 2
-    for (let x = 0; x <= current.width; x += SCREEN_COLS) {
+    for (let x = 0; x <= current.width; x += screenSpan.value.cols) {
       ctx.beginPath()
       ctx.moveTo(x * zoom, 0)
       ctx.lineTo(x * zoom, element.height)
       ctx.stroke()
     }
-    for (let y = 0; y <= current.height; y += SCREEN_ROWS) {
+    for (let y = 0; y <= current.height; y += screenSpan.value.rows) {
       ctx.beginPath()
       ctx.moveTo(0, y * zoom)
       ctx.lineTo(element.width, y * zoom)

@@ -30,6 +30,7 @@ import {
   redo,
   saveSession,
   screenSession,
+  startBlank,
   undo,
   type ScreenSession
 } from './session'
@@ -181,6 +182,17 @@ function sourceButtonLabel(active: ScreenSession): string {
         then retouch the conversion with the pencil/fill tools and palette panel.
         For MSX1 full-screen art (SCREEN 1/2), draw a tileset in the tile editor and
         place it in a map instead — a 32×24 map is one screen.
+        <template v-if="!doc(session).converted">
+          Or
+          <button
+            type="button"
+            class="link"
+            @click="startBlank(session)"
+          >
+            start a blank canvas
+          </button>
+          and draw here — which is what an atlas or a sprite sheet usually wants.
+        </template>
       </p>
 
       <div class="panes">
@@ -273,5 +285,15 @@ function sourceButtonLabel(active: ScreenSession): string {
   font-size: 12px;
   line-height: 1.5;
   color: var(--color-text-muted);
+}
+
+.hint .link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-accent);
+  text-decoration: underline;
+  cursor: pointer;
 }
 </style>

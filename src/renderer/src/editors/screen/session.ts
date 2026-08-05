@@ -22,7 +22,7 @@ import { decode } from '../../composables/useImageImport'
 import { isBitmapMode, type BitmapMode, type ScreenMode } from '../../../../shared/msx/modes'
 import { quantize } from '../../../../shared/msx/quantize'
 import { serializeResource } from '../../../../shared/msx/resource'
-import { normalizeScreen, type ScreenConvert, type ScreenDoc } from '../../../../shared/msx/screen'
+import { blankConverted, normalizeScreen, type ScreenConvert, type ScreenDoc } from '../../../../shared/msx/screen'
 import {
   applyConversion,
   canRedo,
@@ -221,6 +221,18 @@ export function reconvertWith(session: ScreenSession, patch: { mode?: BitmapMode
 
 export function reconvertNow(session: ScreenSession): void {
   reconvertWith(session, {})
+}
+
+/**
+ * Starts an empty canvas at the mode's resolution, for a screen that is drawn
+ * here rather than converted from artwork — a tile atlas, a HUD strip, a
+ * software-sprite sheet. The pencil, fill, palette and cut tools all work off
+ * `converted`, so giving it something to work on is the whole feature.
+ */
+export function startBlank(session: ScreenSession): void {
+  const current = doc(session)
+  commit(session, { ...current, converted: blankConverted(current.mode) })
+  session.status = 'Blank canvas'
 }
 
 export function setPalette(session: ScreenSession, index: number, grb: number): void {

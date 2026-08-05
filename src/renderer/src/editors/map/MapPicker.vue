@@ -4,13 +4,14 @@
  * palette. Click picks a single-tile stamp; shift+click (or drag) picks a
  * rectangular multi-tile stamp — same marquee gesture `TileGrid.vue` uses for
  * its own selection, built into a `Stamp` via `stampFromMarquee`.
+ *
+ * A bitmap map's atlas arrives here as the same `Sheet` a tileset does, so
+ * nothing below knows which kind it is picking from.
  */
 import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
-import { paletteToRgb } from '../../../../shared/msx/palette'
-import { tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
 import { singleStamp, stampFromMarquee } from '../../../../shared/map-editor'
 import { fitColumns } from '../../../../shared/tile-editor'
-import { pickBlock, pickTile, type MapSession } from './session'
+import { pickBlock, pickTile, sheet, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
@@ -19,11 +20,12 @@ const scroller = ref<HTMLElement | null>(null)
 const hover = ref<number | null>(null)
 let dragAnchor: number | null = null
 
-/** The tileset's named blocks — a stamp bigger than one tile, picked the same way. */
+/** The tileset's named blocks — a stamp bigger than one tile, picked the same way. An atlas has none. */
 const blocks = computed(() => props.session.tileset?.blocks ?? [])
 
+const cells = computed(() => sheet(props.session))
 const cell = computed(() => props.session.pickerZoom)
-const count = computed(() => props.session.tileset?.count ?? 0)
+const count = computed(() => cells.value?.count ?? 0)
 
 /** Same as `TileGrid.vue`: the sheet wraps into the pane instead of scrolling off the side of it. */
 const paneWidth = ref(0)
@@ -89,40 +91,30 @@ function onUp(): void {
 
 watchEffect(() => {
   const element = canvas.value
-  const tileset = props.session.tileset
-  if (!element || !tileset) return
+  const source = cells.value
+  if (!element || !source) return
   const size = cell.value
   element.width = COLUMNS.value * size
   element.height = rows.value * size
   const context = element.getContext('2d')
   if (!context) return
   context.clearRect(0, 0, element.width, element.height)
-
-  const rgb = paletteToRgb(tileset.palette)
-  const sheet = new ImageData(COLUMNS.value * TILE_SIZE, rows.value * TILE_SIZE)
-  for (let index = 0; index < tileset.count; index++) {
-    const pixels = tilePixels(tileset, index)
-    const ox = (index % COLUMNS.value) * TILE_SIZE
-    const oy = Math.floor(index / COLUMNS.value) * TILE_SIZE
-    for (let y = 0; y < TILE_SIZE; y++) {
-      for (let x = 0; x < TILE_SIZE; x++) {
-        const value = pixels[y * TILE_SIZE + x]
-        const at = ((oy + y) * sheet.width + ox + x) * 4
-        const color = rgb[value] ?? { r: 0, g: 0, b: 0 }
-        sheet.data[at] = color.r
-        sheet.data[at + 1] = color.g
-        sheet.data[at + 2] = color.b
-        sheet.data[at + 3] = 255
-      }
-    }
-  }
-  const source = document.createElement('canvas')
-  source.width = sheet.width
-  source.height = sheet.height
-  source.getContext('2d')?.putImageData(sheet, 0, 0)
   context.imageSmoothingEnabled = false
-  for (let row = 0; row < rows.value; row++) {
-    context.drawImage(source, 0, row * TILE_SIZE, sheet.width, TILE_SIZE, 0, row * size, COLUMNS.value * size, size)
+
+  // The pane's column count is measured, not the sheet's own, so each cell is
+  // placed rather than the sheet blitted in rows — the two grids differ.
+  for (let index = 0; index < source.count; index++) {
+    context.drawImage(
+      source.canvas,
+      (index % source.cols) * source.cellW,
+      Math.floor(index / source.cols) * source.cellH,
+      source.cellW,
+      source.cellH,
+      (index % COLUMNS.value) * size,
+      Math.floor(index / COLUMNS.value) * size,
+      size,
+      size
+    )
   }
 
   context.lineWidth = 2
@@ -140,7 +132,7 @@ watchEffect(() => {
       <span class="readout">{{ hover ?? session.pickerActive }} · {{ hex(hover ?? session.pickerActive) }}</span>
     </header>
     <p
-      v-if="!session.tileset"
+      v-if="!cells"
       class="hint"
     >
       {{ session.tilesetError ?? 'No tileset.' }}
