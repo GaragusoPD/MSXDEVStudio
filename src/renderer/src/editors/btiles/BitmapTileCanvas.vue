@@ -77,8 +77,15 @@ function up(event: PointerEvent): void {
 
 watchEffect(() => {
   const element = canvas.value
-  const ctx = element?.getContext('2d')
-  if (!element || !ctx) return
+  if (!element) return
+  // Sized here rather than bound in the template: assigning width/height clears
+  // the canvas, and Vue patches attributes *after* this effect runs — so a
+  // template binding wipes everything just drawn. Changing the zoom did exactly
+  // that, and left the tile blank.
+  element.width = width.value
+  element.height = height.value
+  const ctx = element.getContext('2d')
+  if (!ctx) return
   const tiles = tileset.value
   const pixels = tileImage(tiles, props.session.selected)
   const cell = step.value
@@ -114,8 +121,6 @@ watchEffect(() => {
   <canvas
     ref="canvas"
     class="tile-canvas"
-    :width="width"
-    :height="height"
     :style="{ width: `${width}px`, height: `${height}px` }"
     @pointerdown="down"
     @pointermove="move"

@@ -12,6 +12,7 @@ import { computed, ref, watch } from 'vue'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import type { TileTool } from '../../../../shared/bitmap-tile-editor'
+import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import BitmapTileCanvas from './BitmapTileCanvas.vue'
 import BitmapTileGrid from './BitmapTileGrid.vue'
@@ -23,7 +24,8 @@ import {
   importImage,
   moveTile,
   pruneBitmapTileSessions,
-  removeTile
+  removeTile,
+  saveSession
 } from './session'
 
 // `EditorArea` renders the active editor with no props — every resource tab
@@ -50,6 +52,22 @@ watch(
   () => pruneBitmapTileSessions(new Set(tabs.tabs.map((tab) => tab.filePath ?? ''))),
   { immediate: true }
 )
+
+const resourcesStore = useResourcesStore()
+
+async function save(): Promise<void> {
+  try {
+    await saveSession(session.value)
+  } catch (error) {
+    session.value.status = `Save failed: ${String(error)}`
+  }
+}
+
+/** Export goes through Spec 07's converter, so the file on disk has to be current first. */
+async function exportNow(): Promise<void> {
+  await save()
+  await resourcesStore.exportOne(session.value.path)
+}
 
 function onImported(result: ImportResult): void {
   importImage(session.value, result, dedupe.value)
@@ -128,6 +146,23 @@ function onImported(result: ImportResult): void {
             v-model="dedupe"
             type="checkbox"
           > collapse repeats</label>
+        </div>
+
+        <div class="group">
+          <button
+            type="button"
+            :disabled="!session.dirty"
+            @click="save"
+          >
+            {{ session.dirty ? 'Save' : 'Saved' }}
+          </button>
+          <button
+            type="button"
+            title="Write the C header / binary this tileset exports"
+            @click="exportNow"
+          >
+            Export
+          </button>
         </div>
 
         <span class="status">

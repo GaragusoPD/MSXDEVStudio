@@ -77,8 +77,13 @@ const height = computed(() => sheet.value.height * scale)
 
 watchEffect(() => {
   const element = canvas.value
-  const ctx = element?.getContext('2d')
-  if (!element || !ctx) return
+  if (!element) return
+  // Same as the tile canvas: assigning the size clears it, so it happens here
+  // and not through a template binding Vue applies afterwards.
+  element.width = width.value
+  element.height = height.value
+  const ctx = element.getContext('2d')
+  if (!ctx) return
   const tiles = tileset.value
   const pixels = sheet.value
   const rgb = paletteToRgb(tiles.palette)
@@ -133,8 +138,6 @@ watchEffect(() => {
     <canvas
       ref="canvas"
       class="grid"
-      :width="width"
-      :height="height"
       :style="{ width: `${width}px`, height: `${height}px` }"
       @pointerdown="down"
       @pointermove="move"

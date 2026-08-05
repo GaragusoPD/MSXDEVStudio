@@ -47,7 +47,7 @@ import {
   undo as undoHistory,
   type History
 } from '../../../../shared/history'
-import { serializeResource } from '../../../../shared/msx/resource'
+import { defaultExport, serializeResource, type ExportBlock } from '../../../../shared/msx/resource'
 import type { ImportResult } from '../../composables/useImageImport'
 import { useTabsStore } from '../../stores/tabsStore'
 
@@ -248,6 +248,17 @@ export function setPaletteEntry(session: BitmapTileSession, index: number, grb: 
 
 export function setTileSize(session: BitmapTileSession, width: number, height: number): void {
   commit(session, resizeTiles(doc(session), width, height))
+}
+
+/** Gives a tileset an export target, named after the file like every other kind. */
+export function setupExport(session: BitmapTileSession): void {
+  commit(session, { ...doc(session), export: defaultExport(session.path) })
+}
+
+export function patchExport(session: BitmapTileSession, patch: Partial<ExportBlock>): void {
+  const current = doc(session)
+  if (!current.export) return
+  commit(session, { ...current, export: { ...current.export, ...patch } })
 }
 
 // ── blocks ──────────────────────────────────────────────────────────────────

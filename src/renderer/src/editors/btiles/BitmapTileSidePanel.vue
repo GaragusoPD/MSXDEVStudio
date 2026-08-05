@@ -17,9 +17,11 @@ import {
   doc,
   dropBlock,
   renameBlock,
+  patchExport,
   setFlagBit,
   setPaletteEntry,
   setTileSize,
+  setupExport,
   type BitmapTileSession
 } from './session'
 
@@ -200,6 +202,57 @@ function applySize(): void {
         </button>
       </div>
     </section>
+
+    <section>
+      <h3>Export</h3>
+      <template v-if="tileset.export">
+        <label class="field">
+          <span>Table name</span>
+          <input
+            type="text"
+            spellcheck="false"
+            :value="tileset.export.name"
+            @change="patchExport(session, { name: ($event.target as HTMLInputElement).value })"
+          >
+        </label>
+        <label class="field">
+          <span>Output</span>
+          <input
+            type="text"
+            spellcheck="false"
+            :value="tileset.export.out"
+            @change="patchExport(session, { out: ($event.target as HTMLInputElement).value })"
+          >
+        </label>
+        <label class="field">
+          <span>Format</span>
+          <select
+            :value="tileset.export.format"
+            @change="patchExport(session, { format: ($event.target as HTMLSelectElement).value as 'c' | 'bin' })"
+          >
+            <option value="c">C header</option>
+            <option value="bin">Raw binary</option>
+          </select>
+        </label>
+        <label class="flag">
+          <input
+            type="checkbox"
+            :checked="tileset.export.helpers === true"
+            @change="patchExport(session, { helpers: ($event.target as HTMLInputElement).checked })"
+          >
+          <span title="Adds _Upload() and _Draw(), which blit a tile from the sheet. Needs msxgl.h included first.">
+            Ready-made C
+          </span>
+        </label>
+      </template>
+      <button
+        v-else
+        class="wide"
+        @click="setupExport(session)"
+      >
+        Set an export target
+      </button>
+    </section>
   </div>
 </template>
 
@@ -288,5 +341,17 @@ h3 {
 .dim {
   opacity: 0.6;
   font-size: 11px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.field input,
+.field select {
+  width: 100%;
+  min-width: 0;
 }
 </style>
