@@ -21,9 +21,15 @@ const preview = ref<Point[]>([])
 let origin: Point | null = null
 
 const tileset = computed(() => doc(props.session))
-/** Big enough to work in, small enough that a 64×64 tile still fits a pane. */
+/**
+ * The zoom slider drives this directly, capped so even a 64×64 tile stays on
+ * screen. The old formula scaled the zoom *down* by the tile size, so a 16×16
+ * tile at maximum zoom came out 192 pixels across — smaller than the bank
+ * beside it.
+ */
+const MAX_CANVAS = 640
 const step = computed(() =>
-  Math.max(2, Math.min(props.session.zoom, Math.floor((16 * props.session.zoom) / Math.max(tileset.value.width, tileset.value.height))))
+  Math.max(2, Math.min(props.session.zoom, Math.floor(MAX_CANVAS / Math.max(tileset.value.width, tileset.value.height))))
 )
 const width = computed(() => tileset.value.width * step.value)
 const height = computed(() => tileset.value.height * step.value)

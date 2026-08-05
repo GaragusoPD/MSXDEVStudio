@@ -92,7 +92,7 @@ function onImported(result: ImportResult): void {
             v-model.number="session.zoom"
             type="range"
             min="4"
-            max="24"
+            max="40"
           ></label>
         </div>
 
@@ -202,6 +202,7 @@ button.on {
 }
 .stage {
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: flex-start;
   justify-content: center;

@@ -74,9 +74,7 @@ function applySize(): void {
           :style="{ background: `rgb(${rgb[index]?.r ?? 0},${rgb[index]?.g ?? 0},${rgb[index]?.b ?? 0})` }"
           :title="`${index}: ${toHex(rgb[index] ?? { r: 0, g: 0, b: 0 })}`"
           @click="emit('color', index)"
-        >
-          <span>{{ index }}</span>
-        </button>
+        />
       </div>
       <p
         v-else
@@ -212,7 +210,9 @@ function applySize(): void {
   gap: 14px;
   padding: 10px;
   overflow-y: auto;
-  min-width: 220px;
+  /* Fixed, like the bank: whatever is left over belongs to the tile. */
+  flex: 0 0 196px;
+  width: 196px;
 }
 h3 {
   margin: 0 0 6px;
@@ -228,16 +228,16 @@ h3 {
 }
 .swatches {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
+  /* Sixteen chips in two rows. The index lives in the tooltip — printing it in
+     the swatch is what forced them big enough to read. */
+  grid-template-columns: repeat(8, 18px);
   gap: 2px;
 }
 .swatch {
-  aspect-ratio: 1;
+  width: 18px;
+  height: 18px;
   border: 1px solid var(--border, #333);
   cursor: pointer;
-  font-size: 9px;
-  color: #fff;
-  text-shadow: 0 0 2px #000;
   padding: 0;
 }
 .swatch.on {

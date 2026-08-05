@@ -15,11 +15,21 @@ import { doc, setSelection, type BitmapTileSession } from './session'
 const props = defineProps<{ session: BitmapTileSession }>()
 const emit = defineEmits<{ select: [index: number] }>()
 
+/**
+ * One screen pixel per tile pixel, always.
+ *
+ * `sheetCols` is how many tiles fit across VRAM, so the sheet is never wider
+ * than 256 dots whatever the tile size — which makes 1:1 both the honest view
+ * and a column the editing area can afford. It was drawing at 3×, which put a
+ * 768-pixel bank next to a 192-pixel canvas.
+ */
+const scale = 1
+
 /** Grid coordinates under the pointer, clamped to the bank. */
 function cellAt(event: PointerEvent): { col: number; row: number; index: number } | null {
   const box = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
-  const col = Math.floor((event.clientX - box.left) / (tileset.value.width * scale.value))
-  const row = Math.floor((event.clientY - box.top) / (tileset.value.height * scale.value))
+  const col = Math.floor((event.clientX - box.left) / (tileset.value.width * scale))
+  const row = Math.floor((event.clientY - box.top) / (tileset.value.height * scale))
   if (col < 0 || row < 0 || col >= cols.value) return null
   const index = row * cols.value + col
   return index < tileset.value.count ? { col, row, index } : null
@@ -59,13 +69,11 @@ function up(): void {
 const canvas = ref<HTMLCanvasElement | null>(null)
 const tileset = computed(() => doc(props.session))
 const cols = computed(() => sheetCols(tileset.value))
-/** Enough to recognise a tile, capped so a big bank still fits the pane. */
-const step = computed(() => Math.max(1, Math.min(3, Math.floor(192 / cols.value / Math.max(1, tileset.value.width) * 4))))
-const scale = computed(() => Math.max(1, step.value))
+
 
 const sheet = computed(() => sheetPixels(tileset.value))
-const width = computed(() => sheet.value.width * scale.value)
-const height = computed(() => sheet.value.height * scale.value)
+const width = computed(() => sheet.value.width * scale)
+const height = computed(() => sheet.value.height * scale)
 
 watchEffect(() => {
   const element = canvas.value
@@ -93,8 +101,8 @@ watchEffect(() => {
 
   // Slots past `count` are padding in the sheet, not tiles: dim them so the end
   // of the bank is visible rather than implied.
-  const cw = tiles.width * scale.value
-  const ch = tiles.height * scale.value
+  const cw = tiles.width * scale
+  const ch = tiles.height * scale
   const slots = cols.value * Math.ceil(pixels.height / tiles.height)
   ctx.fillStyle = 'rgba(0,0,0,0.55)'
   for (let index = tiles.count; index < slots; index++) {
@@ -140,6 +148,10 @@ watchEffect(() => {
 .grid-wrap {
   overflow: auto;
   padding: 4px;
+  /* The bank is a fixed column: it never grows, and the canvas gets the rest. */
+  flex: 0 0 auto;
+  max-width: 272px;
+  border-right: 1px solid var(--border, #333);
 }
 .grid {
   image-rendering: pixelated;

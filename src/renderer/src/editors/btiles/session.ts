@@ -92,7 +92,7 @@ export function bitmapTileSession(path: string): BitmapTileSession {
     selected: 0,
     tool: 'pencil',
     color: 1,
-    zoom: 12,
+    zoom: 20,
     filled: false,
     status: '',
     selection: null,
