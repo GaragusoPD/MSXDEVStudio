@@ -17,11 +17,11 @@
 //   title.png    256×212 — the title screen, text baked in
 //   credits.png  256×212 — the credits screen, likewise
 
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PNG } from 'pngjs'
-import { VEIN_CYCLE } from './palette.mjs'
+import { RGB, VEIN_CYCLE } from './palette.mjs'
 import { art, blit, canvas, fillRect, get, hLine, put, rng, stamp, text, textCentered, toRgba, vLine } from './draw.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -53,31 +53,155 @@ const CELL = 16
 const MIST_H = 16
 const MIST_WIDTHS = [48, 32, 40]
 
-// ── the canyon atlas ────────────────────────────────────────────────────────
+// ── the canyon atlas, cut from the concept art ──────────────────────────────
+//
+// The canyon tiles are not drawn here. `canyon_concept.png` is resampled to the
+// screen's own 256 dots, quantised against the palette — which was measured off
+// the same image, see palette.mjs — and the cells are then *cut out of it*.
+//
+// That is the whole trick, and it is why the rock reads as rock. Procedural
+// noise gives you speckle; a real photograph of a cliff gives you strata,
+// erosion channels, and the way a lit face fades into shadow over eight pixels.
+// None of that survives being described in a rule, and none of it has to be:
+// the concept already contains it, at a resolution the MSX can hold.
 
-/** Speckled ground: three shades of dust with the odd dark pebble. */
-function floorCell(seed) {
-  const cell = canvas(CELL, CELL, FLOOR)
-  const random = rng(seed)
-  for (let y = 0; y < CELL; y++) {
-    for (let x = 0; x < CELL; x++) {
-      const roll = random()
-      if (roll < 0.09) put(cell, x, y, FLOOR_DARK)
-      else if (roll < 0.13) put(cell, x, y, FLOOR_LIT)
-      else if (roll < 0.135) put(cell, x, y, BLACK)
+const CONCEPT_W = 256
+
+/** The concept, resampled to the screen's width and reduced to palette indices. */
+function loadConcept() {
+  const png = PNG.sync.read(readFileSync(join(HERE, 'canyon_concept.png')))
+  const height = Math.round((png.height * CONCEPT_W) / png.width)
+  const sheet = canvas(CONCEPT_W, height)
+  const sx = png.width / CONCEPT_W
+  const sy = png.height / height
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < CONCEPT_W; x++) {
+      // Box-average the source block, so the reduction keeps the mid-tones the
+      // rock is mostly made of instead of point-sampling noise out of it.
+      let r = 0, g = 0, b = 0, n = 0
+      for (let yy = Math.floor(y * sy); yy < Math.max(Math.floor(y * sy) + 1, Math.floor((y + 1) * sy)); yy++) {
+        for (let xx = Math.floor(x * sx); xx < Math.max(Math.floor(x * sx) + 1, Math.floor((x + 1) * sx)); xx++) {
+          const o = (yy * png.width + xx) * 4
+          r += png.data[o]; g += png.data[o + 1]; b += png.data[o + 2]; n++
+        }
+      }
+      let best = 0
+      let bestDistance = Infinity
+      RGB.forEach(([pr, pg, pb], index) => {
+        const d = (r / n - pr) ** 2 + (g / n - pg) ** 2 + (b / n - pb) ** 2
+        if (d < bestDistance) { bestDistance = d; best = index }
+      })
+      put(sheet, x, y, best)
     }
+  }
+  return sheet
+}
+
+const CONCEPT = loadConcept()
+
+/** Where the chasm runs in the concept: the columns that are dark all the way down. */
+function chasmBand() {
+  const dark = []
+  for (let x = 0; x < CONCEPT_W; x++) {
+    let n = 0
+    for (let y = 0; y < CONCEPT.height; y++) if (get(CONCEPT, x, y) <= 1) n++
+    if (n / CONCEPT.height > 0.92) dark.push(x)
+  }
+  return [dark[0], dark[dark.length - 1]]
+}
+
+const [CHASM_L, CHASM_R] = chasmBand()
+
+/** A CELL×CELL window of the concept, copied out as a cell. */
+function patch([x, y]) {
+  const cell = canvas(CELL, CELL)
+  for (let dy = 0; dy < CELL; dy++) {
+    for (let dx = 0; dx < CELL; dx++) put(cell, dx, dy, get(CONCEPT, x + dx, y + dy))
   }
   return cell
 }
 
-/** Ground split by a fault line — the dark cracks that break up a plain floor. */
+/** How many pixels of `x..x+w` in a window are one of `want`. */
+function tally(x, y, want, x0 = 0, x1 = CELL) {
+  let n = 0
+  for (let dy = 0; dy < CELL; dy++) {
+    for (let dx = x0; dx < x1; dx++) if (want.has(get(CONCEPT, x + dx, y + dy))) n++
+  }
+  return n
+}
+
+/**
+ * Every window of the concept that passes `test`, kept a cell apart from each
+ * other — otherwise the best-scoring places all sit on top of one another and
+ * the atlas gets the same crag eight times.
+ */
+function windows(test) {
+  const found = []
+  for (let y = 0; y + CELL <= CONCEPT.height; y += 2) {
+    for (let x = 0; x + CELL <= CONCEPT_W; x += 2) {
+      if (!test(x, y)) continue
+      if (found.some(([fx, fy]) => Math.abs(fx - x) < CELL && Math.abs(fy - y) < CELL)) continue
+      found.push([x, y])
+    }
+  }
+  return found
+}
+
+const WARM = new Set([FLOOR_DARK, FLOOR, FLOOR_LIT])
+/** How much of a window is its single commonest colour — a flat wall tiles quietly. */
+function flatness(x, y) {
+  const count = new Array(16).fill(0)
+  for (let dy = 0; dy < CELL; dy++) for (let dx = 0; dx < CELL; dx++) count[get(CONCEPT, x + dx, y + dy)]++
+  return Math.max(...count)
+}
+const DARK = new Set([TRANSPARENT, BLACK])
+const EDGE = 6
+
+/**
+ * Rock with almost nothing else in it — the body of the wall, flattest first.
+ *
+ * The order matters more than it looks. A wall cell with no open side is the one
+ * the map lays down over and over, so it wants the quietest rock in the picture:
+ * anything with a strong dark crag in it turns into a visible checkerboard the
+ * moment it repeats. The cells with an open side appear in a single column
+ * against the drop and can afford the interesting rock.
+ */
+const ROCK_WINDOWS = windows((x, y) => tally(x, y, WARM) >= 180)
+  .sort((a, b) => flatness(b[0], b[1]) - flatness(a[0], a[1]))
+/** The chasm floor: windows from the middle that are dark all the way through. */
+const CHASM_WINDOWS = windows((x, y) => x > CHASM_L && x + CELL < CHASM_R && tally(x, y, DARK) >= 240)
+/**
+ * The two places the rock meets the drop: warm rock on the inside, the cool
+ * slate face against the gap. There are only a handful, which is what makes
+ * them worth searching for rather than guessing at.
+ */
+const COOL = new Set([ROCK_DARK, ROCK])
+const FACE_WINDOWS = {
+  e: windows((x, y) => Math.abs(x - (CHASM_L - CELL)) <= 6 &&
+    tally(x, y, COOL, CELL - EDGE, CELL) >= 28 && tally(x, y, WARM, 0, EDGE) >= 18),
+  w: windows((x, y) => Math.abs(x - (CHASM_R + 1)) <= 6 &&
+    tally(x, y, COOL, 0, EDGE) >= 28 && tally(x, y, WARM, CELL - EDGE, CELL) >= 18)
+}
+
+const pickWindow = (list, seed) => list[seed % list.length]
+
+/** The chasm the ship flies down. */
+function floorCell(seed) {
+  return patch(pickWindow(CHASM_WINDOWS, seed))
+}
+
+/**
+ * A fault in the chasm floor. On ground this dark a crack cannot be drawn
+ * darker, so it is drawn as the rock the split exposes: a seam of the wall's
+ * own colours, wandering down the cell.
+ */
 function crackedCell(seed) {
   const cell = floorCell(seed)
   const random = rng(seed ^ 0x5bd1)
   let x = 2 + Math.floor(random() * 4)
   for (let y = 0; y < CELL; y++) {
-    put(cell, x, y, BLACK)
-    put(cell, x + 1, y, FLOOR_DARK)
+    put(cell, x, y, FLOOR_DARK)
+    put(cell, x + 1, y, random() < 0.4 ? ROCK_DARK : FLOOR_DARK)
     if (random() < 0.45) x += random() < 0.5 ? 1 : -1
     x = Math.max(1, Math.min(CELL - 3, x))
   }
@@ -86,8 +210,11 @@ function crackedCell(seed) {
 
 /**
  * A glowing vein, drawn as a three-shade ramp so the game's palette rotation
- * makes it appear to flow. `sides` names which cell edges the vein reaches:
- * 'n', 's', 'e', 'w'. Everything else is ground.
+ * makes it appear to flow. `sides` names which cell edges the vein reaches.
+ *
+ * The one thing in the canyon that is not cut from the concept, and
+ * deliberately: the vein cycle is three palette writes standing in for a whole
+ * animated layer, and it has nowhere to read against except ground this dark.
  */
 function veinCell(seed, sides) {
   const cell = floorCell(seed)
@@ -112,41 +239,49 @@ function veinCell(seed, sides) {
 }
 
 /**
- * Canyon wall. `open` names the sides that face open ground, and those get a
- * lit rim: the light in this canyon comes from the veins below, so a wall edge
- * is bright where it overhangs the floor and dark inside.
+ * The face strip for `side`. The concept only has the two vertical faces, so
+ * 'n' and 's' are the same pixels transposed — rock strata turned on their side
+ * read as a shelf rather than a cliff, which is what a wall edge facing up or
+ * down actually is.
  */
-function wallCell(seed, open = '') {
-  const cell = canvas(CELL, CELL, ROCK)
-  const random = rng(seed)
+function facePatch(side, seed) {
+  const vertical = patch(pickWindow(FACE_WINDOWS[side === 'n' || side === 's' ? 'e' : side], seed))
+  if (side === 'e' || side === 'w') return vertical
+  const turned = canvas(CELL, CELL)
   for (let y = 0; y < CELL; y++) {
     for (let x = 0; x < CELL; x++) {
-      const roll = random()
-      if (roll < 0.13) put(cell, x, y, ROCK_DARK)
-      else if (roll < 0.17) put(cell, x, y, ROCK_LIT)
+      put(turned, x, y, get(vertical, side === 'n' ? CELL - 1 - y : y, x))
     }
   }
-  if (open.includes('n')) {
-    hLine(cell, 0, 0, CELL, ROCK_LIT)
-    hLine(cell, 0, 1, CELL, ROCK)
+  return turned
+}
+
+/**
+ * Canyon wall. `open` names the sides that face the chasm, and each of those
+ * takes the outer six pixels of the matching face strip — so a corner cell gets
+ * both without the two fighting over the middle.
+ */
+function wallCell(seed, open = '') {
+  // No open side means this is the cell that tiles: take one of the flattest.
+  const body = open === ''
+    ? ROCK_WINDOWS[seed % Math.min(8, ROCK_WINDOWS.length)]
+    : pickWindow(ROCK_WINDOWS, seed * 7)
+  const cell = patch(body)
+  const copy = (side, test) => {
+    const face = facePatch(side, seed)
+    for (let y = 0; y < CELL; y++) {
+      for (let x = 0; x < CELL; x++) if (test(x, y)) put(cell, x, y, get(face, x, y))
+    }
   }
-  if (open.includes('s')) {
-    hLine(cell, 0, CELL - 1, CELL, BLACK)
-    hLine(cell, 0, CELL - 2, CELL, ROCK_DARK)
-  }
-  if (open.includes('w')) {
-    vLine(cell, 0, 0, CELL, ROCK_LIT)
-    vLine(cell, 1, 0, CELL, ROCK)
-  }
-  if (open.includes('e')) {
-    vLine(cell, CELL - 1, 0, CELL, ROCK_LIT)
-    vLine(cell, CELL - 2, 0, CELL, ROCK)
-  }
+  if (open.includes('e')) copy('e', (x) => x >= CELL - EDGE)
+  if (open.includes('w')) copy('w', (x) => x < EDGE)
+  if (open.includes('n')) copy('n', (_, y) => y < EDGE)
+  if (open.includes('s')) copy('s', (_, y) => y >= CELL - EDGE)
   return cell
 }
 
 /** A hand-drawn cell, where procedural noise would only get in the way. */
-const CRYSTALS = art([
+const CRYSTALS = onDarkGround(art([
   '6666666666666666',
   '666666dd66666666',
   '66666dcd66666666',
@@ -163,9 +298,9 @@ const CRYSTALS = art([
   '6666666666666666',
   '6666666665666666',
   '6666666666666666'
-])
+]))
 
-const BONES = art([
+const BONES = onDarkGround(art([
   '6666666666666666',
   '6666111116666666',
   '6661777716666666',
@@ -182,9 +317,9 @@ const BONES = art([
   '6666177166666666',
   '6666666666666666',
   '6666666666666666'
-])
+]))
 
-const PAD = art([
+const PAD = onDarkGround(art([
   'cccccccccccccccc',
   'c66666666666666c',
   'c6c6666666666c6c',
@@ -201,9 +336,9 @@ const PAD = art([
   'c66666666666666c',
   'cccccccccccccccc',
   '6666666666666666'
-])
+]))
 
-const FLORA = art([
+const FLORA = onDarkGround(art([
   '66666666666666d6',
   '666d6666666666d6',
   '66d6d66666666dd6',
@@ -220,9 +355,9 @@ const FLORA = art([
   '6666655dd5566666',
   '6666655555566666',
   '6666666666666666'
-])
+]))
 
-const RUBBLE = art([
+const RUBBLE = onDarkGround(art([
   '6666666666666666',
   '6666666666666666',
   '6666555166666666',
@@ -239,15 +374,38 @@ const RUBBLE = art([
   '6666551166666666',
   '6666666666666666',
   '6666666666666666'
-])
+]))
 
-/** Solid black, for the pits the ship must not fly over. */
+/**
+ * A hole in the chasm floor — which now has to be darker than dark.
+ *
+ * The floor used to be bright ground and a pit was simply black. With the floor
+ * itself near-black the difference has to come from the *rim*: true black in
+ * the middle, a violet edge where the ground breaks away. It reads as depth
+ * rather than as a shape drawn on the floor.
+ */
 function pitCell(open = '') {
-  const cell = canvas(CELL, CELL, BLACK)
-  if (open.includes('n')) hLine(cell, 0, 0, CELL, FLOOR_DARK)
-  if (open.includes('s')) hLine(cell, 0, CELL - 1, CELL, FLOOR_DARK)
-  if (open.includes('w')) vLine(cell, 0, 0, CELL, FLOOR_DARK)
-  if (open.includes('e')) vLine(cell, CELL - 1, 0, CELL, FLOOR_DARK)
+  const cell = canvas(CELL, CELL, TRANSPARENT)
+  if (open.includes('n')) hLine(cell, 0, 0, CELL, ROCK_DARK)
+  if (open.includes('s')) hLine(cell, 0, CELL - 1, CELL, ROCK_DARK)
+  if (open.includes('w')) vLine(cell, 0, 0, CELL, ROCK_DARK)
+  if (open.includes('e')) vLine(cell, CELL - 1, 0, CELL, ROCK_DARK)
+  return cell
+}
+
+/**
+ * The hand-drawn decor was all drawn standing on the old rust ground. The
+ * ground is the dark chasm now, so its background becomes the floor colour —
+ * and anything that was outlined in near-black takes the violet shadow first,
+ * or it would vanish into the very colour it is being drawn against.
+ */
+function onDarkGround(cell) {
+  for (let i = 0; i < cell.pixels.length; i++) {
+    if (cell.pixels[i] === BLACK) cell.pixels[i] = ROCK_DARK
+  }
+  for (let i = 0; i < cell.pixels.length; i++) {
+    if (cell.pixels[i] === FLOOR) cell.pixels[i] = BLACK
+  }
   return cell
 }
 
@@ -301,12 +459,16 @@ const ATLAS_CELLS = [
   /* 39 */ pitCell('sw'),
   /* 40 */ pitCell('se'),
   /* 41 */ PAD,
-  /* 42 */ floorCell(0x3001),
-  /* 43 */ crackedCell(0x3002),
-  /* 44 */ veinCell(0x3003, 'n'),
-  /* 45 */ veinCell(0x3004, 's'),
-  /* 46 */ veinCell(0x3005, 'w'),
-  /* 47 */ veinCell(0x3006, 'e')
+  // Six more plain wall cells. The interior of the wall is a third of every
+  // frame and the map lays the same handful of tiles across all of it, so the
+  // only real defence against a visible grid is having enough of them. These
+  // slots were spare floor variants the map never asked for.
+  /* 42 */ wallCell(0x2011),
+  /* 43 */ wallCell(0x2012),
+  /* 44 */ wallCell(0x2013),
+  /* 45 */ wallCell(0x2014),
+  /* 46 */ wallCell(0x2015),
+  /* 47 */ wallCell(0x2016)
 ]
 
 const ATLAS_COLS = 16
@@ -610,12 +772,19 @@ function buildEndings() {
 // ── output ──────────────────────────────────────────────────────────────────
 
 function save(name, target) {
+  if (!wanted(name)) return
   const png = new PNG({ width: target.width, height: target.height })
   png.data = toRgba(target)
   const file = join(OUT, name)
   writeFileSync(file, PNG.sync.write(png))
   console.log(`${name.padEnd(14)} ${target.width}×${target.height}`)
 }
+
+// Which sheets to write. `node make-art.mjs atlas` rebuilds the canyon alone —
+// which matters because several of these PNGs are hand-edited afterwards, and a
+// blanket run puts the generated version back over the top of that.
+const only = process.argv.slice(2)
+const wanted = (name) => only.length === 0 || only.includes(name.replace('.png', ''))
 
 mkdirSync(OUT, { recursive: true })
 
@@ -638,6 +807,7 @@ save('title.png', buildTitle())
 save('credits.png', buildCredits())
 
 console.log(`\natlas: ${ATLAS_CELLS.length} cells of ${CELL}×${CELL}, ${ATLAS_COLS} per row`)
+console.log(`concept windows: ${ROCK_WINDOWS.length} rock, ${CHASM_WINDOWS.length} chasm, ${FACE_WINDOWS.e.length}/${FACE_WINDOWS.w.length} faces; chasm columns ${CHASM_L}..${CHASM_R}`)
 console.log(`mist fragments: ${mist.widths.join(', ')} wide`)
 console.log(`boss frames: 2 × ${boss.width}×${boss.height}`)
 console.log(`hud strip: ${hud.width}×${HUD_H} (4 bar states + 4 life counts)`)

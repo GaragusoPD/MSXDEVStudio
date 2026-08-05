@@ -42,6 +42,9 @@ const PIT = { '': 32, n: 33, s: 34, w: 35, e: 36, nw: 37, ne: 38, sw: 39, se: 40
 const PAD = 41
 
 /** Wall cells by which sides face open ground; see the atlas order. */
+// Two cells for the wall's interior rather than one: it is the tile the map
+// lays down by the hundred, and a single one of anything repeats visibly.
+const WALL_PLAIN = [16, 17, 42, 43, 44, 45, 46, 47]
 const WALL = {
   '': 16,
   n: 18,
@@ -73,11 +76,14 @@ const KIND = Array.from({ length: ROWS }, () => new Array(COLS).fill('floor'))
 let left = 2
 let right = COLS - 3
 for (let y = ROWS - 1; y >= 0; y--) {
-  // The canyon breathes: it closes to a four-cell gap and opens back out, which
-  // is what makes flying it feel like something other than a corridor.
+  // Six cells of open sky in sixteen, wandering left and right as it climbs —
+  // the walls take two thirds of the screen, which is the proportion the
+  // concept art holds and the reason the canyon feels like a slot rather than a
+  // field with edges. The two bounds move together, so the gap keeps its width
+  // and meanders; the clamps are what close it further at the extremes.
   const squeeze = Math.sin(y / 13) + Math.sin(y / 31)
-  left = Math.max(1, Math.min(5, Math.round(2 + squeeze)))
-  right = COLS - 1 - Math.max(1, Math.min(5, Math.round(2 - squeeze)))
+  left = Math.max(2, Math.min(7, Math.round(5 + squeeze)))
+  right = COLS - 1 - Math.max(2, Math.min(7, Math.round(5 - squeeze)))
   for (let x = 0; x < COLS; x++) if (x < left || x > right) KIND[y][x] = 'wall'
 }
 
@@ -117,7 +123,13 @@ const cells = []
 for (let y = 0; y < ROWS; y++) {
   for (let x = 0; x < COLS; x++) {
     const kind = KIND[y][x]
-    if (kind === 'wall') cells.push(lookup(WALL, openSides(x, y, 'wall')))
+    if (kind === 'wall') {
+      // The interior — no side facing the gap — is the tile the map lays down by
+      // the hundred, so it alternates between the two plain cells. One of
+      // anything, repeated over a third of the screen, reads as a checkerboard.
+      const sides = openSides(x, y, 'wall')
+      cells.push(sides ? lookup(WALL, sides) : pick(WALL_PLAIN))
+    }
     else if (kind === 'pit') cells.push(lookup(PIT, openSides(x, y, 'pit')))
     else cells.push(random() < 0.12 ? pick(CRACKED) : pick(FLOOR))
   }
