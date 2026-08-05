@@ -24,7 +24,22 @@
     ]
   },
   "retouch": [],
-  "fragments": [],
+  "fragments": [
+    {
+      "name": "victory",
+      "x": 0,
+      "y": 0,
+      "width": 96,
+      "height": 18
+    },
+    {
+      "name": "gameover",
+      "x": 96,
+      "y": 0,
+      "width": 96,
+      "height": 18
+    }
+  ],
   "converted": {
     "width": 192,
     "height": 18,

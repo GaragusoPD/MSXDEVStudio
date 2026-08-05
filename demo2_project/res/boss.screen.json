@@ -24,7 +24,22 @@
     ]
   },
   "retouch": [],
-  "fragments": [],
+  "fragments": [
+    {
+      "name": "rest",
+      "x": 0,
+      "y": 0,
+      "width": 68,
+      "height": 40
+    },
+    {
+      "name": "flex",
+      "x": 68,
+      "y": 0,
+      "width": 68,
+      "height": 40
+    }
+  ],
   "converted": {
     "width": 136,
     "height": 40,
