@@ -13,14 +13,17 @@
  */
 
 import {
+  MAX_BITMAP_TILES,
   tileImage,
+  tilePixels,
   addBitmapTile,
   removeBitmapTile,
   reorderBitmapTiles,
   withPixels,
   type BitmapTilesDoc
 } from './msx/bitmap-tile'
-import type { TileBlock } from './msx/tile'
+import { encodeIndices } from './msx/screen'
+import { MAX_BLOCK, type TileBlock } from './msx/tile'
 import { linePoints, rectPoints, type Point, type TileTool } from './tile-editor'
 
 export type { Point, TileTool }
@@ -186,21 +189,64 @@ export function paintBlock(
 
 // ── blocks ──────────────────────────────────────────────────────────────────
 
-/** A named `width × height` group of tile references. Same type pattern tiles use. */
+/**
+ * A new block, on `width × height` *fresh* tiles taken from the end of the
+ * bank — the same thing `createBlock` does for pattern tiles.
+ *
+ * It has to allocate. A block is references, so filling one with tile 0 would
+ * point every cell at the same tile: the canvas would show that tile repeated,
+ * and painting any cell would paint all of them. A new block is meant to be a
+ * blank surface, which means blank tiles of its own.
+ *
+ * Returns `doc` unchanged when the bank cannot grow that far, so the caller can
+ * say so rather than silently making something smaller than asked for.
+ */
 export function createBitmapBlock(
   doc: BitmapTilesDoc,
   name: string,
   width: number,
-  height: number,
-  tiles?: readonly number[]
+  height: number
 ): BitmapTilesDoc {
-  const w = Math.max(1, Math.round(width) || 1)
-  const h = Math.max(1, Math.round(height) || 1)
+  const w = Math.max(1, Math.min(MAX_BLOCK, Math.round(width) || 1))
+  const h = Math.max(1, Math.min(MAX_BLOCK, Math.round(height) || 1))
+  const start = doc.count
+  if (start + w * h > MAX_BITMAP_TILES) return doc
+  const per = doc.width * doc.height
+  const pixels = new Uint8Array((start + w * h) * per)
+  pixels.set(tilePixels(doc))
   const block: TileBlock = {
     name: name.trim() || `block${doc.blocks.length + 1}`,
     width: w,
     height: h,
-    tiles: Array.from({ length: w * h }, (_, i) => (tiles?.[i] ?? 0) & 0xff)
+    tiles: Array.from({ length: w * h }, (_, i) => start + i)
+  }
+  return {
+    ...doc,
+    count: start + w * h,
+    pixels: encodeIndices(pixels),
+    flags: [...doc.flags, ...new Array<number>(w * h).fill(0)],
+    blocks: [...doc.blocks, block]
+  }
+}
+
+/** Names an existing rectangle of tiles as a block — the bank's marquee, kept. */
+export function blockFromBitmapTiles(
+  doc: BitmapTilesDoc,
+  name: string,
+  width: number,
+  height: number,
+  tiles: readonly number[]
+): BitmapTilesDoc {
+  const w = Math.max(1, Math.min(MAX_BLOCK, Math.round(width) || 1))
+  const h = Math.max(1, Math.min(MAX_BLOCK, Math.round(height) || 1))
+  const block: TileBlock = {
+    name: name.trim() || `block${doc.blocks.length + 1}`,
+    width: w,
+    height: h,
+    tiles: Array.from({ length: w * h }, (_, i) => {
+      const tile = tiles[i] ?? 0
+      return tile >= 0 && tile < doc.count ? tile : 0
+    })
   }
   return { ...doc, blocks: [...doc.blocks, block] }
 }
@@ -237,5 +283,5 @@ export function blockFromSelection(
       tiles.push(index < doc.count ? index : 0)
     }
   }
-  return createBitmapBlock(doc, name, width, height, tiles)
+  return blockFromBitmapTiles(doc, name, width, height, tiles)
 }

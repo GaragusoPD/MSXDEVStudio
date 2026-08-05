@@ -34,6 +34,7 @@ import {
   type TileTool
 } from '../../../../shared/bitmap-tile-editor'
 import {
+  MAX_BITMAP_TILES,
   normalizeBitmapTiles,
   resizeTiles,
   sliceImage,
@@ -307,8 +308,20 @@ export function patchExport(session: BitmapTileSession, patch: Partial<ExportBlo
 
 // ── blocks ──────────────────────────────────────────────────────────────────
 
+/**
+ * A blank block, on fresh tiles of its own. It grows the bank, so it can run
+ * out of room — and saying so beats quietly making something smaller.
+ */
 export function addBlock(session: BitmapTileSession, name: string, width: number, height: number): void {
-  commit(session, createBitmapBlock(doc(session), name, width, height))
+  const current = doc(session)
+  const next = createBitmapBlock(current, name, width, height)
+  if (next === current) {
+    session.status = `No room for a ${width}×${height} block — the bank holds ${MAX_BITMAP_TILES} tiles.`
+    return
+  }
+  commit(session, next)
+  session.block = next.blocks.length - 1
+  session.selected = next.count - width * height
 }
 
 /**

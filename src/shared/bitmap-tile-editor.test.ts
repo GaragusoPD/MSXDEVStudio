@@ -81,7 +81,12 @@ describe('bitmap tile editing', () => {
   it('adds, renames and removes blocks', () => {
     let doc = createBitmapTilesDoc('sc5', 8, 8, 4)
     doc = createBitmapBlock(doc, 'door', 2, 2)
-    expect(doc.blocks[0]).toMatchObject({ name: 'door', width: 2, height: 2, tiles: [0, 0, 0, 0] })
+    // A new block gets tiles of its own, appended to the bank — not four
+    // references to tile 0, which would repeat one tile across the whole block
+    // and make painting any cell paint all of them.
+    expect(doc.count).toBe(8)
+    expect(doc.blocks[0]).toMatchObject({ name: 'door', width: 2, height: 2, tiles: [4, 5, 6, 7] })
+    expect(new Set(doc.blocks[0].tiles).size).toBe(4)
     doc = renameBitmapBlock(doc, 0, 'gate')
     expect(doc.blocks[0].name).toBe('gate')
     doc = removeBitmapBlock(doc, 0)
@@ -148,5 +153,18 @@ describe('bitmap tile editing', () => {
     // The same tile twice in one block: painting one copy paints the tile.
     doc = paintBlock(doc, { name: 'b', width: 2, height: 1, tiles: [1, 1] }, [{ x: 0, y: 0 }], 4)
     expect(getTilePixel(doc, 1, 0, 0)).toBe(4)
+  })
+
+  it('paints one cell of a new block without touching the others', () => {
+    let doc = createBitmapBlock(createBitmapTilesDoc('sc5', 8, 8, 1), 'b', 2, 1)
+    const block = doc.blocks[0]
+    doc = paintBlock(doc, block, [{ x: 0, y: 0 }], 5)
+    expect(getTilePixel(doc, block.tiles[0], 0, 0)).toBe(5)
+    expect(getTilePixel(doc, block.tiles[1], 0, 0)).toBe(0)
+  })
+
+  it('refuses a block the bank has no room for', () => {
+    const doc = createBitmapTilesDoc('sc5', 8, 8, 255)
+    expect(createBitmapBlock(doc, 'huge', 2, 2)).toBe(doc)
   })
 })
