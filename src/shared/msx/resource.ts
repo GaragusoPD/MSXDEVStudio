@@ -8,6 +8,17 @@
  * disagree about what a `.tiles.json` becomes.
  */
 
+import {
+  bitmapBlockBytes,
+  bitmapBlockOffsets,
+  bitmapTileBytes,
+  bitmapTileHelperC,
+  normalizeBitmapTiles,
+  sheetCols,
+  sheetPixels,
+  validateBitmapTiles,
+  type BitmapTilesDoc
+} from './bitmap-tile'
 import { defineName, emitBin, emitC, type EmitTable, type HelperC } from './emitC'
 import { normalizeMap, mapExport, mapHelperC, validateMap, type MapDoc } from './map'
 import { MODES } from './modes'
@@ -71,7 +82,7 @@ export interface ExportBlock {
   compress?: 'rlep'
 }
 
-export type ResourceKind = 'tiles' | 'sprites' | 'map' | 'screen' | 'sfx'
+export type ResourceKind = 'tiles' | 'btiles' | 'sprites' | 'map' | 'screen' | 'sfx'
 
 /**
  * Where new resources are created. Nothing *requires* them to live here — the
@@ -83,6 +94,7 @@ export const RESOURCE_DIR = 'res'
 
 export const RESOURCE_SUFFIXES: Readonly<Record<ResourceKind, string>> = {
   tiles: '.tiles.json',
+  btiles: '.btiles.json',
   sprites: '.sprites.json',
   map: '.map.json',
   screen: '.screen.json',
@@ -91,6 +103,7 @@ export const RESOURCE_SUFFIXES: Readonly<Record<ResourceKind, string>> = {
 
 export type ResourceDoc =
   | { kind: 'tiles'; doc: TilesDoc }
+  | { kind: 'btiles'; doc: BitmapTilesDoc }
   | { kind: 'sprites'; doc: SpritesDoc }
   | { kind: 'map'; doc: MapDoc }
   | { kind: 'screen'; doc: ScreenDoc }
@@ -143,6 +156,8 @@ export function parseResource(path: string, text: string): ResourceDoc {
   switch (kind) {
     case 'tiles':
       return { kind, doc: normalizeTiles(raw) }
+    case 'btiles':
+      return { kind, doc: normalizeBitmapTiles(raw) }
     case 'sprites':
       return { kind, doc: normalizeSprites(raw) }
     case 'map':
@@ -163,6 +178,8 @@ export function validateResource(resource: ResourceDoc): string[] {
   switch (resource.kind) {
     case 'tiles':
       return validateTiles(resource.doc)
+    case 'btiles':
+      return validateBitmapTiles(resource.doc)
     case 'sprites':
       return validateSprites(resource.doc)
     case 'map':
@@ -222,6 +239,41 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
         tables.push({
           suffix: '_Blocks',
           bytes: blockBytes(doc),
+          perLine: Math.min(16, Math.max(...doc.blocks.map((block) => block.width))),
+          comment: `Multi-tile blocks — tile indices row-major: ${doc.blocks
+            .map((block) => `${block.name} ${block.width}×${block.height}`)
+            .join(', ')}`
+        })
+      }
+      return tables
+    }
+    case 'btiles': {
+      const { doc } = resource
+      const sheet = sheetPixels(doc)
+      const tables: EmitTable[] = [
+        {
+          suffix: '_Tiles',
+          bytes: bitmapTileBytes(doc),
+          comment:
+            `${doc.count} tiles of ${doc.width}×${doc.height}, as one ${sheet.width}×${sheet.height} sheet ` +
+            `${sheetCols(doc)} across — upload it whole, then blit a tile at a time`
+        }
+      ]
+      if (doc.palette) {
+        tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
+      }
+      // Same rule as pattern tiles: only worth the ROM once a tile carries a bit.
+      if (doc.flags.some((value) => value !== 0)) {
+        tables.push({
+          suffix: '_Flags',
+          bytes: Uint8Array.from(doc.flags),
+          comment: 'Gameplay flags, one byte per tile (bit 0 = flag 1)'
+        })
+      }
+      if (doc.blocks.length) {
+        tables.push({
+          suffix: '_Blocks',
+          bytes: bitmapBlockBytes(doc),
           perLine: Math.min(16, Math.max(...doc.blocks.map((block) => block.width))),
           comment: `Multi-tile blocks — tile indices row-major: ${doc.blocks
             .map((block) => `${block.name} ${block.width}×${block.height}`)
@@ -381,6 +433,23 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
         notes.push(`Flagged tiles: ${resource.doc.flags.filter((value) => value !== 0).length}`)
       }
       break
+    case 'btiles': {
+      const sheet = sheetPixels(resource.doc)
+      notes.push(
+        `Mode: ${MODES[resource.doc.mode].label}`,
+        `Tiles: ${resource.doc.count} of ${resource.doc.width}×${resource.doc.height}`,
+        `Sheet: ${sheet.width}×${sheet.height}, ${sheetCols(resource.doc)} tiles across`
+      )
+      if (resource.doc.blocks.length) {
+        notes.push(
+          `Blocks: ${resource.doc.blocks.map((block) => `${block.name} ${block.width}×${block.height}`).join(', ')}`
+        )
+      }
+      if (resource.doc.flags.some((value) => value !== 0)) {
+        notes.push(`Flagged tiles: ${resource.doc.flags.filter((value) => value !== 0).length}`)
+      }
+      break
+    }
     case 'sprites':
       notes.push(
         `Sprite mode: ${resource.doc.mode}`,
@@ -492,6 +561,27 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
         : [])
     ]
   }
+  if (resource.kind === 'btiles') {
+    const { doc } = resource
+    const sheet = sheetPixels(doc)
+    const offsets = bitmapBlockOffsets(doc)
+    return [
+      `#define ${prefix}_COUNT ${doc.count}`,
+      `#define ${prefix}_TILE_W ${doc.width}`,
+      `#define ${prefix}_TILE_H ${doc.height}`,
+      `#define ${prefix}_COLS ${sheetCols(doc)}`,
+      `#define ${prefix}_SHEET_W ${sheet.width}`,
+      `#define ${prefix}_SHEET_H ${sheet.height}`,
+      ...doc.blocks.flatMap((block, index) => {
+        const id = `${prefix}_${defineName(block.name)}`
+        return [
+          `#define ${id}_BASE ${offsets[index]}`,
+          `#define ${id}_W ${block.width}`,
+          `#define ${id}_H ${block.height}`
+        ]
+      })
+    ]
+  }
   if (resource.kind === 'tiles') {
     return blockPlacements(resource.doc).flatMap((placement) => {
       const id = `${prefix}_${defineName(placement.name)}`
@@ -532,6 +622,10 @@ function resourceCode(resource: ResourceDoc, name: string, compress?: ExportBloc
     return resource.doc.fragments.length ? joinHelpers(banded, screenHelperC(resource.doc, name)) : banded
   }
   if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : NO_CODE
+  // Unlike pattern tiles, this is worth emitting with no blocks at all: the
+  // upload and the single-tile blit are the whole reason a bitmap tileset can
+  // be drawn without the game knowing how the sheet is laid out.
+  if (resource.kind === 'btiles') return bitmapTileHelperC(resource.doc, name)
   if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return NO_CODE
   return spriteHelperC(resource.doc, name)
 }

@@ -14,6 +14,7 @@
  * is visible.
  */
 
+import { sheetCols, sheetPixels, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { screenPixels, screenRgb, type ScreenDoc } from '../../../../shared/msx/screen'
 import { tilePixels, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
@@ -33,7 +34,7 @@ export interface Sheet {
 const TILESET_COLUMNS = 16
 
 /** Rebuilt only when the source document changes identity — both panes share one cache. */
-let cachedSource: TilesDoc | ScreenDoc | null = null
+let cachedSource: TilesDoc | ScreenDoc | BitmapTilesDoc | null = null
 /** An atlas sheet also depends on the map's cell size, which is not part of the screen doc. */
 let cachedKey = ''
 let cached: Sheet | null = null
@@ -78,6 +79,42 @@ export function tilesetSheet(tileset: TilesDoc): Sheet {
  * `ScreenFragment`s — fragments are named cut-outs of whatever size suits
  * them, and a tilemap wants the opposite.
  */
+/**
+ * A bitmap tileset's own sheet. Unlike `atlasSheet` this needs nothing from the
+ * map: the tile size and the sheet's shape belong to the tileset, which is the
+ * whole difference between a tileset and a picture being read as a grid.
+ */
+export function bitmapTilesetSheet(tileset: BitmapTilesDoc): Sheet {
+  if (cachedSource === tileset && cachedKey === 'btiles' && cached) return cached
+  const pixels = sheetPixels(tileset)
+  const canvas = document.createElement('canvas')
+  canvas.width = pixels.width
+  canvas.height = pixels.height
+  const sheet: Sheet = {
+    canvas,
+    cellW: tileset.width,
+    cellH: tileset.height,
+    cols: sheetCols(tileset),
+    count: tileset.count
+  }
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return sheet
+  const rgb = paletteToRgb(tileset.palette)
+  const image = new ImageData(canvas.width, canvas.height)
+  for (let i = 0; i < pixels.indices.length; i++) {
+    const color = rgb[pixels.indices[i]] ?? { r: 0, g: 0, b: 0 }
+    image.data[i * 4] = color.r
+    image.data[i * 4 + 1] = color.g
+    image.data[i * 4 + 2] = color.b
+    image.data[i * 4 + 3] = 255
+  }
+  ctx.putImageData(image, 0, 0)
+  cachedSource = tileset
+  cachedKey = 'btiles'
+  cached = sheet
+  return sheet
+}
+
 export function atlasSheet(screen: ScreenDoc, cell: MapCell): Sheet {
   const key = `${cell.width}x${cell.height}/${cell.cols}`
   if (cachedSource === screen && cachedKey === key && cached) return cached

@@ -184,7 +184,7 @@ export interface ConversionResult {
 export interface ResourceEntry {
   /** Project-root-relative, forward-slash. */
   path: string
-  kind: 'tiles' | 'sprites' | 'map' | 'screen' | 'sfx'
+  kind: 'tiles' | 'btiles' | 'sprites' | 'map' | 'screen' | 'sfx'
   /** Its `export.out`, or null when the file has no export block. */
   out: string | null
 }

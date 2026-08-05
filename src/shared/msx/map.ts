@@ -1,5 +1,6 @@
 /**
- * `*.map.json` (Spec 10 A): a tilemap over a `*.tiles.json` tileset. Layers
+ * `*.map.json` (Spec 10 A): a tilemap over a `*.tiles.json` or `*.btiles.json`
+ * tileset. Layers
  * are flat `width * height` arrays — either tile indices or per-cell bit
  * layers — which is exactly what gets exported.
  *
@@ -14,7 +15,7 @@ import type { ExportBlock } from './resource'
 
 export interface MapLayer {
   name: string
-  /** Only tile layers exist; gameplay bits live on the tileset (`TilesDoc.flags`). */
+  /** Only tile layers exist; gameplay bits live on the tileset's `flags`. */
   kind: 'tiles'
   /** `width * height` values, row-major. Tile indices, or a flag bitmask per cell. */
   data: number[]
@@ -22,8 +23,11 @@ export interface MapLayer {
 }
 
 /**
- * What a cell is when the map is drawn in a **bitmap** mode (SCREEN 5 and up),
- * where `tileset` names a `*.screen.json` rather than a `*.tiles.json`.
+ * What a cell is when the map is drawn over a **screen** read as a grid.
+ *
+ * This is the older of the two bitmap paths. A `*.btiles.json` tileset carries
+ * its own tile size and needs none of this; `cell` exists for maps whose
+ * `tileset` still names a `*.screen.json`.
  *
  * There is no name table in those modes, so a cell is not an index the VDP
  * resolves — it is a rectangle of pixels the game copies. The atlas is the
@@ -42,7 +46,12 @@ export interface MapCell {
 
 export interface MapDoc {
   version: 1
-  /** Project-relative path of the tileset this map draws with — `.tiles.json`, or `.screen.json` when `cell` is set. */
+  /**
+   * Project-relative path of the tileset this map draws with: `.tiles.json` in
+   * a pattern mode, `.btiles.json` in a bitmap one — or a `.screen.json` read
+   * as a grid, which is what bitmap maps had to do before bitmap tilesets
+   * existed and is kept working for the maps that still point at one.
+   */
   tileset: string
   width: number
   height: number
