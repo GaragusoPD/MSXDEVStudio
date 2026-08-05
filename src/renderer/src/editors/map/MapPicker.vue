@@ -26,6 +26,12 @@ let dragAnchor: number | null = null
  * none, because its cells are anonymous.
  */
 const blocks = computed(() => tilesetBlocks(props.session))
+/**
+ * Whether the tileset can carry blocks at all. Both tileset kinds can; a screen
+ * read as a grid cannot, because its cells are anonymous rectangles with
+ * nothing to name.
+ */
+const hasTileset = computed(() => Boolean(props.session.tileset ?? props.session.bitmapTileset))
 
 const cells = computed(() => sheet(props.session))
 const cell = computed(() => props.session.pickerZoom)
@@ -161,7 +167,7 @@ watchEffect(() => {
     </p>
 
     <section
-      v-if="session.tileset"
+      v-if="hasTileset"
       class="blocks"
     >
       <h3>Blocks</h3>
@@ -170,7 +176,7 @@ watchEffect(() => {
         class="hint"
       >
         A design bigger than one tile — a door, a tree — drawn on one canvas in
-        the tile editor. Name one there and it becomes a stamp here.
+        the tileset's own editor. Name one there and it becomes a stamp here.
       </p>
       <div
         v-else
