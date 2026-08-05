@@ -148,6 +148,11 @@ function onImported(result: ImportResult): void {
           > collapse repeats</label>
         </div>
 
+        <span class="status">
+          {{ tileset.count }} tiles of {{ tileset.width }}×{{ tileset.height }} · {{ session.status }}
+        </span>
+        <span class="spacer" />
+
         <div class="group">
           <button
             type="button"
@@ -164,10 +169,6 @@ function onImported(result: ImportResult): void {
             Export
           </button>
         </div>
-
-        <span class="status">
-          {{ tileset.count }} tiles of {{ tileset.width }}×{{ tileset.height }} · {{ session.status }}
-        </span>
       </header>
 
       <div class="panes">
@@ -226,9 +227,11 @@ button.on {
   outline: 2px solid #4ea1ff;
 }
 .status {
-  margin-left: auto;
   font-size: 11px;
   opacity: 0.65;
+}
+.spacer {
+  flex: 1;
 }
 .panes {
   display: flex;
