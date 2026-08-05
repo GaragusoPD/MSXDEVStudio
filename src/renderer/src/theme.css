@@ -7,6 +7,10 @@
 :root {
   color-scheme: dark;
 
+  /* A plain surface, for things that float above the layout — dialogs. Without
+     it `background: var(--color-bg)` resolved to nothing and the import dialog
+     was transparent. */
+  --color-bg: #1e1e1e;
   --color-bg-activitybar: #333333;
   --color-bg-sidebar: #252526;
   --color-bg-editor: #1e1e1e;
@@ -23,6 +27,7 @@
 
   --color-border: #3c3c3c;
   --color-accent: #007acc;
+  --color-error: #f14c4c;
 
   --font-ui: -apple-system, 'Segoe UI', system-ui, sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
@@ -31,6 +36,7 @@
 :root[data-theme='light'] {
   color-scheme: light;
 
+  --color-bg: #ffffff;
   --color-bg-activitybar: #ececec;
   --color-bg-sidebar: #f3f3f3;
   --color-bg-editor: #ffffff;
@@ -47,6 +53,7 @@
 
   --color-border: #d4d4d4;
   --color-accent: #007acc;
+  --color-error: #d13438;
 }
 
 * {
