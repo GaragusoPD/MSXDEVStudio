@@ -146,7 +146,17 @@ void Scroll_Update(void)
 void Scroll_Present(void)
 {
 	g_ShownOffset = g_MainOffset;
+	// Back to the scrolling page: the H-blank handler left the display on page 1
+	// for the status band, and that has to be undone before the next frame's
+	// first line is drawn.
+	VDP_SetPage(0);
 	VDP_SetVerticalOffset(g_ShownOffset);
+	// The H-blank handler switched them off for the status band.
+	VDP_EnableSprite(TRUE);
+	// R#19 is compared against the *offset* line counter, not the display line —
+	// so the split moves with the scroll unless the offset is added back in.
+	// Leave it out and the status band creeps up the screen as the stage runs.
+	VDP_SetHBlankLine((u8)(HUD_Y + g_ShownOffset));
 }
 
 /**

@@ -33,7 +33,7 @@
     "delayBoot": false,
     "signature": false,
     "installRamIsr": "RAMISR_PAGE3",
-    "customIsr": "VBLANK",
+    "customIsr": "VHBLANK",
     "bankedCall": false
   },
   "files": {

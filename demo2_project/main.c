@@ -37,103 +37,69 @@ void VDP_InterruptHandler(void)
 	g_VBlank = 1;
 }
 
+/**
+ * The split: from here down, the display is page 1 with no offset — the status
+ * band. R#23 and R#2 both change, and both only ever change inside a blanking
+ * period, which is what keeps the picture still.
+ *
+ * Sprites go off too, and that is not tidiness. The VDP compares a sprite's Y
+ * against the same offset line counter R#23 shifts, so with the offset dropped
+ * to zero for these lines every sprite is suddenly being asked about a
+ * different part of the screen — and whichever ones happen to land in 188–211
+ * are drawn over the band. Ships and drones appearing at random across the
+ * status bar is what that looks like. One bit in R#8 ends it.
+ */
+void VDP_HBlankHandler(void)
+{
+	VDP_SetPage(1);
+	VDP_SetVerticalOffset(0);
+	VDP_EnableSprite(FALSE);
+}
+
 void PlaySfx(u8 id)
 {
 	ayFX_PlayBank(id, 0);
 }
 
 /**
- * The HUD: an energy bar and a life count, composited into the picture over the
- * scrolling canyon.
+ * The status band: an energy bar and a life count on a black strip across the
+ * bottom of the screen.
  *
- * Bitmap graphics rather than sprites, which costs more but buys two things. A
- * mode-2 sprite carries one colour per *line*, so a black panel with a coloured
- * bar and a white number on the same rows needs a second plane behind the
- * first; the bitmap has no such limit and the panel is simply drawn. And it
- * leaves all 32 sprite planes to the game.
+ * It lives in page 1, which nothing scrolls, and the H-blank interrupt switches
+ * the display over to it at line HUD_Y (see `VDP_HBlankHandler`). So the band is
+ * painted only when the numbers on it change — the rest of the time it costs
+ * nothing at all, and it cannot shake, blink or be smeared by the scroll,
+ * because the scroll never touches the page it is on.
  *
- * The price is the page. It is a 256-line ring that the display walks round, so
- * a panel at a fixed display line lands on a page row that moves — the panel
- * has to be lifted and put back down every frame, and **sixteen frames out of
- * every 256 it straddles row 0**. The VDP's command engine does not wrap: a
- * rectangle starting at row 250 runs on into the next page, where the display
- * never looks. Blit it in one piece and the HUD blinks out for a third of a
- * second every five seconds. So every copy below is split at the seam.
- *
- * That is why this does not use the exporter's ready-made `g_Hud_Draw`: the
- * generated helper is the straightforward case, an object on a page that does
- * not wrap. This is the same cycle with the seam handled.
+ * `VDP_CommandHMMV` fills; `VDP_CommandLMMM` copies the artwork in from the
+ * strip parked in page 2. Both are VDP block operations — the CPU only writes
+ * the coordinates.
  */
-#define HUD_H 16
-#define HUD_BAR_W 40
-#define HUD_LIFE_W 16
-#define HUD_BACKUP_Y (HUD_STRIP_Y + HUD_H)
+static u8 g_HudShown; // energy and lives as last painted, so it repaints only on a change
 
-/** Page row the panel was last put down at, and whether there is anything to lift. */
-static u8 g_HudRow;
-static u8 g_HudDrawn;
-
-/** Rows that fit before the ring wraps — the whole panel, unless it is over the seam. */
-static u8 HudFirst(u8 row)
+static void PaintHud(void)
 {
-	// 240 is the last row a 16-tall panel still fits below. Past it, `0 - row`
-	// in eight bits *is* 256 - row: the same wrap the ring itself does.
-	return (row > 240) ? (u8)(0 - row) : HUD_H;
+	// The panel: black across the full width, with a lit rule along the top so
+	// the join with the canyon reads as a frame rather than as a glitch.
+	VDP_CommandHMMV(0, HUD_BAND_Y, VIEW_W, HUD_H, 0x11);
+	VDP_CommandHMMV(0, HUD_BAND_Y, VIEW_W, 1, 0x22);
+
+	// Page 1, so past 255 — this is why the project builds with VDP_UNIT_U16.
+	const u16 y = HUD_BAND_Y + 4;
+	const u8* rect = g_Hud_Rects + ((u16)(G_HUD_BAR3 + (MAX_ENERGY - g_Energy)) * 4);
+	VDP_CommandLMMM(rect[0] + ((u16)rect[1] << 8), HUD_STRIP_Y, HUD_X, y, rect[2], rect[3], VDP_OP_TIMP);
+	rect = g_Hud_Rects + ((u16)(G_HUD_LIFE0 + (g_Lives & 3)) * 4);
+	VDP_CommandLMMM(rect[0] + ((u16)rect[1] << 8), HUD_STRIP_Y, HUD_X + 40, y, rect[2], rect[3], VDP_OP_TIMP);
 }
 
-/** Lifts the canyon out from under the panel, into the spare rows below the strip. */
-static void HudSave(u8 slot, u8 x, u8 row, u8 w)
-{
-	u8 first = HudFirst(row);
-	VDP_CommandHMMM(x, row, (u16)slot * HUD_BAR_W, HUD_BACKUP_Y, w, first);
-	if(first < HUD_H)
-		VDP_CommandHMMM(x, 0, (u16)slot * HUD_BAR_W, (u16)HUD_BACKUP_Y + first, w, HUD_H - first);
-}
-
-static void HudRestore(u8 slot, u8 x, u8 row, u8 w)
-{
-	u8 first = HudFirst(row);
-	VDP_CommandHMMM((u16)slot * HUD_BAR_W, HUD_BACKUP_Y, x, row, w, first);
-	if(first < HUD_H)
-		VDP_CommandHMMM((u16)slot * HUD_BAR_W, (u16)HUD_BACKUP_Y + first, x, 0, w, HUD_H - first);
-}
-
-/** One piece of the strip, over whatever is there. */
-static void HudBlit(u8 frame, u8 x, u8 row)
-{
-	const u8* rect = g_Hud_Rects + ((u16)frame * 4);
-	u16 sx = rect[0] + ((u16)rect[1] << 8);
-	u8 w = rect[2];
-	u8 first = HudFirst(row);
-	VDP_CommandLMMM(sx, HUD_STRIP_Y, x, row, w, first, VDP_OP_TIMP);
-	if(first < HUD_H)
-		VDP_CommandLMMM(sx, (u16)HUD_STRIP_Y + first, x, 0, w, HUD_H - first, VDP_OP_TIMP);
-}
-
-/** Puts the canyon back where the panel was. */
-static void HideHud(void)
-{
-	if(!g_HudDrawn)
-		return;
-	HudRestore(1, HUD_X + HUD_BAR_W, g_HudRow, HUD_LIFE_W);
-	HudRestore(0, HUD_X, g_HudRow, HUD_BAR_W);
-	g_HudDrawn = 0;
-}
-
-/**
- * Lift, then save, then draw — in that order for both pieces, so neither one's
- * backup can capture the other's pixels. Getting that wrong leaves a ghost of
- * the bar smeared into the life panel's saved background, one frame behind.
- */
+/** Repaints only when something on it changed — which is a few times a stage. */
 static void DrawHud(void)
 {
-	HideHud();
-	g_HudRow = Scroll_PageRow(HUD_Y);
-	HudSave(0, HUD_X, g_HudRow, HUD_BAR_W);
-	HudSave(1, HUD_X + HUD_BAR_W, g_HudRow, HUD_LIFE_W);
-	HudBlit(G_HUD_BAR3 + (MAX_ENERGY - g_Energy), HUD_X, g_HudRow);
-	HudBlit(G_HUD_LIFE0 + (g_Lives & 3), HUD_X + HUD_BAR_W, g_HudRow);
-	g_HudDrawn = 1;
+	u8 state = (g_Energy << 4) | (g_Lives & 15);
+	if(state == g_HudShown)
+		return;
+	g_HudShown = state;
+	PaintHud();
 }
 
 static void SetupVideo(void)
@@ -160,7 +126,6 @@ static void HideAll(void)
 {
 	Player_Hide();
 	Enemy_Hide();
-	HideHud();
 }
 
 /** One frame of waiting, with the sound chip serviced — the only place that happens. */
@@ -187,6 +152,8 @@ static void StartStage(void)
 	Player_Start();
 	Enemy_Start();
 	Scroll_Present();
+	g_HudShown = 0xFF; // force the band to be painted for the new life
+	VDP_EnableHBlank(TRUE);
 	g_State = STATE_PLAY;
 }
 
@@ -249,6 +216,9 @@ void main(void)
 					Player_Update();
 				}
 			}
+
+			VDP_EnableHBlank(FALSE);
+			VDP_SetPage(0);
 
 			if(g_State == STATE_WIN)
 				break;

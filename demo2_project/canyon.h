@@ -32,20 +32,7 @@
 #define MAP_ROWS G_STAGE_H
 #define WORLD_H ((u16)MAP_ROWS * CELL)
 
-/**
- * The top of the play area — a margin, not a split.
- *
- * This demo did originally split the screen here with the H-blank interrupt
- * (R#19) and give the band above its own R#23, which is the classic V9938
- * two-speed parallax. It is taken out on purpose, and the reason is worth
- * knowing: both bands read from the *same page*, so the strip above the split
- * shows an unrelated part of the same canyon, and the join between them slides.
- * On a side view that reads as distance. On a top-down view it reads as the
- * screen being torn, which is exactly what it looked like.
- *
- * The technique is sound; it wants content that is *meant* to be discontinuous
- * with the world — a status bar, a horizon, a second page. See the README.
- */
+/** A margin at the top of the play area, so nothing spawns half off screen. */
 #define PLAY_TOP 8
 
 // ── VRAM ────────────────────────────────────────────────────────────────────
@@ -62,10 +49,11 @@
 // R#23 moves the sprite plane along with the bitmap, so every sprite Y goes
 // through `Scroll_SpriteY` on its way to the VDP. See scroll.c.
 
-#define ATLAS_Y 256 // the tile atlas, 256×48
-#define MIST_Y 320 // the mist strip, and its backups 16 rows below
-#define BOSS_Y 384 // the boss frames, and its backup 40 rows below
-#define HUD_STRIP_Y 512 // the HUD strip (page 2), and its backups 16 rows below
+#define ATLAS_Y 256 // page 1: the tile atlas, 256×48
+#define MIST_Y 320 // page 1: the mist strip, and its backups 16 rows below
+#define HUD_BAND_Y (256 + HUD_Y) // page 1: the status band the split screen shows
+#define BOSS_Y 544 // page 2: the boss frames, and its backup 40 rows below
+#define HUD_STRIP_Y 512 // page 2: the HUD artwork, blitted into the band when it changes
 
 //
 // The sprite attribute address has to be **1 KB-aligned plus 0x200**, and
@@ -89,14 +77,29 @@
 #define SPR_DRONE 6 // 8 planes, one per drone
 
 /**
- * Where the HUD panel sits, in screen dots. Near the bottom right, over the
- * canyon rather than instead of it: there is no reserved band on this screen to
- * put a status area in, so it is composited on top and the world scrolls behind.
+ * The status band, and the one place this demo splits the screen.
+ *
+ * Everything above HUD_Y is page 0 scrolled by R#23. At that line the H-blank
+ * interrupt switches the display to **page 1 with no offset**, so the bottom of
+ * the screen shows a fixed strip of a page nothing scrolls. The band is drawn
+ * once, when the numbers on it change, and then simply sits there.
+ *
+ * This is what the split screen is actually for. Pointing both bands at the
+ * *same* page and giving them different offsets — the classic two-speed
+ * parallax — was tried first and looked like a tear, because the strip above
+ * the join showed an unrelated part of the same canyon. Content that is meant
+ * to be discontinuous with the world is a different matter: a status bar has no
+ * business lining up with the ground, so the join stops being a seam and starts
+ * being a frame.
+ *
+ * It also makes the HUD free. Composited into the scrolling page instead, it
+ * would have to be lifted and put back down every frame — and 16 frames out of
+ * every 256 it would straddle the ring's seam at row 0, where the VDP's command
+ * engine does not wrap. That is a blink once every five seconds, and a fifth of
+ * the frame's blitting budget to boot.
  */
 #define HUD_Y 188
-#define HUD_W (40 + 16)
-/** Written out rather than `VIEW_W - HUD_W - 8`: that expression is an `int`, and
- *  handing it to a `u8` parameter costs a warning on every call site. */
+#define HUD_H (VIEW_H - HUD_Y)
 #define HUD_X 192
 
 #define MAX_SHOTS 4

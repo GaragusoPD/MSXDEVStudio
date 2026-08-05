@@ -12,6 +12,7 @@ Target = "ROM_ASCII8";
 ROMSize = 128;
 CheckVersion = true;
 InstallRAMISR = "RAMISR_PAGE3";
+CustomISR = "VHBLANK";
 
 //-- Build
 CompileSkipOld = true;
