@@ -8,6 +8,7 @@
  * shows up while painting, cache the sheet and repaint only the edited tile.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+import Icon from '../../components/Icon.vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
 import { fitColumns, marqueeIndices } from '../../../../shared/tile-editor'
@@ -17,10 +18,10 @@ import {
   deleteTile,
   pasteClipboard,
   reorder,
+  setGridZoom,
   select,
   setColumns,
   tileClipboard,
-  zoom,
   type TileSession
 } from './session'
 
@@ -235,20 +236,20 @@ watchEffect(() => {
     <header>
       <span class="title">{{ session.doc.count }} tiles</span>
       <span class="readout">{{ hover ?? session.active }} · {{ hex(hover ?? session.active) }}</span>
-      <button
-        type="button"
-        title="Zoom out"
-        @click="zoom(session, 'gridZoom', -8)"
+      <label
+        class="zoom"
+        title="Zoom"
       >
-        −
-      </button>
-      <button
-        type="button"
-        title="Zoom in"
-        @click="zoom(session, 'gridZoom', 8)"
-      >
-        +
-      </button>
+        <Icon name="zoom_in" />
+        <input
+          :value="session.gridZoom"
+          type="range"
+          :min="8"
+          :max="64"
+          :step="4"
+          @input="setGridZoom(session, Number(($event.target as HTMLInputElement).value))"
+        >
+      </label>
       <button
         type="button"
         title="Copy the selected tiles — pixels, colours and flags (Ctrl+C)"
@@ -372,5 +373,14 @@ header button {
   border-top: 1px solid var(--color-border);
   font-size: 10px;
   color: var(--color-text-muted);
+}
+
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoom input {
+  width: 84px;
 }
 </style>

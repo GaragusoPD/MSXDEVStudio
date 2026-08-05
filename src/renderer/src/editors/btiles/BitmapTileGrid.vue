@@ -155,13 +155,13 @@ watchEffect(() => {
   /* The bank is a fixed column: it never grows, and the canvas gets the rest. */
   flex: 0 0 auto;
   max-width: 272px;
-  border-right: 1px solid var(--border, #333);
+  border-right: 1px solid var(--color-border);
 }
 .grid {
   image-rendering: pixelated;
   touch-action: none;
   background: #000;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--color-border);
   cursor: pointer;
 }
 </style>

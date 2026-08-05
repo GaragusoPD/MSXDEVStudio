@@ -438,13 +438,13 @@ export function setColor(session: TileSession, index: number): void {
   session.color = index
 }
 
-export function setTool(session: TileSession, tool: TileTool): void {
-  session.tool = tool
+/** The bank's zoom. A session function because `TileGrid` gets the session as a prop. */
+export function setGridZoom(session: TileSession, value: number): void {
+  session.gridZoom = Math.max(8, Math.min(64, Math.round(value) || session.gridZoom))
 }
 
-/** Both zoom controls; child components go through here because the session arrives as a prop. */
-export function zoom(session: TileSession, target: 'zoom' | 'gridZoom', delta: number): void {
-  session[target] = Math.max(8, Math.min(64, session[target] + delta))
+export function setTool(session: TileSession, tool: TileTool): void {
+  session.tool = tool
 }
 
 /**

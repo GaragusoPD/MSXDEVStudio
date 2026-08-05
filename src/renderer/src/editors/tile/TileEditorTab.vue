@@ -32,8 +32,7 @@ import {
   setTool,
   tileSession,
   transform,
-  undo,
-  zoom
+  undo
 } from './session'
 
 const tabsStore = useTabsStore()
@@ -191,20 +190,19 @@ watch(
         </button>
 
         <span class="sep" />
-        <button
-          type="button"
-          title="Zoom out"
-          @click="zoom(session, 'zoom', -8)"
+        <label
+          class="zoom"
+          title="Zoom"
         >
-          −
-        </button>
-        <button
-          type="button"
-          title="Zoom in"
-          @click="zoom(session, 'zoom', 8)"
-        >
-          +
-        </button>
+          <Icon name="zoom_in" />
+          <input
+            v-model.number="session.zoom"
+            type="range"
+            :min="8"
+            :max="64"
+            :step="4"
+          >
+        </label>
 
         <span class="spacer" />
         <select
@@ -360,5 +358,14 @@ watch(
 
 .error {
   color: var(--color-error, #f14c4c);
+}
+
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoom input {
+  width: 84px;
 }
 </style>

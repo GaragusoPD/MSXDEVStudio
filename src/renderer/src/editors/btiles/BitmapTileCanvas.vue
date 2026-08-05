@@ -156,7 +156,7 @@ watchEffect(() => {
 .tile-canvas {
   image-rendering: pixelated;
   background: #000;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--color-border);
   cursor: crosshair;
   touch-action: none;
 }

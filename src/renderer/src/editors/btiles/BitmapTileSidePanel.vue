@@ -299,12 +299,12 @@ h3 {
 .swatch {
   width: 18px;
   height: 18px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--color-border);
   cursor: pointer;
   padding: 0;
 }
 .swatch.on {
-  outline: 2px solid #4ea1ff;
+  outline: 2px solid var(--color-accent);
 }
 .flags {
   display: grid;

@@ -20,6 +20,7 @@ import { useTabsStore } from '../../stores/tabsStore'
 import ScreenCanvas from './ScreenCanvas.vue'
 import ScreenPalettePanel from './ScreenPalettePanel.vue'
 import { isTypingTarget } from '../../commands'
+import Icon from '../../components/Icon.vue'
 import {
   canRedo,
   canUndo,
@@ -56,11 +57,6 @@ async function save(): Promise<void> {
 async function exportNow(): Promise<void> {
   await save()
   await resourcesStore.exportOne(session.value.path)
-}
-
-function zoom(delta: number): void {
-  const active = session.value
-  active.zoom = Math.max(1, Math.min(8, active.zoom + delta))
 }
 
 async function onImported(result: ImportResult, file: File | null, mode: ScreenMode): Promise<void> {
@@ -142,20 +138,19 @@ function sourceButtonLabel(active: ScreenSession): string {
         </button>
 
         <span class="sep" />
-        <button
-          type="button"
-          title="Zoom out"
-          @click="zoom(-1)"
+        <label
+          class="zoom"
+          title="Zoom"
         >
-          −
-        </button>
-        <button
-          type="button"
-          title="Zoom in"
-          @click="zoom(1)"
-        >
-          +
-        </button>
+          <Icon name="zoom_in" />
+          <input
+            v-model.number="session.zoom"
+            type="range"
+            :min="1"
+            :max="8"
+            :step="1"
+          >
+        </label>
 
         <span class="spacer" />
         <button
@@ -295,5 +290,14 @@ function sourceButtonLabel(active: ScreenSession): string {
   color: var(--color-accent);
   text-decoration: underline;
   cursor: pointer;
+}
+
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoom input {
+  width: 84px;
 }
 </style>

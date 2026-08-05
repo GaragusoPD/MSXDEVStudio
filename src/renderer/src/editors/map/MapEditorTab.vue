@@ -59,11 +59,6 @@ async function exportNow(): Promise<void> {
   await resourcesStore.exportOne(session.value.path)
 }
 
-function zoom(delta: number): void {
-  const active = session.value
-  active.zoom = Math.max(4, Math.min(48, active.zoom + delta))
-}
-
 function onKeydown(event: KeyboardEvent): void {
   // Typing a filename in a side panel is not an editor shortcut.
   if (isTypingTarget(event)) return
@@ -179,20 +174,19 @@ onMounted(() => void resourcesStore.refresh())
         </button>
 
         <span class="sep" />
-        <button
-          type="button"
-          title="Zoom out"
-          @click="zoom(-4)"
+        <label
+          class="zoom"
+          title="Zoom"
         >
-          −
-        </button>
-        <button
-          type="button"
-          title="Zoom in"
-          @click="zoom(4)"
-        >
-          +
-        </button>
+          <Icon name="zoom_in" />
+          <input
+            v-model.number="session.zoom"
+            type="range"
+            :min="4"
+            :max="48"
+            :step="2"
+          >
+        </label>
         <label class="inline">
           <input
             v-model="session.gridVisible"
@@ -320,5 +314,14 @@ onMounted(() => void resourcesStore.refresh())
 
 .error {
   color: var(--color-error, #f14c4c);
+}
+
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoom input {
+  width: 84px;
 }
 </style>

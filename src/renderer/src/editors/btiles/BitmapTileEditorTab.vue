@@ -9,6 +9,8 @@
  * without being redrawn cell by cell.
  */
 import { computed, ref, watch } from 'vue'
+import type { MaterialSymbol } from '@material-symbols/font-400'
+import Icon from '../../components/Icon.vue'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import type { TileTool } from '../../../../shared/bitmap-tile-editor'
@@ -37,11 +39,13 @@ const tileset = computed(() => doc(session.value))
 const importing = ref(false)
 const dedupe = ref(true)
 
-const TOOLS: { id: TileTool; label: string }[] = [
-  { id: 'pencil', label: 'Pencil' },
-  { id: 'line', label: 'Line' },
-  { id: 'rect', label: 'Rect' },
-  { id: 'fill', label: 'Fill' }
+// The same four icons the pattern tile editor uses, so a tool is the same
+// picture whichever tileset is open.
+const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
+  { id: 'pencil', icon: 'edit', title: 'Pencil' },
+  { id: 'line', icon: 'pen_size_1', title: 'Line' },
+  { id: 'rect', icon: 'rectangle', title: 'Rectangle' },
+  { id: 'fill', icon: 'format_color_fill', title: 'Fill' }
 ]
 
 // Sessions outlive tab switches; drop the ones whose tab is gone. Keyed on
@@ -89,10 +93,12 @@ function onImported(result: ImportResult): void {
           <button
             v-for="tool in TOOLS"
             :key="tool.id"
-            :class="{ on: session.tool === tool.id }"
+            type="button"
+            :class="{ active: session.tool === tool.id }"
+            :title="tool.title"
             @click="session.tool = tool.id"
           >
-            {{ tool.label }}
+            <Icon :name="tool.icon" />
           </button>
           <label
             v-if="session.tool === 'rect'"
@@ -115,32 +121,46 @@ function onImported(result: ImportResult): void {
         </div>
 
         <div class="group">
-          <button @click="addTile(session)">
-            Add tile
+          <button
+            type="button"
+            title="Add a tile to the end of the bank"
+            @click="addTile(session)"
+          >
+            <Icon name="add" />
           </button>
           <button
+            type="button"
+            title="Remove the selected tile (flags and blocks renumber)"
             :disabled="tileset.count <= 1"
             @click="removeTile(session, session.selected)"
           >
-            Remove
+            <Icon name="delete" />
           </button>
           <button
+            type="button"
+            title="Move the selected tile earlier"
             :disabled="session.selected <= 0"
             @click="moveTile(session, session.selected, session.selected - 1)"
           >
-            ←
+            <Icon name="arrow_back" />
           </button>
           <button
+            type="button"
+            title="Move the selected tile later"
             :disabled="session.selected >= tileset.count - 1"
             @click="moveTile(session, session.selected, session.selected + 1)"
           >
-            →
+            <Icon name="arrow_forward" />
           </button>
         </div>
 
         <div class="group">
-          <button @click="importing = true">
-            Import image…
+          <button
+            type="button"
+            title="Cut an image into this bank"
+            @click="importing = true"
+          >
+            <Icon name="image" />
           </button>
           <label class="check"><input
             v-model="dedupe"
@@ -156,17 +176,18 @@ function onImported(result: ImportResult): void {
         <div class="group">
           <button
             type="button"
+            :title="session.dirty ? 'Save (Ctrl+S)' : 'Saved'"
             :disabled="!session.dirty"
             @click="save"
           >
-            {{ session.dirty ? 'Save' : 'Saved' }}
+            <Icon name="save" />
           </button>
           <button
             type="button"
             title="Write the C header / binary this tileset exports"
             @click="exportNow"
           >
-            Export
+            <Icon name="output" />
           </button>
         </div>
       </header>
@@ -208,7 +229,7 @@ function onImported(result: ImportResult): void {
   align-items: center;
   gap: 14px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--color-border);
   flex-wrap: wrap;
 }
 .group {
@@ -223,8 +244,10 @@ function onImported(result: ImportResult): void {
   font-size: 11px;
   opacity: 0.85;
 }
-button.on {
-  outline: 2px solid #4ea1ff;
+.toolbar button.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
 }
 .status {
   font-size: 11px;
@@ -249,6 +272,6 @@ button.on {
 }
 .error {
   padding: 12px;
-  color: #ff6b6b;
+  color: var(--color-error, #f14c4c);
 }
 </style>
