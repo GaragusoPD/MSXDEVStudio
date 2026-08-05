@@ -10,7 +10,7 @@
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { sheetCols, sheetPixels } from '../../../../shared/msx/bitmap-tile'
-import { doc, setSelection, type BitmapTileSession } from './session'
+import { doc, selectTile, setSelection, type BitmapTileSession } from './session'
 
 const props = defineProps<{ session: BitmapTileSession }>()
 const emit = defineEmits<{ select: [index: number] }>()
@@ -43,6 +43,7 @@ function down(event: PointerEvent): void {
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
   anchor = { col: cell.col, row: cell.row }
   setSelection(props.session, null)
+  selectTile(props.session, cell.index)
   emit('select', cell.index)
 }
 

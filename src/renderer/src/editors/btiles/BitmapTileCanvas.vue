@@ -10,9 +10,16 @@
  */
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
-import { tileImage } from '../../../../shared/msx/bitmap-tile'
 import { bitmapToolPoints, type Point } from '../../../../shared/bitmap-tile-editor'
-import { doc, strokeEnd, strokeMove, strokeStart, type BitmapTileSession } from './session'
+import {
+  activeExtent,
+  activePixels,
+  doc,
+  strokeEnd,
+  strokeMove,
+  strokeStart,
+  type BitmapTileSession
+} from './session'
 
 const props = defineProps<{ session: BitmapTileSession }>()
 
@@ -28,11 +35,13 @@ const tileset = computed(() => doc(props.session))
  * beside it.
  */
 const MAX_CANVAS = 640
+/** One tile, or a whole block — the canvas draws whichever is open. */
+const extent = computed(() => activeExtent(props.session))
 const step = computed(() =>
-  Math.max(2, Math.min(props.session.zoom, Math.floor(MAX_CANVAS / Math.max(tileset.value.width, tileset.value.height))))
+  Math.max(2, Math.min(props.session.zoom, Math.floor(MAX_CANVAS / Math.max(extent.value.width, extent.value.height))))
 )
-const width = computed(() => tileset.value.width * step.value)
-const height = computed(() => tileset.value.height * step.value)
+const width = computed(() => extent.value.width * step.value)
+const height = computed(() => extent.value.height * step.value)
 const rgb = computed(() => paletteToRgb(tileset.value.palette))
 
 function pointAt(event: PointerEvent): Point {
@@ -60,9 +69,8 @@ function move(event: PointerEvent): void {
     strokeMove(props.session, point)
     return
   }
-  const pixels = tileImage(tileset.value, props.session.selected)
   preview.value = bitmapToolPoints(
-    props.session.tool, origin, point, pixels, tileset.value.width, tileset.value.height, props.session.filled
+    props.session.tool, origin, point, activePixels(props.session), extent.value.width, extent.value.height, props.session.filled
   )
 }
 
@@ -86,13 +94,13 @@ watchEffect(() => {
   element.height = height.value
   const ctx = element.getContext('2d')
   if (!ctx) return
-  const tiles = tileset.value
-  const pixels = tileImage(tiles, props.session.selected)
+  const size = extent.value
+  const pixels = activePixels(props.session)
   const cell = step.value
   ctx.clearRect(0, 0, element.width, element.height)
-  for (let y = 0; y < tiles.height; y++) {
-    for (let x = 0; x < tiles.width; x++) {
-      const color = rgb.value[pixels[y * tiles.width + x]] ?? { r: 0, g: 0, b: 0 }
+  for (let y = 0; y < size.height; y++) {
+    for (let x = 0; x < size.width; x++) {
+      const color = rgb.value[pixels[y * size.width + x]] ?? { r: 0, g: 0, b: 0 }
       ctx.fillStyle = `rgb(${color.r},${color.g},${color.b})`
       ctx.fillRect(x * cell, y * cell, cell, cell)
     }
@@ -107,11 +115,25 @@ watchEffect(() => {
   if (cell >= 6) {
     ctx.strokeStyle = 'rgba(255,255,255,0.12)'
     ctx.lineWidth = 1
-    for (let x = 1; x < tiles.width; x++) {
-      ctx.beginPath(); ctx.moveTo(x * cell + 0.5, 0); ctx.lineTo(x * cell + 0.5, tiles.height * cell); ctx.stroke()
+    for (let x = 1; x < size.width; x++) {
+      ctx.beginPath(); ctx.moveTo(x * cell + 0.5, 0); ctx.lineTo(x * cell + 0.5, size.height * cell); ctx.stroke()
     }
-    for (let y = 1; y < tiles.height; y++) {
-      ctx.beginPath(); ctx.moveTo(0, y * cell + 0.5); ctx.lineTo(tiles.width * cell, y * cell + 0.5); ctx.stroke()
+    for (let y = 1; y < size.height; y++) {
+      ctx.beginPath(); ctx.moveTo(0, y * cell + 0.5); ctx.lineTo(size.width * cell, y * cell + 0.5); ctx.stroke()
+    }
+  }
+
+  // Tile boundaries inside a block, so it is clear where one tile ends — a
+  // stroke across the seam edits two tiles, and both may appear elsewhere.
+  const tiles = tileset.value
+  if (size.width > tiles.width || size.height > tiles.height) {
+    ctx.strokeStyle = 'rgba(255,210,78,0.55)'
+    ctx.lineWidth = 1
+    for (let x = tiles.width; x < size.width; x += tiles.width) {
+      ctx.beginPath(); ctx.moveTo(x * cell + 0.5, 0); ctx.lineTo(x * cell + 0.5, size.height * cell); ctx.stroke()
+    }
+    for (let y = tiles.height; y < size.height; y += tiles.height) {
+      ctx.beginPath(); ctx.moveTo(0, y * cell + 0.5); ctx.lineTo(size.width * cell, y * cell + 0.5); ctx.stroke()
     }
   }
 })

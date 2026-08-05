@@ -13,6 +13,7 @@
  */
 
 import {
+  tileImage,
   addBitmapTile,
   removeBitmapTile,
   reorderBitmapTiles,
@@ -114,6 +115,74 @@ export function setBitmapPaletteEntry(doc: BitmapTilesDoc, index: number, grb: n
 }
 
 export { addBitmapTile, removeBitmapTile, reorderBitmapTiles }
+
+// ── editing a block as one image ────────────────────────────────────────────
+
+/**
+ * Which tile of `block` a point on the block canvas lands in, and where inside
+ * that tile.
+ *
+ * This is what lets a block be drawn on as a single picture. A block owns no
+ * pixels — it is references — so a stroke across it has to be taken apart and
+ * delivered to whichever tiles it crossed.
+ */
+export function blockTileAt(
+  doc: BitmapTilesDoc,
+  block: TileBlock,
+  x: number,
+  y: number
+): { tile: number; tx: number; ty: number } | null {
+  if (x < 0 || y < 0) return null
+  const col = Math.floor(x / doc.width)
+  const row = Math.floor(y / doc.height)
+  if (col >= block.width || row >= block.height) return null
+  const tile = block.tiles[row * block.width + col]
+  if (tile === undefined || tile >= doc.count) return null
+  return { tile, tx: x % doc.width, ty: y % doc.height }
+}
+
+/** The block composed into one image, for the canvas to draw. */
+export function blockPixels(doc: BitmapTilesDoc, block: TileBlock): Uint8Array {
+  const width = block.width * doc.width
+  const out = new Uint8Array(width * block.height * doc.height)
+  block.tiles.forEach((tile, index) => {
+    if (tile >= doc.count) return
+    const ox = (index % block.width) * doc.width
+    const oy = Math.floor(index / block.width) * doc.height
+    const pixels = tileImage(doc, tile)
+    for (let y = 0; y < doc.height; y++) {
+      out.set(pixels.subarray(y * doc.width, y * doc.width + doc.width), (oy + y) * width + ox)
+    }
+  })
+  return out
+}
+
+/**
+ * Paints a stroke that was drawn across a block, tile by tile.
+ *
+ * The same tile may appear in a block more than once, and painting it is
+ * painting *the tile* — so both copies change. That is the point of a block
+ * being references rather than pixels, and it is worth knowing before it
+ * surprises someone.
+ */
+export function paintBlock(
+  doc: BitmapTilesDoc,
+  block: TileBlock,
+  points: readonly Point[],
+  color: number
+): BitmapTilesDoc {
+  const byTile = new Map<number, Point[]>()
+  for (const point of points) {
+    const hit = blockTileAt(doc, block, point.x, point.y)
+    if (!hit) continue
+    const list = byTile.get(hit.tile) ?? []
+    list.push({ x: hit.tx, y: hit.ty })
+    byTile.set(hit.tile, list)
+  }
+  let next = doc
+  for (const [tile, local] of byTile) next = paintTile(next, tile, local, color)
+  return next
+}
 
 // ── blocks ──────────────────────────────────────────────────────────────────
 

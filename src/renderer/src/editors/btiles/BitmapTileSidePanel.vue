@@ -15,6 +15,7 @@ import {
   addBlock,
   addBlockFromGrid,
   doc,
+  selectBlock,
   dropBlock,
   renameBlock,
   patchExport,
@@ -153,15 +154,24 @@ function applySize(): void {
     <section>
       <h3>Blocks</h3>
       <p class="hint">
-        Named groups of tiles — a door, a tree. They own no pixels, only
-        references. Drag across the bank to select a rectangle, then keep it;
-        rename it in the list.
+        Named groups of tiles — a door, a tree. Drag across the bank to select a
+        rectangle, then keep it. Open one to draw across it as a single picture:
+        a block owns no pixels, only references, so painting it paints the tiles
+        it points at — everywhere else they are used.
       </p>
       <ul class="blocks">
         <li
           v-for="(block, index) in tileset.blocks"
           :key="index"
+          :class="{ open: session.block === index }"
         >
+          <button
+            class="open-block"
+            :title="session.block === index ? 'Close — go back to the tile' : 'Open on the canvas and draw across it'"
+            @click="selectBlock(session, session.block === index ? null : index)"
+          >
+            {{ session.block === index ? '▾' : '▸' }}
+          </button>
           <input
             :value="block.name"
             @change="renameBlock(session, index, ($event.target as HTMLInputElement).value)"
@@ -333,6 +343,13 @@ h3 {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.blocks li.open input {
+  outline: 1px solid #ffd24e;
+}
+.open-block {
+  padding: 0 4px;
+  min-width: 1.4em;
 }
 .blocks input {
   flex: 1;

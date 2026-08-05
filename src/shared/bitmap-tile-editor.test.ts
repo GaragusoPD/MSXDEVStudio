@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   addBitmapTile,
+  blockPixels,
+  blockTileAt,
+  paintBlock,
   bitmapFillPoints,
   bitmapToolPoints,
   blockFromSelection,
@@ -107,5 +110,43 @@ describe('bitmap tile editing', () => {
   it('falls back to a default name when none is given', () => {
     const doc = createBitmapTilesDoc('sc5', 8, 8, 4)
     expect(createBitmapBlock(doc, '   ', 1, 1).blocks[0].name).toBe('block1')
+  })
+
+  it('finds which tile of a block a point lands in', () => {
+    const doc = createBitmapTilesDoc('sc5', 8, 8, 4)
+    const block = { name: 'b', width: 2, height: 2, tiles: [0, 1, 2, 3] }
+    expect(blockTileAt(doc, block, 0, 0)).toEqual({ tile: 0, tx: 0, ty: 0 })
+    expect(blockTileAt(doc, block, 9, 2)).toEqual({ tile: 1, tx: 1, ty: 2 })
+    expect(blockTileAt(doc, block, 3, 11)).toEqual({ tile: 2, tx: 3, ty: 3 })
+    // Outside the block is not clamped into it.
+    expect(blockTileAt(doc, block, 16, 0)).toBeNull()
+    expect(blockTileAt(doc, block, -1, 0)).toBeNull()
+  })
+
+  it('composes a block into one image', () => {
+    let doc = createBitmapTilesDoc('sc5', 8, 8, 4)
+    doc = paintTile(doc, 1, [{ x: 0, y: 0 }], 6)
+    const pixels = blockPixels(doc, { name: 'b', width: 2, height: 1, tiles: [0, 1] })
+    // Tile 1 starts at x = 8 of a 16-wide composite.
+    expect(pixels).toHaveLength(16 * 8)
+    expect(pixels[8]).toBe(6)
+    expect(pixels[0]).toBe(0)
+  })
+
+  it('splits a stroke across the tiles a block spans', () => {
+    let doc = createBitmapTilesDoc('sc5', 8, 8, 4)
+    const block = { name: 'b', width: 2, height: 1, tiles: [0, 1] }
+    doc = paintBlock(doc, block, [{ x: 7, y: 0 }, { x: 8, y: 0 }], 3)
+    // One point either side of the seam: the last column of tile 0 and the
+    // first of tile 1.
+    expect(getTilePixel(doc, 0, 7, 0)).toBe(3)
+    expect(getTilePixel(doc, 1, 0, 0)).toBe(3)
+  })
+
+  it('paints every place a repeated tile is used, because a block is references', () => {
+    let doc = createBitmapTilesDoc('sc5', 8, 8, 2)
+    // The same tile twice in one block: painting one copy paints the tile.
+    doc = paintBlock(doc, { name: 'b', width: 2, height: 1, tiles: [1, 1] }, [{ x: 0, y: 0 }], 4)
+    expect(getTilePixel(doc, 1, 0, 0)).toBe(4)
   })
 })

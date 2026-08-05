@@ -19,6 +19,8 @@ import { shallowReactive } from 'vue'
 import {
   addBitmapTile,
   blockFromSelection,
+  blockPixels,
+  paintBlock,
   createBitmapBlock,
   paintTile,
   removeBitmapBlock,
@@ -38,6 +40,7 @@ import {
   tileImage,
   type BitmapTilesDoc
 } from '../../../../shared/msx/bitmap-tile'
+import type { TileBlock } from '../../../../shared/msx/tile'
 import {
   canRedo as historyCanRedo,
   canUndo as historyCanUndo,
@@ -58,8 +61,10 @@ export interface BitmapTileSession {
   error: string | null
   dirty: boolean
 
-  /** Which tile the pixel canvas is showing. */
+  /** Which tile the pixel canvas is showing, when no block is open. */
   selected: number
+  /** An open block, drawn on the canvas as one image. Null means a single tile. */
+  block: number | null
   tool: TileTool
   color: number
   zoom: number
@@ -90,6 +95,7 @@ export function bitmapTileSession(path: string): BitmapTileSession {
     error: null,
     dirty: false,
     selected: 0,
+    block: null,
     tool: 'pencil',
     color: 1,
     zoom: 20,
@@ -175,6 +181,34 @@ function clampSelection(session: BitmapTileSession): void {
   session.selected = Math.max(0, Math.min(doc(session).count - 1, session.selected))
 }
 
+/** The block on the canvas, if one is open and still exists. */
+export function activeBlock(session: BitmapTileSession): TileBlock | null {
+  const index = session.block
+  if (index === null) return null
+  return doc(session).blocks[index] ?? null
+}
+
+/** What the canvas draws: one tile, or a whole block composed. */
+export function activePixels(session: BitmapTileSession): Uint8Array {
+  const block = activeBlock(session)
+  const current = doc(session)
+  return block ? blockPixels(current, block) : tileImage(current, session.selected)
+}
+
+/** Canvas size in pixels — one tile, or `w × h` tiles of them. */
+export function activeExtent(session: BitmapTileSession): { width: number; height: number } {
+  const block = activeBlock(session)
+  const current = doc(session)
+  return block
+    ? { width: block.width * current.width, height: block.height * current.height }
+    : { width: current.width, height: current.height }
+}
+
+/** Opens a block on the canvas, or `null` to go back to the selected tile. */
+export function selectBlock(session: BitmapTileSession, index: number | null): void {
+  session.block = index !== null && doc(session).blocks[index] ? index : null
+}
+
 // ── painting ────────────────────────────────────────────────────────────────
 
 /**
@@ -192,9 +226,17 @@ export function strokeMove(session: BitmapTileSession, point: Point): void {
   const from = session.dragFrom
   if (!from || !session.preview) return
   const current = session.preview
-  const pixels = tileImage(current, session.selected)
-  const points = bitmapToolPoints(session.tool, from, point, pixels, current.width, current.height, session.filled)
-  session.preview = paintTile(current, session.selected, points, session.color)
+  const block = activeBlock(session)
+  // Tools work in canvas space, which is the block's whole extent when one is
+  // open — so the fill sees across tile edges, as it should for one picture.
+  const extent = block
+    ? { width: block.width * current.width, height: block.height * current.height }
+    : { width: current.width, height: current.height }
+  const pixels = block ? blockPixels(current, block) : tileImage(current, session.selected)
+  const points = bitmapToolPoints(session.tool, from, point, pixels, extent.width, extent.height, session.filled)
+  session.preview = block
+    ? paintBlock(current, block, points, session.color)
+    : paintTile(current, session.selected, points, session.color)
   // Pencil and line differ in what "from" means: a pencil walks, the others rubber-band.
   if (session.tool === 'pencil') session.dragFrom = point
 }
@@ -236,6 +278,8 @@ export function setSelection(
 
 export function selectTile(session: BitmapTileSession, index: number): void {
   session.selected = index
+  // Picking a tile leaves whatever block was open — the canvas can only show one.
+  session.block = null
 }
 
 export function setFlagBit(session: BitmapTileSession, bit: number, on: boolean): void {
@@ -283,10 +327,14 @@ export function addBlockFromGrid(session: BitmapTileSession, cols: number): void
   const current = doc(session)
   const name = `block_${current.blocks.length}`
   commit(session, blockFromSelection(current, name, cols, selection.start, selection.width, selection.height))
+  // Open it straight away: the reason to keep a selection is to work on it.
+  session.block = doc(session).blocks.length - 1
   session.status = `Kept ${selection.width}×${selection.height} as ${name}`
 }
 
 export function dropBlock(session: BitmapTileSession, index: number): void {
+  if (session.block === index) session.block = null
+  else if (session.block !== null && session.block > index) session.block--
   commit(session, removeBitmapBlock(doc(session), index))
 }
 
