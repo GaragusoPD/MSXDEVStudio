@@ -71,6 +71,12 @@ void Screens_LoadAtlas(void)
 static void ShowUntilSpace(u8 seg)
 {
 	Scroll_Reset();
+	// Nothing on a picture screen is a sprite, and the ones the stage left
+	// behind are parked at 213 *plus the scroll offset* — which the reset above
+	// has just thrown away, so they would slide back into view. Y = 216 in plane
+	// 0 tells the VDP to stop looking at the table at all; the next Player_Start
+	// overwrites it.
+	VDP_DisableSpritesFrom(0);
 	DrawPicture(seg, VIEW_H);
 
 	while(Keyboard_IsKeyPressed(KEY_SPACE))

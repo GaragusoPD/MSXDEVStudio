@@ -138,12 +138,6 @@ static void SetupVideo(void)
 	g_Hud_Upload(HUD_STRIP_Y);
 }
 
-static void HideAll(void)
-{
-	Player_Hide();
-	Enemy_Hide();
-}
-
 /**
  * One frame of waiting, with the sound chip serviced — the only place that
  * happens.
@@ -225,7 +219,6 @@ void main(void)
 
 	for(;;)
 	{
-		HideAll();
 		g_State = STATE_TITLE;
 		Screens_Title();
 
@@ -283,7 +276,6 @@ void main(void)
 		// Only now, on the way to a full-screen picture, does the split go away.
 		Scroll_ShowBand(FALSE);
 		VDP_SetPage(0);
-		HideAll();
 		Screens_Credits();
 	}
 }
