@@ -39,8 +39,7 @@ static Shot g_Shots[MAX_SHOTS];
 #define SHIP_SPEED 2
 #define SHOT_SPEED 6
 #define SHIP_TOP (PLAY_TOP + 8)
-// Clear of the HUD panel: the ship must not add sprites to that line.
-#define SHIP_BOTTOM (HUD_Y - 20)
+#define SHIP_BOTTOM (VIEW_H - 20)
 #define FIRE_DELAY 8
 
 void Player_Start(void)

@@ -93,7 +93,7 @@ void Enemy_Update(void)
 		Drone* drone = &g_Drones[i];
 
 		drone->y += DRONE_FALL;
-		if(drone->y > HUD_Y - 18)
+		if(drone->y > VIEW_H - 18)
 		{
 			drone->alive = 0;
 			Scroll_HideSprite(SPR_DRONE + i);

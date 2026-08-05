@@ -78,7 +78,11 @@ static void ShowUntilSpace(u8 seg)
 	while(!Keyboard_IsKeyPressed(KEY_SPACE))
 	{
 		while(g_VBlank == 0)
-			;
+		{
+			__asm
+				halt
+			__endasm;
+		}
 		g_VBlank = 0;
 		g_Frame++;
 		ayFX_Update();

@@ -56,7 +56,7 @@ palette and the sprites share it**: a mode-2 sprite's per-line colour byte is an
 index into the same sixteen entries the canyon is drawn from. Sixteen colours
 are chosen once, in one file, and every asset is drawn with them.
 
-## Six things worth knowing
+## Seven things worth knowing
 
 ### R#23 scrolls the sprites too
 
@@ -108,7 +108,8 @@ It also means anything composited into the visible page has to be lifted and put
 back down every frame, and sixteen frames out of every 256 it straddles row 0 —
 where the VDP's command engine does not wrap. A rectangle starting at row 250
 runs on into the next page, where the display never looks. That is a blink once
-every five seconds, and it is why the status band ended up where it did.
+every five seconds, and it is why the status band is not composited at all but
+lives on a page of its own.
 
 ### The split screen is for the status band, not for parallax
 
@@ -122,24 +123,65 @@ canyon, sliding at its own rate. On a side view that reads as distance. On a
 top-down view it reads as the screen being broken.
 
 What the split is genuinely good for is content that is *meant* to be
-discontinuous with the world. At line 188 the H-blank handler switches the
-display to **page 1 with no offset**, and the bottom 24 lines become a fixed
-status band on a page nothing scrolls. It is painted only when the numbers on it
-change. It cannot shake, blink, or be smeared by the scroll, because the scroll
-never touches the page it is on — and it costs nothing per frame.
+discontinuous with the world. The frame **starts** on the status band — page 1,
+no offset, sprites off — and at line 24 the H-blank handler hands the rest of
+the screen to page 0 with the scroll. The band is painted only when the numbers
+on it change, sits on a page nothing scrolls, and costs nothing per frame.
 
-Three details make it work:
+Four things have to be right, and each of them was a visible bug first:
 
-- R#2 has to be switched **back** to page 0 in the V-blank handler, or the whole
-  screen shows page 1 from the first line.
-- R#19 is compared against the *offset* line counter, not the display line, so
-  the split line needs R#23 added to it — leave it out and the band creeps up
-  the screen as the stage runs.
-- **Sprites have to be switched off at the split.** The VDP compares a sprite's
-  Y against that same offset counter, so dropping the offset to zero for the
-  band asks every sprite about a different part of the screen, and whichever
-  ones land in 188–211 are drawn over the status bar. Ships and drones appearing
-  at random across the HUD is what that looks like. One bit in R#8 ends it.
+- R#2 has to be switched **back** for the other half of the screen, every frame.
+- **Sprites have to be off across the band.** The VDP compares a sprite's Y
+  against the same offset line counter R#23 shifts, so with the band's offset at
+  zero every sprite is being asked about a different part of the screen, and
+  whichever ones land in the band's lines are drawn over it. Ships and drones
+  scattered across the status bar is what that looks like. One bit in R#8.
+- The interrupt is late. It fires at the *end* of the line R#19 names, and then
+  the Z80 finishes its instruction, takes the interrupt, saves registers and
+  reads S#1 before it can write anything — several scanlines. `HUD_SPLIT_LEAD`
+  corrects for that and `HUD_SPLIT_DELAY` pauses a little more, so the writes
+  land in the horizontal blanking instead of partway along a visible line.
+- **And it has to be late by the same amount every frame**, which is the part
+  that decides where the band goes.
+
+### Why the band is at the top
+
+Because that is the only place the join can be made still.
+
+MSXgl sets a VDP command up by writing fifteen registers with interrupts
+disabled. An H-blank interrupt arriving mid-burst therefore waits — by a
+different amount each frame, depending on what the game happened to be blitting.
+The join frays: one scanline where the left part is canyon and the right is
+band, with the boundary walking about.
+
+With the band at the bottom the split fires at line 188, deep into the frame,
+and profiling with the border colour showed this frame's blitting running
+anywhere from 99 to **240 scanlines** — sometimes the whole frame. There is no
+quiet moment at line 188 to be found.
+
+With the band at the top, the loop can simply wait:
+
+```c
+while(g_VBlank == 0) { __asm halt __endasm; }   // vertical blanking
+while(g_BandOn && g_Split == 0) { __asm halt __endasm; }   // then the join
+// only now does the frame's blitting begin
+```
+
+The interrupt is always taken out of a `halt`, so it is serviced the same number
+of cycles later every time, and the frame's work cannot begin until the join is
+already behind the raster. Measured over twenty seconds of play, the band's rows
+are pixel-identical frame to frame and no canyon pixel ever reaches them.
+
+`halt` rather than a polling loop matters on its own: `while(g_VBlank == 0);` is
+several instructions, and an interrupt can arrive at any point in it, which is
+tens of dots of jitter all by itself.
+
+**Konami mostly did not have this problem, because they were not doing this.**
+Their MSX2 scrolling games — and their MSX1 ones, where the VDP has no R#23 and
+no line interrupt at all — are tile-mode games. In a tile mode a status area is
+simply name-table rows you never rewrite, and scrolling is rewriting the name
+table; there is no mid-frame register change to get wrong. Bitmap mode buys a
+colour per pixel and pays for it here.
 
 ### Where the parallax actually comes from
 

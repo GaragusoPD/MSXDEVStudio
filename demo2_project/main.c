@@ -19,6 +19,8 @@
 
 u8 g_Palette[32];
 u8 g_VBlank;
+/** Set by the H-blank handler once the display has been handed to the world. */
+u8 g_Split;
 u8 g_Frame;
 GameState g_State;
 u8 g_Lives;
@@ -38,22 +40,31 @@ void VDP_InterruptHandler(void)
 }
 
 /**
- * The split: from here down, the display is page 1 with no offset — the status
- * band. R#23 and R#2 both change, and both only ever change inside a blanking
- * period, which is what keeps the picture still.
+ * The join: from here down the display is the scrolling world again — page 0,
+ * the scroll offset, and sprites back on.
  *
- * Sprites go off too, and that is not tidiness. The VDP compares a sprite's Y
- * against the same offset line counter R#23 shifts, so with the offset dropped
- * to zero for these lines every sprite is suddenly being asked about a
- * different part of the screen — and whichever ones happen to land in 188–211
- * are drawn over the band. Ships and drones appearing at random across the
- * status bar is what that looks like. One bit in R#8 ends it.
+ * Sprites being off across the band is not tidiness. The VDP compares a
+ * sprite's Y against the same offset line counter R#23 shifts, so with the
+ * band's offset at zero every sprite is suddenly being asked about a different
+ * part of the screen, and whichever ones land in the band's lines are drawn
+ * over it. Ships and drones appearing at random across the status bar is what
+ * that looks like. One bit in R#8 ends it.
+ *
+ * The short pause first pushes the register writes into the horizontal
+ * blanking, so the change does not land partway along a visible line and leave
+ * the join ragged. It only works because the main loop is halted waiting for
+ * this interrupt — see `WaitFrame`.
  */
 void VDP_HBlankHandler(void)
 {
-	VDP_SetPage(1);
-	VDP_SetVerticalOffset(0);
-	VDP_EnableSprite(FALSE);
+	for(u8 i = HUD_SPLIT_DELAY; i; --i)
+	{
+		__asm
+			nop
+		__endasm;
+	}
+	Scroll_World();
+	g_Split = 1;
 }
 
 void PlaySfx(u8 id)
@@ -79,10 +90,15 @@ static u8 g_HudShown; // energy and lives as last painted, so it repaints only o
 
 static void PaintHud(void)
 {
-	// The panel: black across the full width, with a lit rule along the top so
-	// the join with the canyon reads as a frame rather than as a glitch.
-	VDP_CommandHMMV(0, HUD_BAND_Y, VIEW_W, HUD_H, 0x11);
-	VDP_CommandHMMV(0, HUD_BAND_Y, VIEW_W, 1, 0x22);
+	// The panel: black across the full width, starting a few lines above where
+	// the band is meant to begin so the switch cannot expose a stripe of canyon,
+	// with a lit rule on the line the band actually starts at.
+	VDP_CommandHMMV(0, HUD_BAND_Y, VIEW_W, HUD_PAINT_H, 0x11);
+	// A rule along the bottom, where the band meets the canyon, so the join reads
+	// as a deliberate frame — with two plain rows left below it, because the
+	// switch still lands a couple of dozen dots into a line and that residue is
+	// better on blank padding than through the rule.
+	VDP_CommandHMMV(0, (u16)HUD_BAND_Y + HUD_H - 4, VIEW_W, 2, 0x44);
 
 	// Page 1, so past 255 — this is why the project builds with VDP_UNIT_U16.
 	const u16 y = HUD_BAND_Y + 4;
@@ -128,12 +144,47 @@ static void HideAll(void)
 	Enemy_Hide();
 }
 
-/** One frame of waiting, with the sound chip serviced — the only place that happens. */
+/**
+ * One frame of waiting, with the sound chip serviced — the only place that
+ * happens.
+ *
+ * The wait is a `halt`, not a polling loop, and that is what makes the split
+ * screen clean. A poll like `while(g_VBlank == 0);` is a handful of
+ * instructions, and the H-blank interrupt for the status band can arrive at any
+ * point in it — so it is serviced a variable number of cycles later, and the
+ * page switch lands at a different dot of the scanline every frame. The band's
+ * top edge frays.
+ *
+ * `halt` parks the Z80 until an interrupt, so the interrupt is always taken
+ * from the same state and the switch lands in the same place. It costs nothing:
+ * the CPU had no work to do anyway.
+ */
 static void WaitFrame(void)
 {
 	while(g_VBlank == 0)
-		;
+	{
+		__asm
+			halt
+		__endasm;
+	}
 	g_VBlank = 0;
+
+	// Then wait for the split before doing anything at all.
+	//
+	// This is the whole reason the status band is at the top of the screen. The
+	// join is only clean if the interrupt is serviced the same number of cycles
+	// after it fires every frame, and it will not be if the CPU is halfway
+	// through MSXgl's fifteen-register command setup with interrupts disabled.
+	// Waiting here means the interrupt is always taken from a `halt`, and the
+	// frame's blitting only begins once the join is behind the raster — so
+	// however heavy the frame gets, it cannot fray the band.
+	while(g_BandOn && g_Split == 0)
+	{
+		__asm
+			halt
+		__endasm;
+	}
+	g_Split = 0;
 	g_Frame++;
 	ayFX_Update();
 	PSG_Apply();
@@ -151,9 +202,9 @@ static void StartStage(void)
 	Scroll_Start();
 	Player_Start();
 	Enemy_Start();
-	Scroll_Present();
 	g_HudShown = 0xFF; // force the band to be painted for the new life
-	VDP_EnableHBlank(TRUE);
+	Scroll_ShowBand(TRUE);
+	Scroll_Present();
 	g_State = STATE_PLAY;
 }
 
@@ -217,19 +268,21 @@ void main(void)
 				}
 			}
 
-			VDP_EnableHBlank(FALSE);
-			VDP_SetPage(0);
-
 			if(g_State == STATE_WIN)
 				break;
 
-			// Dead: hold the wreck a moment so it is clear what happened.
+			// Dead: hold the wreck a moment so it is clear what happened. The
+			// band stays up through it — switching it off here was leaving the
+			// canyon to fill the top of the screen for a second and a half.
 			PlaySfx(2);
 			Player_Hide();
 			Pause(70);
 			g_Lives--;
 		}
 
+		// Only now, on the way to a full-screen picture, does the split go away.
+		Scroll_ShowBand(FALSE);
+		VDP_SetPage(0);
 		HideAll();
 		Screens_Credits();
 	}

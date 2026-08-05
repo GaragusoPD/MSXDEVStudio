@@ -32,8 +32,8 @@
 #define MAP_ROWS G_STAGE_H
 #define WORLD_H ((u16)MAP_ROWS * CELL)
 
-/** A margin at the top of the play area, so nothing spawns half off screen. */
-#define PLAY_TOP 8
+/** The first display line below the status band — the top of the play area. */
+#define PLAY_TOP (HUD_H + 4)
 
 // ── VRAM ────────────────────────────────────────────────────────────────────
 //
@@ -49,11 +49,11 @@
 // R#23 moves the sprite plane along with the bitmap, so every sprite Y goes
 // through `Scroll_SpriteY` on its way to the VDP. See scroll.c.
 
-#define ATLAS_Y 256 // page 1: the tile atlas, 256×48
+#define HUD_BAND_Y 256 // page 1, row 0: the status band the split screen shows
 #define MIST_Y 320 // page 1: the mist strip, and its backups 16 rows below
-#define HUD_BAND_Y (256 + HUD_Y) // page 1: the status band the split screen shows
-#define BOSS_Y 544 // page 2: the boss frames, and its backup 40 rows below
-#define HUD_STRIP_Y 512 // page 2: the HUD artwork, blitted into the band when it changes
+#define ATLAS_Y 512 // page 2: the tile atlas, 256×48
+#define HUD_STRIP_Y 576 // page 2: the HUD artwork, blitted into the band when it changes
+#define BOSS_Y 608 // page 2: the boss frames, and its backup 40 rows below
 
 //
 // The sprite attribute address has to be **1 KB-aligned plus 0x200**, and
@@ -77,30 +77,67 @@
 #define SPR_DRONE 6 // 8 planes, one per drone
 
 /**
- * The status band, and the one place this demo splits the screen.
+ * The status band: the top 24 lines of the screen, and the one place this demo
+ * splits the display.
  *
- * Everything above HUD_Y is page 0 scrolled by R#23. At that line the H-blank
- * interrupt switches the display to **page 1 with no offset**, so the bottom of
- * the screen shows a fixed strip of a page nothing scrolls. The band is drawn
- * once, when the numbers on it change, and then simply sits there.
+ * The frame *starts* on the band — page 1, no offset, sprites off — and at line
+ * HUD_H the H-blank interrupt hands the rest of the screen to the scrolling
+ * world on page 0. The band is painted once, when the numbers on it change, and
+ * then simply sits there on a page nothing scrolls.
  *
- * This is what the split screen is actually for. Pointing both bands at the
- * *same* page and giving them different offsets — the classic two-speed
- * parallax — was tried first and looked like a tear, because the strip above
- * the join showed an unrelated part of the same canyon. Content that is meant
- * to be discontinuous with the world is a different matter: a status bar has no
- * business lining up with the ground, so the join stops being a seam and starts
+ * It is at the top rather than the bottom for one reason, and it is a timing
+ * one. The split is only clean if the CPU is in a known state when the
+ * interrupt arrives: MSXgl sets a VDP command up by writing fifteen registers
+ * with interrupts disabled, so an interrupt landing mid-burst waits — by a
+ * different amount every frame, which frays the join. With the band at the
+ * bottom the split fires at line 188, deep into the frame's blitting, and the
+ * frame's blitting is measurably able to run the whole 240 lines. With it at the
+ * top the loop can simply *wait* for the split before it starts work, so the
+ * interrupt is always taken from a `halt` and always lands in the same place.
+ *
+ * This is also what the split screen is for in the first place. Pointing both
+ * bands at the *same* page with different offsets — the classic two-speed
+ * parallax — was tried first and looked like a tear, because the strip across
+ * the join showed an unrelated part of the same canyon. A status bar has no
+ * business lining up with the ground, so its join stops being a seam and starts
  * being a frame.
- *
- * It also makes the HUD free. Composited into the scrolling page instead, it
- * would have to be lifted and put back down every frame — and 16 frames out of
- * every 256 it would straddle the ring's seam at row 0, where the VDP's command
- * engine does not wrap. That is a blink once every five seconds, and a fifth of
- * the frame's blitting budget to boot.
  */
-#define HUD_Y 188
-#define HUD_H (VIEW_H - HUD_Y)
+#define HUD_H 24
+/** The bar and the count, tucked against the right end of the band. */
 #define HUD_X 192
+
+/**
+ * How many lines early R#19 has to be set for the world to start on line HUD_H.
+ *
+ * The line interrupt fires at the *end* of the line R#19 names, and then the
+ * Z80 has to finish its instruction, take the interrupt, save registers, read
+ * S#1 to find out which interrupt it was, and only then write R#2, R#23 and
+ * R#8. That is several scanlines on a 3.58 MHz machine — measured, not guessed.
+ *
+ * With the loop waiting for the split before it does anything, the interrupt is
+ * always taken from a `halt` and this is consistent frame to frame, so a fixed
+ * lead corrects it exactly.
+ */
+#define HUD_SPLIT_LEAD 4
+
+/**
+ * A calibrated pause before the handler touches a register, in loop iterations.
+ *
+ * The interrupt does not arrive at the start of a line, it arrives partway
+ * along one — so the page switch takes effect in the *middle* of a scanline and
+ * the band's top edge comes out as a step: canyon for the first seventy-odd
+ * dots, black for the rest. Waiting a moment first pushes the switch into the
+ * horizontal blanking, where changing R#2 costs nothing visible and the edge
+ * comes out straight.
+ *
+ * ponytail: this is a cycle count, so it is specific to a 3.58 MHz Z80 — it was
+ * measured, not derived. If the top of the band ever shows a step again (a
+ * turbo machine, a different ISR), this is the one knob to turn.
+ */
+#define HUD_SPLIT_DELAY 12
+
+/** A few painted rows past the join, so a switch landing late still lands on band. */
+#define HUD_PAINT_H (HUD_H + 8)
 
 #define MAX_SHOTS 4
 #define MAX_DRONES 8
@@ -144,6 +181,7 @@ typedef enum
 /** The 32 palette bytes, copied out of the atlas blob so they can be read without paging. */
 extern u8 g_Palette[32];
 extern u8 g_VBlank;
+extern u8 g_Split;
 extern u8 g_Frame;
 extern GameState g_State;
 extern u8 g_Lives;
@@ -153,6 +191,11 @@ void PlaySfx(u8 id);
 // scroll.c — the four parallax layers
 extern u16 g_ViewY; // display line L shows world row g_ViewY + L
 void Scroll_Present(void);
+/** Called from the H-blank handler: hands the rest of the screen to the world. */
+void Scroll_World(void);
+/** Turns the status band on for the game and off for the title and credits screens. */
+void Scroll_ShowBand(u8 on);
+extern u8 g_BandOn;
 /** The page row a screen line is currently drawn from — the bitmap counterpart of Scroll_SpriteY. */
 u8 Scroll_PageRow(u8 screenY);
 u8 Scroll_SpriteY(u8 screenY);

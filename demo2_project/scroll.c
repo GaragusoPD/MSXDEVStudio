@@ -59,8 +59,7 @@ typedef struct
 #define WISPS 3
 #define WISP_H 16
 #define WISP_TOP (PLAY_TOP + 4)
-/** Clear of the HUD panel: both draw into the page, and neither restores the other's pixels. */
-#define WISP_BOTTOM (HUD_Y - WISP_H - 4)
+#define WISP_BOTTOM (VIEW_H - WISP_H - 4)
 
 static Wisp g_Wisps[WISPS];
 
@@ -143,20 +142,44 @@ void Scroll_Update(void)
  * Installs the scroll for the frame that is about to be drawn. Called from the
  * V-blank handler and nowhere else — see above for why.
  */
+u8 g_BandOn;
+
+void Scroll_ShowBand(u8 on)
+{
+	g_BandOn = on;
+	VDP_EnableHBlank(on ? TRUE : FALSE);
+}
+
+/**
+ * Sets the display up for the top of the frame, from the V-blank handler.
+ *
+ * With the band on, the frame *starts* on it: page 1, no offset, no sprites.
+ * R#19 then asks for an interrupt at the join, and because the band's own
+ * offset is zero the line R#19 names is the display line — no scroll to add
+ * back in, which is one fewer thing to get wrong than a band at the bottom.
+ */
 void Scroll_Present(void)
 {
 	g_ShownOffset = g_MainOffset;
-	// Back to the scrolling page: the H-blank handler left the display on page 1
-	// for the status band, and that has to be undone before the next frame's
-	// first line is drawn.
+	if(!g_BandOn)
+	{
+		VDP_SetPage(0);
+		VDP_SetVerticalOffset(g_ShownOffset);
+		VDP_EnableSprite(TRUE);
+		return;
+	}
+	VDP_SetPage(1);
+	VDP_SetVerticalOffset(0);
+	VDP_EnableSprite(FALSE);
+	VDP_SetHBlankLine(HUD_H - HUD_SPLIT_LEAD);
+}
+
+/** …and for everything below the join: the scrolling world, with its sprites. */
+void Scroll_World(void)
+{
 	VDP_SetPage(0);
 	VDP_SetVerticalOffset(g_ShownOffset);
-	// The H-blank handler switched them off for the status band.
 	VDP_EnableSprite(TRUE);
-	// R#19 is compared against the *offset* line counter, not the display line —
-	// so the split moves with the scroll unless the offset is added back in.
-	// Leave it out and the status band creeps up the screen as the stage runs.
-	VDP_SetHBlankLine((u8)(HUD_Y + g_ShownOffset));
 }
 
 /**
@@ -220,6 +243,31 @@ void Scroll_Mist(void)
 	for(u8 i = 0; i < WISPS; ++i)
 		if(((g_Frame + g_Wisps[i].phase) % g_Wisps[i].period) == 0)
 			moved |= 1 << i;
+
+	// At most one wisp a frame, and this is a frame *budget*, not thrift.
+	//
+	// A wisp costs about 1.2 KB of VRAM traffic to lift and put down, and the
+	// VDP runs at roughly 1.5 µs a byte with the display on — so three of them
+	// in one frame is five milliseconds, and with a map row and the sprites on
+	// top of that the blitting can still be going when the raster reaches the
+	// bottom of the screen. That matters because the status band's split fires
+	// down there: if the CPU is inside MSXgl's command setup, which writes
+	// fifteen registers with interrupts disabled, the interrupt waits — by a
+	// different amount every frame — and the band's top edge frays.
+	//
+	// Spreading them out costs nothing visible (each wisp still moves at its own
+	// rate, just never on the same frame as its neighbours) and leaves the last
+	// third of every frame quiet.
+	// Round-robin, so no wisp starves when two come due on the same frame.
+	for(u8 n = 0; n < WISPS; ++n)
+	{
+		u8 bit = 1 << ((g_Frame + n) % WISPS);
+		if(moved & bit)
+		{
+			moved = bit;
+			break;
+		}
+	}
 	if(moved == 0)
 		return;
 
