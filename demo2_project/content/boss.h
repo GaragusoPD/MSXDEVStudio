@@ -4,7 +4,7 @@
 // Generation parameters:
 //  - Source: res/boss.screen.json
 //  - Mode: SCREEN 5 (GRAPHIC 4)
-//  - Dither: none
+//  - Dither: bayer4
 //  - Fragments: rest 68×40, flex 68×40
 
 #pragma once

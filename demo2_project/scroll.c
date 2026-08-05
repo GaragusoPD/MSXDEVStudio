@@ -311,7 +311,26 @@ void Scroll_Mist(void)
 		u16 screen = wisp->y - g_ViewY;
 		if(screen > WISP_BOTTOM)
 			wisp->y = g_ViewY + WISP_TOP;
-		g_Mist_Draw(&wisp->sprite, wisp->frame, wisp->x, (UY)(wisp->y & 0xFF), MIST_Y);
+
+		// The page is a ring for the *display*, but not for the command engine:
+		// DY is ten bits, so a blit starting within WISP_H of row 255 does not
+		// wrap back to row 0, it carries straight on into page 1 — which is the
+		// status band. Both the backup and the draw would land there, and the
+		// band is only repainted when the numbers on it change, so what it
+		// leaves sits on the HUD until the wisp next moves.
+		//
+		// The wisp is simply left down for the fifteen moves it takes to cross
+		// the seam. It was restored above, so nothing of it is on the picture,
+		// and its own `bw` is zero — the next restore is a no-op.
+		//
+		// ponytail: the cheap half of the fix. The wisp does fade out and back
+		// in, roughly a second every quarter-minute. Splitting the blit in two
+		// at the seam would keep it visible, but the generated helper takes a
+		// whole fragment; if that ever matters, teach it a height.
+		u8 row = (u8)(wisp->y & 0xFF);
+		if(row > (u8)(256 - WISP_H))
+			continue;
+		g_Mist_Draw(&wisp->sprite, wisp->frame, wisp->x, (UY)row, MIST_Y);
 	}
 }
 
