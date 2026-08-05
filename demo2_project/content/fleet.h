@@ -5,36 +5,33 @@
 //  - Source: res/fleet.sprites.json
 //  - Sprite mode: 2
 //  - Size: 16×16
-//  - Characters: 5
+//  - Characters: 4
 
 #pragma once
 
-#define G_FLEET_SHIP_LEFT_BASE 0
-#define G_FLEET_SHIP_LEFT_PLANES 2
-#define G_FLEET_SHIP_LEFT_FRAMES 1
-#define G_FLEET_SHIP_BASE 2
-#define G_FLEET_SHIP_PLANES 2
-#define G_FLEET_SHIP_FRAMES 1
-#define G_FLEET_SHIP_RIGHT_BASE 4
-#define G_FLEET_SHIP_RIGHT_PLANES 2
-#define G_FLEET_SHIP_RIGHT_FRAMES 1
-#define G_FLEET_SHOT_BASE 6
+#define G_FLEET_SHIP_COPY_BASE 0
+#define G_FLEET_SHIP_COPY_PLANES 2
+#define G_FLEET_SHIP_COPY_FRAMES 2
+#define G_FLEET_SHOT_BASE 4
 #define G_FLEET_SHOT_PLANES 1
 #define G_FLEET_SHOT_FRAMES 1
-#define G_FLEET_DRONE_BASE 7
+#define G_FLEET_DRONE_BASE 5
 #define G_FLEET_DRONE_PLANES 1
 #define G_FLEET_DRONE_FRAMES 2
+#define G_FLEET_BOOM_BASE 7
+#define G_FLEET_BOOM_PLANES 1
+#define G_FLEET_BOOM_FRAMES 3
 
-#define G_FLEET_PATTERNS_SIZE 288
+#define G_FLEET_PATTERNS_SIZE 320
 extern const unsigned char g_Fleet_Patterns[];
 
-#define G_FLEET_COLORS_SIZE 144
+#define G_FLEET_COLORS_SIZE 160
 extern const unsigned char g_Fleet_Colors[];
 
 #define G_FLEET_PALETTE_SIZE 32
 extern const unsigned char g_Fleet_Palette[];
 
-#define G_FLEET_LAYOUT_SIZE 18
+#define G_FLEET_LAYOUT_SIZE 20
 extern const unsigned char g_Fleet_Layout[];
 
 

@@ -109,7 +109,16 @@
 // - VDP_ISR_SAFE_NONE ............ No ISR protection (for program not using VDP interruption)
 // - VDP_ISR_SAFE_DEFAULT ......... Protect only VDP register pair writing (default behavior; ISR can read/write registers but VRAM ones)
 // - VDP_ISR_SAFE_ALL ............. Protect all VDP writing process
-#define VDP_ISR_SAFE_MODE			VDP_ISR_SAFE_DEFAULT
+// VDP_ISR_SAFE_ALL, not the DEFAULT, and the note above says why: DEFAULT lets
+// the ISR touch registers but leaves the main loop's *VRAM address* pair
+// unprotected. This program's ISR writes R#2, R#23, R#8 and R#19 every frame
+// while the main loop is setting VRAM addresses continuously — and a port #99
+// pair is two bytes. An interrupt landing between them feeds the ISR's own
+// bytes into the half-finished pair, and from there the VDP's byte-pair state
+// machine is out of step: a register write lands in the wrong register. That is
+// the occasional whole-screen flicker — one frame drawn from page 1 at the
+// world's scroll offset, with the status band down at the bottom of it.
+#define VDP_ISR_SAFE_MODE			VDP_ISR_SAFE_ALL
 
 // Initial screen mode setting
 // - VDP_INIT_OFF ................. Force option to be disable

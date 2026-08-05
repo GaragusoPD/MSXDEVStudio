@@ -54,6 +54,10 @@
 #define ATLAS_Y 512 // page 2: the tile atlas, 256×48
 #define HUD_STRIP_Y 576 // page 2: the HUD artwork, blitted into the band when it changes
 #define BOSS_Y 608 // page 2: the boss frames, and its backup 40 rows below
+// Page 3, which nothing else uses. The boss is assembled here rather than on the
+// picture — see bossfight.c.
+#define BOSS_BG_Y 768 // the arena band, as it looks with no boss standing on it
+#define BOSS_COMP_Y 816 // where the next frame of the boss is put together
 
 //
 // The sprite attribute address has to be **1 KB-aligned plus 0x200**, and
@@ -181,7 +185,6 @@ typedef enum
 /** The 32 palette bytes, copied out of the atlas blob so they can be read without paging. */
 extern u8 g_Palette[32];
 extern u8 g_VBlank;
-extern u8 g_Split;
 extern u8 g_Frame;
 extern GameState g_State;
 extern u8 g_Lives;
@@ -193,6 +196,11 @@ extern u16 g_ViewY; // display line L shows world row g_ViewY + L
 void Scroll_Present(void);
 /** Called from the H-blank handler: hands the rest of the screen to the world. */
 void Scroll_World(void);
+
+/** Where the frame is: `Scroll_Present` resets it, the line interrupt moves it on. */
+#define PHASE_BAND 0  // above the join; the band is on screen
+#define PHASE_WORLD 1 // the split has happened; the world is on screen
+extern u8 g_Phase;
 /** Turns the status band on for the game and off for the title and credits screens. */
 void Scroll_ShowBand(u8 on);
 /** Parks the display at the top of the page — for the full-screen pictures. */
@@ -226,6 +234,8 @@ void Enemy_Hide(void);
 
 // boss.c
 void Boss_Start(void);
+/** Forgets the saved arena band, because a new stage draws a different one. */
+void Boss_Reset(void);
 /** FALSE once the boss is gone. */
 bool Boss_Update(void);
 

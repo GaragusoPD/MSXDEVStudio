@@ -154,6 +154,13 @@ void Scroll_Update(void)
  */
 u8 g_BandOn = FALSE;
 
+/**
+ * Where the frame is: on the band, or past the join and on the world. Reset by
+ * `Scroll_Present` at the V-blank, moved on by the line interrupt — so it is
+ * both the split's state and what `WaitFrame` waits on.
+ */
+u8 g_Phase = PHASE_BAND;
+
 void Scroll_ShowBand(u8 on)
 {
 	g_BandOn = on;
@@ -193,18 +200,48 @@ void Scroll_Present(void)
 		VDP_EnableSprite(TRUE);
 		return;
 	}
+	g_Phase = PHASE_BAND;
 	VDP_SetPage(1);
 	VDP_SetVerticalOffset(0);
 	VDP_EnableSprite(FALSE);
 	VDP_SetHBlankLine(HUD_H - HUD_SPLIT_LEAD);
+	// Armed here, at a known line, with the offset still zero. `Scroll_World`
+	// decides what happens to it after it fires — see there.
+	VDP_EnableHBlank(TRUE);
 }
 
-/** …and for everything below the join: the scrolling world, with its sprites. */
+/**
+ * …and for everything below the join: the scrolling world, with its sprites.
+ *
+ * Then the line interrupt is switched off for the rest of the frame, and that
+ * is not tidiness either — it is the fix for the screen jumping every few
+ * seconds.
+ *
+ * R#19 is not compared against the display line. It is compared against the
+ * same offset line counter R#23 shifts, which is only the display line while
+ * the offset is zero — true across the band, and the reason the band is easy to
+ * place. The moment this function installs the world's offset, R#19 = 20 starts
+ * naming display line (20 − offset) instead, and it matches a *second* time in
+ * the same frame. For most offsets that second match lands early and harmlessly
+ * re-runs this function. But as the canyon scrolls, the offset passes through
+ * 65–69, the second match lands on display lines 207–211 — the last handful
+ * before the vertical blank — and the two interrupts arrive on top of each
+ * other. The frame that comes out is drawn from page 1 at the world's offset:
+ * the whole picture jumps and the status band appears at the bottom of it.
+ *
+ * It is a window five values wide out of 256, so it turns up about every four
+ * seconds of scrolling — often enough to be the "every now and then" flicker,
+ * rare enough to look random. One bit closes it: the split has already happened
+ * and there is nothing left to interrupt for, so the interrupt goes away until
+ * the next V-blank arms it again.
+ */
 void Scroll_World(void)
 {
 	VDP_SetPage(0);
 	VDP_SetVerticalOffset(g_ShownOffset);
 	VDP_EnableSprite(TRUE);
+	g_Phase = PHASE_WORLD;
+	VDP_EnableHBlank(FALSE);
 }
 
 /**

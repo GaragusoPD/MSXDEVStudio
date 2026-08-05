@@ -19,8 +19,6 @@
 
 u8 g_Palette[32];
 u8 g_VBlank;
-/** Set by the H-blank handler once the display has been handed to the world. */
-u8 g_Split;
 u8 g_Frame;
 GameState g_State;
 u8 g_Lives;
@@ -64,7 +62,6 @@ void VDP_HBlankHandler(void)
 		__endasm;
 	}
 	Scroll_World();
-	g_Split = 1;
 }
 
 void PlaySfx(u8 id)
@@ -88,20 +85,41 @@ void PlaySfx(u8 id)
  */
 static u8 g_HudShown; // energy and lives as last painted, so it repaints only on a change
 
-static void PaintHud(void)
+/**
+ * The panel itself. Painted once, when a stage puts the band up — never from
+ * the game loop.
+ *
+ * It used to be part of every repaint, and that was the single most expensive
+ * thing this program did in a frame: a 256×32 fill is four kilobytes of VDP
+ * traffic and a full-width rule on top of it, some six milliseconds with the
+ * display on. The frame that paid it was always the frame the player was hit,
+ * because that is what changes the numbers — so the work landed on top of the
+ * mist, the drones and the ship, ran past the end of the frame, and the V-blank
+ * handler was still waiting when the raster came round. The screen jumped and
+ * the canyon vanished for a moment, exactly when the player was least able to
+ * afford it. The panel does not change, so it should not be redrawn.
+ */
+static void PaintHudPanel(void)
 {
-	// The panel: black across the full width, starting a few lines above where
-	// the band is meant to begin so the switch cannot expose a stripe of canyon,
-	// with a lit rule on the line the band actually starts at.
+	// Black across the full width, starting a few lines above where the band is
+	// meant to begin so the switch cannot expose a stripe of canyon.
 	VDP_CommandHMMV(0, HUD_BAND_Y, VIEW_W, HUD_PAINT_H, 0x11);
 	// A rule along the bottom, where the band meets the canyon, so the join reads
 	// as a deliberate frame — with two plain rows left below it, because the
 	// switch still lands a couple of dozen dots into a line and that residue is
 	// better on blank padding than through the rule.
 	VDP_CommandHMMV(0, (u16)HUD_BAND_Y + HUD_H - 4, VIEW_W, 2, 0x44);
+}
 
+/**
+ * The two readouts, and only the strip they sit in — about a sixteenth of what
+ * the full repaint moved.
+ */
+static void PaintHudValues(void)
+{
 	// Page 1, so past 255 — this is why the project builds with VDP_UNIT_U16.
 	const u16 y = HUD_BAND_Y + 4;
+	VDP_CommandHMMV(HUD_X, y, VIEW_W - HUD_X, HUD_H - 8, 0x11);
 	const u8* rect = g_Hud_Rects + ((u16)(G_HUD_BAR3 + (MAX_ENERGY - g_Energy)) * 4);
 	VDP_CommandLMMM(rect[0] + ((u16)rect[1] << 8), HUD_STRIP_Y, HUD_X, y, rect[2], rect[3], VDP_OP_TIMP);
 	rect = g_Hud_Rects + ((u16)(G_HUD_LIFE0 + (g_Lives & 3)) * 4);
@@ -115,7 +133,7 @@ static void DrawHud(void)
 	if(state == g_HudShown)
 		return;
 	g_HudShown = state;
-	PaintHud();
+	PaintHudValues();
 }
 
 static void SetupVideo(void)
@@ -172,13 +190,12 @@ static void WaitFrame(void)
 	// Waiting here means the interrupt is always taken from a `halt`, and the
 	// frame's blitting only begins once the join is behind the raster — so
 	// however heavy the frame gets, it cannot fray the band.
-	while(g_BandOn && g_Split == 0)
+	while(g_BandOn && g_Phase == PHASE_BAND)
 	{
 		__asm
 			halt
 		__endasm;
 	}
-	g_Split = 0;
 	g_Frame++;
 	ayFX_Update();
 	PSG_Apply();
@@ -191,15 +208,33 @@ static void Pause(u8 frames)
 		WaitFrame();
 }
 
-static void StartStage(void)
+/**
+ * A new life, on the canyon exactly where it was left.
+ *
+ * Losing a life costs the life, not the ground already flown. `Scroll_Start` is
+ * deliberately *not* here: it rewinds `g_ViewY` to the bottom of the map and
+ * refills the ring, which threw away a whole stage's progress every time the
+ * hull ran out of energy. Everything this does touch is per-life state — a
+ * fresh ship, an empty sky, and the readouts forced to repaint for the new
+ * count.
+ */
+static void StartLife(void)
 {
-	Scroll_Start();
 	Player_Start();
 	Enemy_Start();
-	g_HudShown = 0xFF; // force the band to be painted for the new life
+	g_HudShown = 0xFF; // force the readouts to be painted for the new life
 	Scroll_ShowBand(TRUE);
+	PaintHudPanel();
 	Scroll_Present();
 	g_State = STATE_PLAY;
+}
+
+/** A new game: the canyon back to the start, then the first life on it. */
+static void StartStage(void)
+{
+	Boss_Reset();
+	Scroll_Start();
+	StartLife();
 }
 
 void main(void)
@@ -223,10 +258,9 @@ void main(void)
 		Screens_Title();
 
 		g_Lives = 3;
+		StartStage();
 		while(g_Lives)
 		{
-			StartStage();
-
 			while(g_State == STATE_PLAY || g_State == STATE_BOSS)
 			{
 				WaitFrame();
@@ -270,7 +304,8 @@ void main(void)
 			PlaySfx(2);
 			Player_Hide();
 			Pause(70);
-			g_Lives--;
+			if(--g_Lives)
+				StartLife();
 		}
 
 		// Only now, on the way to a full-screen picture, does the split go away.
