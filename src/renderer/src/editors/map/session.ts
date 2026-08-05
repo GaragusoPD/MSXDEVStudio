@@ -39,6 +39,7 @@ import {
   redo as redoHistory,
   removeLayer as removeLayerPure,
   renameLayer as renameLayerPure,
+  reorderLayer as reorderLayerPure,
   replayReorders,
   samePath,
   singleStamp,
@@ -428,6 +429,13 @@ export function addLayer(session: MapSession): void {
 export function removeLayer(session: MapSession, index: number): void {
   commit(session, removeLayerPure(doc(session), index))
   if (session.activeLayer >= doc(session).layers.length) session.activeLayer = doc(session).layers.length - 1
+}
+
+/** Keeps the selection on the layer the user was editing, wherever it landed. */
+export function reorderLayer(session: MapSession, from: number, to: number): void {
+  const active = doc(session).layers[session.activeLayer]
+  commit(session, reorderLayerPure(doc(session), from, to))
+  session.activeLayer = Math.max(0, doc(session).layers.indexOf(active))
 }
 
 export function renameLayer(session: MapSession, index: number, name: string): void {

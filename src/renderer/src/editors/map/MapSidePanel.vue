@@ -8,7 +8,7 @@
 import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
-import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, resize, selectLayer, setCell, setTileset, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setCell, setTileset, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 
@@ -214,6 +214,24 @@ const packing = computed(() => {
         <span class="kind">{{ layer.kind }}</span>
         <button
           type="button"
+          class="move"
+          title="Move layer up"
+          :disabled="index === 0"
+          @click.stop="reorderLayer(session, index, index - 1)"
+        >
+          <Icon name="arrow_upward" />
+        </button>
+        <button
+          type="button"
+          class="move"
+          title="Move layer down"
+          :disabled="index === mapDoc.layers.length - 1"
+          @click.stop="reorderLayer(session, index, index + 1)"
+        >
+          <Icon name="arrow_downward" />
+        </button>
+        <button
+          type="button"
           class="remove"
           title="Remove layer"
           :disabled="mapDoc.layers.length <= 1"
@@ -388,6 +406,7 @@ label > span:first-child {
 }
 
 .layer-row .vis,
+.layer-row .move,
 .layer-row .remove {
   flex: none;
   width: 18px;
@@ -395,6 +414,7 @@ label > span:first-child {
   color: var(--color-text-muted);
 }
 
+.layer-row .move:disabled,
 .layer-row .remove:disabled {
   opacity: 0.35;
   cursor: default;

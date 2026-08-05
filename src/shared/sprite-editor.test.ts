@@ -35,6 +35,7 @@ import {
   removeSprite,
   renameSprite,
   reorderFrame,
+  reorderLayer,
   scanlineBudget,
   setCharacterGrid,
   shiftLayer,
@@ -162,6 +163,22 @@ describe('frame/sprite/layer list ops', () => {
     }
     const reordered = reorderFrame(tagged, 0, 0, 2)
     expect(reordered.sprites[0].frames.map((f) => f.layers[0].color)).toEqual([1, 2, 0])
+  })
+
+  it('reorderLayer moves the plane in every frame, keeping frames shape-identical', () => {
+    let doc = createSpritesDoc()
+    doc = addLayer(doc, 0)
+    doc = addLayer(doc, 0)
+    // Tag each plane by colour, then give the sprite a second frame with the same shape.
+    doc = { ...doc, sprites: [{ ...doc.sprites[0], frames: [{ layers: doc.sprites[0].frames[0].layers.map((l, i) => ({ ...l, color: i })) }] }] }
+    doc = addFrame(doc, 0)
+    const moved = reorderLayer(doc, 0, 2, 0)
+    expect(moved.sprites[0].frames.map((f) => f.layers.map((l) => l.color))).toEqual([
+      [2, 0, 1],
+      [2, 0, 1]
+    ])
+    expect(reorderLayer(doc, 0, 1, 1)).toBe(doc)
+    expect(reorderLayer(doc, 0, 0, 3)).toBe(doc)
   })
 
   it('addSprite/duplicateSprite/removeSprite/renameSprite', () => {

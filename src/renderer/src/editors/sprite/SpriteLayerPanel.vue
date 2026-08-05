@@ -28,6 +28,7 @@ import {
   gridShrinkLossy,
   modeConversionLossy,
   removeLayer,
+  reorderLayer,
   setCharacterGrid,
   sizeConversionLossy,
   updateLayer,
@@ -53,6 +54,13 @@ const cellFull = computed(
 
 const THUMB = 32
 const thumbRefs = ref<(HTMLCanvasElement | null)[]>([])
+
+/** Moves a plane one step; the buttons only ever swap neighbours, so the selection just follows. */
+function moveLayer(from: number, to: number): void {
+  emit('mutate', reorderLayer(props.doc, props.target.sprite, from, to))
+  if (props.target.layer === from) emit('selectLayer', to)
+  else if (props.target.layer === to) emit('selectLayer', from)
+}
 
 function redrawThumbs(): void {
   layers.value.forEach((layer, i) => {
@@ -223,6 +231,22 @@ function changeSize(size: SpriteSize): void {
             class="dot"
             :style="{ background: swatch(layer.color) }"
           />
+          <button
+            type="button"
+            title="Move layer up"
+            :disabled="index === 0"
+            @click.stop="moveLayer(index, index - 1)"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            title="Move layer down"
+            :disabled="index === layers.length - 1"
+            @click.stop="moveLayer(index, index + 1)"
+          >
+            ↓
+          </button>
           <button
             type="button"
             title="Remove layer"

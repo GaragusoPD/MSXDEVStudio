@@ -70,7 +70,7 @@ void Screens_LoadAtlas(void)
 /** A picture, and then wait for SPACE — with a release first, so one press is one press. */
 static void ShowUntilSpace(u8 seg)
 {
-	VDP_SetVerticalOffset(0);
+	Scroll_Reset();
 	DrawPicture(seg, VIEW_H);
 
 	while(Keyboard_IsKeyPressed(KEY_SPACE))

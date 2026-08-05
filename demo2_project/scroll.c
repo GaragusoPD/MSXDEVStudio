@@ -142,12 +142,37 @@ void Scroll_Update(void)
  * Installs the scroll for the frame that is about to be drawn. Called from the
  * V-blank handler and nowhere else — see above for why.
  */
-u8 g_BandOn;
+/**
+ * The initialiser is not decoration. MSXgl's crt0 copies `_INITIALIZER` into
+ * `_INITIALIZED` and stops there — it never clears `_DATA`, so a global written
+ * without one starts as whatever the machine happened to leave in RAM. Left
+ * bare, this came up non-zero on a cold boot and the V-blank handler put the
+ * display on page 1 before `main` had run a line: the title picture was drawn
+ * correctly onto page 0 and never shown, and what reached the screen was the
+ * mist strip parked at MIST_Y. Anything read before it is first written needs
+ * an `= value` here.
+ */
+u8 g_BandOn = FALSE;
 
 void Scroll_ShowBand(u8 on)
 {
 	g_BandOn = on;
 	VDP_EnableHBlank(on ? TRUE : FALSE);
+}
+
+/**
+ * Parks the display at the top of the page, for the full-screen pictures.
+ *
+ * Setting R#23 directly would not survive: `Scroll_Present` reinstalls
+ * `g_ShownOffset` on the very next V-blank, so a picture shown after a stage
+ * would come up scrolled by wherever the canyon had got to. The offset belongs
+ * to this file, so the reset does too.
+ */
+void Scroll_Reset(void)
+{
+	g_MainOffset = 0;
+	g_ShownOffset = 0;
+	VDP_SetVerticalOffset(0);
 }
 
 /**

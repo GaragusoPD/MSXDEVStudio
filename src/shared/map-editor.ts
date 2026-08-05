@@ -191,6 +191,14 @@ export function removeLayer(doc: MapDoc, index: number): MapDoc {
   return { ...doc, layers: doc.layers.filter((_, i) => i !== index) }
 }
 
+/** Array order is the draw order (layer 0 is the opaque base) and the order the tables export in. */
+export function reorderLayer(doc: MapDoc, from: number, to: number): MapDoc {
+  if (from === to || !doc.layers[from] || !doc.layers[to]) return doc
+  const layers = doc.layers.slice()
+  layers.splice(to, 0, ...layers.splice(from, 1))
+  return { ...doc, layers }
+}
+
 export function renameLayer(doc: MapDoc, index: number, name: string): MapDoc {
   if (!doc.layers[index]) return doc
   const layers = doc.layers.slice()

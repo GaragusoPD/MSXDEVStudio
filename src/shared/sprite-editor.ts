@@ -263,6 +263,26 @@ export function removeLayer(doc: SpritesDoc, spriteIndex: number, layerIndex: nu
   )
 }
 
+/**
+ * Moves a plane in *every* frame at once. Array order is the OR-stack priority
+ * `compositePixel` reads and the order `eachLayer` exports in, so it has to
+ * stay identical across frames — same reason `addLayer`/`removeLayer` do.
+ */
+export function reorderLayer(doc: SpritesDoc, spriteIndex: number, from: number, to: number): SpritesDoc {
+  return updateSprite(doc, spriteIndex, (sprite) => {
+    const layers = sprite.frames[0]?.layers
+    if (from === to || !layers?.[from] || !layers[to]) return sprite
+    return {
+      ...sprite,
+      frames: sprite.frames.map((frame) => {
+        const moved = frame.layers.slice()
+        moved.splice(to, 0, ...moved.splice(from, 1))
+        return { layers: moved }
+      })
+    }
+  })
+}
+
 /** Index of the first plane on cell `(cx, cy)`, or -1 — what a canvas click selects. */
 export function layerAtCell(frame: SpriteFrame, cx: number, cy: number): number {
   return frame.layers.findIndex((layer) => layer.cx === cx && layer.cy === cy)

@@ -18,6 +18,7 @@ import {
   redo,
   removeLayer,
   renameLayer,
+  reorderLayer,
   replayReorders,
   samePath,
   singleStamp,
@@ -168,6 +169,17 @@ describe('layer list ops', () => {
     expect(doc.layers[1].visible).toBe(false)
     doc = removeLayer(doc, 1)
     expect(doc.layers).toHaveLength(1)
+  })
+
+  it('reorderLayer moves a layer and refuses out-of-range moves', () => {
+    let doc = mapDoc(2, 2)
+    doc = addLayer(doc, 'foreground')
+    doc = addLayer(doc, 'meta')
+    const names = (d: MapDoc): string[] => d.layers.map((l) => l.name)
+    expect(names(reorderLayer(doc, 2, 0))).toEqual(['meta', 'background', 'foreground'])
+    expect(names(reorderLayer(doc, 0, 1))).toEqual(['foreground', 'background', 'meta'])
+    expect(reorderLayer(doc, 1, 1)).toBe(doc)
+    expect(reorderLayer(doc, 0, 3)).toBe(doc)
   })
 
   it('refuses to remove the last layer', () => {

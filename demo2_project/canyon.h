@@ -195,6 +195,8 @@ void Scroll_Present(void);
 void Scroll_World(void);
 /** Turns the status band on for the game and off for the title and credits screens. */
 void Scroll_ShowBand(u8 on);
+/** Parks the display at the top of the page — for the full-screen pictures. */
+void Scroll_Reset(void);
 extern u8 g_BandOn;
 /** The page row a screen line is currently drawn from — the bitmap counterpart of Scroll_SpriteY. */
 u8 Scroll_PageRow(u8 screenY);
