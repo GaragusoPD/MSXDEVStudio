@@ -26,9 +26,11 @@ import {
   removeTile
 } from './session'
 
-const props = defineProps<{ path: string }>()
-
-const session = computed(() => bitmapTileSession(props.path))
+// `EditorArea` renders the active editor with no props — every resource tab
+// takes its own path off the tabs store, and the session is keyed on it.
+const tabs = useTabsStore()
+const path = computed(() => tabs.activeTab?.filePath ?? '')
+const session = computed(() => bitmapTileSession(path.value))
 const tileset = computed(() => doc(session.value))
 const importing = ref(false)
 const dedupe = ref(true)
@@ -40,10 +42,13 @@ const TOOLS: { id: TileTool; label: string }[] = [
   { id: 'fill', label: 'Fill' }
 ]
 
-const tabs = useTabsStore()
+// Sessions outlive tab switches; drop the ones whose tab is gone. Keyed on
+// `filePath`, which is what a session is keyed on — `id` is the tab's own
+// identity and would prune every live session on the first change.
 watch(
-  () => tabs.tabs.map((tab) => tab.id),
-  (ids) => pruneBitmapTileSessions(new Set(ids))
+  () => tabs.tabs.length,
+  () => pruneBitmapTileSessions(new Set(tabs.tabs.map((tab) => tab.filePath ?? ''))),
+  { immediate: true }
 )
 
 function onImported(result: ImportResult): void {

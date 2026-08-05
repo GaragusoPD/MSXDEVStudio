@@ -49,4 +49,10 @@ describe('isIgnoredName', () => {
   it('does not flag ordinary names', () => {
     expect(isIgnoredName('src')).toBe(false)
   })
+
+  it('rejects a path that is not a string, rather than throwing from inside split', () => {
+    // These come over IPC; a renderer bug should read as a rejected path.
+    expect(resolveRelativePath(undefined as unknown as string)).toBeNull()
+    expect(resolveRelativePath(null as unknown as string)).toBeNull()
+  })
 })

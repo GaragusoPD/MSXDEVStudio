@@ -20,6 +20,10 @@ export const IGNORED_DIR_NAMES = ['node_modules', 'out', 'emul', '.git', '.msxst
  * slash (`''` for the root itself).
  */
 export function resolveRelativePath(relativePath: string): string | null {
+  // These arrive over IPC, so "a string" is an assumption rather than a fact.
+  // A missing path used to reach `.split` and surface as a TypeError from deep
+  // inside the fs service, which says nothing about what actually went wrong.
+  if (typeof relativePath !== 'string') return null
   const segments = relativePath.split(/[\\/]+/).filter((segment) => segment.length > 0 && segment !== '.')
   const stack: string[] = []
   for (const segment of segments) {
