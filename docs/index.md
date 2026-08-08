@@ -1,0 +1,54 @@
+# MSXStudio documentation
+
+Everything here ships inside the application — **Help ▸ Documentation** opens
+this page, and it all works offline.
+
+New to MSX development? Read [Getting started](getting-started.md), then work
+through the [tutorials](tutorials/README.md) in order.
+
+## Using the application
+
+| Guide | What it covers |
+|---|---|
+| [Getting started](getting-started.md) | First launch, the toolchain download, choosing an emulator, and your first project |
+| [Project settings](project-settings.md) | Machine, target and ROM size, mappers, library modules, the ISR options, and the escape hatch to a hand-written config |
+| [Building and running](building-and-running.md) | Build, Rebuild and Clean, the Problems panel, incremental builds, and running in openMSX or WebMSX |
+| [Editing and navigating](editing.md) | The workbench, tabs, search, Git, the terminal, and the examples browser |
+| [Keyboard shortcuts](shortcuts.md) | Every binding, in one table |
+| [Troubleshooting](troubleshooting.md) | Silent emulator audio, blurry pixels, download warnings, build failures |
+
+## Making the art and the sound
+
+| Guide | What it covers |
+|---|---|
+| [Resources](resources.md) | All six asset editors, blocks, metasprites and fragments, exporting, and the ready-made C |
+| [The project file](project-file.md) | What `.msxproj` holds, what `project_config.js` is generated from it, and the config chain MSXgl reads |
+
+## Learning MSXgl
+
+The [tutorials](tutorials/README.md) walk through the MSXgl graphics samples,
+each ending in a complete program you can paste into `main.c` and Run.
+
+1. [Hello world](tutorials/01-hello-world.md)
+2. [Printing text](tutorials/02-printing-text.md)
+3. [Tiles and maps](tutorials/03-tiles-and-maps.md)
+4. [Sprites on MSX1](tutorials/04-sprites-mode1.md)
+5. [Sprites on MSX2](tutorials/05-sprites-mode2.md)
+6. [Scrolling](tutorials/06-scrolling.md)
+7. [Bitmap graphics](tutorials/07-bitmap-graphics.md)
+8. [Software sprites and tiles](tutorials/08-software-sprites.md)
+
+For the library's own API reference, use **Help ▸ MSXgl Reference**, or the
+**Offline docs** link at the bottom of the Examples panel when you have an
+MSXgl checkout.
+
+## The demo games
+
+Two complete games ship with the source, both built entirely with the editors
+described here. Open either `.msxproj` and press Run; each folder's `README.md`
+explains how every piece is loaded.
+
+- **`demo_msx1/`** — a two-screen platformer: a SCREEN 2 tileset, a six-pose
+  sprite, a 64×24 map and an ayFX bank, in a 32 KB ROM.
+- **`demo_msx2/`** — *Canyon Runner*, a vertical shooter: SCREEN 5 in a 128 KB
+  MegaROM, hardware scrolling, sprite mode 2, and software sprites for the boss.

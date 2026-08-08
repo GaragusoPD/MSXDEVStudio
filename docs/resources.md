@@ -7,6 +7,7 @@ in your project that an editor owns, and each one exports a C header your game
 | Kind | File | Editor | Use it for |
 |---|---|---|---|
 | tiles | `name.tiles.json` | Tile editor | 8×8 patterns for SCREEN 1/2/4 |
+| bitmap tiles | `name.btiles.json` | Bitmap tile editor | Tilesets for the MSX2 bitmap modes (SCREEN 5–8) |
 | sprites | `name.sprites.json` | Sprite editor | 8×8 or 16×16 hardware sprites |
 | map | `name.map.json` | Map editor | Tile layouts / levels |
 | screen | `name.screen.json` | Screen editor | Full-screen MSX2 bitmaps (SCREEN 5–8) |
@@ -120,13 +121,39 @@ a multi-tile stamp. A 32×24 map is exactly one screen; larger maps get a screen
 outline overlay for designing scrolling worlds. Add layers to draw a foreground
 over a background: on any layer above the first, tile 0 means transparent.
 
+**Bitmap tiles** — the SCREEN 5/6/7/8 counterpart of a pattern tileset, and a
+different thing from a screen. A screen is one picture used as it is; a tileset
+is a bank of small images addressed by number, which a map indexes and the game
+blits. It is deliberately shaped like the pattern tileset — the same tile flags,
+the same named blocks, the same renumbering when you reorder — and differs only
+where the hardware does:
+
+- **Pixels, not patterns.** A pattern tile is eight pattern bytes plus colour
+  attributes. A bitmap tile is one palette index per pixel, packed on export to
+  whatever the mode holds — two per byte in SCREEN 5, four in SCREEN 6.
+- **Any size.** A pattern tile is 8×8 because the name table says so. Nothing in
+  a bitmap mode cares, so the size belongs to the tileset: 16×16 for chunky art,
+  8×8 for fine, 32×16 if that is what the picture wants.
+- **Cut from an image, as well as drawn.** Import a PNG and slice it into cells,
+  which is what makes this usable for art made outside MSXStudio.
+
 ![A SCREEN 5 image cut into 16x16 cells, with the mode's sixteen-entry palette and per-tile flags on the right](images/editor_msx2_bitmap_tile_editor.png)
+
+Without it, a bitmap-mode map has to point its tileset at a picture and read it
+as an implicit grid. That works, but it costs what a tileset is *for*: no
+gameplay flags, so collision falls back to comparing tile numbers against
+ranges; no blocks; and the tile order becomes load-bearing, because it is the
+only thing carrying meaning.
+
+![The map editor drawing in a bitmap mode: cells taken from a SCREEN 5 atlas instead of a pattern bank, with the screen outline marking one screenful](images/editor_msx2_bitmap_map_editor.png)
+
+The tiles are uploaded to VRAM as a grid rather than one long strip — fifty
+16-dot tiles in a row would be 800 dots wide and VRAM is 256 across — and the
+exported code indexes into that sheet for you.
 
 **Screen** — for MSX2 bitmap modes only. Import a source image, then retouch
 the conversion with pencil/fill and edit the palette. For MSX1 full-screen art,
 draw a tileset and place it in a map instead.
-
-![The map editor drawing in a bitmap mode: cells taken from a SCREEN 5 atlas instead of a pattern bank, with the screen outline marking one screenful](images/editor_msx2_bitmap_map_editor.png)
 
 **Fragments** — bitmap modes have no name table, so the block idea arrives as a
 **fragment**: pick the **cut** tool (the dashed-corners icon) and drag a rectangle on the converted image to

@@ -206,7 +206,7 @@ on a credits screen at the end.
 
 ## Documentation
 
-- **[Resources guide](docs/resources.md)** — the five asset editors, blocks,
+- **[Resources guide](docs/resources.md)** — the six asset editors, blocks,
   metasprites and fragments, how exporting works, and how to use the generated
   tables and ready-made C from your game.
 - **[Tutorials](docs/tutorials/)** — eight walkthroughs of the MSXgl graphics
