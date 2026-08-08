@@ -51,7 +51,7 @@
 
 ## When creating the GitHub repo
 
-Repo created 2026-08-03 at https://github.com/GaragusoPD/MSXStudio, **private for now** —
+Repo created 2026-08-03 at https://github.com/GaragusoPD/MSXDEVStudio, **private for now** —
 make it public when the work in progress is ready to show.
 
 - [x] Fix `homepage` in `package.json` (was a guessed URL — needed by the .deb builder).
