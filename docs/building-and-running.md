@@ -1,6 +1,6 @@
 # Building and running
 
-MSXStudio never reimplements MSXgl's build. It runs MSXgl's own `build.js` with
+MSXDEVStudio never reimplements MSXgl's build. It runs MSXgl's own `build.js` with
 your project folder as the working directory, and puts a user interface around
 what comes back.
 
@@ -18,7 +18,7 @@ They are on the **Build** menu, and Build and Run also have toolbar buttons.
 
 Each maps onto MSXgl's own step keywords — `all`, `rebuild`, `clean`, and `run`
 appended for openMSX. Run only adds the `run` step when openMSX is the
-preferred emulator; WebMSX is launched by MSXStudio instead (see below).
+preferred emulator; WebMSX is launched by MSXDEVStudio instead (see below).
 
 Before every build, two things happen automatically:
 
@@ -34,7 +34,7 @@ The bottom panel has two tabs.
 
 **Output** is the raw build log, exactly as MSXgl printed it.
 
-**Problems** is that log parsed into a clickable list. MSXStudio understands
+**Problems** is that log parsed into a clickable list. MSXDEVStudio understands
 SDCC's diagnostics, this SDCC's `sdasz80`, and the `?ASxxxx-Error-…` /
 `?ASlink-Warning-…` forms the linker uses. A problem that names a file inside
 your project is clickable and jumps to the line; one that names a file
@@ -52,7 +52,7 @@ check only ever compares a `.c` against its own `.rel` — it cannot see:
 - a change to the build flags, the machine, the target, or a `define=`,
 - anything else that changes *how* the same source compiles.
 
-So MSXStudio guards it. After each successful build it writes a stamp file into
+So MSXDEVStudio guards it. After each successful build it writes a stamp file into
 `out/` recording the configuration those `.rel` files were compiled with, and
 before the next one it compares the stamp and sweeps the modification times of
 every `.h`/`.inc` in the project. If either says the objects are stale, it
@@ -68,12 +68,12 @@ a stale binary, **Rebuild** is the hammer.
 ## Running it
 
 **openMSX** launches through MSXgl's own `run` step, using the emulator path
-MSXStudio wrote into MSXgl's user-global config. Per-project emulator options —
+MSXDEVStudio wrote into MSXgl's user-global config. Per-project emulator options —
 the machine override, cartridge extensions like SCC or MSX-MUSIC, joystick
 ports, 60 Hz, full screen, mute — live in [Project
 settings](project-settings.md).
 
-**WebMSX** runs the game in your browser instead. MSXStudio starts a small
+**WebMSX** runs the game in your browser instead. MSXDEVStudio starts a small
 server bound to `127.0.0.1` on a random port, lends it *only* the files this
 build produced, and opens webmsx.org pointed at the right one. Nothing else on
 your machine is reachable through it, and no path is ever taken from the
@@ -84,7 +84,7 @@ Which one Run uses is the **preferred emulator** setting, per project.
 
 ## When a build fails
 
-MSXStudio explains MSXgl's own exit codes rather than showing a bare number.
+MSXDEVStudio explains MSXgl's own exit codes rather than showing a bare number.
 The ones you are most likely to meet:
 
 | Meaning | What to do |
@@ -96,7 +96,7 @@ The ones you are most likely to meet:
 
 MSXgl's exit codes are three digits, and POSIX truncates exit statuses to eight
 bits — so the same failure arrives as, say, `310` on Windows and `54` on Linux.
-MSXStudio matches both, which is why the message is the same on either.
+MSXDEVStudio matches both, which is why the message is the same on either.
 
 If a code has no explanation attached, the message carries the last few lines
 of standard error, which is usually enough to see what happened.

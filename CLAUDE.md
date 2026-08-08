@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-MSXStudio is a desktop IDE for MSX game development (Electron + Vue 3 + TypeScript + Pinia + Monaco) that wraps the MSXgl C library, SDCC, and openMSX/WebMSX. Built spec-first: `specs/00`–`13` are the implementation plan, and **`specs/msxgl-notes.md` is the ground-truth MSXgl reference** (build.js invocation, config chain, exit codes, MSXimg CLI, ayFX format) — trust it over memory; it was extracted from a real MSXgl clone.
+MSXDEVStudio is a desktop IDE for MSX game development (Electron + Vue 3 + TypeScript + Pinia + Monaco) that wraps the MSXgl C library, SDCC, and openMSX/WebMSX. Built spec-first: `specs/00`–`13` are the implementation plan, and **`specs/msxgl-notes.md` is the ground-truth MSXgl reference** (build.js invocation, config chain, exit codes, MSXimg CLI, ayFX format) — trust it over memory; it was extracted from a real MSXgl clone.
 
 ## Commands
 
@@ -53,7 +53,7 @@ Emitted C is not verified by compiling it in your head. Build a scratch project 
 
 ### The build pipeline (the core of the app)
 
-MSXStudio never reimplements MSXgl's build — it spawns `node <msxgl>/engine/script/js/build.js <steps>` with **cwd = the project dir** (MSXgl bundles its own SDCC, MSXtk, and Node). Around that:
+MSXDEVStudio never reimplements MSXgl's build — it spawns `node <msxgl>/engine/script/js/build.js <steps>` with **cwd = the project dir** (MSXgl bundles its own SDCC, MSXtk, and Node). Around that:
 
 - `.msxproj` (JSON) is the project model; `generateProjectConfig()` regenerates `project_config.js` before every build unless `customConfig` is set. Values equal to MSXgl's own defaults are omitted, except those that `projects/default_config.js` (the user-global config, loaded before the project one) would silently override.
 - Config chain order: engine `setup_global.js` → `<msxgl>/projects/default_config.js` → project `project_config.js` (last wins). The IDE writes the emulator path into the user-global file (`writeEmulatorConfig`).

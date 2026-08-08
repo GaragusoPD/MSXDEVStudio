@@ -8,7 +8,7 @@ three lives.
 
 ![Gameplay](../docs/images/demo_msx2_gameplay.png)
 
-Open `canyon.msxproj` in MSXStudio and press **Run**.
+Open `canyon.msxproj` in MSXDEVStudio and press **Run**.
 
 Where [`demo_msx1`](../demo_msx1/) is an MSX1 game — one name table, 16
 fixed colours, eight-pixel scroll steps — this one is about what the V9938
@@ -49,7 +49,7 @@ too wide for the sprite hardware](../docs/images/demo_msx2_boss_fight.png)
 
 Everything in `datasrc/` is a script. `node datasrc/make-art.mjs` draws the five
 source PNGs from nothing but code, and `node datasrc/make-data.mjs` writes the
-map, the sprite sheet and the sound bank straight into MSXStudio's editor
+map, the sprite sheet and the sound bank straight into MSXDEVStudio's editor
 formats. Both are ordinary Node scripts with no dependency on the app.
 
 That is a way to get a first draft quickly, not a parallel pipeline: every file
@@ -259,13 +259,13 @@ called `bossfight.c` for that reason.
 **MSXgl's incremental build cannot see header changes.** `CompileSkipOld`
 compares a source's mtime against its `.rel`, so editing `canyon.h` and
 rebuilding gets you the old objects and a very confusing debugging session.
-MSXStudio guards against this with a stamp file and a header sweep — see
+MSXDEVStudio guards against this with a stamp file and a header sweep — see
 `needsFullRebuild()` — but if you build from the command line, use the `rebuild`
 step after touching a header.
 
 ## Credits and attribution
 
-The demo carries its attribution in the game, which is what MSXStudio's
+The demo carries its attribution in the game, which is what MSXDEVStudio's
 [license](../LICENSE) asks of anything built with it: a line on the title screen
 and a full credits screen after you win.
 
@@ -277,17 +277,30 @@ and a full credits screen after you win.
 demo — the canyon, the ship, the drones, the boss and the sound effects —
 are the author's own.
 
-It ships with MSXStudio as a worked example, so it is meant to be built on: you
+It ships with MSXDEVStudio as a worked example, so it is meant to be built on: you
 may use, modify and adapt its code and art in your own projects, commercial or
 not, with **no obligation to credit this demo**.
 
-That is a separate matter from the tools. MSXStudio and MSXgl still ask for the
+That is a separate matter from the tools. MSXDEVStudio and MSXgl still ask for the
 credit their own licenses describe, which is what the title and credits
 screens do.
 
+### Trademarks and affiliation
+
+This demo and MSXDEVStudio are an **independent project**, not affiliated with,
+endorsed by or official to **MSX Licensing Corporation**, the **MSX
+Association**, or any other holder of MSX rights.
+
+> **"MSX" is a trademark of MSX Licensing Corporation.**
+
+"MSX", "MSX2" and the other platform names are used descriptively, to identify
+the hardware this game runs on. No official MSX logo or branding is used here —
+the artwork is the author's own. See the
+[project README](../README.md#trademarks-and-affiliation) for the full notice.
+
 ### Tools used
 
-- **MSXStudio** by P.D. Garaguso, whose license asks to be credited in software
+- **MSXDEVStudio** by P.D. Garaguso, whose license asks to be credited in software
   made with it, in wording that does not imply endorsement.
 - **MSXgl** and **MSXtk** by Guillaume "Aoineko" Blanchard, licensed
   [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), which also

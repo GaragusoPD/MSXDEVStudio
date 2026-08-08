@@ -111,7 +111,7 @@ export function menuTemplate(send: (command: MenuCommand) => void): MenuItemCons
         { type: 'separator' },
         item('MSXgl Reference', 'help.msxgl'),
         { type: 'separator' },
-        item('About MSXStudio', 'help.about')
+        item('About MSXDEVStudio', 'help.about')
       ]
     }
   ]

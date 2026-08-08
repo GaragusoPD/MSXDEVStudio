@@ -20,7 +20,7 @@ export const hasMsxgl = existsSync(join(REAL_MSXGL, 'projects/template/template.
  * live on the same device as the checkout it builds with.
  */
 export function scratchRoot(): string {
-  const root = join(dirname(REAL_MSXGL), '.msxstudio-test-scratch')
+  const root = join(dirname(REAL_MSXGL), '.msxdevstudio-test-scratch')
   if (!existsSync(root)) mkdirSync(root, { recursive: true })
   return root
 }

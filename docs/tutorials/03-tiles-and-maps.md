@@ -180,7 +180,7 @@ void main()
 }
 ```
 
-`G_TILESET_PATTERNS_SIZE` is the size define MSXStudio writes next to
+`G_TILESET_PATTERNS_SIZE` is the size define MSXDEVStudio writes next to
 every generated array (see `../resources.md`); dividing it by 8 gives the
 tile count so `VDP_LoadPattern_GM2` never reads past the end of your
 tileset, whatever its size.
@@ -229,7 +229,7 @@ including multi-layer maps and MSX2 palettes.
   display), or the screen will briefly show the map through the wrong
   patterns.
 
-## Two things MSXStudio adds
+## Two things MSXDEVStudio adds
 
 **Designs bigger than one tile.** A door or a tree is several tiles, and
 assembling it mentally from 8x8 cells is the tedious part of tile art. The tile

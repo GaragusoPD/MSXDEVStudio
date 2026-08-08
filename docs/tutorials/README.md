@@ -1,8 +1,8 @@
 # MSXgl graphics tutorials
 
-Walkthroughs of the MSXgl graphics samples, written for MSXStudio users. Each
+Walkthroughs of the MSXgl graphics samples, written for MSXDEVStudio users. Each
 one explains a sample from the MSXgl checkout, gives you a complete program you
-can paste into `main.c` and Run, and points at the MSXStudio editor that makes
+can paste into `main.c` and Run, and points at the MSXDEVStudio editor that makes
 the art for it.
 
 Read them in order if you are new to MSX development. Every API name in these
@@ -18,18 +18,18 @@ memory.
 | 5 | [Sprites on MSX2](05-sprites-mode2.md) | Sprite mode 2, per-line colors, layering for multicolor characters | MSX2 and up |
 | 6 | [Scrolling](06-scrolling.md) | The scroll module, its compile-time configuration, maps bigger than one screen | MSX1 and up |
 | 7 | [Bitmap graphics](07-bitmap-graphics.md) | SCREEN 5 to 8, palettes, showing an image, the VDP command engine, cutting fragments | MSX2 and up |
-| 8 | [Software sprites and tiles](08-software-sprites.md) | Drawing objects without the sprite hardware, its CPU cost, and the runtime MSXStudio generates for it | MSX2 and up |
+| 8 | [Software sprites and tiles](08-software-sprites.md) | Drawing objects without the sprite hardware, its CPU cost, and the runtime MSXDEVStudio generates for it | MSX2 and up |
 
 ## Before you start
 
-The samples live in your MSXgl checkout under `projects/samples/`. MSXStudio's
+The samples live in your MSXgl checkout under `projects/samples/`. MSXDEVStudio's
 **Examples** browser can open and build them directly, which is the quickest way
 to see one running before you read about it.
 
 ![The Examples browser: the MSXgl samples grouped by topic, each tagged with the machine it needs, with Try it and New project from example on the opened one](../images/editor_MSXgl_examples_easy_access.png)
 
 Settings these tutorials refer to (**LibModules**, **Machine**, **Target**,
-**CustomISR**) are all in **Project Settings** inside MSXStudio.
+**CustomISR**) are all in **Project Settings** inside MSXDEVStudio.
 
 ![Project Settings: machine, target and ROM size, the source module list, and the ROM/startup options including Custom ISR](../images/editor_project_settings.png)
 
@@ -41,6 +41,6 @@ For making your own tiles, sprites, maps, screens and sound effects, see
 These tutorials quote source code from the MSXgl sample programs, which are
 licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) by
 Guillaume "Aoineko" Blanchard. This folder is therefore licensed CC BY-SA 4.0 as
-well, rather than under MSXStudio's own license: share and adapt it freely,
+well, rather than under MSXDEVStudio's own license: share and adapt it freely,
 including commercially, as long as you credit the source and license what you
 build from it the same way.

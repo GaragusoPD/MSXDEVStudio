@@ -76,7 +76,7 @@ permits the undocumented Z80 opcodes.
 **Defines** are passed to the compiler as build arguments rather than written
 into the config file, so they behave like `-D` on a command line. Changing one
 is exactly the kind of change the incremental build cannot see on its own —
-MSXStudio's stamp catches it and forces a full rebuild.
+MSXDEVStudio's stamp catches it and forces a full rebuild.
 
 ## Library modules
 
@@ -119,7 +119,7 @@ what they say.
 
 Declarative MSXimg conversions, run before every build from the project root:
 each rule is a source image, an output path, and the MSXimg command-line
-arguments. MSXStudio edits the arguments as plain text and links to MSXimg's own
+arguments. MSXDEVStudio edits the arguments as plain text and links to MSXimg's own
 documentation rather than pretending to be an argument builder — MSXimg has more
 options than a form could usefully hold.
 
@@ -129,7 +129,7 @@ ordinary tiles, sprites and pictures, use the editors — see
 
 ## Custom config
 
-The last resort. Tick it and MSXStudio stops generating `project_config.js`
+The last resort. Tick it and MSXDEVStudio stops generating `project_config.js`
 entirely: the file becomes yours, and everything above stops having any effect
 on the build. Use it when you need something MSXgl supports and this form does
 not expose. [The project file](project-file.md) explains what the generated file

@@ -36,7 +36,7 @@ takes VDP cycles proportional to the area being moved.
 The technique needs the VDP command engine (`VDP_Command*` functions),
 which only exists on MSX2 and up. `VDP_USE_COMMAND` in
 `msxgl_config_msx2.h` is what turns on those wrapper functions, and it is
-gated on `MSX_VERSION >= MSX_2`. In MSXStudio's Project Settings that means
+gated on `MSX_VERSION >= MSX_2`. In MSXDEVStudio's Project Settings that means
 **Machine** must be MSX2 or higher.
 
 `InitScreen()` in `s_swsprt.c` sets the mode and turns hardware sprites off,
@@ -348,7 +348,7 @@ In the 512 pixel wide modes (SCREEN 6 and 7) the real sample scales X by a
 `pixelWidth` factor of `Width / 256`, so a sprite at logical x=100 is passed
 as 200. Keep that in mind if you port this to another mode.
 
-In MSXStudio: create an MSX2 project, set **CustomISR** to `VBLANK` in Project
+In MSXDEVStudio: create an MSX2 project, set **CustomISR** to `VBLANK` in Project
 Settings, include your exported sprite header in place of the `extern`
 declaration, and press Run.
 
@@ -398,7 +398,7 @@ cycle, and unpacks compressed artwork. Read it once this version runs.
 
 ## Using your own art
 
-MSXStudio's **Map editor** already produces what `Tile_DrawScreen`/
+MSXDEVStudio's **Map editor** already produces what `Tile_DrawScreen`/
 `Tile_DrawMapChunk` expect for a level layout: a flat, one-byte-per-cell
 array (see `../resources.md`). Point it at a tileset using tiles in the
 same order you loaded into your tile bank, export, and pass the array
@@ -407,13 +407,13 @@ straight to those functions.
 The tile *pixel* data is a different story. `Tile_LoadBank` needs each cell
 packed as a contiguous `TILE_CELL_BYTES`-byte block, in the screen's native
 packed pixel format, the way `content/tile/data_bg_4b.h` is laid out.
-MSXStudio's Tile editor targets the SCREEN 1/2/4 pattern-generator format
+MSXDEVStudio's Tile editor targets the SCREEN 1/2/4 pattern-generator format
 instead (bitplanes plus a separate color table), which is a different byte
 layout entirely. There's no export path from the Tile editor to the format
 `Tile_LoadBank` needs, you'd have to build or convert that cell data
 yourself, the way the engine's own sample content does.
 
-Software sprites have no gap at all: MSXStudio does the whole of the above
+Software sprites have no gap at all: MSXDEVStudio does the whole of the above
 for you. Cut your frames out of a converted image as **fragments** (the **cut** tool, the dashed-corners icon
 tool in the Screen editor), and the export lays them side by side into one
 `_Strip` in the packed native format for the mode — exactly what

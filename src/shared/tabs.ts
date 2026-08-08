@@ -24,7 +24,7 @@ export function nextMru(order: string[], currentId: string | undefined): string 
   return order.find((id) => id !== currentId) ?? currentId
 }
 
-/** Contents of `<project>/.msxstudio/state.json` — volatile, gitignored IDE state. */
+/** Contents of `<project>/.msxdevstudio/state.json` — volatile, gitignored IDE state. */
 export interface ProjectTabsState {
   /** Root-relative file paths of open tabs, in tab-strip order. */
   openPaths: string[]

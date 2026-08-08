@@ -1,6 +1,6 @@
 # Keyboard shortcuts
 
-Every binding in MSXStudio, in one place. The application menu shows the main
+Every binding in MSXDEVStudio, in one place. The application menu shows the main
 ones next to their items.
 
 ## Anywhere in the workbench

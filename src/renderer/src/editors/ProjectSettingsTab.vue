@@ -77,7 +77,7 @@ watch(
 function setCustomConfig(input: HTMLInputElement): void {
   if (
     !input.checked &&
-    !window.confirm('MSXStudio will overwrite project_config.js from these settings on the next save. Continue?')
+    !window.confirm('MSXDEVStudio will overwrite project_config.js from these settings on the next save. Continue?')
   ) {
     input.checked = true // the reactive value never changed, so Vue won't re-render this back
     return
@@ -150,7 +150,7 @@ async function save(): Promise<void> {
       v-if="readOnly"
       class="banner"
     >
-      This project sets <code>customConfig: true</code> — MSXStudio never writes its
+      This project sets <code>customConfig: true</code> — MSXDEVStudio never writes its
       <code>project_config.js</code>. Settings below are read-only.
       <button
         type="button"
@@ -587,7 +587,7 @@ async function save(): Promise<void> {
           :checked="project.customConfig"
           @change.stop="setCustomConfig($event.target as HTMLInputElement)"
         >
-        <span>Hand-edit <code>project_config.js</code> (MSXStudio stops generating it)</span>
+        <span>Hand-edit <code>project_config.js</code> (MSXDEVStudio stops generating it)</span>
       </label>
     </section>
   </div>

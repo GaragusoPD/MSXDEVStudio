@@ -24,8 +24,8 @@ import yauzl from 'yauzl'
 export const MSXGL_GIT_URL = 'https://github.com/aoineko-fr/MSXgl.git'
 export const MSXGL_ZIP_URL = 'https://codeload.github.com/aoineko-fr/MSXgl/zip/refs/heads/main'
 
-/** File MSXStudio drops at the root of a zip-installed MSXgl to record when it was installed (no git HEAD to read). */
-export const MSXSTUDIO_META_FILE = '.msxstudio-meta.json'
+/** File MSXDEVStudio drops at the root of a zip-installed MSXgl to record when it was installed (no git HEAD to read). */
+export const MSXDEVSTUDIO_META_FILE = '.msxdevstudio-meta.json'
 
 export interface ProgressPayload {
   message: string
@@ -77,7 +77,7 @@ export function getMsxglVersion(root: string): { isGitRepo: boolean; version: st
     }
   }
   try {
-    const meta = JSON.parse(readFileSync(join(root, MSXSTUDIO_META_FILE), 'utf-8')) as {
+    const meta = JSON.parse(readFileSync(join(root, MSXDEVSTUDIO_META_FILE), 'utf-8')) as {
       installedAt?: string
     }
     return {

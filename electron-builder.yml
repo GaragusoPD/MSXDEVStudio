@@ -1,5 +1,5 @@
-appId: com.msxstudio.app
-productName: MSXStudio
+appId: com.msxdevstudio.app
+productName: MSXDEVStudio
 directories:
   buildResources: build
   output: dist
@@ -34,21 +34,21 @@ asarUnpack:
 extraResources:
   - from: demo_msx1
     to: demos/demo_msx1
-    filter: ['**/*', '!out/**', '!emul/**', '!.msxstudio/**']
+    filter: ['**/*', '!out/**', '!emul/**', '!.msxdevstudio/**']
   - from: demo_msx2
     to: demos/demo_msx2
-    filter: ['**/*', '!out/**', '!emul/**', '!.msxstudio/**']
+    filter: ['**/*', '!out/**', '!emul/**', '!.msxdevstudio/**']
 
 # No code signing (no certificates yet) and no auto-update (YAGNI pre-users) —
 # see README's "Known gaps" section.
 fileAssociations:
   - ext: msxproj
-    name: MSX Studio Project
-    description: MSX Studio project file
+    name: MSXDEVStudio Project
+    description: MSXDEVStudio project file
     # Linux .desktop/MimeType + shared-mime-info registration keys off this;
     # Windows NSIS registers the extension directly and uses the app's own
     # icon (electron-builder default) since no per-association icon is set.
-    mimeType: application/x-msxstudio-project
+    mimeType: application/x-msxdevstudio-project
     role: Editor
 
 win:

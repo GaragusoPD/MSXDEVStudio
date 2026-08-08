@@ -1,18 +1,18 @@
 # The project file
 
-What a MSXStudio project is on disk, and how it reaches MSXgl.
+What a MSXDEVStudio project is on disk, and how it reaches MSXgl.
 
 ## The layout
 
 ```
-Game.msxproj        the project: JSON, the only file MSXStudio owns
+Game.msxproj        the project: JSON, the only file MSXDEVStudio owns
 project_config.js   generated from it before every build — MSXgl reads this
 main.c              your code
 msxgl_config.h      MSXgl's per-project engine configuration
 res/                the editor resources (*.tiles.json, *.map.json, …)
 content/            C headers exported from res/ — generated
 out/                build output — generated, safe to delete
-.msxstudio/         which tabs were open; not worth committing
+.msxdevstudio/         which tabs were open; not worth committing
 ```
 
 Everything in `content/` and `out/` is regenerated. `res/` is source: it is what
@@ -32,7 +32,7 @@ the same `.msxproj` works on someone else's computer.
 ## `project_config.js`
 
 MSXgl's build tool does not read `.msxproj`. It reads `project_config.js`, a
-JavaScript file it evaluates for its global assignments. MSXStudio regenerates
+JavaScript file it evaluates for its global assignments. MSXDEVStudio regenerates
 that file from the model before every build.
 
 The generated file is deliberately short: **a setting equal to MSXgl's own
@@ -63,7 +63,7 @@ MSXgl loads three files, in this order, last one winning:
 2. `<msxgl>/projects/default_config.js` — **user-global**, outside your project.
 3. `<project>/project_config.js` — generated from your `.msxproj`.
 
-The middle one matters for two reasons. It is where MSXStudio writes your
+The middle one matters for two reasons. It is where MSXDEVStudio writes your
 **emulator path**, editing that one value and preserving everything else in the
 file, which is how MSXgl's `run` step knows what to launch. And because it is
 loaded *before* the project config, anything it sets that your project config
@@ -72,9 +72,9 @@ written out.
 
 ## Taking it over
 
-Tick **Custom config** in Project Settings and MSXStudio stops writing
+Tick **Custom config** in Project Settings and MSXDEVStudio stops writing
 `project_config.js`. The file becomes yours, permanently, and the settings form
-stops affecting builds — everything else in MSXStudio still works.
+stops affecting builds — everything else in MSXDEVStudio still works.
 
 Do this when you need something MSXgl supports that the form does not expose.
 Start from the generated file rather than a blank one: it is already correct for
@@ -82,7 +82,7 @@ your project, and it shows which globals matter.
 
 ## Opening a project you did not create here
 
-MSXStudio can adopt an existing MSXgl project. It evaluates the project's
+MSXDEVStudio can adopt an existing MSXgl project. It evaluates the project's
 `project_config.js` in a sandbox, reads the globals that come out, and builds a
 `.msxproj` from them — so an MSXgl project made by hand or from another
 template arrives with its machine, target, modules and options already filled

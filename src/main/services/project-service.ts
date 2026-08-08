@@ -99,7 +99,7 @@ export class ProjectService {
     if (existing) return this.activate(existing)
 
     if (!hasMsxglConfig(root)) {
-      throw new Error(`No MSXStudio project (*${PROJECT_EXT}) or MSXgl project_config.js in ${root}`)
+      throw new Error(`No MSXDEVStudio project (*${PROJECT_EXT}) or MSXgl project_config.js in ${root}`)
     }
     const msxglPath = this.msxglPath()
     const nodeBinary = resolveNodeBinary(msxglPath, this.toolchainService.nodeOverride())

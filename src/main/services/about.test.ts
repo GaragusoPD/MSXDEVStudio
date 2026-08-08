@@ -10,7 +10,7 @@ describe('the About box', () => {
 
   it('states the two terms a user has to know', () => {
     const detail = aboutDetail()
-    expect(detail).toMatch(/do not sell msxstudio itself/i)
+    expect(detail).toMatch(/do not sell msxdevstudio itself/i)
     expect(detail).toMatch(/credit the author/i)
   })
 
@@ -22,6 +22,6 @@ describe('the About box', () => {
   })
 
   it('puts the application version in the headline', () => {
-    expect(aboutMessage('0.1.0')).toBe('MSXStudio 0.1.0')
+    expect(aboutMessage('0.1.0')).toBe('MSXDEVStudio 0.1.0')
   })
 })

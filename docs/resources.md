@@ -1,6 +1,6 @@
 # Resources
 
-Resources are the art and sound you make inside MSXStudio. Each one is a file
+Resources are the art and sound you make inside MSXDEVStudio. Each one is a file
 in your project that an editor owns, and each one exports a C header your game
 `#include`s.
 
@@ -43,7 +43,7 @@ when the target can't hold what you have — going to SCREEN 1 keeps one pair
 per group of eight and drops the rest. **Import image…** converts a PNG into a
 whole tileset.
 
-Deleting or dragging a tile renumbers the ones after it, and MSXStudio rewrites
+Deleting or dragging a tile renumbers the ones after it, and MSXDEVStudio rewrites
 every map drawn with the tileset to match — open ones immediately, closed ones
 when you next open them. The tile's flags and any block using it follow too, so
 re-arranging a tileset never quietly changes what a level means.
@@ -135,7 +135,7 @@ where the hardware does:
   a bitmap mode cares, so the size belongs to the tileset: 16×16 for chunky art,
   8×8 for fine, 32×16 if that is what the picture wants.
 - **Cut from an image, as well as drawn.** Import a PNG and slice it into cells,
-  which is what makes this usable for art made outside MSXStudio.
+  which is what makes this usable for art made outside MSXDEVStudio.
 
 ![A SCREEN 5 image cut into 16x16 cells, with the mode's sixteen-entry palette and per-tile flags on the right](images/editor_msx2_bitmap_tile_editor.png)
 

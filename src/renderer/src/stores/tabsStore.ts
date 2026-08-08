@@ -107,7 +107,7 @@ export const useTabsStore = defineStore('tabs', {
       }
     },
 
-    /** Persists into `<project>/.msxstudio/state.json` (main resolves the path from the open project). */
+    /** Persists into `<project>/.msxdevstudio/state.json` (main resolves the path from the open project). */
     persist(): void {
       if (!this.projectRoot) return
       const openPaths = this.tabs.filter((t) => t.filePath).map((t) => t.filePath as string)

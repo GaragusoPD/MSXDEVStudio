@@ -213,7 +213,7 @@ void main()
 
 ## Using your own art
 
-Hand-typed pixel bytes get old fast. Draw the sprite in MSXStudio's **Sprite
+Hand-typed pixel bytes get old fast. Draw the sprite in MSXDEVStudio's **Sprite
 editor** instead: create a `name.sprites.json` resource, pick mode 1, draw
 your 8x8 or 16x16 frames, then export it. That generates a header with
 `g_Name_Patterns` (the pattern bytes, ready for `VDP_LoadSpritePattern`) and
@@ -239,7 +239,7 @@ See [Resources](../resources.md) for how the editors and exports work.
   drawn in the same `color`; there's no per-line colour like MSX2's sprite
   mode 2 offers. The way round it is *superposition*: draw the character as
   two or more sprites on the same coordinate, each holding the pixels of one
-  colour. MSXStudio's sprite editor calls those layers, tells you what the
+  colour. MSXDEVStudio's sprite editor calls those layers, tells you what the
   stack costs against the 4-per-line limit, and — with **Export ready-made
   C** ticked — writes a `_SetMeta()` that places every plane from one x/y.
   The [demo game](../../demo_msx1/README.md) uses it for its two-colour player.

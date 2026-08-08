@@ -9,7 +9,7 @@
  */
 
 /** Directory names never surfaced by the explorer, watcher, or search. */
-export const IGNORED_DIR_NAMES = ['node_modules', 'out', 'emul', '.git', '.msxstudio']
+export const IGNORED_DIR_NAMES = ['node_modules', 'out', 'emul', '.git', '.msxdevstudio']
 
 /**
  * Normalizes a (possibly untrusted) project-relative path: resolves `.` and

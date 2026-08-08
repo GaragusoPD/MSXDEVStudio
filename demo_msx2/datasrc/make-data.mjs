@@ -7,7 +7,7 @@
 //
 //   node datasrc/make-data.mjs
 //
-// These are MSXStudio's own editor formats, so everything written here opens
+// These are MSXDEVStudio's own editor formats, so everything written here opens
 // in the editors and can be redrawn by hand — generating them is a way to get
 // a first draft quickly, not a parallel pipeline. The `.screen.json` files are
 // the exception: those cache a conversion, so they come from importing the
@@ -24,7 +24,7 @@ mkdirSync(RES, { recursive: true })
 
 // Which resources to write. `node make-data.mjs stage` regenerates the map
 // alone — and that matters, because every one of these is editable in
-// MSXStudio afterwards. A blanket run puts the generated version back over the
+// MSXDEVStudio afterwards. A blanket run puts the generated version back over the
 // top of whatever was done in the editor, which is exactly how a hand-drawn
 // sprite sheet gets lost.
 const only = process.argv.slice(2)

@@ -97,7 +97,7 @@ describe('getMsxglVersion', () => {
   it('falls back to the recorded install date for a zip install', () => {
     const dir = makeTmpDir('msxgl-zip-meta-')
     writeFileSync(
-      join(dir, '.msxstudio-meta.json'),
+      join(dir, '.msxdevstudio-meta.json'),
       JSON.stringify({ installedAt: '2026-08-01T12:00:00.000Z' })
     )
     const result = getMsxglVersion(dir)

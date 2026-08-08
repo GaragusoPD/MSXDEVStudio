@@ -279,6 +279,6 @@ describe('isGitMissing', () => {
 
 describe('STARTER_GITIGNORE', () => {
   it('matches Spec 03´s project-wizard .gitignore', () => {
-    expect(STARTER_GITIGNORE).toBe('out/\nemul/\n.msxstudio/\n')
+    expect(STARTER_GITIGNORE).toBe('out/\nemul/\n.msxdevstudio/\n')
   })
 })

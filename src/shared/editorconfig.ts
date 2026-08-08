@@ -14,7 +14,7 @@ interface EditorConfigSection {
 
 /**
  * Parses a minimal, project-root-only subset of `.editorconfig`: `[glob]`
- * section headers and the four keys MSXStudio's editor cares about. No
+ * section headers and the four keys MSXDEVStudio's editor cares about. No
  * `root = true` handling and no directory cascading — good enough for a
  * single-folder MSXgl project; extend if per-subfolder configs matter later.
  */

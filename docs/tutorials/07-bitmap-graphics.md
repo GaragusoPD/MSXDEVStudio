@@ -46,7 +46,7 @@ VDP_SetPaletteEntry(1, RGB16(7, 0, 0)); // palette index 1 = red
 `VDP_SetPaletteEntry(u8 index, u16 color)` takes an index (0-15) and one
 `RGB16` value. To load a whole table at once, use `VDP_SetPalette(const u8*
 pal)`. By default it writes palette indices 1 to 15 (30 bytes, 2 per entry)
-and leaves index 0 alone; MSXStudio's MSX2 project template leaves
+and leaves index 0 alone; MSXDEVStudio's MSX2 project template leaves
 `VDP_USE_PALETTE16` at its default `FALSE`, so this is what you get unless
 you turn that on in `msxgl_config.h`.
 
@@ -92,7 +92,7 @@ stays on screen: `VDP_WriteVRAM(buffer, addr, 1, count); // Write to page 1`.
 
 ## Using your own image
 
-MSXStudio's screen editor does this conversion for you: **Import image…**
+MSXDEVStudio's screen editor does this conversion for you: **Import image…**
 loads a PNG, converts it to the bitmap mode you picked, and **Export**
 produces a header with `g_Name_Palette` (2 bytes per entry, ready for
 `VDP_SetPalette`) and `g_Name_Data` (the packed bitmap, already laid out the
@@ -117,7 +117,7 @@ just writes a handful of registers describing the operation and moves on
 instead of looping over pixels itself. MSXgl wraps that register interface
 (R#32-46) in the `VDP_Command*` functions declared in `vdp.h` and defined in
 `vdp_inl.h`, active whenever `VDP_USE_COMMAND` is on (it is, by default, in
-MSXStudio's MSX2 template).
+MSXDEVStudio's MSX2 template).
 
 ```c
 void VDP_CommandHMMV(u16 dx, u16 dy, u16 nx, u16 ny, u8 col);
@@ -245,7 +245,7 @@ void main()
 }
 ```
 
-In MSXStudio: create or open a project, set **Machine** to MSX2 (or higher)
+In MSXDEVStudio: create or open a project, set **Machine** to MSX2 (or higher)
 and **Library modules** to `system`, `bios`, `vdp`, `draw`, `input` in
 Project Settings, paste this into `main.c`, and press Run.
 
@@ -291,7 +291,7 @@ Project Settings, paste this into `main.c`, and press Run.
 ## Cutting pieces out of a converted image
 
 Bitmap modes have no name table, so there is no "tile" to place — a piece of art
-is just a rectangle of pixels stamped wherever you want it. MSXStudio's screen
+is just a rectangle of pixels stamped wherever you want it. MSXDEVStudio's screen
 editor makes those explicit: pick the **cut** tool (the dashed-corners icon), drag a rectangle, and you have a
 named **fragment**. Fragments hold no pixels of their own, only the rectangle,
 so retouching the image updates every fragment over it.

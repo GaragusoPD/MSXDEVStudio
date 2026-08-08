@@ -9,7 +9,7 @@ Installable builds for Linux and Windows via `electron-builder`.
 ## Scope
 
 - **Linux:** AppImage + `.deb`. **Windows:** NSIS installer + portable zip.
-- App id `com.msxstudio.app`, proper icon set (source SVG → png sizes; a simple
+- App id `com.msxdevstudio.app`, proper icon set (source SVG → png sizes; a simple
   pixel-art "MSX" monogram placeholder is fine, done in-repo).
 - File associations: `.msxproj` (project file, Spec 03) opens the app.
 - CI: GitHub Actions workflow building both platforms on tag push, artifacts

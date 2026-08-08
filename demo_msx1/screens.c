@@ -81,7 +81,7 @@ void CreditsScreen()
 	BeginTextScreen();
 	PrintAt(9,  2, "C R E D I T S");
 
-	PrintAt(5,  5, "Built with MSXStudio");
+	PrintAt(5,  5, "Built with MSXDEVStudio");
 	PrintAt(8,  6, "by P.D. Garaguso");
 
 	PrintAt(13, 8, MSX_GL);

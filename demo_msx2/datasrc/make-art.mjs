@@ -3,7 +3,7 @@
 //
 //   node datasrc/make-art.mjs
 //
-// The PNGs are the *input* to MSXStudio's screen editor, not the assets: open
+// The PNGs are the *input* to MSXDEVStudio's screen editor, not the assets: open
 // each one there, import it with the palette locked to `datasrc/palette.mjs`,
 // and the editor produces the `.screen.json` the build actually reads. Keeping
 // the art generated rather than hand-painted means the whole look can be
@@ -706,7 +706,7 @@ function buildTitle() {
   textCentered(picture, 122, 'SPACE FIRES', WHITE, SCREEN_W)
 
   panel(picture, 8, 154, SCREEN_W - 16, 46)
-  textCentered(picture, 160, 'AN MSXSTUDIO DEMO', MIST_LIT, SCREEN_W)
+  textCentered(picture, 160, 'AN MSXDEVSTUDIO DEMO', MIST_LIT, SCREEN_W)
   textCentered(picture, 174, 'BUILT WITH MSXGL BY AOINEKO', MIST, SCREEN_W)
   textCentered(picture, 186, 'PRESS SPACE', VEIN_C, SCREEN_W)
   return picture
@@ -717,11 +717,11 @@ function buildCredits() {
 
   panel(picture, 8, 12, SCREEN_W - 16, 188)
   textCentered(picture, 20, 'CANYON RUNNER', VEIN_C, SCREEN_W)
-  textCentered(picture, 34, 'A DEMO FOR MSXSTUDIO', MIST_LIT, SCREEN_W)
+  textCentered(picture, 34, 'A DEMO FOR MSXDEVSTUDIO', MIST_LIT, SCREEN_W)
 
   const lines = [
     ['', 0],
-    ['MSXSTUDIO', VEIN_B],
+    ['MSXDEVSTUDIO', VEIN_B],
     ['BY P.D. GARAGUSO', WHITE],
     ['', 0],
     ['MSXGL AND MSXTK', VEIN_B],

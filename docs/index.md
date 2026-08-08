@@ -1,4 +1,9 @@
-# MSXStudio documentation
+# MSXDEVStudio documentation
+
+> **MSXDEVStudio is an independent project**, not affiliated with, endorsed by
+> or official to MSX Licensing Corporation, the MSX Association, or any other
+> holder of MSX rights. **"MSX" is a trademark of MSX Licensing Corporation**,
+> used here descriptively to identify the hardware this software targets.
 
 Everything here ships inside the application — **Help ▸ Documentation** opens
 this page, and it all works offline.
@@ -45,7 +50,7 @@ MSXgl checkout.
 
 ## The demo games
 
-Two complete games ship *inside* MSXStudio, both built entirely with the editors
+Two complete games ship *inside* MSXDEVStudio, both built entirely with the editors
 described here. **[The demo games](demos.md)** is the guided tour: how to
 install them, and a step-by-step first session on each.
 

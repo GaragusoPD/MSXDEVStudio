@@ -20,7 +20,7 @@
  * 1. `while (*src != 0)` ends the stream, so a header byte of 0x00 is the
  *    terminator — a type-0 chunk is never emitted with count 1.
  * 2. This packs for `COMPRESS_USE_RLEP_DEFAULT TRUE` (what MSXgl's project
- *    template sets, so what every MSXStudio project inherits): the stream
+ *    template sets, so what every MSXDEVStudio project inherits): the stream
  *    starts with the default byte, which the unpacker consumes. Set that flag
  *    FALSE and every chunk lands one byte early.
  */

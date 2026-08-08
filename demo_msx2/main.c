@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Canyon Runner — an MSX2 demo for MSXStudio.
+// Canyon Runner — an MSX2 demo for MSXDEVStudio.
 //
 // SCREEN 5, a 128 KB ASCII-8 ROM, four layers of parallax, multicolour sprites
 // for the ship and a software sprite for the boss. main.c is the setup and the
@@ -18,9 +18,9 @@
 // Copyright © 2026 Pablo D. Garaguso. The code and all the artwork — the
 // canyon, the ship, the drones, the boss and the sound effects — are the
 // author's own, drawn from the generators in datasrc/ and finished in
-// MSXStudio's editors.
+// MSXDEVStudio's editors.
 //
-// This demo ships with MSXStudio as a worked example. You may use, modify and
+// This demo ships with MSXDEVStudio as a worked example. You may use, modify and
 // build on its code and art in your own projects, commercial or not, with no
 // obligation to credit this demo. See README.md for the full notice.
 // ─────────────────────────────────────────────────────────────────────────────

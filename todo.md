@@ -1,4 +1,4 @@
-# MSXStudio — Next Steps
+# MSXDEVStudio — Next Steps
 
 ## Verify now (manual — nothing here was verifiable headless)
 
@@ -6,7 +6,7 @@
       `~/Development/openMSX/openmsx-21.0-linux-x86_64-bin` and needs
       `OPENMSX_SYSTEM_DATA=<that>/share` — the relocatable-tarball case the build
       service already handles. Original note: install openMSX, run the app
-      (`npm run dev` or `dist/msxstudio-0.1.0.AppImage`), Settings → point at an MSXgl
+      (`npm run dev` or `dist/msxdevstudio-0.1.0.AppImage`), Settings → point at an MSXgl
       checkout (or Download), New Project, press **F5**.
 - [ ] Turbo R / real-BIOS machines: set the openMSX machine override in Project Settings
       (C-BIOS has no turbo R) and confirm the friendly exit-500 hint appears without it.

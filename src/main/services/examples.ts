@@ -171,7 +171,7 @@ export function forkSample(
   const configHeader = project.machine === '1' ? 'msxgl_config_msx1.h' : 'msxgl_config_msx2.h'
   copyFileSync(join(samples, configHeader), join(root, 'msxgl_config.h'))
 
-  writeFileSync(join(root, '.gitignore'), 'out/\nemul/\n.msxstudio/\n', 'utf-8')
+  writeFileSync(join(root, '.gitignore'), 'out/\nemul/\n.msxdevstudio/\n', 'utf-8')
   for (const script of launcherScripts(msxglPath)) {
     const scriptPath = join(root, script.name)
     writeFileSync(scriptPath, script.content, 'utf-8')

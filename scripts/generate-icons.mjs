@@ -1,70 +1,80 @@
 #!/usr/bin/env node
-// Generates build/icon.png, build/icon.ico, and resources/icon.png from an
-// in-repo pixel-art "MSX" monogram — no external image assets, no SVG editor.
-// The pixel data lives right here; edit it and rerun `npm run icons`.
-import { mkdirSync, writeFileSync } from 'node:fs'
+// Generates build/icon.png, build/icon.ico and resources/icon.png from the
+// project's own logo, `docs/images/MSXDEVStudio_logo_icon.png`. Edit that file
+// and rerun `npm run icons`.
+//
+// This used to draw an "MSX" monogram from a pixel font embedded in this
+// script. That shipped the bare trademark as the application icon, which is
+// exactly what the rebrand to MSXDEVStudio is meant to avoid — so the icon is
+// now the project's own mark, and there is one source of truth for it.
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PNG } from 'pngjs'
 import pngToIco from 'png-to-ico'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const SOURCE = join(ROOT, 'docs/images/MSXDEVStudio_logo_icon.png')
 
-// 5x7 pixel font, one glyph per letter needed for the "MSX" monogram.
-const FONT = {
-  M: ['#...#', '##.##', '#.#.#', '#...#', '#...#', '#...#', '#...#'],
-  S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
-  X: ['#...#', '.#.#.', '..#..', '..#..', '..#..', '.#.#.', '#...#']
-}
+/**
+ * Box-average downscale to `size`x`size`.
+ *
+ * Averaging rather than nearest-neighbour because the emitted sizes are not all
+ * integer divisors of the source (48 and 24 are not), and dropping pixels at
+ * those ratios eats whole strokes of the lettering. Averaging blurs instead,
+ * which at 24px is the lesser evil.
+ */
+function downscale(source, size) {
+  const out = new PNG({ width: size, height: size })
+  const scaleX = source.width / size
+  const scaleY = source.height / size
 
-const BG = [0x14, 0x16, 0x2b] // dark slate, matches the app's dark theme
-const FG = [0x4c, 0xd9, 0xe8] // bright cyan monogram
-
-// Base pixel-art canvas every output size is nearest-neighbor scaled from.
-// 16 (the smallest emitted size) so the base art is only ever upscaled, never
-// downscaled — downscaling a hand-drawn 1px-stroke font blurs it past legibility.
-const GRID = 16
-
-function drawGlyph(pixels, glyph, ox, oy, color) {
-  FONT[glyph].forEach((row, y) => {
-    ;[...row].forEach((cell, x) => {
-      if (cell === '#') pixels[oy + y][ox + x] = color
-    })
-  })
-}
-
-/** "MS" on the top row, "X" centered underneath — reads as "MSX", roughly square. */
-function buildBaseGrid() {
-  const pixels = Array.from({ length: GRID }, () => Array.from({ length: GRID }, () => BG))
-  const left = Math.floor((GRID - 11) / 2) // "M" + 1px gap + "S" = 11 wide
-  const top = Math.floor((GRID - 16) / 2) // two 7-tall rows + 2px gap = 16 tall
-  drawGlyph(pixels, 'M', left, top, FG)
-  drawGlyph(pixels, 'S', left + 6, top, FG)
-  drawGlyph(pixels, 'X', left + 3, top + 9, FG)
-  return pixels
-}
-
-function rasterize(pixels, size) {
-  const png = new PNG({ width: size, height: size })
   for (let y = 0; y < size; y++) {
-    const srcY = Math.min(GRID - 1, Math.floor((y * GRID) / size))
+    const y0 = Math.floor(y * scaleY)
+    const y1 = Math.max(y0 + 1, Math.floor((y + 1) * scaleY))
     for (let x = 0; x < size; x++) {
-      const srcX = Math.min(GRID - 1, Math.floor((x * GRID) / size))
-      const [r, g, b] = pixels[srcY][srcX]
+      const x0 = Math.floor(x * scaleX)
+      const x1 = Math.max(x0 + 1, Math.floor((x + 1) * scaleX))
+
+      let r = 0
+      let g = 0
+      let b = 0
+      let a = 0
+      let n = 0
+      for (let sy = y0; sy < y1 && sy < source.height; sy++) {
+        for (let sx = x0; sx < x1 && sx < source.width; sx++) {
+          const i = (source.width * sy + sx) << 2
+          r += source.data[i]
+          g += source.data[i + 1]
+          b += source.data[i + 2]
+          a += source.data[i + 3]
+          n++
+        }
+      }
+
       const idx = (size * y + x) << 2
-      png.data[idx] = r
-      png.data[idx + 1] = g
-      png.data[idx + 2] = b
-      png.data[idx + 3] = 255
+      out.data[idx] = Math.round(r / n)
+      out.data[idx + 1] = Math.round(g / n)
+      out.data[idx + 2] = Math.round(b / n)
+      out.data[idx + 3] = Math.round(a / n)
     }
   }
-  return PNG.sync.write(png)
+  return out
 }
 
 async function main() {
-  const base = buildBaseGrid()
+  const source = PNG.sync.read(readFileSync(SOURCE))
+  if (source.width !== source.height) {
+    throw new Error(`${SOURCE} must be square, got ${source.width}x${source.height}`)
+  }
+
   const sizes = [16, 24, 32, 48, 64, 128, 256, 512]
-  const buffers = Object.fromEntries(sizes.map((size) => [size, rasterize(base, size)]))
+  const buffers = Object.fromEntries(
+    sizes.map((size) => [
+      size,
+      PNG.sync.write(size === source.width ? source : downscale(source, size))
+    ])
+  )
 
   mkdirSync(join(ROOT, 'build'), { recursive: true })
   mkdirSync(join(ROOT, 'resources'), { recursive: true })
@@ -75,7 +85,7 @@ async function main() {
   const ico = await pngToIco([16, 24, 32, 48, 64, 128, 256].map((size) => buffers[size]))
   writeFileSync(join(ROOT, 'build/icon.ico'), ico)
 
-  console.log('Wrote build/icon.png, build/icon.ico, resources/icon.png')
+  console.log(`Wrote build/icon.png, build/icon.ico, resources/icon.png from ${SOURCE}`)
 }
 
 main()

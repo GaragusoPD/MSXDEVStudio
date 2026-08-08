@@ -1,4 +1,4 @@
-# MSXStudio — Overview & Implementation Guide
+# MSXDEVStudio — Overview & Implementation Guide
 
 A desktop IDE for MSX game development: Godot's project/editor model, Pico-8's
 "everything included" feel, VS Code's workbench — built on the
@@ -30,7 +30,7 @@ in `src/shared/ipc.ts`; every file-type editor registers in
 
 MSXgl is not just a library — it bundles its whole toolchain (SDCC 4.6.0, MSXtk
 converters, Node 18 runtime, msxtar, MSX-DOS files; Linux + Windows binaries) and a
-Node-based build orchestrator. **MSXStudio therefore wraps, never reimplements:**
+Node-based build orchestrator. **MSXDEVStudio therefore wraps, never reimplements:**
 builds spawn `<msxgl>/engine/script/js/build.js` with cwd = project folder; image
 conversion uses bundled `MSXimg`; DSK creation, emulator launching, mapper layout
 are all the build tool's job. The IDE's own value is the UI, the constraint-aware
@@ -77,6 +77,6 @@ V9990 tooling, macOS.
 ## Licensing note
 
 MSXgl is CC BY-SA 4.0 (bundled third-party tools under their own free licenses).
-MSXStudio doesn't redistribute MSXgl — Spec 02 downloads it to the user's machine —
+MSXDEVStudio doesn't redistribute MSXgl — Spec 02 downloads it to the user's machine —
 but games built with it inherit MSXgl's license terms; surface this in the About
 dialog and README.

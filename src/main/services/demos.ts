@@ -48,10 +48,10 @@ export const DEMO_PROJECTS: DemoProject[] = [
  * Shipping `out/` would also mean shipping a prebuilt ROM, which could let a
  * demo look like it ran on a machine whose toolchain is actually broken.
  */
-export const EXCLUDED_DIRS = ['out', 'emul', 'node_modules', '.msxstudio']
+export const EXCLUDED_DIRS = ['out', 'emul', 'node_modules', '.msxdevstudio']
 
 /** Written into each installed copy, so a stale demo is diagnosable later. */
-export const STAMP_FILE = '.msxstudio-demo.json'
+export const STAMP_FILE = '.msxdevstudio-demo.json'
 
 /**
  * Where the pristine demos are at runtime.
@@ -155,17 +155,17 @@ export function installDemos(
 }
 
 function writeStamp(destination: string, id: string, version?: string): void {
-  const stamp = { demo: id, msxstudio: version ?? 'unknown' }
+  const stamp = { demo: id, msxdevstudio: version ?? 'unknown' }
   writeFileSync(join(destination, STAMP_FILE), `${JSON.stringify(stamp, null, 2)}\n`, 'utf-8')
 }
 
-/** The MSXStudio version an installed copy came from, or null if unstamped. */
+/** The MSXDEVStudio version an installed copy came from, or null if unstamped. */
 export function installedVersion(demoDir: string): string | null {
   const file = join(demoDir, STAMP_FILE)
   if (!existsSync(file)) return null
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { msxstudio?: unknown }
-    return typeof parsed.msxstudio === 'string' ? parsed.msxstudio : null
+    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { msxdevstudio?: unknown }
+    return typeof parsed.msxdevstudio === 'string' ? parsed.msxdevstudio : null
   } catch {
     return null // hand-edited or truncated; not worth failing an install over
   }

@@ -9,4 +9,4 @@ dist
 demo_project/emul
 
 # Per-user IDE session state (open tabs), written into each project
-.msxstudio/
+.msxdevstudio/

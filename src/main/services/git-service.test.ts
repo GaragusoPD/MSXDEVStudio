@@ -74,7 +74,7 @@ describe('GitService.init', () => {
     const status = await service.init()
 
     expect(existsSync(join(root, '.git'))).toBe(true)
-    expect(readFileSync(join(root, '.gitignore'), 'utf-8')).toBe('out/\nemul/\n.msxstudio/\n')
+    expect(readFileSync(join(root, '.gitignore'), 'utf-8')).toBe('out/\nemul/\n.msxdevstudio/\n')
     expect(status.isRepo).toBe(true)
     expect(status.initial).toBe(true) // no commits yet
     expect(events.at(-1)).toEqual(status)

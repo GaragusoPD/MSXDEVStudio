@@ -1,6 +1,6 @@
 # Demo project: a two-screen platformer
 
-A small, complete MSX1 game built entirely with MSXStudio's own editors. Collect
+A small, complete MSX1 game built entirely with MSXDEVStudio's own editors. Collect
 all eight coins, then reach the door at the far right. Arrow keys move, SPACE
 jumps.
 
@@ -8,7 +8,7 @@ jumps.
 
 ![Gameplay](../docs/images/demo_msx1_gameplay.png)
 
-Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
+Open `demo.msxproj` in MSXDEVStudio and press **Run**. It builds to a 32 KB ROM
 (about 19.7 KB used) and boots in openMSX or WebMSX.
 
 ## What it demonstrates
@@ -40,7 +40,7 @@ explain. It is split into chapters rather than one long file:
 | `main.c` | ~250 | Setup, and the loop that drives the rest |
 
 Each chapter is a real module, listed in **ProjModules** and compiled on its
-own. That works because MSXStudio's exporter splits every resource in two: a
+own. That works because MSXDEVStudio's exporter splits every resource in two: a
 header of `#define`s, `extern` declarations and helper prototypes, and a `.c`
 holding the tables themselves. Five files can include `content/tiles.h`; only
 `content/tiles.c` defines `g_Tiles_Patterns`. The IDE adds those generated
@@ -265,7 +265,7 @@ volume, and it should ramp down over the frames after a coin is collected.
 
 ## Credits and attribution
 
-The demo carries its attribution in the game itself, which is what MSXStudio's
+The demo carries its attribution in the game itself, which is what MSXDEVStudio's
 [license](../LICENSE) asks of anything built with it: a line on the title
 screen, and a full credits screen after you win.
 
@@ -277,17 +277,30 @@ screen, and a full credits screen after you win.
 demo — the tiles, sprites, maps and sound effects in `res/` — are the
 author's own.
 
-It ships with MSXStudio as a worked example, so it is meant to be built on: you
+It ships with MSXDEVStudio as a worked example, so it is meant to be built on: you
 may use, modify and adapt its code and art in your own projects, commercial or
 not, with **no obligation to credit this demo**.
 
-That is a separate matter from the tools. MSXStudio and MSXgl still ask for the
+That is a separate matter from the tools. MSXDEVStudio and MSXgl still ask for the
 credit their own licenses describe, which is what the title and credits
 screens do.
 
+### Trademarks and affiliation
+
+This demo and MSXDEVStudio are an **independent project**, not affiliated with,
+endorsed by or official to **MSX Licensing Corporation**, the **MSX
+Association**, or any other holder of MSX rights.
+
+> **"MSX" is a trademark of MSX Licensing Corporation.**
+
+"MSX", "MSX2" and the other platform names are used descriptively, to identify
+the hardware this game runs on. No official MSX logo or branding is used here —
+the artwork is the author's own. See the
+[project README](../README.md#trademarks-and-affiliation) for the full notice.
+
 ### Tools used
 
-- **MSXStudio** by P.D. Garaguso, whose license asks to be credited in software
+- **MSXDEVStudio** by P.D. Garaguso, whose license asks to be credited in software
   made with it, in wording that does not imply endorsement.
 - **MSXgl** and **MSXtk** by Guillaume "Aoineko" Blanchard, licensed
   [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), which also

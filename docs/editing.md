@@ -24,7 +24,7 @@ to move a line.
 The part worth knowing about is completion. Press `Ctrl+Space` and you get the
 **whole MSXgl API**: over five thousand functions and constants with their real
 signatures, descriptions and per-parameter documentation. None of it is a
-hand-maintained list — MSXStudio parses MSXgl's own headers, so the completions
+hand-maintained list — MSXDEVStudio parses MSXgl's own headers, so the completions
 describe the checkout you are actually building against, and they follow it when
 you update. The index is built once per configured MSXgl path and cached.
 

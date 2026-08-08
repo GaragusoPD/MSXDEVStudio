@@ -151,7 +151,7 @@ export function defaultExport(path: string): ExportBlock {
 
 export function parseResource(path: string, text: string): ResourceDoc {
   const kind = resourceKindOf(path)
-  if (!kind) throw new Error(`Not an MSXStudio resource: ${path}`)
+  if (!kind) throw new Error(`Not an MSXDEVStudio resource: ${path}`)
   const raw = JSON.parse(text) as unknown
   switch (kind) {
     case 'tiles':
@@ -346,7 +346,7 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       // it goes. `_Strip` is what `_Upload` uploads and what `_Rects` indexes,
       // and it is the one the helpers name.
       //
-      // This is worth real ROM rather than a few bytes. In MSXStudio's own
+      // This is worth real ROM rather than a few bytes. In MSXDEVStudio's own
       // MSX2 demo the boss, HUD and mist sheets carried five kilobytes of exact
       // duplicate between them, inside the 32 KB the code shares — enough, in
       // the end, to push live functions into the ROM-paging window and hang the

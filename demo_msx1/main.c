@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-//  MSXStudio demo: a two-screen platformer
+//  MSXDEVStudio demo: a two-screen platformer
 //
 //  Collect all eight coins, then reach the door on the far right.
 //  Arrows move, SPACE jumps.
 //
-//  Every graphic and sound in here was made with MSXStudio's own editors and
+//  Every graphic and sound in here was made with MSXDEVStudio's own editors and
 //  exported to the headers included below:
 //
 //    res/tiles.tiles.json    -> content/tiles.h   (g_Tiles_Patterns / _Colors,
@@ -18,7 +18,7 @@
 //                                            static backdrop behind the level)
 //    res/sfx.sfx.json        -> content/sfx.h     (g_Sfx, an ayFX bank)
 //
-//  Five of MSXStudio's editor features carry their weight here:
+//  Five of MSXDEVStudio's editor features carry their weight here:
 //
 //    * The coins spin without the map being touched. The four poses are a 4x1
 //      *block* in the tileset — a multi-tile design drawn on one canvas — and
@@ -59,17 +59,17 @@
 //
 //  Copyright © 2026 Pablo D. Garaguso. The code and all the artwork — the
 //  tiles, sprites, maps and sound effects in res/ — are the author's own,
-//  drawn in MSXStudio's editors.
+//  drawn in MSXDEVStudio's editors.
 //
-//  This demo ships with MSXStudio as a worked example. You may use, modify and
+//  This demo ships with MSXDEVStudio as a worked example. You may use, modify and
 //  build on its code and art in your own projects, commercial or not, with no
 //  obligation to credit this demo. See README.md for the full notice.
 //
-//  Built with MSXStudio by P.D. Garaguso.
+//  Built with MSXDEVStudio by P.D. Garaguso.
 //  Powered by MSXgl and MSXtk by Guillaume "Aoineko" Blanchard (CC BY-SA 4.0),
 //  compiled with SDCC, sound in Shiru's ayFX format.
 //  None of the above endorse this demo. The in-game credits screen says the
-//  same thing, which is what MSXStudio's license asks of anything made with it.
+//  same thing, which is what MSXDEVStudio's license asks of anything made with it.
 #include "demo.h"
 
 //──────────────────────────────────────────────────────────────────────────────

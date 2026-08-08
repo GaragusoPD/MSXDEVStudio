@@ -29,7 +29,7 @@ function openToolchainSetup(): void {
 
 <template>
   <div class="welcome">
-    <h1>MSXStudio</h1>
+    <h1>MSXDEVStudio</h1>
     <p class="subtitle">
       A desktop IDE for MSX game development.
     </p>

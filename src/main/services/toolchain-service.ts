@@ -8,7 +8,7 @@ import {
   MSXGL_GIT_URL,
   MSXGL_SENTINELS,
   MSXGL_ZIP_URL,
-  MSXSTUDIO_META_FILE,
+  MSXDEVSTUDIO_META_FILE,
   WINDOWS_DEFAULT_OPENMSX_PATH,
   cloneMsxgl,
   downloadZipFile,
@@ -123,7 +123,7 @@ export class ToolchainService {
         await downloadZipFile(MSXGL_ZIP_URL, zipPath, (p) => this.emit('download', p.message, p.percent))
         mkdirSync(dir, { recursive: true })
         await extractZip(zipPath, dir, (p) => this.emit('extract', p.message, p.percent))
-        writeFileSync(join(dir, MSXSTUDIO_META_FILE), JSON.stringify({ installedAt: new Date().toISOString() }))
+        writeFileSync(join(dir, MSXDEVSTUDIO_META_FILE), JSON.stringify({ installedAt: new Date().toISOString() }))
       } finally {
         rmSync(zipPath, { force: true })
       }

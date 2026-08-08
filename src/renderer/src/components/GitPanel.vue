@@ -16,9 +16,9 @@ const busy = ref(false)
 
 const installHint = computed(() => {
   const platform = toolchainStore.status?.platform
-  if (platform === 'win32') return 'Install Git from git-scm.com, then restart MSXStudio.'
+  if (platform === 'win32') return 'Install Git from git-scm.com, then restart MSXDEVStudio.'
   if (platform === 'linux') return "Install git via your distro's package manager, e.g. `apt install git`."
-  return 'Install git, then restart MSXStudio.'
+  return 'Install git, then restart MSXDEVStudio.'
 })
 
 async function refresh(): Promise<void> {

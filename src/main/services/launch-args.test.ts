@@ -4,7 +4,7 @@ import { extractProjectPath } from './launch-args'
 describe('extractProjectPath', () => {
   it('finds a .msxproj path in packaged argv (exe, then args)', () => {
     expect(
-      extractProjectPath(['/opt/MSXStudio/msxstudio', '/home/pablo/game/Game.msxproj'])
+      extractProjectPath(['/opt/MSXDEVStudio/msxdevstudio', '/home/pablo/game/Game.msxproj'])
     ).toBe('/home/pablo/game/Game.msxproj')
   })
 

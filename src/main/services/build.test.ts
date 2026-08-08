@@ -82,7 +82,7 @@ describe('build arguments', () => {
 describe('incremental rebuild guard', () => {
   /** A project dir with one compiled `.rel` at time `relTime` and a matching stamp. */
   function builtProject(stamp: string, relTime: Date): string {
-    const root = makeTmpDir('msxstudio-guard-')
+    const root = makeTmpDir('msxdevstudio-guard-')
     mkdirSync(join(root, 'out'))
     writeFileSync(join(root, 'out', 'main.rel'), '')
     utimesSync(join(root, 'out', 'main.rel'), relTime, relTime)
@@ -94,7 +94,7 @@ describe('incremental rebuild guard', () => {
   const after = new Date('2026-01-02T00:00:00Z')
 
   it('is false with no .rel files — a plain all compiles everything anyway', () => {
-    const root = makeTmpDir('msxstudio-guard-')
+    const root = makeTmpDir('msxdevstudio-guard-')
     expect(needsFullRebuild(root, 'stamp')).toBe(false)
     mkdirSync(join(root, 'out'))
     expect(needsFullRebuild(root, 'stamp')).toBe(false)
@@ -102,7 +102,7 @@ describe('incremental rebuild guard', () => {
 
   it('is true when .rels exist without a stamp (built before the guard existed)', () => {
     const root = builtProject('stamp', before)
-    rmSync(join(root, 'out', '.msxstudio-stamp'))
+    rmSync(join(root, 'out', '.msxdevstudio-stamp'))
     expect(needsFullRebuild(root, 'stamp')).toBe(true)
   })
 
@@ -135,7 +135,7 @@ describe('incremental rebuild guard', () => {
   })
 
   it('buildStamp changes with defines and with project_config.js content', () => {
-    const root = makeTmpDir('msxstudio-stamp-')
+    const root = makeTmpDir('msxdevstudio-stamp-')
     const base = project()
     const withDefine = project({ build: { ...base.build, defines: { DEBUG_MODE: '' } } })
     expect(buildStamp(root, base)).not.toBe(buildStamp(root, withDefine))

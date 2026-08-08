@@ -17,20 +17,20 @@ function fakeDemo(root: string, id: string, projectFile: string): void {
   mkdirSync(join(root, id, 'res'), { recursive: true })
   mkdirSync(join(root, id, 'out'), { recursive: true })
   mkdirSync(join(root, id, 'emul'), { recursive: true })
-  mkdirSync(join(root, id, '.msxstudio'), { recursive: true })
+  mkdirSync(join(root, id, '.msxdevstudio'), { recursive: true })
   writeFileSync(join(root, id, projectFile), '{}')
   writeFileSync(join(root, id, 'main.c'), 'void main(void) {}')
   writeFileSync(join(root, id, 'res', 'tiles.tiles.json'), '{}')
   writeFileSync(join(root, id, 'out', 'demo.rom'), 'STALE')
   writeFileSync(join(root, id, 'emul', 'openmsx.log'), 'noise')
-  writeFileSync(join(root, id, '.msxstudio', 'state.json'), '{}')
+  writeFileSync(join(root, id, '.msxdevstudio', 'state.json'), '{}')
 }
 
 let source: string
 let target: string
 
 beforeEach(() => {
-  const base = mkdtempSync(join(tmpdir(), 'msxstudio-demos-'))
+  const base = mkdtempSync(join(tmpdir(), 'msxdevstudio-demos-'))
   source = join(base, 'src')
   target = join(base, 'dest')
   mkdirSync(source, { recursive: true })
@@ -50,7 +50,7 @@ describe('shouldCopy', () => {
     'out',
     'out/demo.rom',
     'emul/openmsx.log',
-    '.msxstudio/state.json',
+    '.msxdevstudio/state.json',
     'node_modules/x/index.js'
   ])('drops %s', (path) => {
     expect(shouldCopy(path)).toBe(false)
@@ -109,7 +109,7 @@ describe('installDemos', () => {
 
   it('leaves build output and IDE state behind', () => {
     installDemos(source, target)
-    for (const dir of ['out', 'emul', '.msxstudio']) {
+    for (const dir of ['out', 'emul', '.msxdevstudio']) {
       expect(existsSync(join(target, 'demo_msx1', dir))).toBe(false)
     }
   })
@@ -158,7 +158,7 @@ describe('installDemos', () => {
     expect(result.installed.map((i) => i.id)).toEqual(['demo_msx1'])
   })
 
-  it('stamps each copy with the MSXStudio version', () => {
+  it('stamps each copy with the MSXDEVStudio version', () => {
     installDemos(source, target, { version: '1.2.3' })
     expect(existsSync(join(target, 'demo_msx1', STAMP_FILE))).toBe(true)
     expect(installedVersion(join(target, 'demo_msx1'))).toBe('1.2.3')

@@ -10,17 +10,17 @@ does not have. Choose "More info" then "Run anyway" if you trust the source you
 got it from.
 
 **The AppImage will not start.** Make it executable first:
-`chmod +x MSXStudio-*.AppImage`.
+`chmod +x MSXDEVStudio-*.AppImage`.
 
 ## The toolchain
 
 **"Toolchain not found" when building.** Open **Toolchain Settings** and check
-the MSXgl path. MSXStudio resolves each tool in the same order — an explicit
+the MSXgl path. MSXDEVStudio resolves each tool in the same order — an explicit
 setting, then your `PATH`, then the platform default — and validates by running
 the binaries, so a path that merely *looks* right can still fail here.
 
 **The MSXgl download worked but builds fail on Linux.** MSXgl bundles its own
-SDCC and tools, and a ZIP archive cannot record the executable bit. MSXStudio
+SDCC and tools, and a ZIP archive cannot record the executable bit. MSXDEVStudio
 sets it after extracting; if you unpacked MSXgl yourself, you may need to do it
 by hand. Re-running the download from Toolchain Settings is the easy fix.
 
@@ -30,7 +30,7 @@ against the module list.
 
 ## Building
 
-**A change to a header did not take effect.** It should — MSXStudio watches
+**A change to a header did not take effect.** It should — MSXDEVStudio watches
 header modification times and forces a full rebuild when they move. If you
 suspect a stale object anyway, use **Rebuild**, which cleans `out/` first. Note
 that building from the command line has no such guard: use MSXgl's `rebuild`
@@ -42,7 +42,7 @@ instead. The Output panel has the full log.
 
 **The same failure shows a different number on Windows and Linux.** POSIX
 truncates exit statuses to eight bits, so MSXgl's three-digit codes come back
-`mod 256`. MSXStudio matches both forms, which is why the *message* is the same.
+`mod 256`. MSXDEVStudio matches both forms, which is why the *message* is the same.
 
 **Errors point at files inside MSXgl.** They are listed but not clickable, since
 they are outside your project. Usually it means a library module is missing from
@@ -85,7 +85,7 @@ others whatever scaler you pick.
 ### openMSX from the Linux tarball cannot find its data
 
 The relocatable `.tar.gz` build cannot locate its own `share/` directory.
-MSXStudio detects that layout and sets `OPENMSX_SYSTEM_DATA` when it launches
+MSXDEVStudio detects that layout and sets `OPENMSX_SYSTEM_DATA` when it launches
 the emulator, so it works with no setup. If you launch openMSX yourself from a
 terminal, you will need to set it too.
 
@@ -125,5 +125,5 @@ and the generated header says which happened. See [Resources](resources.md).
 
 The [MSXgl Discord](https://discord.gg/pMeadGfv8E) is where the library's own
 questions get answered, and the MSX community there has seen most hardware
-oddities before. For MSXStudio itself, open an issue with what you did, what you
+oddities before. For MSXDEVStudio itself, open an issue with what you did, what you
 expected and what the Output panel said.

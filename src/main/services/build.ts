@@ -74,7 +74,7 @@ export function buildArgs(
 // check can't see — header/include edits and compile-flag changes — and the
 // build service swaps `all` for MSXgl's `rebuild` step when they trip.
 
-const STAMP_FILE = '.msxstudio-stamp'
+const STAMP_FILE = '.msxdevstudio-stamp'
 
 /** Root-level output dirs — everything inside is generated, never a compile input. */
 const NON_SOURCE_DIRS = new Set(['out', 'emul', 'node_modules'])

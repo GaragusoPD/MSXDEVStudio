@@ -47,7 +47,7 @@ Print_SetTextFont(PRINT_DEFAULT_FONT, 1); // Initialize font (use BIOS font)
 Print_DrawText("Hello MSX world!");
 ```
 
-(`s_hello.c`, MSXStudio's own hello-world sample.) `PRINT_DEFAULT_FONT` is
+(`s_hello.c`, MSXDEVStudio's own hello-world sample.) `PRINT_DEFAULT_FONT` is
 just `#define PRINT_DEFAULT_FONT NULL`, and passing it tells `Print_SetTextFont`
 to reuse the character set already sitting in the BIOS ROM (`g_CGTABL`)
 instead of uploading your own data. The `1` is the pattern index where the
@@ -56,7 +56,7 @@ font gets stored in VRAM.
 In **bitmap modes** (SCREEN 5-8; `VDP_MODE_GRAPHIC4/5/6/7`), there is no
 pattern table: each character is unpacked and blitted straight into the
 bitmap. That's `Print_SetBitmapFont`, which needs `PRINT_USE_BITMAP` set in
-`msxgl_config.h` (MSXStudio's MSX2 project template already has it `TRUE`;
+`msxgl_config.h` (MSXDEVStudio's MSX2 project template already has it `TRUE`;
 the MSX1 template leaves it `FALSE`, since MSX1 hardware has no bitmap
 screens to draw into):
 
@@ -68,7 +68,7 @@ VDP_ClearVRAM();
 Print_SetBitmapFont(g_Font_MGL_Sample6);
 ```
 
-(`projects/template_msx2/template.c`, what a new MSXStudio MSX2 project
+(`projects/template_msx2/template.c`, what a new MSXDEVStudio MSX2 project
 starts from.) `g_Font_MGL_Sample6` comes from
 `#include "font/font_mgl_sample6.h"`. MSXgl ships around 50 fonts under
 `engine/content/font/` in the MSXgl checkout: `font_mgl_std0.h` (6x8),
@@ -130,7 +130,7 @@ Print_DrawInt(g_KuBase);
 ```
 
 `Print_DrawInt` prints a signed decimal integer: `i32` if
-`PRINT_USE_32B` is `TRUE` in `msxgl_config.h` (both MSXStudio templates
+`PRINT_USE_32B` is `TRUE` in `msxgl_config.h` (both MSXDEVStudio templates
 default it `TRUE`), otherwise `i16`. `print.h` also declares
 `Print_DrawHex8(u8)`, `Print_DrawHex16(u16)`, `Print_DrawBin8(u8)` (always
 available), and `Print_DrawHex32(u32)` (needs `PRINT_USE_32B`). None of
@@ -209,7 +209,7 @@ void main()
 }
 ```
 
-This drops straight into a new MSXStudio MSX2 project: Project Settings
+This drops straight into a new MSXDEVStudio MSX2 project: Project Settings
 already lists `system`, `bios`, `vdp`, `print`, `input`, `memory` after
 **New Project**, which is everything this needs. Replace `main.c` with the
 code above and press Run.
@@ -249,7 +249,7 @@ code above and press Run.
   a loop does nothing useful in SCREEN 0 or SCREEN 1.
 - `Print_SetBitmapFont`, `Print_SetVRAMFont`, and `Print_SetSpriteFont` are
   compiled in only if `PRINT_USE_BITMAP`, `PRINT_USE_VRAM`, and
-  `PRINT_USE_SPRITE` are `TRUE` in `msxgl_config.h`. MSXStudio's MSX2
+  `PRINT_USE_SPRITE` are `TRUE` in `msxgl_config.h`. MSXDEVStudio's MSX2
   project template enables all three; the MSX1 template leaves them `FALSE`
   since GRAPHIC4-7 don't exist on MSX1 hardware.
 - The BIOS font (`PRINT_DEFAULT_FONT`/`NULL`) only covers ASCII codes 1-255

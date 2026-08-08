@@ -1,6 +1,6 @@
 # The demo games
 
-Two complete, playable games ship inside MSXStudio. They are the shortest route
+Two complete, playable games ship inside MSXDEVStudio. They are the shortest route
 from "I installed an IDE" to "I changed something and it ran on an MSX", and
 every graphic and sound in them came out of the editors described in
 [Resources](resources.md).
@@ -27,7 +27,7 @@ and the install directory is read-only.
 
 1. **Help ▸ Install Demo Projects…**, or **Install Demos…** on the Welcome tab.
 2. Pick a folder — your usual projects directory is the right answer.
-3. Both demos are copied in as `demo_msx1/` and `demo_msx2/`. MSXStudio offers
+3. Both demos are copied in as `demo_msx1/` and `demo_msx2/`. MSXDEVStudio offers
    to open the first one.
 4. Press **F5**.
 
@@ -143,6 +143,6 @@ use, modify and adapt their code and art in your own projects, commercial or
 not, with no obligation to credit the demo. Each folder's README carries the
 full notice.
 
-The one thing to keep is the credit MSXStudio and MSXgl ask for — which both
+The one thing to keep is the credit MSXDEVStudio and MSXgl ask for — which both
 demos already show you how to do, on the title screen and again on a credits
 screen at the end.

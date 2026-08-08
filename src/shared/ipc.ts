@@ -1,5 +1,5 @@
 /**
- * The IPC contract. Every channel MSXStudio exposes between main and renderer
+ * The IPC contract. Every channel MSXDEVStudio exposes between main and renderer
  * is declared here, with its request/response (or push-event) types.
  *
  * Adding a channel: append one line to `IpcApi` (or `IpcEvents`), implement it
@@ -292,7 +292,7 @@ export interface IpcApi {
   'project:close': { req: void; res: void }
   /** LibModules candidates from a scan of `<msxgl>/engine/src/`; cached per MSXgl path. */
   'project:libModules': { req: void; res: string[] }
-  /** Per-project workbench state from `<project>/.msxstudio/state.json`. */
+  /** Per-project workbench state from `<project>/.msxdevstudio/state.json`. */
   'project:getIdeState': { req: void; res: ProjectTabsState | null }
   'project:setIdeState': { req: ProjectTabsState; res: void }
   'fs:readDir': { req: { path: string }; res: FsEntry[] }

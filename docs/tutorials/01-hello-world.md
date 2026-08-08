@@ -139,7 +139,7 @@ void main()
 }
 ```
 
-In MSXStudio: create or open a project, set **Library modules** in Project
+In MSXDEVStudio: create or open a project, set **Library modules** in Project
 Settings to `system`, `bios`, `vdp`, `print`, `input` (the default project
 template also includes `memory`, which this sample doesn't need but is
 harmless to leave checked), paste this into `main.c`, and press Run.

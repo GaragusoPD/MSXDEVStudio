@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/images/MSXStudio_logo_banner.png" width="60%" alt="MSXStudio">
+  <img src="docs/images/MSXDEVStudio_logo_banner.png" width="60%" alt="MSXDEVStudio">
 </p>
 
-# MSXStudio
+# MSXDEVStudio
 
 **A desktop IDE for making MSX games.** Write the code, draw the tiles and
 sprites, lay out the maps, compose the sound effects, press Run, and watch your
@@ -10,7 +10,13 @@ ROM boot in an emulator. One application, one download.
 
 Targets MSX1, MSX2, MSX2+ and MSX turbo R. Runs on Linux and Windows.
 
-![The MSXStudio map editor: a tile picker, a level being laid out from a SCREEN 2
+> **MSXDEVStudio is an independent project by a single author.** It is not
+> affiliated with, endorsed by, sponsored by or in any way official to **MSX
+> Licensing Corporation**, the **MSX Association**, or any other holder of MSX
+> rights. "MSX" is used here only to describe the hardware the software targets.
+> See [Trademarks and affiliation](#trademarks-and-affiliation).
+
+![The MSXDEVStudio map editor: a tile picker, a level being laid out from a SCREEN 2
 tileset, and the export settings that turn it into a C header](docs/images/editor_msx1_level_map.png)
 
 ## Why it exists
@@ -21,7 +27,7 @@ sprite editor from somewhere else, and a pile of scripts to glue them together.
 That work has nothing to do with making a game, and it stops a lot of people
 before they write a single line.
 
-MSXStudio takes the approach Godot and PICO-8 take, and points it at real MSX
+MSXDEVStudio takes the approach Godot and PICO-8 take, and points it at real MSX
 hardware. It borrows Godot's project-and-editor model, PICO-8's
 everything-is-included feel, and VS Code's workbench layout, then wraps the
 tools the MSX community already trusts rather than replacing them. It does not
@@ -97,13 +103,13 @@ Download the latest build for your system from the
 
 **Linux**
 
-- `.AppImage` (portable): `chmod +x MSXStudio-*.AppImage` and run it.
-- `.deb` (Debian, Ubuntu and derivatives): `sudo apt install ./msxstudio-*.deb`
+- `.AppImage` (portable): `chmod +x MSXDEVStudio-*.AppImage` and run it.
+- `.deb` (Debian, Ubuntu and derivatives): `sudo apt install ./msxdevstudio-*.deb`
 
 **Windows**
 
-- `msxstudio-*-setup.exe` — the installer.
-- `msxstudio-*-portable.exe` — a single file, no installation.
+- `msxdevstudio-*-setup.exe` — the installer.
+- `msxdevstudio-*-portable.exe` — a single file, no installation.
 
 Both are 64-bit x86. macOS is not supported at the moment.
 
@@ -112,17 +118,17 @@ binaries are not code-signed yet. See [Known gaps](#known-gaps).
 
 ### First run
 
-MSXStudio does not bundle the MSX toolchain, and does not need you to find it
+MSXDEVStudio does not bundle the MSX toolchain, and does not need you to find it
 either. On first launch it offers to download MSXgl (which brings its own SDCC
 compiler and tools) for you, or to point at an install you already have.
 
 openMSX is the one piece you supply yourself: install it from
 [openmsx.org](https://openmsx.org/) or your distribution's packages, then point
-MSXStudio at the executable in Toolchain Settings. If you would rather not
+MSXDEVStudio at the executable in Toolchain Settings. If you would rather not
 install an emulator at all, choose WebMSX and your games run in the browser.
 
 > **Note for the openMSX Linux tarball:** the relocatable `.tar.gz` build cannot
-> find its own `share/` directory. MSXStudio detects that layout and sets
+> find its own `share/` directory. MSXDEVStudio detects that layout and sets
 > `OPENMSX_SYSTEM_DATA` for you, so it works without any manual setup.
 
 > **No sound from openMSX on Linux?** The distributed openMSX builds can only
@@ -154,8 +160,8 @@ install an emulator at all, choose WebMSX and your games run in the browser.
 
 ### Opening projects
 
-Double-click any `.msxproj` file, or run `msxstudio path/to/Game.msxproj`. If
-MSXStudio is already open it focuses the existing window rather than starting a
+Double-click any `.msxproj` file, or run `msxdevstudio path/to/Game.msxproj`. If
+MSXDEVStudio is already open it focuses the existing window rather than starting a
 second copy.
 
 ![The Welcome tab: New Project, Open Project and Project Settings, a list of
@@ -223,8 +229,8 @@ documentation](https://aoineko.org/msxgl) and its
 Requires Node.js 20 or newer.
 
 ```bash
-git clone <your-fork-url> MSXStudio
-cd MSXStudio
+git clone <your-fork-url> MSXDEVStudio
+cd MSXDEVStudio
 npm install
 npm run dev
 ```
@@ -310,17 +316,17 @@ the same as "it works". If you have not seen it run, do not send it yet.
 - **No auto-update.** Check the Releases page and reinstall.
 - **macOS is not built.** Nothing in the codebase rules it out, but it is not
   packaged or tested.
-- **No debugger integration.** openMSX has a debugger; MSXStudio does not talk
+- **No debugger integration.** openMSX has a debugger; MSXDEVStudio does not talk
   to it yet.
 
 ## Thanks
 
-MSXStudio is a wrapper around other people's excellent work, and it would not
+MSXDEVStudio is a wrapper around other people's excellent work, and it would not
 exist without any of it.
 
 - **[MSXgl](https://github.com/aoineko-fr/MSXgl)** and
   **[MSXtk](https://github.com/aoineko-fr/MSXimg)** by Guillaume "Aoineko"
-  Blanchard — the C game library and image tools that MSXStudio is built
+  Blanchard — the C game library and image tools that MSXDEVStudio is built
   around. The engine, the build system and the sample programs are all his.
 - **[SDCC](https://sdcc.sourceforge.net/)** — the Small Device C Compiler, which
   turns C into Z80 machine code.
@@ -341,55 +347,119 @@ exist without any of it.
 
 And to the MSX community, still building for a machine from 1983.
 
+## Trademarks and affiliation
+
+**MSXDEVStudio is an independent project, developed and maintained by Pablo D.
+Garaguso.** It is not affiliated with, endorsed by, sponsored by, approved by or
+in any way official to:
+
+- **MSX Licensing Corporation**
+- the **MSX Association**
+- any other holder of rights in the MSX platform, its trademarks or its BIOS
+
+Nothing produced by this project should be read as an official MSX product, nor
+as carrying any endorsement from those organisations.
+
+### Trademark notice
+
+> **"MSX" is a trademark of MSX Licensing Corporation.**
+
+"MSX", "MSX2", "MSX2+" and "MSX turbo R" are used throughout this project
+**descriptively** — to identify the hardware the software targets and the file
+formats it produces — under nominative fair use. No claim is made to any of
+those marks, and no other party's trademarks are claimed either. All trademarks
+are the property of their respective owners.
+
+The name **MSXDEVStudio** and this project's own logo belong to the author and
+are not MSX marks.
+
+### On MSX logos and branding
+
+This project does **not** use the official MSX logo, the MSX Association logo,
+or any other official MSX branding, in the application, its icons, its
+documentation or its promotional material. The logo shipped here is the
+project's own.
+
+Those logos have published usage guidelines — older, but still referenced by the
+rights holders — and using them requires following those guidelines and, where
+applicable, obtaining permission. If you fork or redistribute this project,
+**do not add official MSX branding to it** on the assumption that this project's
+licence permits it; it does not, and cannot.
+
+If you represent a rights holder and consider anything here to overstep, please
+open an issue — corrections will be made promptly and in good faith.
+
+### Third-party software
+
+MSXDEVStudio does not bundle the MSX toolchain. It drives, and credits, other
+people's work:
+
+| Component | By | Licence |
+|---|---|---|
+| [MSXgl](https://github.com/aoineko-fr/MSXgl) | Guillaume "Aoineko" Blanchard | CC BY-SA 4.0 |
+| [MSXtk / MSXimg](https://github.com/aoineko-fr/MSXimg) | Guillaume "Aoineko" Blanchard | CC BY-SA |
+| [SDCC](https://sdcc.sourceforge.net/) | SDCC contributors | GNU GPL |
+| [openMSX](https://openmsx.org/) | The openMSX team | GNU GPL v2 |
+| [WebMSX](https://webmsx.org/) | Paulo Peccin | See the project |
+| [C-BIOS](http://cbios.sourceforge.net/) | BouKiCHi, Reikan and contributors | BSD-style |
+| ayFX | Shiru | Free format specification |
+| [ZX0](https://github.com/einar-saukas/ZX0) | Einar Saukas | BSD-3-Clause |
+| Pletter | XL2S Entertainment | Free, informal terms |
+| Bitbuster | Team Bomba | MIT-style |
+| [Electron](https://electronjs.org/), [Vue](https://vuejs.org/), [Monaco](https://microsoft.github.io/monaco-editor/) | Their respective authors | MIT |
+
+Full details, and which of these ship inside the download, are in
+[Third-party components](#third-party-components) below.
+
 ## License
 
-### MSXStudio
+### MSXDEVStudio
 
 Copyright © 2026 Pablo D. Garaguso.
 
-MSXStudio is free to download and use. In summary: **make anything you like with
-it, including commercial games, but do not sell MSXStudio itself, and credit the
+MSXDEVStudio is free to download and use. In summary: **make anything you like with
+it, including commercial games, but do not sell MSXDEVStudio itself, and credit the
 author in what you make.**
 
 **You may:**
 
-- Use MSXStudio to create software of any kind, for any purpose, including
-  commercial products. Whatever you make with it is entirely yours. MSXStudio
+- Use MSXDEVStudio to create software of any kind, for any purpose, including
+  commercial products. Whatever you make with it is entirely yours. MSXDEVStudio
   claims no rights over your code, your assets or your games, and no share of
   your revenue.
-- Copy and share MSXStudio itself, unmodified and free of charge.
+- Copy and share MSXDEVStudio itself, unmodified and free of charge.
 - Modify it for your own use.
 
 **You may not:**
 
-- Sell MSXStudio, charge a fee for access to it, or include it in a paid
+- Sell MSXDEVStudio, charge a fee for access to it, or include it in a paid
   product, paid bundle or paid service. It must reach whoever receives it free
   of charge.
 
 **You must:**
 
-- Credit the author in software you create with MSXStudio. Wording such as
-  *"Built with MSXStudio by P.D. Garaguso"*, or anything similar that names the
+- Credit the author in software you create with MSXDEVStudio. Wording such as
+  *"Built with MSXDEVStudio by P.D. Garaguso"*, or anything similar that names the
   author, placed anywhere a user can reasonably find it: a title screen, a
   credits screen, an about box, a README, or accompanying documentation. This
   mirrors what MSXgl asks of the games built with it.
 - Keep that credit factual and neutral. It must not state or imply that Pablo D.
   Garaguso endorses, sponsors, approves of or is affiliated with your product.
 
-**No warranty.** MSXStudio is provided "as is", without warranty of any kind,
+**No warranty.** MSXDEVStudio is provided "as is", without warranty of any kind,
 express or implied, including but not limited to the warranties of
 merchantability, fitness for a particular purpose and non-infringement. In no
 event shall the author be liable for any claim, damages or other liability
 arising from, out of, or in connection with the software or its use.
 
 > These terms are deliberately not an OSI-approved open source license: the
-> restriction on selling MSXStudio makes it *source-available* rather than open
+> restriction on selling MSXDEVStudio makes it *source-available* rather than open
 > source, and GitHub will label it "Other". This does not affect what you may do
 > with the games you make.
 
 ### Third-party components
 
-MSXStudio does not bundle or redistribute the MSX toolchain. MSXgl, SDCC and
+MSXDEVStudio does not bundle or redistribute the MSX toolchain. MSXgl, SDCC and
 their tools are downloaded to your own machine by the toolchain setup, and
 openMSX is installed by you. They remain under their own licenses:
 
@@ -409,5 +479,5 @@ openMSX is installed by you. They remain under their own licenses:
 
 Because MSXgl is CC BY-SA 4.0, games built with it are expected to credit it.
 Check [MSXgl's own terms](https://github.com/aoineko-fr/MSXgl) for what it asks
-of you; MSXStudio's attribution requirement is separate from, and additional to,
+of you; MSXDEVStudio's attribution requirement is separate from, and additional to,
 MSXgl's.

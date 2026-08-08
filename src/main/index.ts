@@ -20,7 +20,7 @@ import { TerminalService } from './services/terminal-service'
 import { ToolchainService } from './services/toolchain-service'
 import type { AppState, BuildCommand, MenuCommand, MsxglSymbol } from '../shared/ipc'
 
-// Single-instance lock: a second `.msxproj` double-click while MSXStudio is
+// Single-instance lock: a second `.msxproj` double-click while MSXDEVStudio is
 // already running should focus the existing window and open the file there,
 // not launch a competing process (see the `second-instance` handler below).
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
@@ -51,7 +51,7 @@ protocol.registerSchemesAsPrivileged([
 
 const stateService = new StateService()
 
-// Launched via file association / `msxstudio some.msxproj`: seed `lastProject`
+// Launched via file association / `msxdevstudio some.msxproj`: seed `lastProject`
 // before the renderer loads so the existing "reopen last project on startup"
 // flow (see App.vue) opens it — no separate open path to keep in sync.
 const launchProjectPath = extractProjectPath(process.argv)
@@ -95,7 +95,7 @@ ipcMain.handle('git:clone', (_e, req: { url: string; targetDir: string }) => git
 const projectService = new ProjectService(stateService, toolchainService, fsService, gitService, () => mainWindow)
 projectService.registerIpc()
 
-// A second launch (another `.msxproj` double-click, or `msxstudio some.msxproj`
+// A second launch (another `.msxproj` double-click, or `msxdevstudio some.msxproj`
 // while already running) hits this instance instead of starting a competing
 // process — focus the window and open whatever project it was launched with.
 app.on('second-instance', (_event, argv) => {

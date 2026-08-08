@@ -241,7 +241,7 @@ void main()
 ## Using your own art
 
 Hand-writing pattern bytes and color arrays works for a tutorial, but for
-real sprites use the **Sprites** editor in MSXStudio: pick mode 2, draw on
+real sprites use the **Sprites** editor in MSXDEVStudio: pick mode 2, draw on
 the composite canvas, and use the per-layer line-color strip on the right
 to paint each line's color and toggle its EC/CC bits. Stack up to 4 layers
 per sprite for multicolor characters exactly like the disk-and-dot example

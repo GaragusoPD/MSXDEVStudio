@@ -100,7 +100,7 @@ describe('findResourceFiles', () => {
   })
 
   it('returns nothing for a folder that does not exist', () => {
-    expect(findResourceFiles(join(tmpdir(), 'definitely-not-here-msxstudio'))).toEqual([])
+    expect(findResourceFiles(join(tmpdir(), 'definitely-not-here-msxdevstudio'))).toEqual([])
   })
 })
 
