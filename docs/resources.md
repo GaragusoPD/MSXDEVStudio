@@ -29,6 +29,8 @@ can move files into `res/` at your leisure. If you do move a tileset, fix the
 Exported headers are a separate thing and still go where the resource's
 **Output** says, `content/` by default.
 
+![The Welcome tab and the file explorer, with the Resources panel one icon away in the activity bar](images/editor_welcome_tab.png)
+
 ## The editors
 
 **Tiles** — draw with pencil, line, rectangle and fill. Shift, mirror and
@@ -45,6 +47,8 @@ every map drawn with the tileset to match — open ones immediately, closed ones
 when you next open them. The tile's flags and any block using it follow too, so
 re-arranging a tileset never quietly changes what a level means.
 
+![The tile editor: a SCREEN 2 bank, a 2x2 marquee edited as one image, the per-tile flags, and the named blocks](images/editor_msx1_tile_editor.png)
+
 **Tile flags** — eight numbered squares in the tile editor, in the manner of
 PICO-8's sprite flags. They say what a tile *means* to your game rather than how
 it looks: solid, collectable, deadly, whatever you decide. They belong to the
@@ -58,7 +62,7 @@ if (g_Tiles_Flags[tile] & FLAG_SOLID) { /* blocked */ }
 
 That turns collision into a table lookup rather than a list of tile numbers in
 your code, so re-arranging a tileset does not break the game. See
-[`demo_project`](../demo_project/) for it in use.
+[`demo_msx1`](../demo_msx1/) for it in use.
 
 **Editing several tiles at once** — drag a rectangle in the tile grid and the
 canvas shows those tiles as one image, seams drawn in blue. Nothing is copied:
@@ -76,9 +80,13 @@ new block, for starting from nothing. In SCREEN 1 a new block starts on a
 colour-group boundary, because eight consecutive tiles share one FG/BG pair
 there — the panel warns when a block can't own its whole group.
 
+![The sprite editor in mode 1: a 16x16 character on three layers, the colour row, and the six-frame filmstrip](images/editor_msx1_sprites.png)
+
 **Sprites** — mode 1 gives each sprite one colour; mode 2 gives a colour per
 line, plus the EC/CC/IC bits. Sprites are 8×8 or 16×16 and can stack up to 4
 layers for multicolour characters. The animation bar previews frames.
+
+![The sprite editor in mode 2: the Character grid control, two stacked layers, and a per-line colour for every row](images/editor_msx2_sprite_editor.png)
 
 **Metasprites** — a character can span a grid of hardware sprites (the
 *Character grid* control): 2×2 of 16×16 sprites is a 32×32 Metal Gear-style
@@ -104,15 +112,21 @@ A layer that packs no smaller than raw is shipped raw instead — and because on
 whole map rather than leaving a helper that is wrong for one of the tables. The
 generated header's parameter block always says which of the two happened.
 
+![The map editor: a 32x24 map painted from a SCREEN 2 tileset, with its layer list and the RLEp compression saving reported in the Export panel](images/editor_msx1_background_map.png)
+
 **Map** — pick a tileset first (dropdown in the side panel), then paint with
 stamp, fill, rectangle and erase. Shift+click or drag in the tile picker takes
 a multi-tile stamp. A 32×24 map is exactly one screen; larger maps get a screen
 outline overlay for designing scrolling worlds. Add layers to draw a foreground
 over a background: on any layer above the first, tile 0 means transparent.
 
+![A SCREEN 5 image cut into 16x16 cells, with the mode's sixteen-entry palette and per-tile flags on the right](images/editor_msx2_bitmap_tile_editor.png)
+
 **Screen** — for MSX2 bitmap modes only. Import a source image, then retouch
 the conversion with pencil/fill and edit the palette. For MSX1 full-screen art,
 draw a tileset and place it in a map instead.
+
+![The map editor drawing in a bitmap mode: cells taken from a SCREEN 5 atlas instead of a pattern bank, with the screen outline marking one screenful](images/editor_msx2_bitmap_map_editor.png)
 
 **Fragments** — bitmap modes have no name table, so the block idea arrives as a
 **fragment**: pick the **cut** tool (the dashed-corners icon) and drag a rectangle on the converted image to

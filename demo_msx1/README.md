@@ -4,9 +4,9 @@ A small, complete MSX1 game built entirely with MSXStudio's own editors. Collect
 all eight coins, then reach the door at the far right. Arrow keys move, SPACE
 jumps.
 
-![Title screen](../docs/images/demo-title.png)
+![Title screen](../docs/images/demo_msx1_title.png)
 
-![Gameplay](../docs/images/demo-gameplay.png)
+![Gameplay](../docs/images/demo_msx1_gameplay.png)
 
 Open `demo.msxproj` in MSXStudio and press **Run**. It builds to a 32 KB ROM
 (about 19.7 KB used) and boots in openMSX or WebMSX.
@@ -269,7 +269,7 @@ The demo carries its attribution in the game itself, which is what MSXStudio's
 [license](../LICENSE) asks of anything built with it: a line on the title
 screen, and a full credits screen after you win.
 
-![Credits screen](../docs/images/demo-credits.png)
+![Credits screen](../docs/images/demo_msx1_credits.png)
 
 - **MSXStudio** by P.D. Garaguso, whose license asks to be credited in software
   made with it, in wording that does not imply endorsement.

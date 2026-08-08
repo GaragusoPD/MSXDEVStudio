@@ -248,5 +248,5 @@ using that tile animates, including the ones scrolled off screen. Re-pointing
 cells costs a name-table write per copy per step and leaves the off-screen ones
 behind. The catch is that it is all-or-nothing: every use of that tile animates,
 so anything that must hold still needs its own tile. The
-[demo game](../../demo_project/) spins its coins this way, keeping the four
+[demo game](../../demo_msx1/) spins its coins this way, keeping the four
 poses as a 4x1 block.

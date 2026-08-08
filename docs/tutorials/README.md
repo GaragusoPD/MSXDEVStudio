@@ -26,8 +26,12 @@ The samples live in your MSXgl checkout under `projects/samples/`. MSXStudio's
 **Examples** browser can open and build them directly, which is the quickest way
 to see one running before you read about it.
 
+![The Examples browser: the MSXgl samples grouped by topic, each tagged with the machine it needs, with Try it and New project from example on the opened one](../images/editor_MSXgl_examples_easy_access.png)
+
 Settings these tutorials refer to (**LibModules**, **Machine**, **Target**,
 **CustomISR**) are all in **Project Settings** inside MSXStudio.
+
+![Project Settings: machine, target and ROM size, the source module list, and the ROM/startup options including Custom ISR](../images/editor_project_settings.png)
 
 For making your own tiles, sprites, maps, screens and sound effects, see
 [the resources guide](../resources.md).

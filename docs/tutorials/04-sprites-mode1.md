@@ -242,7 +242,7 @@ See [Resources](../resources.md) for how the editors and exports work.
   colour. MSXStudio's sprite editor calls those layers, tells you what the
   stack costs against the 4-per-line limit, and — with **Export ready-made
   C** ticked — writes a `_SetMeta()` that places every plane from one x/y.
-  The [demo game](../../demo_project/) uses it for its two-colour player.
+  The [demo game](../../demo_msx1/) uses it for its two-colour player.
 - **A character can be bigger than one sprite.** Several sprites side by
   side and stacked, moved together, is how a 32x32 character works on this
   hardware. The sprite editor's *character grid* models that directly, and

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/MSXStudio_logo_banner.png" width="60%" alt="MSXStudio">
+</p>
+
 # MSXStudio
 
 **A desktop IDE for making MSX games.** Write the code, draw the tiles and
@@ -7,7 +11,7 @@ ROM boot in an emulator. One application, one download.
 Targets MSX1, MSX2, MSX2+ and MSX turbo R. Runs on Linux and Windows.
 
 ![The MSXStudio map editor: a tile picker, a level being laid out from a SCREEN 2
-tileset, and the export settings that turn it into a C header](docs/images/screenshot.png)
+tileset, and the export settings that turn it into a C header](docs/images/editor_msx1_level_map.png)
 
 ## Why it exists
 
@@ -35,18 +39,38 @@ shipped in 1983.
   the entire MSXgl API: 5,400+ functions and constants with their real
   signatures, descriptions and per-parameter documentation, read from the
   library's own headers.
+
+  ![The code editor with the MSX2 demo's main.c open: C syntax highlighting, a
+  minimap, the project explorer, and the Output and Problems
+  panels](docs/images/editor_c_language.png)
+
 - **Tile editor** for SCREEN 1, 2 and 4 pattern modes, with per-row and
   per-group colors, and PNG import that converts an image into a tileset.
   Designs bigger than one tile — a door, a tree, a boss face — are drawn on
   **one canvas** as a named block, not as loose 8x8 cells you assemble in your
   head.
+
+  ![The tile editor: a SCREEN 2 tile bank, a 2x2 marquee being drawn as one
+  image, the per-tile gameplay flags, and the named blocks kept from earlier
+  selections](docs/images/editor_msx1_tile_editor.png)
+
 - **Sprite editor** for sprite modes 1 and 2, 8x8 and 16x16, with per-line
   colors, up to four stacked layers for multicolor characters, and
   **metasprites**: a character can span a grid of hardware sprites, so a 32x32
   Metal Gear-style hero moves as one. Each character shows what it spends of
   the VDP's 4 or 8 sprites per scanline.
+
+  ![The sprite editor in mode 2: a 16x16 ship on two stacked layers, the
+  per-line colour table, and the animation filmstrip along the
+  bottom](docs/images/editor_msx2_sprite_editor.png)
+
 - **Map editor** with a tile picker, multi-tile stamps, flood fill, layers,
   collision flags, and a screen-size overlay for designing scrolling worlds.
+
+  ![The map editor working in a bitmap mode: a 16x160 canyon laid out from a
+  SCREEN 5 atlas, with the 32x24 screen outline showing where one screenful
+  ends](docs/images/editor_msx2_bitmap_map_editor.png)
+
 - **Screen editor** for the MSX2 bitmap modes, converting a PNG into SCREEN 5
   to 8 data with an editable palette and pencil-and-fill retouching. Drag a
   rectangle to cut a named **fragment** — a bitmap-mode block, and the frame of
@@ -134,28 +158,49 @@ Double-click any `.msxproj` file, or run `msxstudio path/to/Game.msxproj`. If
 MSXStudio is already open it focuses the existing window rather than starting a
 second copy.
 
-## The demo game
+![The Welcome tab: New Project, Open Project and Project Settings, a list of
+recent projects, and the file explorer alongside
+it](docs/images/editor_welcome_tab.png)
 
-[`demo_project/`](demo_project/) is a complete, playable MSX1 platformer, and
-the fastest way to see what the editors actually produce. Open its
-`demo.msxproj` and press Run.
+## The demo games
+
+Two complete, playable games ship with the repository, and they are the fastest
+way to see what the editors actually produce. Open either `.msxproj` and press
+Run.
+
+### MSX1: a two-screen platformer
 
 <p align="center">
-  <img src="docs/images/demo-title.png" width="47%" alt="The demo's title screen, framed with Print_DrawBox and carrying the MSXgl logo">
-  <img src="docs/images/demo-gameplay.png" width="47%" alt="The demo in play: a tile level scrolling across two screens with a sprite and a coin counter">
+  <img src="docs/images/demo_msx1_title.png" width="47%" alt="The MSX1 demo's title screen, framed with Print_DrawBox and carrying the MSXgl logo">
+  <img src="docs/images/demo_msx1_gameplay.png" width="47%" alt="The MSX1 demo in play: a tile level scrolling across two screens with a sprite and a coin counter">
 </p>
 
-Collect eight coins across a two-screen scrolling level, then reach the door.
-Every graphic and sound in it came from a resource editor: a SCREEN 2 tileset,
-a six-pose sprite, a 64x24 map and an ayFX bank. The coins spin without the map
-being touched, the player is two superposed hardware sprites so it can have two
-colours on an MSX1, and the doorway opens when the last coin is taken — the
-three techniques the editors' generated C exists for. It builds to about 19.7 KB
-of a 32 KB ROM, and its [README](demo_project/README.md) explains how each piece
-is loaded, along with a few MSX gotchas worth knowing before you hit them
-yourself.
+[`demo_msx1/`](demo_msx1/) — collect eight coins across a two-screen scrolling
+level, then reach the door. Every graphic and sound in it came from a resource
+editor: a SCREEN 2 tileset, a six-pose sprite, a 64x24 map and an ayFX bank. The
+coins spin without the map being touched, the player is two superposed hardware
+sprites so it can have two colours on an MSX1, and the doorway opens when the
+last coin is taken — the three techniques the editors' generated C exists for.
+It builds to about 19.7 KB of a 32 KB ROM, and its
+[README](demo_msx1/README.md) explains how each piece is loaded, along with a
+few MSX gotchas worth knowing before you hit them yourself.
 
-It is also the worked example of the attribution this project's
+### MSX2: Canyon Runner, a vertical shooter
+
+<p align="center">
+  <img src="docs/images/demo_msx2_title.png" width="47%" alt="Canyon Runner's title screen: a full SCREEN 5 picture with the text baked into the bitmap">
+  <img src="docs/images/demo_msx2_gameplay.png" width="47%" alt="Canyon Runner in play: the ship flying a scrolling SCREEN 5 canyon past drones, with mist drifting as a parallax layer and a status band on top">
+</p>
+
+[`demo_msx2/`](demo_msx2/) — a SCREEN 5 game in a 128 KB MegaROM, and what the
+V9938 changes: a bitmap screen with a programmable palette, the scroll register
+for the parallax, sprites with a colour per line, and the command engine moving
+rectangles of VRAM faster than the CPU could. The canyon is a map whose tileset
+is a *picture* rather than a pattern bank, the mist and the boss are software
+sprites built from screen fragments, and its
+[README](demo_msx2/README.md) walks through each of those.
+
+Both are also worked examples of the attribution this project's
 [license](#license) asks for: the credit appears on the title screen and again
 on a credits screen at the end.
 
@@ -211,7 +256,8 @@ src/shared/     the IPC contract, plus MSX hardware and format logic
                 (dependency-free, runs in main, renderer and tests unchanged)
 specs/          implementation specs, one per feature area
 docs/           user guides and tutorials
-demo_project/   a complete example game, built with the editors
+demo_msx1/      a complete example game for MSX1, built with the editors
+demo_msx2/      the same for MSX2: SCREEN 5, a MegaROM, software sprites
 scripts/        build-time generators (icons, the trimmed Monaco shim)
 ```
 

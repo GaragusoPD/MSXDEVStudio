@@ -4,9 +4,13 @@ A SCREEN 5 game in a 128 KB MegaROM. Fly the canyon, shoot the drones, kill the
 thing waiting at the top. Arrow keys fly, SPACE fires; three hits per life,
 three lives.
 
+![Title screen](../docs/images/demo_msx2_title.png)
+
+![Gameplay](../docs/images/demo_msx2_gameplay.png)
+
 Open `canyon.msxproj` in MSXStudio and press **Run**.
 
-Where [`demo_project`](../demo_project/) is an MSX1 game — one name table, 16
+Where [`demo_msx1`](../demo_msx1/) is an MSX1 game — one name table, 16
 fixed colours, eight-pixel scroll steps — this one is about what the V9938
 changes: a bitmap screen with a programmable palette, a scroll register, sprites
 with a colour per line, and a command engine that moves rectangles of VRAM
@@ -37,6 +41,9 @@ The code is split into chapters:
 | `enemy.c` | The drones |
 | `bossfight.c` | The boss |
 | `screens.c` | The title and credits pictures, read straight out of ROM segments |
+
+![The boss fight: a 68x40 boss drawn as a software sprite from screen fragments,
+too wide for the sprite hardware](../docs/images/demo_msx2_boss_fight.png)
 
 ## The art is generated
 
@@ -261,6 +268,8 @@ step after touching a header.
 The demo carries its attribution in the game, which is what MSXStudio's
 [license](../LICENSE) asks of anything built with it: a line on the title screen
 and a full credits screen after you win.
+
+![Credits screen](../docs/images/demo_msx2_credits.png)
 
 - **MSXStudio** by P.D. Garaguso, whose license asks to be credited in software
   made with it, in wording that does not imply endorsement.
