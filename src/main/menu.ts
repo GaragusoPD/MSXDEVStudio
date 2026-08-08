@@ -101,6 +101,8 @@ export function menuTemplate(send: (command: MenuCommand) => void): MenuItemCons
       label: '&Help',
       submenu: [
         item('Documentation', 'help.docs'),
+        item('Tutorials', 'help.tutorials'),
+        { type: 'separator' },
         item('MSXgl Reference', 'help.msxgl'),
         { type: 'separator' },
         item('About MSXStudio', 'help.about')

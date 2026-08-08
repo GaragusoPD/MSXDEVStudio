@@ -374,7 +374,8 @@ export interface IpcEvents {
  * What the application menu can ask for. `main/menu.ts` builds the menu from
  * these and `renderer/src/menu-commands.ts` runs each one through the store
  * action the equivalent button already uses, so a menu item is never a second
- * implementation of anything. `help.*` is answered in the main process.
+ * implementation of anything. `help.docs` / `help.tutorials` open the bundled
+ * documentation in a tab; the rest of `help.*` is answered in the main process.
  */
 export type MenuCommand =
   | 'file.newProject'
@@ -404,6 +405,7 @@ export type MenuCommand =
   | 'view.terminal'
   | 'view.terminalTab'
   | 'help.docs'
+  | 'help.tutorials'
   | 'help.msxgl'
   | 'help.about'
 

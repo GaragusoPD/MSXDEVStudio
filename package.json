@@ -35,6 +35,7 @@
     "eslint": "^10.8.0",
     "eslint-plugin-vue": "^10.10.0",
     "globals": "^17.8.0",
+    "marked": "^18.0.9",
     "monaco-editor": "^0.56.0",
     "pinia": "^3.0.4",
     "png-to-ico": "^3.0.2",

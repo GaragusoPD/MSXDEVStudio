@@ -11,9 +11,11 @@
  * as new editors are registered.
  */
 
+import { DOCS_INDEX, DOCS_TUTORIALS } from '../../shared/docs'
 import type { MenuCommand } from '../../shared/ipc'
 import { getEditorFor } from './editors/registry'
 import { disposeModel, saveModel, triggerMonaco } from './editors/monaco-models'
+import { openDocs } from './editors/docs/session'
 import { newTerminalId } from './editors/terminal/session'
 import { router } from './router'
 import { useAppStore } from './stores/appStore'
@@ -192,8 +194,15 @@ export function runMenuCommand(command: MenuCommand): void {
     case 'view.terminalTab':
       openTerminalTab()
       break
+    case 'help.docs':
+      openDocs(DOCS_INDEX)
+      break
+    case 'help.tutorials':
+      openDocs(DOCS_TUTORIALS)
+      break
     default:
-      // `help.*` never reaches the renderer — the main process answers those itself.
+      // The rest of `help.*` never reaches the renderer — the main process
+      // answers those itself.
       break
   }
 }

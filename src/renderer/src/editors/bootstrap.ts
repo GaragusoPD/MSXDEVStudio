@@ -9,6 +9,7 @@ import * as sfx from './sfx/session'
 import * as sprite from './sprite/session'
 import * as tile from './tile/session'
 import BitmapTileEditorTab from './btiles/BitmapTileEditorTab.vue'
+import DocsTab from './docs/DocsTab.vue'
 import ExampleViewerTab from './ExampleViewerTab.vue'
 import GitDiffTab from './GitDiffTab.vue'
 import MapEditorTab from './map/MapEditorTab.vue'
@@ -37,6 +38,14 @@ registerEditor({
   extensions: ['msxproj'],
   component: ProjectSettingsTab,
   save: () => useProjectStore().save()
+})
+
+// The bundled documentation, opened by `openDocs()` from the Help menu. One
+// tab for all of it: `docs/session.ts` holds which page is showing, because
+// following a link navigates in place rather than opening another tab.
+registerEditor({
+  extensions: ['docs'],
+  component: DocsTab
 })
 
 // Synthetic tabs opened by gitStore.openDiff() — not a real file extension.

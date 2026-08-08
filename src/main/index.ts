@@ -1,5 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 'electron'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { docsRoot, resolveDocRequest } from './services/docs'
 import icon from '../../resources/icon.png?asset'
 import { BuildService } from './services/build-service'
 import { ExamplesService } from './services/examples-service'
@@ -22,6 +24,27 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
 }
+
+// The bundled documentation is served to the renderer as `docs://app/<path>`.
+// Must be declared before `whenReady`, and `standard` is the load-bearing bit:
+// it gives the scheme real URL semantics, so a page's relative links and
+// `<img src>` resolve against the document they came from.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'docs',
+    privileges: {
+      // `standard` is the load-bearing one: it gives the scheme real URL
+      // semantics, so a page's relative links and `<img src>` resolve against
+      // the document they came from. The rest let the renderer `fetch()` it —
+      // and CORS applies, because the renderer's own origin is
+      // `http://localhost` in dev and `file://` when packaged, never `docs:`.
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+])
 
 const stateService = new StateService()
 
@@ -117,7 +140,6 @@ function broadcastState(state: AppState): void {
   mainWindow?.webContents.send('app:stateChanged', state)
 }
 
-const DOCS_URL = 'https://github.com/GaragusoPD/MSXStudio/tree/main/docs'
 const MSXGL_DOCS_URL = 'https://github.com/aoineko-fr/MSXgl/wiki'
 
 /**
@@ -126,8 +148,10 @@ const MSXGL_DOCS_URL = 'https://github.com/aoineko-fr/MSXgl/wiki'
  * actions its buttons use.
  */
 function onMenuCommand(command: MenuCommand): void {
-  if (command === 'help.docs') void shell.openExternal(DOCS_URL)
-  else if (command === 'help.msxgl') void shell.openExternal(MSXGL_DOCS_URL)
+  // `help.docs` / `help.tutorials` are *not* handled here: the documentation
+  // ships inside the app and opens in a tab, so they travel to the renderer
+  // like every other command. Only the genuinely external link stays.
+  if (command === 'help.msxgl') void shell.openExternal(MSXGL_DOCS_URL)
   else if (command === 'help.about') {
     void dialog.showMessageBox({
       type: 'info',
@@ -185,6 +209,29 @@ ipcMain.handle('app:setState', (_event, partial: Partial<AppState>): AppState =>
 // instance can never race a window into existence before it exits.
 if (gotSingleInstanceLock) {
   app.whenReady().then(() => {
+    // `app.getAppPath()` is the project root in dev and `app.asar` when
+    // packaged; `net.fetch` reads a `file:` URL out of either, so the docs are
+    // served the same way in both without unpacking them.
+    const root = docsRoot(app.getAppPath())
+    const notFound = (why: string): Response =>
+      new Response(why, { status: 404, headers: { 'content-type': 'text/plain', 'access-control-allow-origin': '*' } })
+
+    protocol.handle('docs', async (request) => {
+      const file = resolveDocRequest(root, request.url)
+      if (!file) return notFound('Outside the documentation folder')
+      let response: Response
+      try {
+        response = await net.fetch(pathToFileURL(file).toString())
+      } catch {
+        return notFound(`No such documentation file: ${request.url}`)
+      }
+      // `net.fetch` of a `file:` URL answers without CORS headers, so the
+      // cross-origin read above would be rejected before the renderer sees it.
+      const headers = new Headers(response.headers)
+      headers.set('access-control-allow-origin', '*')
+      return new Response(response.body, { status: response.status, headers })
+    })
+
     Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(onMenuCommand)))
     createWindow()
 

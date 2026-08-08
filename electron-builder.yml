@@ -4,7 +4,17 @@ directories:
   buildResources: build
   output: dist
 files:
+  # A *positive* pattern here replaces electron-builder's default `**/*`, so
+  # everything the app needs has to be listed. `out/` is the compiled app
+  # itself — without it the asar has no entry point and packaging fails.
+  - 'out/**'
+  - 'package.json'
   - 'licenses/**'
+  # Help ▸ Documentation reads these out of the asar over the `docs://` scheme
+  # (see main/services/docs.ts), so the guides and tutorials work offline.
+  # Listed explicitly rather than left to the default glob: it is ~2.6 MB, most
+  # of it screenshots, and that should be a decision rather than an accident.
+  - 'docs/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!specs/*'
