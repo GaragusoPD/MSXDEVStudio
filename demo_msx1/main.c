@@ -57,6 +57,14 @@
 //    screens.c  the title picture and the credits
 //    main.c     setup, and the loop that drives the rest
 //
+//  Copyright © 2026 Pablo D. Garaguso. The code and all the artwork — the
+//  tiles, sprites, maps and sound effects in res/ — are the author's own,
+//  drawn in MSXStudio's editors.
+//
+//  This demo ships with MSXStudio as a worked example. You may use, modify and
+//  build on its code and art in your own projects, commercial or not, with no
+//  obligation to credit this demo. See README.md for the full notice.
+//
 //  Built with MSXStudio by P.D. Garaguso.
 //  Powered by MSXgl and MSXtk by Guillaume "Aoineko" Blanchard (CC BY-SA 4.0),
 //  compiled with SDCC, sound in Shiru's ayFX format.

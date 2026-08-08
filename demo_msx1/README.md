@@ -271,6 +271,22 @@ screen, and a full credits screen after you win.
 
 ![Credits screen](../docs/images/demo_msx1_credits.png)
 
+### Copyright
+
+**Copyright © 2026 Pablo D. Garaguso.** The code and all the artwork in this
+demo — the tiles, sprites, maps and sound effects in `res/` — are the
+author's own.
+
+It ships with MSXStudio as a worked example, so it is meant to be built on: you
+may use, modify and adapt its code and art in your own projects, commercial or
+not, with **no obligation to credit this demo**.
+
+That is a separate matter from the tools. MSXStudio and MSXgl still ask for the
+credit their own licenses describe, which is what the title and credits
+screens do.
+
+### Tools used
+
 - **MSXStudio** by P.D. Garaguso, whose license asks to be credited in software
   made with it, in wording that does not imply endorsement.
 - **MSXgl** and **MSXtk** by Guillaume "Aoineko" Blanchard, licensed
