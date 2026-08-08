@@ -252,6 +252,9 @@ export class GitService {
     if (!this.root) throw new Error('No project is open')
     // Explicit cwd: "init" means *this* folder. Left to default it would re-init the enclosing
     // repo when the project sits inside one — which is also why the top level is re-read after.
+    // ponytail: the watcher still points at whatever `setRoot` found, so init-inside-another-repo
+    // needs a reopen to catch out-of-band commits. Unreachable from the UI — the Init button only
+    // appears when `isRepo` is false, and a nested project reports the outer repo's status.
     await this.run(initArgs(), this.root)
     this.topLevel = Promise.resolve(this.root)
     const gitignore = join(this.root, '.gitignore')
