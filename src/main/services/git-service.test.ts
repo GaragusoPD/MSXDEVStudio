@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -279,5 +279,57 @@ describe('GitService.clone', () => {
     await service.clone(`file://${bare}`, target)
 
     expect(readFileSync(join(target, 'README.md'), 'utf-8')).toBe('hello\n')
+  })
+})
+
+describe('GitService — project folder nested inside a bigger repo', () => {
+  // `git status --porcelain` reports paths relative to the repo root, so a project opened at a
+  // subdirectory gets paths that don't resolve against its own folder. Every command has to run
+  // from the top level for the two to agree.
+  it('stages, diffs and discards a file living above the project folder', async () => {
+    const repo = makeRepo('nested-')
+    mkdirSync(join(repo, 'game'))
+    writeFileSync(join(repo, 'game', 'main.c'), 'int main(){}\n')
+    git(repo, ['add', '.'])
+    git(repo, ['commit', '-q', '-m', 'add project'])
+
+    const { service } = harness()
+    service.setRoot(join(repo, 'game')) // the project is the subdirectory, not the repo root
+
+    writeFileSync(join(repo, 'README.md'), 'hello\nchanged\n') // tracked, at the repo root
+    writeFileSync(join(repo, 'notes.txt'), 'scratch\n') // untracked, at the repo root
+
+    expect((await service.status()).files).toEqual([
+      { path: 'README.md', staged: null, unstaged: 'modified', conflicted: false },
+      { path: 'notes.txt', staged: null, unstaged: 'untracked', conflicted: false }
+    ])
+
+    // The bug: `git add -- README.md` ran with cwd=<repo>/game and died on "pathspec did not match".
+    const staged = await service.stage(['README.md'])
+    expect(staged.files).toContainEqual({ path: 'README.md', staged: 'modified', unstaged: null, conflicted: false })
+
+    expect(await service.diff('README.md', false, undefined)).toEqual({
+      old: 'hello\nchanged\n', // already staged, so the index side matches the working tree
+      new: 'hello\nchanged\n'
+    })
+
+    await service.unstage(['README.md'])
+    await service.discard(['README.md', 'notes.txt'])
+    expect(readFileSync(join(repo, 'README.md'), 'utf-8')).toBe('hello\n') // reverted
+    expect(existsSync(join(repo, 'notes.txt'))).toBe(false) // untracked → deleted
+    expect((await service.status()).files).toEqual([])
+  })
+
+  it('init still creates a repo in the project folder, not in the one enclosing it', async () => {
+    const outer = makeRepo('nested-init-')
+    const inner = join(outer, 'game')
+    mkdirSync(inner)
+    const { service } = harness()
+    service.setRoot(inner)
+
+    await service.init()
+
+    expect(existsSync(join(inner, '.git'))).toBe(true)
+    expect((await service.status()).initial).toBe(true) // the inner repo's own history, not outer's
   })
 })

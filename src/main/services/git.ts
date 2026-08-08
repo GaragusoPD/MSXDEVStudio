@@ -21,6 +21,13 @@ export function statusArgs(): string[] {
   return ['status', '--porcelain=v2', '--branch', '-z']
 }
 
+/** The enclosing repo's root. `--porcelain` reports paths relative to *it*, not to cwd, so every
+ *  command has to run from there — a project folder nested inside a bigger repo is otherwise handed
+ *  pathspecs that resolve against the wrong directory. */
+export function topLevelArgs(): string[] {
+  return ['rev-parse', '--show-toplevel']
+}
+
 const STATE_BY_CHAR: Record<string, GitChangeCode> = {
   M: 'modified',
   A: 'added',

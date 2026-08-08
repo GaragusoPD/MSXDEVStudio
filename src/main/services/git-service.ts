@@ -43,6 +43,7 @@ import {
   stageArgs,
   STARTER_GITIGNORE,
   statusArgs,
+  topLevelArgs,
   unstageArgs
 } from './git'
 
@@ -62,6 +63,9 @@ function errorStderr(error: unknown): string {
 
 export class GitService {
   private root: string | null = null
+  /** The repo root enclosing `root` — see `topLevelArgs`. Held as the in-flight promise so commands
+   *  issued before it resolves await the same lookup. Falls back to `root` (not a repo / no git). */
+  private topLevel: Promise<string> | null = null
   private watcher: FSWatcher | null = null
   private gitAvailable = true
 
@@ -73,12 +77,28 @@ export class GitService {
     this.root = root
     void this.watcher?.close()
     this.watcher = null
-    if (!root) return
-    // Watching these two files (not `.git/refs/**`) is enough to catch a
-    // commit/checkout/merge made outside the IDE; chokidar tolerates them not
-    // existing yet (a non-repo project) and picks them up once `git init` runs.
-    this.watcher = watch([join(root, '.git', 'HEAD'), join(root, '.git', 'index')], { ignoreInitial: true })
-    this.watcher.on('all', () => void this.pushChanged())
+    if (!root) {
+      this.topLevel = null
+      return
+    }
+    const pending = (this.topLevel = this.resolveTopLevel(root))
+    void pending.then((top) => {
+      if (this.root !== root) return // a later setRoot won while this lookup was in flight
+      // Watching these two files (not `.git/refs/**`) is enough to catch a
+      // commit/checkout/merge made outside the IDE; chokidar tolerates them not
+      // existing yet (a non-repo project) and picks them up once `git init` runs.
+      this.watcher = watch([join(top, '.git', 'HEAD'), join(top, '.git', 'index')], { ignoreInitial: true })
+      this.watcher.on('all', () => void this.pushChanged())
+    })
+  }
+
+  private async resolveTopLevel(root: string): Promise<string> {
+    try {
+      const { stdout } = await this.run(topLevelArgs(), root)
+      return stdout.trim() || root
+    } catch {
+      return root
+    }
   }
 
   dispose(): void {
@@ -87,7 +107,10 @@ export class GitService {
 
   // ── plumbing ────────────────────────────────────────────────────────────
 
-  private run(args: string[], cwd = this.root): Promise<ExecResult> {
+  /** `cwd` defaults to the enclosing repo root; pass it explicitly to run somewhere else (and to avoid
+   *  awaiting the very lookup that resolves it). */
+  private async run(args: string[], explicitCwd?: string): Promise<ExecResult> {
+    const cwd = explicitCwd ?? (await this.topLevel)
     if (!cwd) return Promise.reject(new Error('No project is open'))
     return new Promise((resolvePromise, reject) => {
       execFile('git', args, { cwd, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -162,11 +185,12 @@ export class GitService {
     }
   }
 
-  private readWorkingFile(path: string): string {
-    const safe = this.root ? resolveRelativePath(path) : null
-    if (safe === null || !this.root) return ''
+  private async readWorkingFile(path: string): Promise<string> {
+    const top = await this.topLevel
+    const safe = top ? resolveRelativePath(path) : null
+    if (safe === null || !top) return ''
     try {
-      return readFileSync(join(this.root, ...safe.split('/')), 'utf-8')
+      return readFileSync(join(top, ...safe.split('/')), 'utf-8')
     } catch {
       return '' // deleted on disk
     }
@@ -176,7 +200,7 @@ export class GitService {
     if (!this.root) return { old: '', new: '' }
     const oldPath = origPath ?? path
     const oldContent = await this.show(staged ? 'HEAD' : 'INDEX', oldPath)
-    const newContent = staged ? await this.show('INDEX', path) : this.readWorkingFile(path)
+    const newContent = staged ? await this.show('INDEX', path) : await this.readWorkingFile(path)
     return { old: oldContent, new: newContent }
   }
 
@@ -196,14 +220,15 @@ export class GitService {
 
   /** Untracked paths are deleted directly (git can't `checkout --` something that isn't tracked); tracked paths go through `git checkout --`. */
   private async discardFiles(paths: string[]): Promise<void> {
-    if (!this.root) return
+    const top = await this.topLevel
+    if (!top) return
     const status = await this.computeStatus()
     const tracked: string[] = []
     for (const path of paths) {
       const file = status.files.find((f) => f.path === path)
       if (file?.unstaged === 'untracked') {
         const safe = resolveRelativePath(path)
-        if (safe !== null) await rm(join(this.root, ...safe.split('/')), { force: true })
+        if (safe !== null) await rm(join(top, ...safe.split('/')), { force: true })
       } else {
         tracked.push(path)
       }
@@ -225,7 +250,10 @@ export class GitService {
 
   async init(): Promise<GitStatus> {
     if (!this.root) throw new Error('No project is open')
-    await this.run(initArgs())
+    // Explicit cwd: "init" means *this* folder. Left to default it would re-init the enclosing
+    // repo when the project sits inside one — which is also why the top level is re-read after.
+    await this.run(initArgs(), this.root)
+    this.topLevel = Promise.resolve(this.root)
     const gitignore = join(this.root, '.gitignore')
     if (!existsSync(gitignore)) await writeFile(gitignore, STARTER_GITIGNORE, 'utf-8')
     return this.pushChanged()

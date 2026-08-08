@@ -259,7 +259,18 @@ function relativeDate(iso: string): string {
       </section>
 
       <section class="group">
-        <h3>Changes ({{ gitStore.unstaged.length }})</h3>
+        <h3>
+          Changes ({{ gitStore.unstaged.length }})
+          <button
+            v-if="gitStore.unstaged.length"
+            type="button"
+            class="action"
+            title="Stage all changes"
+            @click="gitStore.stage(gitStore.unstaged.map((f) => f.path))"
+          >
+            +
+          </button>
+        </h3>
         <p
           v-if="!gitStore.unstaged.length"
           class="hint"
@@ -449,12 +460,20 @@ function relativeDate(iso: string): string {
 }
 
 .group h3 {
+  display: flex;
+  align-items: center;
   margin: 0;
   padding: 4px 12px;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--color-text-muted);
+}
+
+/* `.action` hides itself until its row is hovered; a header button has no row to hover. */
+.group h3 .action {
+  visibility: visible;
+  margin-left: auto;
 }
 
 .hint {
