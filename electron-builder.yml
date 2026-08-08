@@ -26,6 +26,19 @@ files:
 asarUnpack:
   - resources/**
 
+# The demo games ship as plain files beside the asar rather than inside it:
+# "Install demo projects" is then an ordinary recursive copy into a folder the
+# user picks (see main/services/demos.ts). `out/` and `emul/` are build output
+# — excluding them keeps this to ~2 MB, and avoids shipping a prebuilt ROM that
+# could mask a broken toolchain.
+extraResources:
+  - from: demo_msx1
+    to: demos/demo_msx1
+    filter: ['**/*', '!out/**', '!emul/**', '!.msxstudio/**']
+  - from: demo_msx2
+    to: demos/demo_msx2
+    filter: ['**/*', '!out/**', '!emul/**', '!.msxstudio/**']
+
 # No code signing (no certificates yet) and no auto-update (YAGNI pre-users) —
 # see README's "Known gaps" section.
 fileAssociations:

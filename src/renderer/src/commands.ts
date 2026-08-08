@@ -200,6 +200,9 @@ export function runMenuCommand(command: MenuCommand): void {
     case 'help.tutorials':
       openDocs(DOCS_TUTORIALS)
       break
+    case 'help.installDemos':
+      void useProjectStore().installDemos()
+      break
     default:
       // The rest of `help.*` never reaches the renderer — the main process
       // answers those itself.

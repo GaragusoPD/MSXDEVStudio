@@ -55,6 +55,46 @@ export const useProjectStore = defineStore('project', {
       this.wizardVisible = true
     },
 
+    /**
+     * Copies the bundled demo games into a folder the user picks, then offers
+     * to open one.
+     *
+     * The two-step install is deliberate: the first call reports what it would
+     * overwrite *without writing those demos*, so the confirmation below is
+     * asked before anything is destroyed rather than after.
+     */
+    async installDemos(): Promise<void> {
+      const targetDir = await window.api.invoke('demos:pickFolder', undefined)
+      if (!targetDir) return
+
+      try {
+        let result = await window.api.invoke('demos:install', { targetDir })
+
+        if (result.conflicts.length) {
+          const names = result.conflicts.join(' and ')
+          const replace = window.confirm(
+            `${names} already exists in that folder.\n\n` +
+              'Replace it with a fresh copy? Files you added alongside it are kept, ' +
+              'but changes to the demo’s own files are lost.'
+          )
+          if (replace) result = await window.api.invoke('demos:install', { targetDir, overwrite: true })
+        }
+
+        if (result.missing.length) {
+          window.alert(`This build did not ship: ${result.missing.join(', ')}.`)
+        }
+        if (!result.installed.length) return
+
+        const first = result.installed[0]
+        const summary = result.installed.map((demo) => demo.id).join(' and ')
+        if (window.confirm(`Installed ${summary} in ${targetDir}.\n\nOpen ${first.id} now?`)) {
+          await this.openProject(first.projectFile)
+        }
+      } catch (error) {
+        window.alert(`Couldn't install the demo projects: ${String(error)}`)
+      }
+    },
+
     async createProject(request: NewProjectRequest): Promise<boolean> {
       try {
         await this.afterOpen(await window.api.invoke('project:create', request))

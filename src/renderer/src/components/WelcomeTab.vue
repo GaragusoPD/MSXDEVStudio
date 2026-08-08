@@ -68,6 +68,13 @@ function openToolchainSetup(): void {
       >
         Project Settings
       </button>
+      <button
+        type="button"
+        title="Copy the two demo games into a folder of your choice"
+        @click="projectStore.installDemos()"
+      >
+        Install Demos…
+      </button>
     </div>
 
     <div class="recent">

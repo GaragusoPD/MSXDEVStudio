@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { demosRoot, installDemos, planInstall } from './services/demos'
 import { docsRoot, resolveDocRequest } from './services/docs'
 import icon from '../../resources/icon.png?asset'
 import { BuildService } from './services/build-service'
@@ -123,6 +124,35 @@ projectService.onClosed = () => buildService.dispose()
 
 ipcMain.handle('shell:open', (_e, req: { target: string }) =>
   req.target.startsWith('http') ? shell.openExternal(req.target) : shell.openPath(req.target)
+)
+
+// The demo games are copied *out* of the install rather than opened in place:
+// a build writes `out/` into the project folder, and the install directory is
+// root-owned on Linux and under Program Files on Windows.
+const demoSource = (): string => demosRoot(app.isPackaged, app.getAppPath(), process.resourcesPath)
+
+ipcMain.handle('demos:plan', (_e, req: { targetDir: string }) =>
+  planInstall(demoSource(), req.targetDir).map(({ demo, available, conflict }) => ({
+    id: demo.id,
+    title: demo.title,
+    blurb: demo.blurb,
+    available,
+    conflict
+  }))
+)
+ipcMain.handle('demos:pickFolder', async () => {
+  const options = {
+    title: 'Where should the demo projects go?',
+    properties: ['openDirectory' as const, 'createDirectory' as const],
+    buttonLabel: 'Install here'
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+})
+ipcMain.handle('demos:install', (_e, req: { targetDir: string; overwrite?: boolean }) =>
+  installDemos(demoSource(), req.targetDir, { overwrite: req.overwrite, version: app.getVersion() })
 )
 
 const examplesService = new ExamplesService(toolchainService, projectService, buildService)

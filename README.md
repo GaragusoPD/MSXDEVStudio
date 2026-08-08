@@ -240,8 +240,14 @@ npm run dev
 | `npm run test` | Vitest over `src/shared/` and `src/main/` |
 | `npm run icons` | Regenerate the app icons |
 | `npm run monaco:shim` | Regenerate the trimmed Monaco entry point (after bumping `monaco-editor`) |
-| `npx electron-builder --dir` | Unpacked build for the current platform |
-| `npx electron-builder --linux` / `--win` | Installers, per `electron-builder.yml` |
+| `npm run build:dist:linux` | `.AppImage` and `.deb`, per `electron-builder.yml` |
+| `npm run build:dist:win` | `-setup.exe` and `-portable.exe` |
+| `npm run build:dist` | Both, for the current platform's defaults |
+| `npm run build:dist:dir` | Unpacked build — fastest way to test packaging |
+
+Each `build:dist*` script runs `npm run build` first, because electron-builder
+packages `out/`, which only the production build produces. Building the Windows
+targets from Linux works, and needs `wine` installed.
 
 Some tests drive a real MSXgl checkout and run real compiles, so they are slower
 than the rest and need MSXgl available.

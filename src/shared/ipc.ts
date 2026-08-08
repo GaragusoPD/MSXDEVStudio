@@ -181,6 +181,25 @@ export interface ConversionResult {
 }
 
 /** One editor resource found in the project, for the Resources panel. */
+/** One bundled demo game, as offered by "Install demo projects". */
+export interface DemoPlan {
+  id: string
+  title: string
+  blurb: string
+  /** This build shipped it. False only in a package built without the demos. */
+  available: boolean
+  /** Something is already at the destination — installing would overwrite it. */
+  conflict: boolean
+}
+
+export interface DemoInstallResult {
+  installed: { id: string; path: string; projectFile: string }[]
+  /** Ids skipped because their destination existed and `overwrite` was not set. */
+  conflicts: string[]
+  /** Ids this build did not ship. */
+  missing: string[]
+}
+
 export interface ResourceEntry {
   /** Project-root-relative, forward-slash. */
   path: string
@@ -317,6 +336,19 @@ export interface IpcApi {
     req: { id: string; request: NewProjectRequest; copyEntireContent?: boolean }
     res: { opened: OpenProject; notices: string[] }
   }
+  /** The bundled demo games, and whether each one is already at `targetDir`. */
+  'demos:plan': { req: { targetDir: string }; res: DemoPlan[] }
+  /** Asks the user where to put the demos. Null when they cancel. */
+  'demos:pickFolder': { req: void; res: string | null }
+  /**
+   * Copies every bundled demo into `targetDir`. Without `overwrite`, a demo
+   * whose destination already exists is skipped and named in `conflicts` —
+   * nothing is written for it — so the renderer can ask before clobbering.
+   */
+  'demos:install': {
+    req: { targetDir: string; overwrite?: boolean }
+    res: DemoInstallResult
+  }
   /** Non-repo/non-project folders resolve to an all-false/empty status, never an error. */
   'git:status': { req: void; res: GitStatus }
   'git:stage': { req: { paths: string[] }; res: GitStatus }
@@ -406,6 +438,7 @@ export type MenuCommand =
   | 'view.terminalTab'
   | 'help.docs'
   | 'help.tutorials'
+  | 'help.installDemos'
   | 'help.msxgl'
   | 'help.about'
 

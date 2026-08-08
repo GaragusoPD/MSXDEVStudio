@@ -95,7 +95,8 @@ codes mean.
   Each one ends with a complete program you can paste into `main.c` and Run.
 - **[Resources](resources.md)** — the tile, sprite, map, screen and sound
   editors, and how what you draw becomes a C header your game includes.
-- **The demo games** — `demo_msx1/` is a finished MSX1 platformer, `demo_msx2/`
-  a SCREEN 5 shooter in a MegaROM. Open either `.msxproj` and press Run; each
+- **The demo games** — **Help ▸ Install Demo Projects…** copies both into a
+  folder you pick: `demo_msx1` is a finished MSX1 platformer, `demo_msx2` a
+  SCREEN 5 shooter in a MegaROM. Open either `.msxproj` and press Run; each
   folder's README explains how every piece works.
 - **[Keyboard shortcuts](shortcuts.md)** — worth two minutes early on.

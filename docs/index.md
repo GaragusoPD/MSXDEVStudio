@@ -44,9 +44,11 @@ MSXgl checkout.
 
 ## The demo games
 
-Two complete games ship with the source, both built entirely with the editors
-described here. Open either `.msxproj` and press Run; each folder's `README.md`
-explains how every piece is loaded.
+Two complete games ship *inside* MSXStudio, both built entirely with the editors
+described here. **Help ▸ Install Demo Projects…** copies them into a folder you
+choose — they have to live somewhere you can write to, because building a
+project writes into its own folder. Then open either `.msxproj` and press Run;
+each folder's `README.md` explains how every piece is loaded.
 
 - **`demo_msx1/`** — a two-screen platformer: a SCREEN 2 tileset, a six-pose
   sprite, a 64×24 map and an ayFX bank, in a 32 KB ROM.
