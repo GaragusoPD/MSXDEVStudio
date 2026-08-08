@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { demosRoot, installDemos, planInstall } from './services/demos'
-import { docsRoot, resolveDocRequest } from './services/docs'
+import { docsMounts, resolveDocRequest } from './services/docs'
 import icon from '../../resources/icon.png?asset'
 import { BuildService } from './services/build-service'
 import { ExamplesService } from './services/examples-service'
@@ -239,16 +239,16 @@ ipcMain.handle('app:setState', (_event, partial: Partial<AppState>): AppState =>
 // instance can never race a window into existence before it exits.
 if (gotSingleInstanceLock) {
   app.whenReady().then(() => {
-    // `app.getAppPath()` is the project root in dev and `app.asar` when
-    // packaged; `net.fetch` reads a `file:` URL out of either, so the docs are
-    // served the same way in both without unpacking them.
-    const root = docsRoot(app.getAppPath())
+    // Two mounts, because packaging splits them: `docs/` stays in the asar and
+    // the demos are extraResources beside it. `net.fetch` reads a `file:` URL
+    // out of either, so both are served without unpacking anything.
+    const mounts = docsMounts(app.isPackaged, app.getAppPath(), process.resourcesPath)
     const notFound = (why: string): Response =>
       new Response(why, { status: 404, headers: { 'content-type': 'text/plain', 'access-control-allow-origin': '*' } })
 
     protocol.handle('docs', async (request) => {
-      const file = resolveDocRequest(root, request.url)
-      if (!file) return notFound('Outside the documentation folder')
+      const file = resolveDocRequest(mounts, request.url)
+      if (!file) return notFound('Not a published documentation path')
       let response: Response
       try {
         response = await net.fetch(pathToFileURL(file).toString())

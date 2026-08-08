@@ -1,75 +1,103 @@
 import { describe, expect, it } from 'vitest'
-import { resolve, sep } from 'node:path'
-import { docsRoot, resolveDocPath, resolveDocRequest } from './docs'
+import { join, resolve, sep } from 'node:path'
+import { docsMounts, isPublishedTopLevel, resolveDocPath, resolveDocRequest, type DocsMounts } from './docs'
 
-const ROOT = resolve('/app/docs')
-const inRoot = (...parts: string[]): string => [ROOT, ...parts].join(sep)
+const ROOT = resolve('/app')
+const DEMOS = resolve('/app/resources/demos')
+
+/** Packaged: `docs/` in the asar, the demos beside it in extraResources. */
+const SPLIT: DocsMounts = { root: ROOT, demos: DEMOS }
+/** Development: one tree, the repo root. */
+const REPO: DocsMounts = { root: ROOT, demos: ROOT }
+
+const inDocs = (...parts: string[]): string => [ROOT, 'docs', ...parts].join(sep)
+
+describe('docsMounts', () => {
+  it('is a single tree in development, so nothing is special-cased there', () => {
+    expect(docsMounts(false, ROOT, resolve('/elsewhere'))).toEqual({ root: ROOT, demos: ROOT })
+  })
+
+  it('splits the demos out to extraResources when packaged', () => {
+    const mounts = docsMounts(true, resolve('/app.asar'), resolve('/res'))
+    expect(mounts).toEqual({ root: resolve('/app.asar'), demos: join(resolve('/res'), 'demos') })
+  })
+})
+
+describe('isPublishedTopLevel', () => {
+  it.each(['docs', 'demo_msx1', 'demo_msx2'])('publishes %s', (name) => {
+    expect(isPublishedTopLevel(name)).toBe(true)
+  })
+
+  it.each(['src', 'node_modules', 'out', 'package.json', '.git', ''])('refuses %s', (name) => {
+    expect(isPublishedTopLevel(name)).toBe(false)
+  })
+})
 
 describe('resolveDocRequest', () => {
-  it('maps a docs:// URL onto a file under the root', () => {
-    expect(resolveDocRequest(ROOT, 'docs://app/tutorials/01-hello-world.md')).toBe(
-      inRoot('tutorials', '01-hello-world.md')
+  it('maps a docs page onto the root mount', () => {
+    expect(resolveDocRequest(SPLIT, 'docs://app/docs/tutorials/01-hello-world.md')).toBe(
+      inDocs('tutorials', '01-hello-world.md')
     )
   })
 
-  it('serves the root itself for an empty path', () => {
-    expect(resolveDocRequest(ROOT, 'docs://app/')).toBe(ROOT)
+  it('maps a demo walkthrough onto the demos mount, keeping its folder name', () => {
+    expect(resolveDocRequest(SPLIT, 'docs://app/demo_msx1/README.md')).toBe(
+      [DEMOS, 'demo_msx1', 'README.md'].join(sep)
+    )
   })
 
-  it('decodes percent-escapes in the path', () => {
-    expect(resolveDocRequest(ROOT, 'docs://app/images/a%20b.png')).toBe(inRoot('images', 'a b.png'))
+  it('resolves both from one tree in development', () => {
+    expect(resolveDocRequest(REPO, 'docs://app/demo_msx2/README.md')).toBe(
+      [ROOT, 'demo_msx2', 'README.md'].join(sep)
+    )
+    expect(resolveDocRequest(REPO, 'docs://app/docs/index.md')).toBe(inDocs('index.md'))
   })
 
-  it('drops the query and fragment a link may carry', () => {
-    expect(resolveDocRequest(ROOT, 'docs://app/resources.md#exporting')).toBe(inRoot('resources.md'))
+  it("resolves a demo README's reach back into docs/images, the link that made this necessary", () => {
+    // `![](../docs/images/x.png)` from `demo_msx1/README.md` — the browser
+    // resolves it against the page URL before we ever see it.
+    const fromDemo = new URL('../docs/images/demo_msx1_title.png', 'docs://app/demo_msx1/README.md')
+    expect(fromDemo.toString()).toBe('docs://app/docs/images/demo_msx1_title.png')
+    expect(resolveDocRequest(SPLIT, fromDemo.toString())).toBe(inDocs('images', 'demo_msx1_title.png'))
+  })
+
+  it('decodes percent-escapes, and drops query and fragment', () => {
+    expect(resolveDocRequest(SPLIT, 'docs://app/docs/images/a%20b.png')).toBe(inDocs('images', 'a b.png'))
+    expect(resolveDocRequest(SPLIT, 'docs://app/docs/resources.md#exporting')).toBe(inDocs('resources.md'))
   })
 
   it.each([
-    ['another host', 'docs://elsewhere/index.md'],
+    ['the repo root itself', 'docs://app/'],
+    ['application source', 'docs://app/src/main/index.ts'],
+    ['dependencies', 'docs://app/node_modules/marked/package.json'],
+    ['build output', 'docs://app/out/main/index.js'],
+    ['a traversal that lands outside anything published', 'docs://app/../../etc/passwd'],
+    ['an encoded traversal', 'docs://app/%2e%2e/%2e%2e/etc/passwd'],
+    ['a traversal behind encoded slashes', 'docs://app/a%2f..%2f..%2fetc/passwd'],
+    ['another host', 'docs://elsewhere/docs/index.md'],
     ['another scheme', 'file:///etc/passwd'],
     ['a malformed escape', 'docs://app/%zz'],
     ['a non-URL', 'not a url']
   ])('refuses %s', (_label, url) => {
-    expect(resolveDocRequest(ROOT, url)).toBeNull()
+    expect(resolveDocRequest(SPLIT, url)).toBeNull()
   })
 
-  it.each([
-    ['a plain traversal', 'docs://app/../../etc/passwd', 'etc/passwd'],
-    ['an encoded one', 'docs://app/%2e%2e/%2e%2e/etc/passwd', 'etc/passwd'],
-    ['one hidden mid-path', 'docs://app/tutorials/../../secrets.txt', 'secrets.txt'],
-    // `%2f` is the one escape URL parsing leaves alone — the `..` it hides only
-    // appears after decoding. `normalize()` then clamps it at its own root, so
-    // it lands inside `docs/` rather than beside it.
-    ['one behind encoded slashes', 'docs://app/a%2f..%2f..%2fetc/passwd', 'etc/passwd']
-  ])('clamps %s to the root rather than escaping', (_label, url, expected) => {
-    // Two independent mechanisms already neuter these before the containment
-    // check runs. Asserted so that a future switch to a raw-path API, or
-    // dropping the `normalize()`, fails here instead of shipping a hole.
-    expect(resolveDocRequest(ROOT, url)).toBe(inRoot(...expected.split('/')))
-  })
-
-  it('allows a `..` that stays inside the root', () => {
-    expect(resolveDocRequest(ROOT, 'docs://app/tutorials/../resources.md')).toBe(inRoot('resources.md'))
-  })
-
-  it('does not let a sibling directory pass the prefix test', () => {
-    // `/app/docs-private` shares the root's string prefix but is not inside it.
-    expect(resolveDocPath(ROOT, '../docs-private/secret.md')).toBeNull()
+  it('allows a `..` that stays inside a published subtree', () => {
+    expect(resolveDocRequest(SPLIT, 'docs://app/docs/tutorials/../resources.md')).toBe(inDocs('resources.md'))
   })
 })
 
 describe('resolveDocPath', () => {
   it('treats a leading separator as root-relative, not absolute', () => {
-    expect(resolveDocPath(ROOT, '/index.md')).toBe(inRoot('index.md'))
+    expect(resolveDocPath(SPLIT, '/docs/index.md')).toBe(inDocs('index.md'))
   })
 
   it('rejects an embedded NUL', () => {
-    expect(resolveDocPath(ROOT, 'index.md\0.png')).toBeNull()
+    expect(resolveDocPath(SPLIT, 'docs/index.md\0.png')).toBeNull()
   })
-})
 
-describe('docsRoot', () => {
-  it('sits beside the app code, so dev and asar resolve the same way', () => {
-    expect(docsRoot(resolve('/app'))).toBe(resolve('/app', 'docs'))
+  it('does not let a sibling directory pass the prefix test', () => {
+    // `/app/resources/demos-private` shares the demos mount's string prefix.
+    expect(resolveDocPath(SPLIT, 'demo_msx1/../../demos-private/secret.md')).toBeNull()
   })
 })

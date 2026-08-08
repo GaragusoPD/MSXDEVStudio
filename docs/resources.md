@@ -63,7 +63,7 @@ if (g_Tiles_Flags[tile] & FLAG_SOLID) { /* blocked */ }
 
 That turns collision into a table lookup rather than a list of tile numbers in
 your code, so re-arranging a tileset does not break the game. See
-[`demo_msx1`](../demo_msx1/) for it in use.
+[`demo_msx1`](../demo_msx1/README.md) for it in use.
 
 **Editing several tiles at once** — drag a rectangle in the tile grid and the
 canvas shows those tiles as one image, seams drawn in blue. Nothing is copied:

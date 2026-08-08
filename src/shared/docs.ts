@@ -2,10 +2,11 @@
  * The `docs://` scheme, shared by the main process (which serves it) and the
  * renderer (which builds URLs for it). Dependency-free so both can import it.
  *
- * `docs://app/<path>` addresses a file under the app's bundled `docs/` folder,
- * `<path>` being exactly the repo-relative path — `tutorials/README.md`,
- * `images/editor_welcome_tab.png`. Keeping the shape identical to the folder
- * is what lets a page's own relative links resolve without a lookup table.
+ * `docs://app/<path>` addresses a published file by its **repo-relative** path
+ * — `docs/index.md`, `docs/images/editor_welcome_tab.png`,
+ * `demo_msx1/README.md`. Keeping the shape identical to the repository is what
+ * lets every page's own relative links resolve without a lookup table, including
+ * the demo READMEs reaching back into `docs/images/` for their screenshots.
  */
 
 /** The one host the scheme serves. */
@@ -14,10 +15,13 @@ export const DOCS_HOST = 'app'
 export const DOCS_ORIGIN = `docs://${DOCS_HOST}`
 
 /** Landing page — what `Help ▸ Documentation` opens. */
-export const DOCS_INDEX = 'index.md'
+export const DOCS_INDEX = 'docs/index.md'
 
 /** What `Help ▸ Tutorials` opens. */
-export const DOCS_TUTORIALS = 'tutorials/README.md'
+export const DOCS_TUTORIALS = 'docs/tutorials/README.md'
+
+/** The demo walkthroughs, reachable because the scheme mirrors the repo. */
+export const DOCS_DEMOS = 'docs/demos.md'
 
 /** Absolute `docs://` URL for a root-relative documentation path. */
 export function docsUrl(path: string): string {

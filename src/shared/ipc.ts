@@ -438,6 +438,7 @@ export type MenuCommand =
   | 'view.terminalTab'
   | 'help.docs'
   | 'help.tutorials'
+  | 'help.demos'
   | 'help.installDemos'
   | 'help.msxgl'
   | 'help.about'

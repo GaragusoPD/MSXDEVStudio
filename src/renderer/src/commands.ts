@@ -11,7 +11,7 @@
  * as new editors are registered.
  */
 
-import { DOCS_INDEX, DOCS_TUTORIALS } from '../../shared/docs'
+import { DOCS_DEMOS, DOCS_INDEX, DOCS_TUTORIALS } from '../../shared/docs'
 import type { MenuCommand } from '../../shared/ipc'
 import { getEditorFor } from './editors/registry'
 import { disposeModel, saveModel, triggerMonaco } from './editors/monaco-models'
@@ -199,6 +199,9 @@ export function runMenuCommand(command: MenuCommand): void {
       break
     case 'help.tutorials':
       openDocs(DOCS_TUTORIALS)
+      break
+    case 'help.demos':
+      openDocs(DOCS_DEMOS)
       break
     case 'help.installDemos':
       void useProjectStore().installDemos()
