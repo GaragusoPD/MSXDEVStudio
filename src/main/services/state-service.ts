@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppState } from '../../shared/ipc'
-import { pushRecentProject } from '../../shared/state'
+import { MAX_RECENT_PROJECTS, pushRecentProject } from '../../shared/state'
 
 const DEFAULT_STATE: AppState = {
   windowBounds: { width: 1280, height: 800 },
@@ -33,7 +33,11 @@ export class StateService {
     try {
       if (existsSync(this.filePath)) {
         const raw = JSON.parse(readFileSync(this.filePath, 'utf-8')) as Partial<AppState>
-        return { ...DEFAULT_STATE, ...raw }
+        const merged = { ...DEFAULT_STATE, ...raw }
+        // A state.json written before the cap dropped to MAX_RECENT_PROJECTS
+        // still holds more; trim once on load so the list is bounded now rather
+        // than after the next project is opened.
+        return { ...merged, recentProjects: merged.recentProjects.slice(0, MAX_RECENT_PROJECTS) }
       }
     } catch (error) {
       console.error('[StateService] failed to load state.json, using defaults', error)
