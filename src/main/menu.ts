@@ -89,9 +89,13 @@ export function menuTemplate(send: (command: MenuCommand) => void): MenuItemCons
         item('Terminal', 'view.terminal', 'Ctrl+`'),
         item('New Terminal Tab', 'view.terminalTab'),
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        // Not the `resetZoom`/`zoomIn`/`zoomOut` roles: their accelerators are
+        // registered natively and `zoomIn`'s default (`CommandOrControl+Plus`)
+        // never fires on a layout where `+` is a shifted `=`. `index.ts` matches
+        // the keys itself — see `services/zoom.ts` — so these stay labels.
+        item('Actual Size', 'view.zoomReset', 'Ctrl+0'),
+        item('Zoom In', 'view.zoomIn', 'Ctrl+='),
+        item('Zoom Out', 'view.zoomOut', 'Ctrl+-'),
         { type: 'separator' },
         { role: 'togglefullscreen' },
         { role: 'toggleDevTools' }

@@ -2,7 +2,9 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { demosRoot, installDemos, planInstall } from './services/demos'
+import { aboutDetail, aboutMessage, aboutTitle } from './services/about'
 import { docsMounts, resolveDocRequest } from './services/docs'
+import { nextZoomLevel, zoomActionFor, type ZoomAction } from './services/zoom'
 import icon from '../../resources/icon.png?asset'
 import { BuildService } from './services/build-service'
 import { ExamplesService } from './services/examples-service'
@@ -177,7 +179,17 @@ const MSXGL_DOCS_URL = 'https://github.com/aoineko-fr/MSXgl/wiki'
  * About box) or go to the renderer, which runs them through the same store
  * actions its buttons use.
  */
+/** Interface zoom, shared by the View menu and the keyboard (see `services/zoom.ts`). */
+function applyZoom(action: ZoomAction): void {
+  const contents = mainWindow?.webContents
+  if (contents) contents.setZoomLevel(nextZoomLevel(contents.getZoomLevel(), action))
+}
+
 function onMenuCommand(command: MenuCommand): void {
+  if (command === 'view.zoomIn') return applyZoom('in')
+  if (command === 'view.zoomOut') return applyZoom('out')
+  if (command === 'view.zoomReset') return applyZoom('reset')
+
   // `help.docs` / `help.tutorials` are *not* handled here: the documentation
   // ships inside the app and opens in a tab, so they travel to the renderer
   // like every other command. Only the genuinely external link stays.
@@ -185,9 +197,9 @@ function onMenuCommand(command: MenuCommand): void {
   else if (command === 'help.about') {
     void dialog.showMessageBox({
       type: 'info',
-      title: 'About MSXStudio',
-      message: `MSXStudio ${app.getVersion()}`,
-      detail: `An IDE for MSX game development, built around MSXgl.\n\nElectron ${process.versions.electron} · Chromium ${process.versions.chrome} · Node ${process.versions.node}`,
+      title: aboutTitle(),
+      message: aboutMessage(app.getVersion()),
+      detail: aboutDetail(),
       buttons: ['OK']
     })
   } else mainWindow?.webContents.send('menu:command', command)
@@ -205,6 +217,18 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false
     }
+  })
+
+  // Zoom from the keyboard. Done here rather than as menu accelerators because
+  // a menu item holds one accelerator and the zoom-in key has several spellings
+  // (`=`, `+`, keypad `+`) depending on the layout — see `services/zoom.ts`.
+  // `before-input-event` also beats the renderer to the key, so Monaco's own
+  // Ctrl+= binding does not swallow it.
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const action = zoomActionFor(input)
+    if (!action) return
+    event.preventDefault()
+    applyZoom(action)
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
