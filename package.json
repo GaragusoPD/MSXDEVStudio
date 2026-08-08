@@ -20,7 +20,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "check": "npm run lint && npm run typecheck",
     "test": "vitest run",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "node node_modules/electron/install.js && electron-builder install-app-deps"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
