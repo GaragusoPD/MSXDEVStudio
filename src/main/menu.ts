@@ -86,6 +86,8 @@ export function menuTemplate(send: (command: MenuCommand) => void): MenuItemCons
         item('Toggle Bottom Panel', 'view.toggleBottom'),
         item('Output', 'view.output'),
         item('Problems', 'view.problems'),
+        item('Terminal', 'view.terminal', 'Ctrl+`'),
+        item('New Terminal Tab', 'view.terminalTab'),
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },

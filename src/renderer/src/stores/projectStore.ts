@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { NewProjectRequest, OpenProject } from '../../../shared/ipc'
 import type { MsxProject } from '../../../shared/msxproj'
+import { disposeAll as disposeAllTerminals } from '../editors/terminal/session'
 import { useTabsStore } from './tabsStore'
 
 /**
@@ -35,6 +36,9 @@ export const useProjectStore = defineStore('project', {
       if (!opened) return
       this.open = opened
       this.dirty = false
+      // Before the tabs are rebuilt: terminal tabs are dropped along with the
+      // rest, and their shells belong to the project that is being left.
+      disposeAllTerminals()
       await useTabsStore().loadForProject(opened.root)
     },
 

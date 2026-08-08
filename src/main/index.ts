@@ -11,6 +11,7 @@ import { indexMsxglSymbols } from './services/msxgl-symbols'
 import { ProjectService } from './services/project-service'
 import { ResourceService } from './services/resource-service'
 import { StateService } from './services/state-service'
+import { TerminalService } from './services/terminal-service'
 import { ToolchainService } from './services/toolchain-service'
 import type { AppState, BuildCommand, MenuCommand, MsxglSymbol } from '../shared/ipc'
 
@@ -104,6 +105,14 @@ ipcMain.handle('shell:open', (_e, req: { target: string }) =>
 const examplesService = new ExamplesService(toolchainService, projectService, buildService)
 examplesService.registerIpc()
 
+// Shells open in the project root, so a terminal is already where `make`,
+// `git` and the MSXgl scripts expect to be run from.
+const terminalService = new TerminalService(
+  () => projectService.getOpen()?.root ?? null,
+  (channel, payload) => mainWindow?.webContents.send(channel, payload)
+)
+terminalService.registerIpc()
+
 function broadcastState(state: AppState): void {
   mainWindow?.webContents.send('app:stateChanged', state)
 }
@@ -190,6 +199,7 @@ app.on('window-all-closed', () => {
   buildService.dispose()
   void fsService.dispose()
   gitService.dispose()
+  terminalService.dispose()
   if (process.platform !== 'darwin') app.quit()
 })
 

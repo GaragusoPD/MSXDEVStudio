@@ -16,7 +16,7 @@ const DEFAULT_STATE: AppState = {
  * updates local state immediately (snappy UI) and forwards the same partial
  * to main via `app:setState` for debounced disk persistence.
  */
-export type BottomTab = 'output' | 'problems'
+export type BottomTab = 'output' | 'problems' | 'terminal'
 
 export const useAppStore = defineStore('app', {
   // `bottomTab` is view state, not persisted settings — it rides along with the

@@ -14,6 +14,12 @@ export interface EditorRegistration {
   save?: (path: string) => Promise<void> | void
   undo?: (path: string) => void
   redo?: (path: string) => void
+  /**
+   * Tear-down for a tab this editor owns, keyed by tab **id** rather than path
+   * — a synthetic tab (a terminal) has no path, and it is what holds the
+   * resource that must be released.
+   */
+  close?: (id: string) => void
 }
 
 const registry = new Map<string, EditorRegistration>()

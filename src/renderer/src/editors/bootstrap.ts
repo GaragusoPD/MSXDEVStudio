@@ -17,7 +17,9 @@ import ProjectSettingsTab from './ProjectSettingsTab.vue'
 import ScreenEditorTab from './screen/ScreenEditorTab.vue'
 import SfxEditorTab from './sfx/SfxEditorTab.vue'
 import SpriteEditorTab from './sprite/SpriteEditorTab.vue'
+import TerminalTab from './terminal/TerminalTab.vue'
 import TileEditorTab from './tile/TileEditorTab.vue'
+import { dispose as disposeTerminal } from './terminal/session'
 
 setupMonacoEnvironment()
 // The symbol index itself is fetched lazily, on the first completion request.
@@ -47,6 +49,14 @@ registerEditor({
 registerEditor({
   extensions: ['example-viewer'],
   component: ExampleViewerTab
+})
+
+// Synthetic tabs opened by `openTerminalTab()` — a shell, not a file. `close`
+// is what kills it: the tab is the only thing that owns the PTY.
+registerEditor({
+  extensions: ['terminal'],
+  component: TerminalTab,
+  close: disposeTerminal
 })
 
 // The resource editors all keep their document in a per-path session module, so

@@ -14,6 +14,7 @@
 import type { MenuCommand } from '../../shared/ipc'
 import { getEditorFor } from './editors/registry'
 import { disposeModel, saveModel, triggerMonaco } from './editors/monaco-models'
+import { newTerminalId } from './editors/terminal/session'
 import { router } from './router'
 import { useAppStore } from './stores/appStore'
 import { useBuildStore } from './stores/buildStore'
@@ -75,7 +76,31 @@ export function closeTabWithPrompt(id: string): void {
   if (!tab) return
   if (tab.dirty && !window.confirm(`"${tab.title}" has unsaved changes. Close without saving?`)) return
   disposeModel(id)
+  if (tab.extension) getEditorFor(tab.extension)?.close?.(id)
   tabsStore.close(id)
+}
+
+/**
+ * Opens a shell as an editor-area tab — the full-height layout VS Code calls
+ * "terminal in the editor area", and the one worth having for a long-running
+ * agent session. Each is its own shell; the bottom panel's is a fourth.
+ */
+export function openTerminalTab(): void {
+  const id = newTerminalId()
+  useTabsStore().open({
+    id,
+    title: `Terminal ${id.slice('terminal:'.length)}`,
+    extension: 'terminal',
+    dirty: false,
+    closable: true
+  })
+}
+
+/** Ctrl+` — shows the bottom panel's terminal, or collapses the panel if it is already there. */
+export function toggleTerminal(): void {
+  const appStore = useAppStore()
+  if (appStore.panelLayout.bottomVisible && appStore.bottomTab === 'terminal') appStore.toggleBottomPanel()
+  else appStore.showBottomPanel('terminal')
 }
 
 /** Undo/redo on the active tab: its editor's own stack, or Monaco's for a text file. */
@@ -160,6 +185,12 @@ export function runMenuCommand(command: MenuCommand): void {
       break
     case 'view.problems':
       appStore.showBottomPanel('problems')
+      break
+    case 'view.terminal':
+      toggleTerminal()
+      break
+    case 'view.terminalTab':
+      openTerminalTab()
       break
     default:
       // `help.*` never reaches the renderer — the main process answers those itself.

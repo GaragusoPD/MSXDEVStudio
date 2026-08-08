@@ -337,6 +337,17 @@ export interface IpcApi {
   /** `git init` + a starter `.gitignore` (only written when none exists yet). */
   'git:init': { req: void; res: GitStatus }
   'git:clone': { req: { url: string; targetDir: string }; res: void }
+
+  /**
+   * Spawns a shell in a PTY under `id`, cwd = the open project. Idempotent:
+   * a view re-attaching to a terminal it already started must not fork a
+   * second shell, so an id that is already running is left alone.
+   */
+  'terminal:start': { req: { id: string; cols: number; rows: number }; res: void }
+  'terminal:write': { req: { id: string; data: string }; res: void }
+  'terminal:resize': { req: { id: string; cols: number; rows: number }; res: void }
+  /** Kills the shell and forgets the id — closing a terminal. */
+  'terminal:kill': { req: { id: string }; res: void }
 }
 
 /** Main → renderer push events, subscribed to via `window.api.on`. */
@@ -352,6 +363,9 @@ export interface IpcEvents {
   'build:finished': BuildFinished
   /** Pushed after every mutating `git:*` call and on out-of-band `.git/HEAD`/`.git/index` changes. */
   'git:changed': GitStatus
+  /** Raw PTY output — ANSI intact, unlike `build:output`, because xterm renders it. */
+  'terminal:data': { id: string; data: string }
+  'terminal:exit': { id: string; code: number }
   /** An application-menu item was clicked — see `MenuCommand`. */
   'menu:command': MenuCommand
 }
@@ -387,6 +401,8 @@ export type MenuCommand =
   | 'view.toggleBottom'
   | 'view.output'
   | 'view.problems'
+  | 'view.terminal'
+  | 'view.terminalTab'
   | 'help.docs'
   | 'help.msxgl'
   | 'help.about'

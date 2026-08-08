@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useBuildStore } from '../stores/buildStore'
 import { useTabsStore } from '../stores/tabsStore'
 import { getEditorFor } from '../editors/registry'
-import { closeTabWithPrompt, saveAllTabs, saveTab } from '../commands'
+import { closeTabWithPrompt, saveAllTabs, saveTab, toggleTerminal } from '../commands'
 import BuildToolbar from './BuildToolbar.vue'
 import WelcomeTab from './WelcomeTab.vue'
 
@@ -38,6 +38,18 @@ function onTabAuxClick(event: MouseEvent, id: string): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // Before the terminal guard below, so it works from inside a terminal too —
+  // it is the way back out of one.
+  // `code`, not `key`: on the Nordic and Spanish layouts backtick is a dead
+  // key, so this binds the physical key left of `1` the way VS Code does.
+  if (event.ctrlKey && event.code === 'Backquote') {
+    event.preventDefault()
+    toggleTerminal()
+    return
+  }
+  // A focused terminal owns every other key: in a shell Ctrl+W is delete-word
+  // and Ctrl+S is flow control, not close-tab and save.
+  if ((event.target as HTMLElement | null)?.closest('.xterm')) return
   // Build & run first: F5 has no modifier, Ctrl+Shift+B would otherwise fall
   // through to the plain-Ctrl shortcuts below.
   if (event.key === 'F5') {

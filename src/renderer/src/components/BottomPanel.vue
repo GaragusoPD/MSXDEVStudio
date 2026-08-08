@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { openTerminalTab } from '../commands'
+import { PANEL_TERMINAL } from '../editors/terminal/session'
 import { useAppStore } from '../stores/appStore'
 import { useProblemsStore } from '../stores/problemsStore'
 import OutputPane from './OutputPane.vue'
 import ProblemsPane from './ProblemsPane.vue'
+import TerminalView from './TerminalView.vue'
 
 const appStore = useAppStore()
 const problemsStore = useProblemsStore()
@@ -27,7 +30,23 @@ const problemsStore = useProblemsStore()
       >
         {{ problemsStore.problems.length ? `Problems (${problemsStore.problems.length})` : 'Problems' }}
       </button>
+      <button
+        type="button"
+        class="tab"
+        :class="{ active: appStore.bottomTab === 'terminal' }"
+        @click="appStore.bottomTab = 'terminal'"
+      >
+        Terminal
+      </button>
       <div class="spacer" />
+      <button
+        type="button"
+        class="collapse"
+        title="Open a terminal in the editor area"
+        @click="openTerminalTab()"
+      >
+        ⧉
+      </button>
       <button
         type="button"
         class="collapse"
@@ -39,7 +58,11 @@ const problemsStore = useProblemsStore()
     </div>
     <div class="content">
       <OutputPane v-if="appStore.bottomTab === 'output'" />
-      <ProblemsPane v-else />
+      <ProblemsPane v-else-if="appStore.bottomTab === 'problems'" />
+      <TerminalView
+        v-else
+        :id="PANEL_TERMINAL"
+      />
     </div>
   </div>
 </template>
