@@ -9,24 +9,27 @@ const modelRules = new Map<string, EditorConfigRule>()
 const viewStates = new Map<string, monaco.editor.ICodeEditorViewState>()
 
 let editorConfigRoot: string | null = null
-let editorConfigSections: ReturnType<typeof parseEditorConfig> | null = null
+/** The *promise*, not the result: tabs restored together all call in before the first read resolves. */
+let editorConfigSections: Promise<ReturnType<typeof parseEditorConfig>> | null = null
+
+async function loadEditorConfig(): Promise<ReturnType<typeof parseEditorConfig>> {
+  try {
+    // ponytail: stat first — .editorconfig is optional, and a rejected `fs:read` logs an error in main.
+    const exists = await window.api.invoke('fs:stat', { path: '.editorconfig' })
+    return parseEditorConfig(exists ? await window.api.invoke('fs:read', { path: '.editorconfig' }) : '')
+  } catch {
+    return []
+  }
+}
 
 /** Loads and caches `.editorconfig` from the current project root; re-reads only when the root changes. */
 async function getEditorConfigRule(filePath: string): Promise<EditorConfigRule> {
   const root = useTabsStore().projectRoot
   if (root !== editorConfigRoot) {
     editorConfigRoot = root
-    editorConfigSections = null
-    if (root) {
-      try {
-        const content = await window.api.invoke('fs:read', { path: '.editorconfig' })
-        editorConfigSections = parseEditorConfig(content)
-      } catch {
-        editorConfigSections = []
-      }
-    }
+    editorConfigSections = root ? loadEditorConfig() : null
   }
-  return resolveEditorConfig(editorConfigSections ?? [], filePath)
+  return resolveEditorConfig((await editorConfigSections) ?? [], filePath)
 }
 
 /** Trims trailing whitespace and (if requested) ensures a final newline, per the effective editorconfig rule. */
