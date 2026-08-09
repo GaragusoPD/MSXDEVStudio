@@ -271,14 +271,14 @@ watch(
           title="Undo (Ctrl+Z)"
           @click="undo(session)"
         >
-          ↶
+          <Icon name="undo" />
         </button>
         <button
           :disabled="!canRedo(session)"
           title="Redo (Ctrl+Y)"
           @click="redo(session)"
         >
-          ↷
+          <Icon name="redo" />
         </button>
 
         <span class="spacer" />
@@ -328,28 +328,40 @@ watch(
               title="Duplicate"
               @click="commit(session, duplicateEffect(bank, session.selected))"
             >
-              ⧉
+              <Icon
+                name="content_copy"
+                :size="14"
+              />
             </button>
             <button
               title="Delete"
               :disabled="bank.effects.length <= 1"
               @click="commit(session, deleteEffect(bank, session.selected))"
             >
-              🗑
+              <Icon
+                name="delete"
+                :size="14"
+              />
             </button>
             <button
               title="Move up — renumbers the ayFX_PlayBank() ids"
               :disabled="session.selected === 0"
               @click="commit(session, moveEffect(bank, session.selected, session.selected - 1)); session.selected--"
             >
-              ▲
+              <Icon
+                name="arrow_upward"
+                :size="14"
+              />
             </button>
             <button
               title="Move down — renumbers the ayFX_PlayBank() ids"
               :disabled="session.selected >= bank.effects.length - 1"
               @click="commit(session, moveEffect(bank, session.selected, session.selected + 1)); session.selected++"
             >
-              ▼
+              <Icon
+                name="arrow_downward"
+                :size="14"
+              />
             </button>
           </div>
           <p class="hint">
@@ -540,6 +552,10 @@ ul {
 }
 
 .list-actions button {
+  /* They stretch to share the row, so the icon needs centring of its own. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: 1;
   background: var(--color-bg-tab-inactive);
   color: var(--color-text);

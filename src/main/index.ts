@@ -12,6 +12,7 @@ import { FsService } from './services/fs-service'
 import { GitService } from './services/git-service'
 import { extractProjectPath } from './services/launch-args'
 import { menuTemplate } from './menu'
+import { EXTERNAL_DOCS } from './external-docs'
 import { indexMsxglSymbols } from './services/msxgl-symbols'
 import { ProjectService } from './services/project-service'
 import { ResourceService } from './services/resource-service'
@@ -172,16 +173,6 @@ function broadcastState(state: AppState): void {
   mainWindow?.webContents.send('app:stateChanged', state)
 }
 
-/**
- * Help items that leave the app entirely, opened in the system browser. The
- * engine's own wiki, and Konamiman's transcription of the MSX2 Technical
- * Handbook — the reference the hardware rules in `shared/msx/` are checked
- * against, so it is worth one click rather than one search.
- */
-const EXTERNAL_DOCS: Partial<Record<MenuCommand, string>> = {
-  'help.msxgl': 'https://github.com/aoineko-fr/MSXgl/wiki',
-  'help.msx2Handbook': 'https://github.com/Konamiman/MSX2-Technical-Handbook'
-}
 
 /**
  * Menu items either open something the main process owns (the Help links, the

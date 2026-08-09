@@ -15,15 +15,21 @@
 
 import type { MenuItemConstructorOptions } from 'electron'
 import type { MenuCommand } from '../shared/ipc'
+import { EXTERNAL_MARK, isExternal } from './external-docs'
 
 /**
  * `send` receives every app-specific command; `index.ts` answers the `help.*`
  * ones itself and forwards the rest to the renderer.
  */
 export function menuTemplate(send: (command: MenuCommand) => void): MenuItemConstructorOptions[] {
-  /** An app-specific item: the accelerator is shown, not bound. See the note above. */
+  /**
+   * An app-specific item: the accelerator is shown, not bound. See the note above.
+   *
+   * Anything that leaves for the browser gets marked here rather than in its
+   * label, so the arrow can't be forgotten on the next link someone adds.
+   */
   const item = (label: string, command: MenuCommand, accelerator?: string): MenuItemConstructorOptions => ({
-    label,
+    label: isExternal(command) ? `${label}${EXTERNAL_MARK}` : label,
     accelerator,
     registerAccelerator: false,
     click: () => send(command)

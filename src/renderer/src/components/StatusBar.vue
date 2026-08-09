@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from './Icon.vue'
 import { computed } from 'vue'
 import { useAppStore } from '../stores/appStore'
 import { useBuildStore } from '../stores/buildStore'
@@ -70,7 +71,10 @@ function toggleTheme(): void {
             title="Pull"
             @click="gitStore.pull()"
           >
-            ↓{{ gitStore.status.behind }}
+            <Icon
+              name="arrow_downward"
+              :size="13"
+            />{{ gitStore.status.behind }}
           </button>
           <button
             type="button"
@@ -78,7 +82,10 @@ function toggleTheme(): void {
             title="Push"
             @click="gitStore.push()"
           >
-            ↑{{ gitStore.status.ahead }}
+            <Icon
+              name="arrow_upward"
+              :size="13"
+            />{{ gitStore.status.ahead }}
           </button>
         </template>
       </template>
@@ -105,7 +112,14 @@ function toggleTheme(): void {
         title="Show Problems"
         @click="appStore.showBottomPanel('problems')"
       >
-        ⊗ {{ errorCount }} ⚠ {{ warningCount }}
+        <Icon
+          name="error"
+          :size="13"
+        />{{ errorCount }}
+        <Icon
+          name="warning"
+          :size="13"
+        />{{ warningCount }}
       </button>
       <button
         type="button"

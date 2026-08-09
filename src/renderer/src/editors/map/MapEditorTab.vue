@@ -162,7 +162,7 @@ onMounted(() => void resourcesStore.refresh())
           :disabled="!canUndo(session.history)"
           @click="undo(session)"
         >
-          ↶
+          <Icon name="undo" />
         </button>
         <button
           type="button"
@@ -170,7 +170,7 @@ onMounted(() => void resourcesStore.refresh())
           :disabled="!canRedo(session.history)"
           @click="redo(session)"
         >
-          ↷
+          <Icon name="redo" />
         </button>
 
         <span class="sep" />

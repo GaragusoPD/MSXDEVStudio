@@ -178,7 +178,7 @@ watch(
           :disabled="!canUndo(session.history)"
           @click="undo(session)"
         >
-          ↶
+          <Icon name="undo" />
         </button>
         <button
           type="button"
@@ -186,7 +186,7 @@ watch(
           :disabled="!canRedo(session.history)"
           @click="redo(session)"
         >
-          ↷
+          <Icon name="redo" />
         </button>
 
         <span class="sep" />

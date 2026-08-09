@@ -126,7 +126,7 @@ function sourceButtonLabel(active: ScreenSession): string {
           :disabled="!canUndo(session.history)"
           @click="undo(session)"
         >
-          ↶
+          <Icon name="undo" />
         </button>
         <button
           type="button"
@@ -134,7 +134,7 @@ function sourceButtonLabel(active: ScreenSession): string {
           :disabled="!canRedo(session.history)"
           @click="redo(session)"
         >
-          ↷
+          <Icon name="redo" />
         </button>
 
         <span class="sep" />

@@ -169,6 +169,7 @@ watchEffect(redrawThumbs, { flush: 'post' })
       <button
         type="button"
         :class="{ active: playing }"
+        :title="playing ? 'Pause' : 'Play the animation'"
         @click="playing = !playing"
       >
         <Icon :name="playing ? 'pause' : 'play_arrow'" />

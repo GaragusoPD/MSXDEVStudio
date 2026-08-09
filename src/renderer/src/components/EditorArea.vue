@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from './Icon.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useBuildStore } from '../stores/buildStore'
 import { useTabsStore } from '../stores/tabsStore'
@@ -105,8 +106,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <span
             v-if="tab.closable"
             class="close"
+            title="Close tab"
             @click.stop="closeTabWithPrompt(tab.id)"
-          >×</span>
+          ><Icon
+            name="close"
+            :size="13"
+          /></span>
         </button>
       </div>
       <BuildToolbar />

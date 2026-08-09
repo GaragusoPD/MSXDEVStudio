@@ -3,6 +3,7 @@ import { openTerminalTab } from '../commands'
 import { PANEL_TERMINAL } from '../editors/terminal/session'
 import { useAppStore } from '../stores/appStore'
 import { useProblemsStore } from '../stores/problemsStore'
+import Icon from './Icon.vue'
 import OutputPane from './OutputPane.vue'
 import ProblemsPane from './ProblemsPane.vue'
 import TerminalView from './TerminalView.vue'
@@ -45,7 +46,10 @@ const problemsStore = useProblemsStore()
         title="Open a terminal in the editor area"
         @click="openTerminalTab()"
       >
-        ⧉
+        <Icon
+          name="open_in_new"
+          :size="14"
+        />
       </button>
       <button
         type="button"
@@ -53,7 +57,10 @@ const problemsStore = useProblemsStore()
         title="Close panel"
         @click="appStore.toggleBottomPanel()"
       >
-        ×
+        <Icon
+          name="close"
+          :size="14"
+        />
       </button>
     </div>
     <div class="content">
@@ -100,6 +107,9 @@ const problemsStore = useProblemsStore()
 }
 
 .collapse {
+  /* Icon-only, so the button box is the icon: flex centres it instead of
+     letting the glyph sit on the strip's text baseline. */
+  display: flex;
   padding: 4px 10px;
   color: var(--color-text-muted);
 }

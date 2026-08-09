@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import Icon from '../components/Icon.vue'
 import {
   COMPILE_COMPLEXITY,
   CURATED_TARGETS,
@@ -314,9 +315,13 @@ async function save(): Promise<void> {
           >
           <button
             type="button"
+            title="Remove"
             @click="projectStore.patch((p) => delete p.build.defines[key])"
           >
-            ×
+            <Icon
+              name="delete"
+              :size="14"
+            />
           </button>
         </div>
         <button
@@ -386,9 +391,13 @@ async function save(): Promise<void> {
           >
           <button
             type="button"
+            title="Remove"
             @click="projectStore.patch((p) => p.files.rawFiles.splice(index, 1))"
           >
-            ×
+            <Icon
+              name="delete"
+              :size="14"
+            />
           </button>
         </div>
         <button
@@ -412,9 +421,13 @@ async function save(): Promise<void> {
           >
           <button
             type="button"
+            title="Remove"
             @click="projectStore.patch((p) => p.files.diskFiles.splice(index, 1))"
           >
-            ×
+            <Icon
+              name="delete"
+              :size="14"
+            />
           </button>
         </div>
         <button
@@ -474,9 +487,13 @@ async function save(): Promise<void> {
           >
           <button
             type="button"
+            title="Remove"
             @click="projectStore.patch((p) => p.resources.imgRules.splice(index, 1))"
           >
-            ×
+            <Icon
+              name="delete"
+              :size="14"
+            />
           </button>
         </div>
         <button
@@ -696,7 +713,8 @@ select {
 }
 
 .row button {
-  padding: 2px 8px;
+  display: flex;
+  padding: 2px 6px;
   border: 1px solid var(--color-border);
   border-radius: 3px;
   background: var(--color-bg-hover);

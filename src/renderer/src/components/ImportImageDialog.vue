@@ -11,6 +11,7 @@ import { defaultExport, serializeResource } from '../../../shared/msx/resource'
 import { useImageImport, type ImportResult } from '../composables/useImageImport'
 import { useProjectStore } from '../stores/projectStore'
 import { useResourcesStore } from '../stores/resourcesStore'
+import Icon from './Icon.vue'
 
 const props = withDefaults(defineProps<{ mode?: ScreenMode; standalone?: boolean }>(), {
   mode: 'sc2',
@@ -97,9 +98,10 @@ function use(): void {
         <button
           type="button"
           class="close"
+          title="Close"
           @click="emit('close')"
         >
-          ×
+          <Icon name="close" />
         </button>
       </header>
 
@@ -278,8 +280,9 @@ h2 {
 }
 
 .close {
-  font-size: 18px;
-  line-height: 1;
+  /* Icon-only: the icon carries its own size, so the button just has to stop
+     baseline-aligning it against the header's <h2>. */
+  display: flex;
   color: var(--color-text-muted);
 }
 

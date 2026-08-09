@@ -102,7 +102,8 @@ function forkExample(): void {
           type="button"
           @click="forkExample"
         >
-          ⧉ New project from example
+          <Icon name="content_copy" />
+          New project from example
         </button>
       </div>
     </header>

@@ -189,7 +189,10 @@ function patchExport(patch: Partial<ExportBlock>): void {
             title="Remove fragment"
             @click="removeFragment(session, index)"
           >
-            ×
+            <Icon
+              name="delete"
+              :size="14"
+            />
           </button>
         </li>
       </ul>
@@ -393,6 +396,12 @@ function patchExport(patch: Partial<ExportBlock>): void {
 .fragments .dims {
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.fragments button {
+  display: flex;
+  padding: 0 3px;
+  color: var(--color-text-muted);
 }
 .side {
   width: 240px;

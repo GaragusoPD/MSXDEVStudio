@@ -6,6 +6,7 @@
  * converter reads.
  */
 import { computed, ref } from 'vue'
+import Icon from '../../components/Icon.vue'
 import { MODES, TILE_MODES, type TileMode } from '../../../../shared/msx/modes'
 import {
   fromHex,
@@ -208,7 +209,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
             :checked="session.blockWide"
             @change="setBlockWide(session, ($event.target as HTMLInputElement).checked)"
           >
-          <span title="A chip or ⇄ writes that row on every tile of the block, in one undo step. In sc1 the pair belongs to the group of eight, so it can reach further — see the warning under Blocks.">
+          <span title="A chip or a swap writes that row on every tile of the block, in one undo step. In sc1 the pair belongs to the group of eight, so it can reach further — see the warning under Blocks.">
             Whole block
           </span>
         </label>
@@ -266,7 +267,10 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
           title="Swap FG and BG (the pattern is inverted so the tile looks the same)"
           @click="swapRow(session, row.y)"
         >
-          ⇄
+          <Icon
+            name="swap_horiz"
+            :size="14"
+          />
         </button>
       </div>
     </section>
@@ -346,7 +350,10 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
               title="Delete block (its tiles stay in the bank)"
               @click.stop="deleteBlock(session, index)"
             >
-              ×
+              <Icon
+                name="delete"
+                :size="14"
+              />
             </button>
           </div>
         </li>
@@ -508,6 +515,12 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
 .block-row .dims {
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.block-row button {
+  display: flex;
+  padding: 0 3px;
+  color: var(--color-text-muted);
 }
 
 .new-block {
@@ -737,6 +750,7 @@ section {
 }
 
 .swap {
+  display: flex;
   padding: 0 5px;
   border: 1px solid var(--color-border);
   border-radius: 3px;

@@ -8,6 +8,7 @@
  * exported as a table indexed by tile so collision is a lookup.
  */
 import { computed, ref } from 'vue'
+import Icon from '../../components/Icon.vue'
 import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex } from '../../../../shared/msx/palette'
 import { MAX_TILE_SIZE } from '../../../../shared/msx/bitmap-tile'
 import { sheetCols } from '../../../../shared/msx/bitmap-tile'
@@ -218,7 +219,10 @@ function applySize(): void {
             title="Remove"
             @click.stop="dropBlock(session, index)"
           >
-            ×
+            <Icon
+              name="delete"
+              :size="14"
+            />
           </button>
         </li>
       </ul>
@@ -429,6 +433,11 @@ h3 {
   background: transparent;
   color: var(--color-text);
   font-size: 11px;
+}
+.block-row button {
+  display: flex;
+  padding: 0 3px;
+  color: var(--color-text-muted);
 }
 .dim {
   opacity: 0.6;

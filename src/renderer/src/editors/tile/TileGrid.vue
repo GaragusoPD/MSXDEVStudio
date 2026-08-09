@@ -270,7 +270,10 @@ watchEffect(() => {
         title="Append a blank tile"
         @click="addTile(session)"
       >
-        +tile
+        <Icon
+          name="add"
+          :size="14"
+        />tile
       </button>
       <button
         type="button"
@@ -278,7 +281,10 @@ watchEffect(() => {
         :disabled="session.doc.count <= 1"
         @click="confirmDelete"
       >
-        −tile
+        <Icon
+          name="remove"
+          :size="14"
+        />tile
       </button>
     </header>
     <div
@@ -323,6 +329,14 @@ header {
   padding: 6px 8px;
   border-bottom: 1px solid var(--color-border);
   font-size: 11px;
+}
+
+/* The add/remove buttons pair an icon with a word, so they lay out their own
+   contents rather than letting the icon sit on the label's baseline. */
+header button {
+  display: flex;
+  align-items: center;
+  gap: 1px;
 }
 
 .title {

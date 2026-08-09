@@ -5,6 +5,7 @@ import { useGitStore } from '../stores/gitStore'
 import { useProjectStore } from '../stores/projectStore'
 import { useTabsStore } from '../stores/tabsStore'
 import { useToolchainStore } from '../stores/toolchainStore'
+import Icon from './Icon.vue'
 
 const gitStore = useGitStore()
 const projectStore = useProjectStore()
@@ -223,7 +224,10 @@ function relativeDate(iso: string): string {
             title="Mark resolved"
             @click.stop="gitStore.stage([file.path])"
           >
-            ✓
+            <Icon
+              name="check"
+              :size="14"
+            />
           </button>
         </div>
       </section>
@@ -253,7 +257,10 @@ function relativeDate(iso: string): string {
             title="Unstage"
             @click.stop="gitStore.unstage([file.path])"
           >
-            −
+            <Icon
+              name="remove"
+              :size="14"
+            />
           </button>
         </div>
       </section>
@@ -268,7 +275,10 @@ function relativeDate(iso: string): string {
             title="Stage all changes"
             @click="gitStore.stage(gitStore.unstaged.map((f) => f.path))"
           >
-            +
+            <Icon
+              name="add"
+              :size="14"
+            />
           </button>
         </h3>
         <p
@@ -294,7 +304,10 @@ function relativeDate(iso: string): string {
             title="Stage"
             @click.stop="gitStore.stage([file.path])"
           >
-            +
+            <Icon
+              name="add"
+              :size="14"
+            />
           </button>
           <button
             type="button"
@@ -302,7 +315,10 @@ function relativeDate(iso: string): string {
             title="Discard changes"
             @click.stop="discardOne(file)"
           >
-            ⤺
+            <Icon
+              name="undo"
+              :size="14"
+            />
           </button>
         </div>
       </section>
@@ -522,6 +538,11 @@ function relativeDate(iso: string): string {
 
 .action {
   visibility: hidden;
+  /* The box is fixed at 18px but the icon is 14px, so centre it explicitly —
+     baseline alignment would drop it below the row's badge and path. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   width: 18px;
   height: 18px;
