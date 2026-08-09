@@ -115,6 +115,7 @@ export function menuTemplate(send: (command: MenuCommand) => void): MenuItemCons
         item('Demo Games', 'help.demos'),
         item('Install Demo Projects…', 'help.installDemos'),
         { type: 'separator' },
+        item('MSX.org', 'help.msxorg'),
         item('MSXgl Reference', 'help.msxgl'),
         item('MSX2 Technical Handbook', 'help.msx2Handbook'),
         { type: 'separator' },
