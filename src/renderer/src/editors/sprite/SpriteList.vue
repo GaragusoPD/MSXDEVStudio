@@ -5,6 +5,7 @@
  * entry point.
  */
 import { computed, ref, watchEffect } from 'vue'
+import Icon from '../../components/Icon.vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { compositeFrame, type SpriteFrame, type SpritesDoc } from '../../../../shared/msx/sprite'
 import {
@@ -98,7 +99,10 @@ function onImported(frames: SpriteFrame[], palette: number[] | null): void {
           title="Duplicate"
           @click.stop="emit('mutate', duplicateSprite(doc, index))"
         >
-          ⧉
+          <Icon
+            name="content_copy"
+            :size="14"
+          />
         </button>
         <button
           type="button"
@@ -106,7 +110,10 @@ function onImported(frames: SpriteFrame[], palette: number[] | null): void {
           :disabled="doc.sprites.length <= 1"
           @click.stop="emit('mutate', removeSprite(doc, index))"
         >
-          ×
+          <Icon
+            name="delete"
+            :size="14"
+          />
         </button>
       </li>
     </ul>
@@ -224,7 +231,8 @@ ul {
 }
 
 .row button {
-  padding: 0 4px;
+  display: flex;
+  padding: 0 3px;
   color: var(--color-text-muted);
   flex-shrink: 0;
 }

@@ -153,7 +153,7 @@ watchEffect(redrawThumbs, { flush: 'post' })
         :disabled="target.frame === 0"
         @click="emit('mutate', reorderFrame(doc, target.sprite, target.frame, target.frame - 1))"
       >
-        ↑
+        <Icon name="arrow_upward" />
       </button>
       <button
         type="button"
@@ -161,7 +161,7 @@ watchEffect(redrawThumbs, { flush: 'post' })
         :disabled="target.frame >= frames.length - 1"
         @click="emit('mutate', reorderFrame(doc, target.sprite, target.frame, target.frame + 1))"
       >
-        ↓
+        <Icon name="arrow_downward" />
       </button>
 
       <span class="sep" />

@@ -280,7 +280,10 @@ function changeSize(size: SpriteSize): void {
             :disabled="index === 0"
             @click.stop="moveLayer(index, index - 1)"
           >
-            ↑
+            <Icon
+              name="arrow_upward"
+              :size="14"
+            />
           </button>
           <button
             type="button"
@@ -288,7 +291,10 @@ function changeSize(size: SpriteSize): void {
             :disabled="index === layers.length - 1"
             @click.stop="moveLayer(index, index + 1)"
           >
-            ↓
+            <Icon
+              name="arrow_downward"
+              :size="14"
+            />
           </button>
           <button
             type="button"
@@ -296,7 +302,10 @@ function changeSize(size: SpriteSize): void {
             :disabled="layers.length <= 1"
             @click.stop="emit('mutate', removeLayer(doc, target.sprite, index))"
           >
-            ×
+            <Icon
+              name="delete"
+              :size="14"
+            />
           </button>
         </li>
       </ul>
@@ -601,7 +610,8 @@ ul {
 }
 
 .row button {
-  padding: 0 4px;
+  display: flex;
+  padding: 0 3px;
   color: var(--color-text-muted);
 }
 

@@ -451,6 +451,7 @@ export type MenuCommand =
   | 'help.demos'
   | 'help.installDemos'
   | 'help.msxgl'
+  | 'help.msx2Handbook'
   | 'help.about'
 
 /** Shape of the single preload bridge exposed as `window.api`. */

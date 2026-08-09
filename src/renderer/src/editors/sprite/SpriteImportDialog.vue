@@ -12,6 +12,7 @@
  * and adopts it as the document's palette when one isn't set yet.
  */
 import { computed, reactive, ref, watch } from 'vue'
+import Icon from '../../components/Icon.vue'
 import { MAX_LAYERS, type SpriteFrame, type SpriteMode, type SpriteSize } from '../../../../shared/msx/sprite'
 import { stripToFrames } from '../../../../shared/sprite-editor'
 import { useImageImport } from '../../composables/useImageImport'
@@ -83,9 +84,10 @@ function doImport(): void {
         <button
           type="button"
           class="close"
+          title="Close"
           @click="emit('close')"
         >
-          ×
+          <Icon name="close" />
         </button>
       </header>
 
