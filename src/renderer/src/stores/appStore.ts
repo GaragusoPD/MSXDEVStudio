@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import type { AppState, PanelLayout, Theme } from '../../../shared/ipc'
+import { LICENSE_VERSION } from '../../../shared/license'
 
 const DEFAULT_STATE: AppState = {
   windowBounds: { width: 1280, height: 800 },
@@ -7,7 +8,8 @@ const DEFAULT_STATE: AppState = {
   recentProjects: [],
   theme: 'dark',
   panelLayout: { sideVisible: true, sideWidth: 260, bottomVisible: true, bottomHeight: 220 },
-  toolchain: { msxglPath: null, openmsxPath: null, nodePath: null }
+  toolchain: { msxglPath: null, openmsxPath: null, nodePath: null },
+  licenseAccepted: null
 }
 
 /**
@@ -21,16 +23,36 @@ export type BottomTab = 'output' | 'problems' | 'terminal'
 export const useAppStore = defineStore('app', {
   // `bottomTab` is view state, not persisted settings — it rides along with the
   // panel layout it belongs to rather than earning a store of its own.
-  state: (): AppState & { bottomTab: BottomTab } => ({ ...DEFAULT_STATE, bottomTab: 'output' }),
+  // `stateLoaded` is the same kind of thing: App.vue renders nothing until it
+  // flips, so an accepted user never sees the licence gate flash past.
+  state: (): AppState & { bottomTab: BottomTab; stateLoaded: boolean } => ({
+    ...DEFAULT_STATE,
+    bottomTab: 'output',
+    stateLoaded: false
+  }),
 
   getters: {
-    hasProject: (state): boolean => state.lastProject !== null
+    hasProject: (state): boolean => state.lastProject !== null,
+
+    /** False until the current licence version has been accepted at startup. */
+    licenseAgreed: (state): boolean => state.licenseAccepted === LICENSE_VERSION
   },
 
   actions: {
     async load(): Promise<void> {
       const state = await window.api.invoke('app:getState', undefined)
       this.$patch(state)
+      this.stateLoaded = true
+    },
+
+    /** Ticked the box and pressed Accept — recorded so the gate stays away. */
+    async acceptLicense(): Promise<void> {
+      await this.persist({ licenseAccepted: LICENSE_VERSION })
+    },
+
+    /** Declined: nothing is recorded, so the gate returns on the next launch. */
+    async declineLicense(): Promise<void> {
+      await window.api.invoke('app:quit', undefined)
     },
 
     /** Applies a partial update locally and asks main to persist it. */

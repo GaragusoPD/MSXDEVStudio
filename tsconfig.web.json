@@ -24,5 +24,9 @@
     "src/renderer/src/**/*.vue",
     "src/preload/index.d.ts",
     "src/shared/**/*"
-  ]
+  ],
+  // Shared tests run in Vitest under Node and are typechecked by
+  // tsconfig.node.json. Leaving them in here as well would additionally require
+  // them to be browser-safe, which is a constraint on the tests, not the code.
+  "exclude": ["src/shared/**/*.test.ts"]
 }

@@ -251,6 +251,11 @@ function createWindow(): void {
   }
 }
 
+// Declining the licence gate: there is no way past it, so the app exits.
+// `before-quit` flushes the state; the acceptance flag is deliberately never
+// written on decline, which is what brings the gate back on the next launch.
+ipcMain.handle('app:quit', (): void => app.quit())
+
 ipcMain.handle('app:getState', (): AppState => stateService.get())
 
 ipcMain.handle('app:setState', (_event, partial: Partial<AppState>): AppState => {

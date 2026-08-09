@@ -1,10 +1,13 @@
 MSXDEVStudio License
+Version 1.0
 
 Copyright (c) 2026 Pablo D. Garaguso. All rights reserved.
 
 MSXDEVStudio is free to download and use. In summary: make anything you like with
 it, including commercial products, but do not sell MSXDEVStudio itself, and credit
 the author in what you make.
+
+By installing or using MSXDEVStudio you accept these terms.
 
 
 1. PERMISSIONS
@@ -20,8 +23,12 @@ You may:
      provided you do so free of charge and keep this license and all copyright
      notices intact.
 
-  c) Modify MSXDEVStudio for your own personal or internal use, and submit
-     modifications back to the project.
+  c) Modify MSXDEVStudio for your own personal or internal use.
+
+  d) Publish your modified source code so that it can be reviewed and
+     contributed back: forking this repository, pushing a branch and opening a
+     pull request are all expressly permitted, and encouraged. Contributions
+     you submit to the project are offered under these same terms.
 
 
 2. RESTRICTIONS
@@ -32,9 +39,12 @@ You may not:
      product, paid bundle, paid service or paid distribution. MSXDEVStudio must
      reach whoever receives it free of charge.
 
-  b) Distribute modified versions of MSXDEVStudio publicly without the author's
-     written permission. This restriction applies to MSXDEVStudio itself, never to
-     software you create with it.
+  b) Distribute modified builds of MSXDEVStudio — installers, packaged
+     applications, or any other ready-to-run form — to end users without the
+     author's written permission. Publishing modified source code under
+     section 1(d) is always allowed; shipping a rival application built from it
+     is not. This restriction applies to MSXDEVStudio itself, never to software
+     you create with it.
 
   c) Remove, obscure or alter this license, the copyright notice, or the
      attribution required by section 3.
@@ -74,9 +84,14 @@ license and which you must comply with independently:
   C-BIOS                      BSD-style
   WebMSX                      see that project
 
-Components that ARE redistributed inside MSXDEVStudio's installers (Electron, Vue,
-Pinia, Vue Router, the Monaco editor, chokidar and yauzl) are licensed under the
-MIT License by their respective authors.
+Components that ARE redistributed inside MSXDEVStudio's installers remain the
+property of their respective authors, under the licenses shown:
+
+  Electron, Vue, Pinia, Vue Router, the Monaco editor, chokidar, yauzl,
+  xterm.js (@xterm/xterm, @xterm/addon-fit), node-pty (@lydell/node-pty)
+                              MIT License
+  Material Symbols (icon font)
+                              Apache License 2.0 — full text in licenses/
 
 The tutorials under docs/tutorials/ quote source code from the MSXgl sample
 programs and are therefore licensed under CC BY-SA 4.0, matching MSXgl's own

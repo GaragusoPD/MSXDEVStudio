@@ -118,6 +118,11 @@ binaries are not code-signed yet. See [Known gaps](#known-gaps).
 
 ### First run
 
+The first launch opens with the [license](#license): a summary of what you may
+and may not do, the full text below it, and a checkbox. Accepting is required to
+use MSXDEVStudio — decline and it closes, and asks again next time. You are only
+asked once per machine, and again if the terms ever change.
+
 MSXDEVStudio does not bundle the MSX toolchain, and does not need you to find it
 either. On first launch it offers to download MSXgl (which brings its own SDCC
 compiler and tools) for you, or to point at an install you already have.
@@ -279,6 +284,12 @@ Pull requests are welcome. This is my first project opened to the community, and
 what I care about most is that it stays reliable for the people using it to make
 games, so the bar is quality rather than volume.
 
+Fork it, branch, and open a pull request in the normal GitHub way — the
+[license](#license) permits publishing your modified source specifically so this
+works. Contributions you submit are offered under the same license as the
+project. The one thing it does not allow is releasing your fork as a competing
+build; the source is open to read, improve and send back.
+
 **Before opening a pull request:**
 
 - Run `npm run check` (lint plus both type checks) and `npm run test`. Both must
@@ -428,13 +439,20 @@ author in what you make.**
   claims no rights over your code, your assets or your games, and no share of
   your revenue.
 - Copy and share MSXDEVStudio itself, unmodified and free of charge.
-- Modify it for your own use.
+- Modify it for your own use, and publish your modified source — fork the
+  repository, push a branch, open a pull request. That is expressly allowed and
+  actively encouraged; see [Contributing](#contributing).
 
 **You may not:**
 
 - Sell MSXDEVStudio, charge a fee for access to it, or include it in a paid
   product, paid bundle or paid service. It must reach whoever receives it free
   of charge.
+- Ship modified **builds** — installers, packaged applications, anything
+  ready-to-run — to end users without written permission. Publishing modified
+  source is always fine; releasing a rival application built from it is not.
+- Remove, obscure or alter the license, the copyright notice, or the credit
+  required below.
 
 **You must:**
 
@@ -475,6 +493,8 @@ openMSX is installed by you. They remain under their own licenses:
 | C-BIOS | BSD-style | No, ships with openMSX |
 | WebMSX | See the project | No, loaded from webmsx.org |
 | Electron, Vue, Pinia, Vue Router, Monaco, chokidar, yauzl | MIT | Yes |
+| xterm.js (`@xterm/xterm`, `@xterm/addon-fit`) | MIT | Yes |
+| node-pty (`@lydell/node-pty`) | MIT | Yes |
 | Material Symbols (icon font) | Apache-2.0 | Yes — [licenses/](licenses/) |
 
 Because MSXgl is CC BY-SA 4.0, games built with it are expected to credit it.

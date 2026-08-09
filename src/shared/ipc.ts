@@ -116,6 +116,11 @@ export interface AppState {
   theme: Theme
   panelLayout: PanelLayout
   toolchain: ToolchainSettings
+  /**
+   * `LICENSE_VERSION` of the terms the user accepted at startup, or null if
+   * they never have. Anything other than the current version re-shows the gate.
+   */
+  licenseAccepted: string | null
 }
 
 /** The currently open project, as `project:open`/`create`/`save` return it. */
@@ -271,6 +276,8 @@ export interface GitResult {
 export interface IpcApi {
   'app:getState': { req: void; res: AppState }
   'app:setState': { req: Partial<AppState>; res: AppState }
+  /** Declining the licence gate: there is no way into the app, so the app exits. */
+  'app:quit': { req: void; res: void }
   'toolchain:getStatus': { req: void; res: ToolchainStatus }
   'toolchain:setPaths': { req: Partial<ToolchainSettings>; res: ToolchainStatus }
   'toolchain:downloadMsxgl': { req: { targetDir?: string }; res: ToolchainStatus }

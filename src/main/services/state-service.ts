@@ -10,7 +10,8 @@ const DEFAULT_STATE: AppState = {
   recentProjects: [],
   theme: 'dark',
   panelLayout: { sideVisible: true, sideWidth: 260, bottomVisible: true, bottomHeight: 220 },
-  toolchain: { msxglPath: null, openmsxPath: null, nodePath: null }
+  toolchain: { msxglPath: null, openmsxPath: null, nodePath: null },
+  licenseAccepted: null
 }
 
 const SAVE_DEBOUNCE_MS = 300
