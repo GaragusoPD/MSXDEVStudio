@@ -6,8 +6,13 @@ import { useExplorerStore } from '../stores/explorerStore'
 import { useTabsStore } from '../stores/tabsStore'
 import { disposeModel } from '../editors/monaco-models'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu.vue'
+import Icon from './Icon.vue'
 
 const props = defineProps<{ entry: FsEntry; depth: number }>()
+
+/** Left inset of a depth-0 row. Matches ExplorerPanel's `.header` padding, so
+ *  the root folder starts on the same line as the "Explorer" title above it. */
+const INDENT_BASE = 12
 
 const explorerStore = useExplorerStore()
 const tabsStore = useTabsStore()
@@ -115,18 +120,10 @@ const menuItems = computed<ContextMenuItem[]>(() => {
   <li class="node">
     <div
       class="row"
-      :style="{ paddingLeft: `${depth * 14 + 6}px` }"
+      :style="{ paddingLeft: `${depth * 14 + INDENT_BASE}px` }"
       @click="onClick"
       @contextmenu.prevent.stop="onContextMenu"
     >
-      <span
-        v-if="entry.isDirectory"
-        class="arrow"
-      >{{ isExpanded ? '▾' : '▸' }}</span>
-      <span
-        v-else
-        class="arrow-spacer"
-      />
       <input
         v-if="isRenaming"
         ref="renameInput"
@@ -138,8 +135,17 @@ const menuItems = computed<ContextMenuItem[]>(() => {
         @blur="commitRename"
       >
       <template v-else>
+        <!-- Folders take the slot the file badge occupies, so names line up
+             whatever the row holds; the glyph opens with the folder so the
+             caret is not the only thing saying so. -->
+        <Icon
+          v-if="entry.isDirectory"
+          class="folder-icon"
+          :name="isExpanded ? 'folder_open' : 'folder'"
+          :size="16"
+        />
         <span
-          v-if="!entry.isDirectory"
+          v-else
           class="badge"
           :style="{ background: badge.color }"
         >{{ badge.label }}</span>
@@ -154,9 +160,8 @@ const menuItems = computed<ContextMenuItem[]>(() => {
       <li
         v-if="isCreatingHere"
         class="row"
-        :style="{ paddingLeft: `${(depth + 1) * 14 + 6}px` }"
+        :style="{ paddingLeft: `${(depth + 1) * 14 + INDENT_BASE}px` }"
       >
-        <span class="arrow-spacer" />
         <input
           ref="createInput"
           v-model="createValue"
@@ -204,13 +209,9 @@ const menuItems = computed<ContextMenuItem[]>(() => {
   background: var(--color-bg-hover);
 }
 
-.arrow,
-.arrow-spacer {
-  display: inline-block;
-  width: 12px;
-  flex-shrink: 0;
-  font-size: 10px;
-  text-align: center;
+/* Same 16px footprint as .badge, so folder and file rows share one text column. */
+.folder-icon {
+  width: 16px;
   color: var(--color-text-muted);
 }
 
