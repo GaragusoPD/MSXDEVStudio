@@ -451,6 +451,7 @@ export type MenuCommand =
   | 'help.demos'
   | 'help.installDemos'
   | 'help.msxorg'
+  | 'help.openmsx'
   | 'help.msxgl'
   | 'help.msx2Handbook'
   | 'help.about'

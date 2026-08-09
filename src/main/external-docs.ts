@@ -19,6 +19,7 @@ export const EXTERNAL_MARK = ' ↗'
 
 export const EXTERNAL_DOCS: Partial<Record<MenuCommand, string>> = {
   'help.msxorg': 'https://www.msx.org/',
+  'help.openmsx': 'https://openmsx.org/',
   'help.msxgl': 'https://github.com/aoineko-fr/MSXgl/wiki',
   'help.msx2Handbook': 'https://github.com/Konamiman/MSX2-Technical-Handbook'
 }
