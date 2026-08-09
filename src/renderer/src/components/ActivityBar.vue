@@ -17,7 +17,7 @@ const items: ActivityItem[] = [
   { key: 'git', label: 'Git', route: '/git', icon: 'account_tree' },
   { key: 'resources', label: 'Resources', route: '/resources', icon: 'imagesmode' },
   { key: 'run', label: 'Run', route: '/run', icon: 'play_arrow' },
-  { key: 'examples', label: 'Examples', route: '/examples', icon: 'grid_view' }
+  { key: 'examples', label: 'MSXgl Examples', route: '/examples', icon: 'grid_view' }
 ]
 
 const settingsItem: ActivityItem = { key: 'settings', label: 'Toolchain Settings', route: '/settings', icon: 'settings' }

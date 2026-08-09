@@ -49,7 +49,7 @@ function openLink(target: string): void {
 <template>
   <div class="examples-panel">
     <h2 class="header">
-      Examples
+      MSXgl Official Examples
     </h2>
 
     <div class="search">
