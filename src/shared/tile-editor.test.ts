@@ -13,6 +13,7 @@ import {
   removeTile,
   reorderTiles,
   rowColorViolations,
+  swapRowColors,
   tileModeConversionLossy,
   splitColorByte,
   tilePixels,
@@ -23,6 +24,7 @@ import {
   applyRoleStroke,
   applyStroke,
   blockColorGroupWarning,
+  blockColorTargets,
   blockFromTiles,
   canRedo,
   canUndo,
@@ -573,6 +575,25 @@ describe('multi-tile blocks', () => {
     const clean = createBlock(createTilesDoc('sc1', 8), 'wall', 4, 2)
     expect(clean.blocks[0].tiles).toEqual([8, 9, 10, 11, 12, 13, 14, 15])
     expect(blockColorGroupWarning(clean, clean.blocks[0])).toBeNull()
+  })
+
+  it('names each tile a block-wide colour edit touches once, however often the block lists it', () => {
+    const doc = blockFromTiles(createTilesDoc('sc2', 8), 'reused', 2, 2, [5, 5, 6, 7])
+    expect(blockColorTargets(doc, doc.blocks[0])).toEqual([5, 6, 7])
+  })
+
+  it('collapses an sc1 block onto one target per group of eight', () => {
+    const inside = createBlock(createTilesDoc('sc1', 8), 'sign', 2, 2) // tiles 8-11, all group 1
+    expect(blockColorTargets(inside, inside.blocks[0])).toEqual([8])
+
+    const straddling = blockFromTiles(createTilesDoc('sc1', 16), 'wide', 2, 2, [6, 7, 14, 15])
+    expect(blockColorTargets(straddling, straddling.blocks[0])).toEqual([6, 14])
+  })
+
+  it('swaps an sc1 block’s pair exactly once — swapping it four times would look untouched', () => {
+    const doc = setRowColors(createBlock(createTilesDoc('sc1', 8), 'sign', 2, 2), 8, 0, 7, 1)
+    const swapped = blockColorTargets(doc, doc.blocks[0]).reduce((d, tile) => swapRowColors(d, tile, 0), doc)
+    expect(splitColorByte(swapped.groupColors[1])).toEqual({ fg: 1, bg: 7 })
   })
 
   it('never warns outside sc1, where colour is per row', () => {

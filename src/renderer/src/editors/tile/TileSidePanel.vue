@@ -27,8 +27,10 @@ import {
   changeMode,
   commit,
   deleteBlock,
+  focusCell,
   nameSelection,
   selectBlock,
+  setBlockWide,
   setColor,
   setPalette,
   setRow,
@@ -42,12 +44,24 @@ const props = defineProps<{ session: TileSession }>()
 const doc = computed(() => props.session.doc)
 const rgb = computed(() => paletteToRgb(doc.value.palette))
 const programmable = computed(() => doc.value.mode === 'sc4')
+/**
+ * What the canvas is editing when it isn't a single tile — a named block, or
+ * the grid marquee acting as one. Named apart from the block list's own `block`
+ * rows, which shadow it inside their `v-for`.
+ */
+const canvasBlock = computed(() => activeBlock(props.session))
 const rows = computed(() =>
   Array.from({ length: TILE_SIZE }, (_, y) => ({ y, ...splitColorByte(colorByteAt(doc.value, props.session.active, y)) }))
 )
 
 /** sc1 shares one pair per group of 8 tiles, so the strip collapses to a single row. */
 const strip = computed(() => (doc.value.mode === 'sc1' ? rows.value.slice(0, 1) : rows.value))
+
+/** In a block the strip edits one of its cells, so the heading has to say which. */
+const stripHeading = computed(() => {
+  const base = doc.value.mode === 'sc1' ? `Group ${props.session.active >> 3} colors` : 'Row colors'
+  return canvasBlock.value ? `${base} — tile ${props.session.active}` : base
+})
 
 function togglePalette(on: boolean): void {
   commit(props.session, { ...doc.value, palette: on ? [...MSX1_PALETTE_GRB] : null }, 'palette mode')
@@ -71,10 +85,7 @@ const newBlock = ref({ width: 2, height: 2 })
 const marquee = computed(() => (props.session.block === null ? activeBlock(props.session) : null))
 
 /** sc1 shares one FG/BG per 8 tiles, so a multi-tile canvas can recolour its neighbours — named or not. */
-const blockWarning = computed(() => {
-  const block = activeBlock(props.session)
-  return block ? blockColorGroupWarning(doc.value, block) : null
-})
+const blockWarning = computed(() => (canvasBlock.value ? blockColorGroupWarning(doc.value, canvasBlock.value) : null))
 
 function switchMode(mode: TileMode): void {
   if (changeMode(props.session, mode)) return
@@ -172,9 +183,38 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
     </section>
 
     <section>
-      <h3>{{ doc.mode === 'sc1' ? `Group ${session.active >> 3} colors` : 'Row colors' }}</h3>
+      <h3>{{ stripHeading }}</h3>
+      <template v-if="canvasBlock">
+        <!-- ponytail: cells shrink to fit; a scrollable mini-map if blocks past ~16 wide become normal -->
+        <div
+          class="cells"
+          :style="{ gridTemplateColumns: `repeat(${canvasBlock.width}, minmax(0, 1fr))` }"
+        >
+          <button
+            v-for="(tile, i) in canvasBlock.tiles"
+            :key="i"
+            type="button"
+            class="cell"
+            :class="{ on: tile === session.active }"
+            :title="`tile ${tile}`"
+            @click="focusCell(session, tile)"
+          >
+            {{ tile }}
+          </button>
+        </div>
+        <label class="inline">
+          <input
+            type="checkbox"
+            :checked="session.blockWide"
+            @change="setBlockWide(session, ($event.target as HTMLInputElement).checked)"
+          >
+          <span title="A chip or ⇄ writes that row on every tile of the block, in one undo step. In sc1 the pair belongs to the group of eight, so it can reach further — see the warning under Blocks.">
+            Whole block
+          </span>
+        </label>
+      </template>
       <p class="hint">
-        Click a chip to give that role the selected palette color ({{ session.color }}).
+        Click a chip to choose that role's color.
       </p>
       <div
         v-for="row in strip"
@@ -182,20 +222,44 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         class="rowpair"
       >
         <span class="label">{{ doc.mode === 'sc1' ? `${session.active >> 3}` : row.y }}</span>
-        <button
-          type="button"
+        <span
           class="chip"
           :style="{ background: toHex(rgb[row.fg]) }"
           :title="`Foreground: ${row.fg} — ${grbLabel(row.fg)}`"
-          @click="setRow(session, row.y, session.color, row.bg)"
-        />
-        <button
-          type="button"
+        >
+          <select
+            :value="row.fg"
+            @change="setRow(session, row.y, Number(($event.target as HTMLSelectElement).value), row.bg)"
+          >
+            <option
+              v-for="(color, index) in rgb"
+              :key="index"
+              :value="index"
+              :style="{ background: toHex(color) }"
+            >
+              {{ index }} — {{ grbLabel(index) }}
+            </option>
+          </select>
+        </span>
+        <span
           class="chip"
           :style="{ background: toHex(rgb[row.bg]) }"
           :title="`Background: ${row.bg} — ${grbLabel(row.bg)}`"
-          @click="setRow(session, row.y, row.fg, session.color)"
-        />
+        >
+          <select
+            :value="row.bg"
+            @change="setRow(session, row.y, row.fg, Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option
+              v-for="(color, index) in rgb"
+              :key="index"
+              :value="index"
+              :style="{ background: toHex(color) }"
+            >
+              {{ index }} — {{ grbLabel(index) }}
+            </option>
+          </select>
+        </span>
         <button
           type="button"
           class="swap"
@@ -273,7 +337,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
               type="text"
               spellcheck="false"
               :value="block.name"
-              @click.stop
+              @keydown.enter="selectBlock(session, index)"
               @change="rename(index, $event)"
             >
             <span class="dims">{{ block.width }}×{{ block.height }}</span>
@@ -575,6 +639,37 @@ section {
   background: none;
 }
 
+/* One button per cell of the open block. The column count is the block's, so it
+   lives in an inline `:style`; a 32-wide marquee then shrinks its cells rather
+   than running off the 220px sidebar. */
+.cells {
+  display: grid;
+  gap: 2px;
+  max-height: 120px;
+  margin-bottom: 4px;
+  overflow-y: auto;
+}
+
+.cells .cell {
+  aspect-ratio: 1;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* The same amber the canvas outlines the targeted cell with. */
+.cells .cell.on {
+  border-color: #ffd24e;
+  background: var(--color-bg-active-item);
+  color: var(--color-text);
+}
+
 .rowpair {
   display: flex;
   align-items: center;
@@ -612,11 +707,33 @@ section {
   color: #fff;
 }
 
+/* The swatch *is* the picker: a transparent native select lies over it, so
+   clicking the colour opens the sixteen entries rather than assigning whichever
+   one the palette above happened to have selected. Same mechanism as the sprite
+   editor's line colours, and it keeps the keyboard and the tinted option list
+   for free. */
 .chip {
+  position: relative;
   width: 34px;
   height: 16px;
   border: 1px solid var(--color-border);
   border-radius: 2px;
+}
+
+.chip:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.chip select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .swap {

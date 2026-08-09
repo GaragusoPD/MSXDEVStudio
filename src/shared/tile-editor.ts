@@ -439,6 +439,24 @@ export function blockColorGroupWarning(doc: TilesDoc, block: TileBlock): string 
   return `sc1: eight tiles share one FG/BG pair. This block doesn't own tile${shared.length > 1 ? 's' : ''} ${shared.join(', ')} of the group${shared.length > 1 ? 's' : ''} it sits in, so recolouring a row here recolours those too. Size it to whole groups of 8 to avoid it.`
 }
 
+/**
+ * The tiles a block-wide colour edit must touch, each once. A block may list the
+ * same tile twice, and in sc1 eight tiles share one byte — writing that byte
+ * twice is harmless, but `swapRowColors` also *inverts the patterns* of the
+ * whole group, so a second visit undoes the first.
+ */
+export function blockColorTargets(doc: TilesDoc, block: TileBlock): number[] {
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const tile of block.tiles) {
+    const key = doc.mode === 'sc1' ? Math.floor(tile / SC1_GROUP) : tile
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(tile)
+  }
+  return out
+}
+
 // ── tileset grid selection ──────────────────────────────────────────────────
 
 /** Tiles per row in the tileset sheet before it has been measured — the shape a marquee is a rectangle of. */

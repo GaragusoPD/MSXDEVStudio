@@ -12,9 +12,11 @@ import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex } from '../../../../sh
 import { MAX_TILE_SIZE } from '../../../../shared/msx/bitmap-tile'
 import { sheetCols } from '../../../../shared/msx/bitmap-tile'
 import {
+  activeBlock,
   addBlock,
   addBlockFromGrid,
   doc,
+  focusCell,
   selectBlock,
   dropBlock,
   renameBlock,
@@ -34,6 +36,9 @@ const emit = defineEmits<{ color: [index: number] }>()
 const tileset = computed(() => doc(props.session))
 const rgb = computed(() => paletteToRgb(tileset.value.palette))
 const flags = computed(() => tileset.value.flags[props.session.selected] ?? 0)
+
+/** The open block, when there is one — what the cell picker offers to aim the flags at. */
+const block = computed(() => activeBlock(props.session))
 
 const tileW = ref(0)
 const tileH = ref(0)
@@ -109,6 +114,23 @@ function applySize(): void {
       <p class="hint">
         Eight bits, meaning is yours. Exported as <code>_Flags</code>, indexed by tile.
       </p>
+      <!-- ponytail: cells shrink to fit; a scrollable mini-map if blocks past ~16 wide become normal -->
+      <div
+        v-if="block"
+        class="cells"
+        :style="{ gridTemplateColumns: `repeat(${block.width}, minmax(0, 1fr))` }"
+      >
+        <button
+          v-for="(tile, i) in block.tiles"
+          :key="i"
+          class="cell"
+          :class="{ on: tile === session.selected }"
+          :title="`tile ${tile}`"
+          @click="focusCell(session, tile)"
+        >
+          {{ tile }}
+        </button>
+      </div>
       <div class="flags">
         <label
           v-for="bit in 8"
@@ -164,26 +186,37 @@ function applySize(): void {
         it points at — everywhere else they are used.
       </p>
       <ul class="blocks">
-        <li
-          v-for="(block, index) in tileset.blocks"
-          :key="index"
-          :class="{ open: session.block === index }"
-        >
+        <li>
+          <!-- "Single tile", not "Selection": closing a block here goes back to the one
+               picked tile, since a bitmap marquee is never itself a canvas. -->
           <button
-            class="open-block"
-            :title="session.block === index ? 'Close — go back to the tile' : 'Open on the canvas and draw across it'"
-            @click="selectBlock(session, session.block === index ? null : index)"
+            class="block-row"
+            :class="{ active: session.block === null }"
+            @click="selectBlock(session, null)"
           >
-            {{ session.block === index ? '▾' : '▸' }}
+            Single tile
           </button>
+        </li>
+        <li
+          v-for="(entry, index) in tileset.blocks"
+          :key="index"
+          class="block-row"
+          :class="{ active: session.block === index }"
+          @click="selectBlock(session, index)"
+        >
+          <!-- The whole row opens the block, so the name needs no click of its own —
+               and Enter on it is the keyboard path the caret button used to be. -->
           <input
-            :value="block.name"
+            class="block-name"
+            spellcheck="false"
+            :value="entry.name"
             @change="renameBlock(session, index, ($event.target as HTMLInputElement).value)"
+            @keydown.enter="selectBlock(session, index)"
           >
-          <span class="dim">{{ block.width }}×{{ block.height }}</span>
+          <span class="dim">{{ entry.width }}×{{ entry.height }}</span>
           <button
             title="Remove"
-            @click="dropBlock(session, index)"
+            @click.stop="dropBlock(session, index)"
           >
             ×
           </button>
@@ -310,6 +343,32 @@ h3 {
 .swatch.on {
   outline: 2px solid var(--color-accent);
 }
+/* A block is up to 255 tiles per axis, and a marquee across the bank is easily 16
+   wide, so the columns come from the block (inline, since the count is dynamic)
+   and the cells shrink into whatever the 196px panel has left. The index label
+   clips at that point; the tooltip and the heading carry the truth. */
+.cells {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.cell {
+  aspect-ratio: 1;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text-muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+.cell.on {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+}
 .flags {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -343,21 +402,33 @@ h3 {
   flex-direction: column;
   gap: 3px;
 }
-.blocks li {
+/* Same shape as the pattern tile editor's list, down to the class names: the two
+   editors open a block the same way, so they should not look like two ideas. */
+.block-row {
   display: flex;
   align-items: center;
   gap: 4px;
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
 }
-.blocks li.open input {
-  outline: 1px solid #ffd24e;
+.block-row.active {
+  border-color: var(--color-accent);
+  background: var(--color-bg-active-item);
 }
-.open-block {
-  padding: 0 4px;
-  min-width: 1.4em;
-}
-.blocks input {
+.block-name {
   flex: 1;
-  min-width: 4em;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 11px;
 }
 .dim {
   opacity: 0.6;

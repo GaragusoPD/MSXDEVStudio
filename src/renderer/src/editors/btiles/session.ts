@@ -205,9 +205,29 @@ export function activeExtent(session: BitmapTileSession): { width: number; heigh
     : { width: current.width, height: current.height }
 }
 
-/** Opens a block on the canvas, or `null` to go back to the selected tile. */
+/**
+ * Opens a block on the canvas, or `null` to go back to the selected tile.
+ *
+ * Opening lands on the block's first cell, because everything the side panel
+ * edits per tile — the flags — reads `selected`, and the tile that happened to
+ * be picked in the bank need not be one of the block's. Re-selecting a block
+ * that is already open does nothing at all: the whole row opens it now, so
+ * clicking into the name to rename it would otherwise throw away the cell the
+ * user just picked.
+ */
 export function selectBlock(session: BitmapTileSession, index: number | null): void {
-  session.block = index !== null && doc(session).blocks[index] ? index : null
+  if (index !== null && session.block === index) return
+  const block = index === null ? undefined : doc(session).blocks[index]
+  session.block = block ? index : null
+  if (block) session.selected = block.tiles[0] ?? session.selected
+}
+
+/**
+ * Picks which cell of the open block the flags apply to, without leaving the
+ * block — deliberately not `selectTile`, which nulls it.
+ */
+export function focusCell(session: BitmapTileSession, tileIndex: number): void {
+  if (activeBlock(session)?.tiles.includes(tileIndex)) session.selected = tileIndex
 }
 
 // ── painting ────────────────────────────────────────────────────────────────

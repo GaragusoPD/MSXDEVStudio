@@ -31,6 +31,7 @@ import {
 import {
   applyRoleStroke,
   applyStroke,
+  blockColorTargets,
   blockFromTiles,
   copyTiles,
   pasteTiles,
@@ -87,6 +88,8 @@ export interface TileSession {
    * block is only a bigger window onto them.
    */
   block: number | null
+  /** "Apply to the whole block" — session-only, not saved with the document. */
+  blockWide: boolean
   tool: TileTool
   filledRect: boolean
   /** Palette index the tools paint with. */
@@ -122,6 +125,7 @@ export function tileSession(path: string): TileSession {
     active: 0,
     columns: GRID_COLUMNS,
     block: null,
+    blockWide: false,
     tool: 'pencil',
     filledRect: false,
     color: 15,
@@ -280,8 +284,15 @@ export function activeExtent(session: TileSession): { width: number; height: num
     : { width: TILE_SIZE, height: TILE_SIZE }
 }
 
-/** Opens a named block on the canvas (or `null` to go back to the marquee). */
+/**
+ * Opens a named block on the canvas (or `null` to go back to the marquee).
+ * Opening one starts on its first tile, but re-opening the block that is
+ * already open does nothing: the block row is clickable across its whole width
+ * now, so clicking into the name field to rename it would otherwise throw away
+ * whichever cell `focusCell` had put the colour and flag controls on.
+ */
 export function selectBlock(session: TileSession, index: number | null): void {
+  if (index !== null && session.block === index) return
   const block = index === null ? null : session.doc.blocks[index]
   if (!block) {
     session.block = null
@@ -290,6 +301,16 @@ export function selectBlock(session: TileSession, index: number | null): void {
   // `select` clears `session.block`, so the open block is set after it.
   select(session, block.tiles[0] ?? 0, block.tiles)
   session.block = index
+}
+
+/**
+ * Picks which tile of the open block the colour, swap, flag and transform
+ * controls act on — without leaving the block. Deliberately not `select()`,
+ * which nulls `session.block` and so would close the block to recolour one of
+ * its tiles.
+ */
+export function focusCell(session: TileSession, tileIndex: number): void {
+  if (activeBlock(session)?.tiles.includes(tileIndex)) session.active = tileIndex
 }
 
 /**
@@ -380,12 +401,36 @@ export function transform(session: TileSession, op: TileTransform): void {
     : ''
 }
 
+/**
+ * The tiles a colour edit writes: the focused cell alone, or every tile of the
+ * open block when "whole block" is ticked, each once. `y` stays a *tile* row
+ * either way — the strip is and stays the hardware's eight rows per tile, so on
+ * a two-tall block row 3 is canvas rows 3 and 11. The FG/BG pair is a per-tile
+ * attribute and a block has no other kind.
+ */
+function colorTargets(session: TileSession): number[] {
+  const block = session.blockWide ? activeBlock(session) : null
+  return block ? blockColorTargets(session.doc, block) : [session.active]
+}
+
 export function swapRow(session: TileSession, y: number): void {
-  commit(session, swapRowColors(session.doc, session.active, y), 'swap FG/BG')
+  // Folded into one `commit`, so the whole block comes back in one undo step.
+  const doc = colorTargets(session).reduce((next, tile) => swapRowColors(next, tile, y), session.doc)
+  commit(session, doc, 'swap FG/BG')
 }
 
 export function setRow(session: TileSession, y: number, fg: number, bg: number): void {
-  commit(session, setRowColors(session.doc, session.active, y, fg, bg), 'row colors')
+  const doc = colorTargets(session).reduce((next, tile) => setRowColors(next, tile, y, fg, bg), session.doc)
+  commit(session, doc, 'row colors')
+}
+
+/**
+ * The colour strip's "whole block". Session state rather than document state,
+ * and left alone when a block closes: `colorTargets` falls back to the focused
+ * tile when there is no block to spread over, so a stale tick can't misfire.
+ */
+export function setBlockWide(session: TileSession, on: boolean): void {
+  session.blockWide = on
 }
 
 export function setPalette(session: TileSession, index: number, grb: number): void {
