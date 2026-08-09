@@ -3,6 +3,7 @@
   "tileset": "res/intro.tiles.json",
   "width": 32,
   "height": 24,
+  "cell": null,
   "layers": [
     {
       "name": "background",
@@ -82,12 +83,12 @@
         26,
         27,
         28,
+        29,
         9,
         10,
         11,
         12,
         13,
-        29,
         29,
         29,
         29,
