@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch, watchEffect } from 'vue'
 import { runMenuCommand } from './commands'
 import { useAppStore } from './stores/appStore'
 import { useBuildStore } from './stores/buildStore'
@@ -35,6 +35,15 @@ let unsubscribeState: (() => void) | undefined
 let unsubscribeProgress: (() => void) | undefined
 
 let unsubscribeMenu: (() => void) | undefined
+
+// theme.css keys the light palette off `:root[data-theme='light']`, so the
+// attribute has to land on <html> — on any element below it the selector never
+// matches and only Monaco and the terminal, which watch the store directly,
+// ever changed. watchEffect covers all three ways the theme moves: initial
+// load, the status-bar toggle, and state pushed from main.
+watchEffect(() => {
+  document.documentElement.dataset.theme = appStore.theme
+})
 
 // Everything that makes the IDE live, held back until the licence is accepted.
 // The menu is the reason this is a function rather than a straight line through
@@ -84,10 +93,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div
-    class="shell"
-    :data-theme="appStore.theme"
-  >
+  <div class="shell">
     <!-- Nothing renders until the persisted state has arrived, so an accepted
          user never sees the gate flash past on the way to the workbench. -->
     <LicenseGate v-if="appStore.stateLoaded && !appStore.licenseAgreed" />
