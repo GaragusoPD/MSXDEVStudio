@@ -30,6 +30,8 @@ import {
   selectLayer,
   selectSprite,
   spriteSession,
+  swapHiddenLayers,
+  toggleLayerHidden,
   undo
 } from './session'
 
@@ -124,42 +126,42 @@ watch(
           title="Mirror horizontally"
           @click="mirror('x')"
         >
-          ⇋
+          <Icon name="swap_horiz" />
         </button>
         <button
           type="button"
           title="Mirror vertically"
           @click="mirror('y')"
         >
-          ⇅
+          <Icon name="swap_vert" />
         </button>
         <button
           type="button"
           title="Shift left (wraps)"
           @click="shift(-1, 0)"
         >
-          ←
+          <Icon name="arrow_back" />
         </button>
         <button
           type="button"
           title="Shift right (wraps)"
           @click="shift(1, 0)"
         >
-          →
+          <Icon name="arrow_forward" />
         </button>
         <button
           type="button"
           title="Shift up (wraps)"
           @click="shift(0, -1)"
         >
-          ↑
+          <Icon name="arrow_upward" />
         </button>
         <button
           type="button"
           title="Shift down (wraps)"
           @click="shift(0, 1)"
         >
-          ↓
+          <Icon name="arrow_downward" />
         </button>
 
         <span class="sep" />
@@ -169,7 +171,7 @@ watch(
           :disabled="!canUndo(session)"
           @click="undo(session)"
         >
-          ↶
+          <Icon name="undo" />
         </button>
         <button
           type="button"
@@ -177,7 +179,7 @@ watch(
           :disabled="!canRedo(session)"
           @click="redo(session)"
         >
-          ↷
+          <Icon name="redo" />
         </button>
 
         <span class="spacer" />
@@ -201,7 +203,11 @@ watch(
         v-if="budget.exceeded"
         class="scanline-hint"
       >
-        ⚠ {{ budget.total }} hardware sprite planes across all characters (frame 0) — more than
+        <Icon
+          name="warning"
+          :size="14"
+        />
+        {{ budget.total }} hardware sprite planes across all characters (frame 0) — more than
         {{ budget.limit }} on the same scanline will be dropped by the VDP. Informational only.
       </p>
 
@@ -221,14 +227,18 @@ watch(
           :target="session.selection"
           :tool="session.tool"
           :onion-skin="session.onionSkin"
+          :hidden-layers="session.hiddenLayers"
           @commit="commit(session, $event)"
           @select-layer="selectLayer(session, $event)"
         />
         <SpriteLayerPanel
           :doc="doc(session)"
           :target="session.selection"
+          :hidden-layers="session.hiddenLayers"
           @select-layer="selectLayer(session, $event)"
           @mutate="commit(session, $event)"
+          @toggle-layer="toggleLayerHidden(session, $event)"
+          @move-layer="swapHiddenLayers(session, $event.from, $event.to)"
         />
       </div>
 
@@ -308,7 +318,12 @@ watch(
   color: var(--color-text-muted);
 }
 
+/* Flex rather than an inline glyph: the icon aligns to the sentence instead of
+   sitting on its baseline, which reads low against 11px text. */
 .scanline-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   margin: 0;
   padding: 4px 10px;
   border-bottom: 1px solid var(--color-border);

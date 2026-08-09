@@ -16,6 +16,7 @@ import {
   cellLayers,
   createLayer,
   getSpritePixel,
+  lockLeadingCc,
   MAX_GRID,
   MAX_LAYERS,
   setSpritePixel,
@@ -57,17 +58,25 @@ export function updateLayer(doc: SpritesDoc, target: SpriteTarget, fn: (layer: S
   const sprites = mapAt(doc.sprites, target.sprite, (s) => {
     const frames = mapAt(s.frames, target.frame, (f) => {
       const layers = mapAt(f.layers, target.layer, fn)
-      return layers === f.layers ? f : { layers }
+      return lockLeadingCc(layers === f.layers ? f : { layers }, doc.mode)
     })
     return frames === s.frames ? s : { ...s, frames }
   })
   return sprites === doc.sprites ? doc : { ...doc, sprites }
 }
 
+/** Every frame of `sprite` with the leading-CC rule applied; same reference when none needed it. */
+function lockFrames(sprite: SpriteCharacter, mode: SpriteMode): SpriteCharacter {
+  const frames = sprite.frames.map((frame) => lockLeadingCc(frame, mode))
+  return frames.every((frame, i) => frame === sprite.frames[i]) ? sprite : { ...sprite, frames }
+}
+
 /** A true no-op `fn` (including an out-of-range index) returns `doc` unchanged. */
 function updateSprite(doc: SpritesDoc, index: number, fn: (sprite: SpriteCharacter) => SpriteCharacter): SpritesDoc {
   if (!doc.sprites[index]) return doc
-  const sprites = mapAt(doc.sprites, index, fn)
+  // Every plane list change lands here — add, delete, reorder, grid change — so
+  // this is where a plane that has just *become* the first one gets its CC cleared.
+  const sprites = mapAt(doc.sprites, index, (sprite) => lockFrames(fn(sprite), doc.mode))
   return sprites === doc.sprites ? doc : { ...doc, sprites }
 }
 

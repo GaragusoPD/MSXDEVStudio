@@ -132,11 +132,12 @@ describe('draw dispatch: strokes land on the active layer and the composite refl
 
 describe('frame/sprite/layer list ops', () => {
   it('addFrame clones frame 0’s layer count/colors but starts blank', () => {
-    const doc = createSpritesDoc(2, 8)
-    const colored = updateLayer(doc, TARGET, (l) => setLineColorByte(l, 0, SPRITE_CC | 7))
+    const doc = addLayer(createSpritesDoc(2, 8), 0)
+    // CC on the *second* plane: the first can never carry it (see the leading-CC rule).
+    const colored = updateLayer(doc, { ...TARGET, layer: 1 }, (l) => setLineColorByte(l, 0, SPRITE_CC | 7))
     const next = addFrame(colored, 0)
     expect(next.sprites[0].frames).toHaveLength(2)
-    const [blankLayer] = next.sprites[0].frames[1].layers
+    const blankLayer = next.sprites[0].frames[1].layers[1]
     expect(blankLayer.lineColors[0]).toBe(SPRITE_CC | 7) // colors carried over
     expect(blankLayer.pattern.every((b) => b === 0)).toBe(true) // pattern is blank
   })
@@ -214,16 +215,78 @@ describe('frame/sprite/layer list ops', () => {
   })
 })
 
+describe('the leading plane can never carry CC', () => {
+  const ccOf = (doc: ReturnType<typeof createSpritesDoc>, layer: number): boolean[] =>
+    doc.sprites[0].frames[0].layers[layer].lineColors.map((value) => (value & SPRITE_CC) !== 0)
+
+  it('refuses CC on the first plane but keeps it on the ones below', () => {
+    let doc = addLayer(createSpritesDoc(2, 16), 0)
+    doc = updateLayer(doc, TARGET, (layer) => setLayerCc(layer, true))
+    expect(ccOf(doc, 0).some(Boolean)).toBe(false)
+
+    doc = updateLayer(doc, { ...TARGET, layer: 1 }, (layer) => setLayerCc(layer, true))
+    expect(ccOf(doc, 1).every(Boolean)).toBe(true)
+  })
+
+  it('clears it from a plane promoted to the front by a reorder', () => {
+    let doc = addLayer(createSpritesDoc(2, 16), 0)
+    doc = updateLayer(doc, { ...TARGET, layer: 1 }, (layer) => setLayerCc(layer, true))
+    expect(ccOf(doc, 1).every(Boolean)).toBe(true)
+
+    // The plane that was legal at index 1 is not legal at index 0.
+    doc = reorderLayer(doc, 0, 1, 0)
+    expect(ccOf(doc, 0).some(Boolean)).toBe(false)
+  })
+
+  it('clears it when the plane above is deleted', () => {
+    let doc = addLayer(createSpritesDoc(2, 16), 0)
+    doc = updateLayer(doc, { ...TARGET, layer: 1 }, (layer) => setLayerCc(layer, true))
+    doc = removeLayer(doc, 0, 0)
+    expect(ccOf(doc, 0).some(Boolean)).toBe(false)
+  })
+
+  it('heals a sheet that already carries it — the demo_msx2 ship blink', () => {
+    const doc = createSpritesDoc(2, 16)
+    const first = doc.sprites[0].frames[0].layers[0]
+    const raw = {
+      ...doc,
+      sprites: [
+        {
+          ...doc.sprites[0],
+          frames: [{ layers: [{ ...first, lineColors: first.lineColors.map((v) => v | SPRITE_CC), cc: true }] }]
+        }
+      ]
+    }
+    expect(ccOf(normalizeSprites(raw), 0).some(Boolean)).toBe(false)
+  })
+
+  it('leaves mode 1 alone, which has no CC bit at all', () => {
+    const doc = createSpritesDoc(1, 16)
+    const first = doc.sprites[0].frames[0].layers[0]
+    const raw = {
+      ...doc,
+      sprites: [
+        {
+          ...doc.sprites[0],
+          frames: [{ layers: [{ ...first, lineColors: first.lineColors.map((v) => v | SPRITE_CC) }] }]
+        }
+      ]
+    }
+    expect(ccOf(normalizeSprites(raw), 0).every(Boolean)).toBe(true)
+  })
+})
+
 describe('size conversion', () => {
   it('growing 8→16 keeps the pattern top-left and preserves color/EC/CC', () => {
-    const doc = createSpritesDoc(2, 8)
+    const doc = addLayer(createSpritesDoc(2, 8), 0)
     let painted = updateLayer(doc, TARGET, (l) => paintPixel(l, 7, 7, 8, true))
-    painted = updateLayer(painted, TARGET, (l) => setLayerCc(l, true))
+    // CC lives on the second plane; the first can never carry it.
+    painted = updateLayer(painted, { ...TARGET, layer: 1 }, (l) => setLayerCc(l, true))
     const grown = convertSpriteSize(painted, 16)
     const layer = grown.sprites[0].frames[0].layers[0]
     expect(getSpritePixel(layer, 7, 7, 16)).toBe(true)
     expect(getSpritePixel(layer, 8, 8, 16)).toBe(false)
-    expect(layer.cc).toBe(true)
+    expect(grown.sprites[0].frames[0].layers[1].cc).toBe(true)
   })
 
   it('shrinking 16→8 crops, and sizeConversionLossy flags pixels outside the kept quadrant', () => {
@@ -255,7 +318,10 @@ describe('mode conversion loss check (the conversion itself is msx/sprite.ts’s
     const varied = updateLayer(createSpritesDoc(2, 16), TARGET, (l) => setLineColorByte(l, 5, 9))
     expect(modeConversionLossy(varied, 1)).toBe(true)
 
-    const blended = updateLayer(createSpritesDoc(2, 16), TARGET, (l) => setLayerCc(l, true))
+    // On the second plane, because the first can never carry CC.
+    const blended = updateLayer(addLayer(createSpritesDoc(2, 16), 0), { ...TARGET, layer: 1 }, (l) =>
+      setLayerCc(l, true)
+    )
     expect(modeConversionLossy(blended, 1)).toBe(true)
   })
 

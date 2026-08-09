@@ -170,7 +170,8 @@ export function normalizeSprites(raw: unknown): SpritesDoc {
         perCell.set(key, count + 1)
         kept.push(layer)
       }
-      return { layers: kept.length ? kept : [createLayer(size)] }
+      // Also on load, so a sheet that already carries the mistake heals itself.
+      return lockLeadingCc({ layers: kept.length ? kept : [createLayer(size)] }, mode)
     })
     return { name: String(sprite.name ?? `sprite_${index}`), cols, rows, frames }
   })
@@ -240,6 +241,30 @@ export function setLineColorByte(layer: SpriteLayer, y: number, value: number): 
   const lineColors = layer.lineColors.slice()
   lineColors[y] = value & 0xff
   return { ...layer, lineColors, cc: lineColors.every((v) => (v & SPRITE_CC) !== 0) }
+}
+
+/**
+ * Clears CC on a frame's first plane — the one place the bit can never mean
+ * anything. CC says "share the priority of the nearest plane above me whose CC
+ * is 0", and above the first plane there is nothing, so the VDP does not draw
+ * such a plane at all: MSX2 Technical Handbook 4.5, *"To display the sprite
+ * whose CC is '1', CC bit of the sprite which has smaller number should be set
+ * to '0'."* A set bit here costs a whole plane and reports nothing, which is
+ * exactly the mistake that is impossible to see in an editor.
+ *
+ * Enforced rather than merely validated, and enforced *here* rather than in the
+ * panel, because a plane can also arrive at the front by being reordered or by
+ * having the plane above it deleted — no checkbox guards those. With the first
+ * plane clear every later plane is legal by construction, so this one rule
+ * keeps the whole frame legal.
+ *
+ * Mode 1 has no CC bit, so its line bytes are left alone.
+ */
+export function lockLeadingCc(frame: SpriteFrame, mode: SpriteMode): SpriteFrame {
+  const first = frame.layers[0]
+  if (mode !== 2 || !first || !first.lineColors.some((value) => (value & SPRITE_CC) !== 0)) return frame
+  const lineColors = first.lineColors.map((value) => value & ~SPRITE_CC & 0xff)
+  return { layers: [{ ...first, lineColors, cc: false }, ...frame.layers.slice(1)] }
 }
 
 /** Sets (or clears) CC on all 16 lines — the layer-level `cc` toggle in the editor. */

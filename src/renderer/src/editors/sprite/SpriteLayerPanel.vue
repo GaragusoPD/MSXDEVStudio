@@ -35,9 +35,15 @@ import {
   type SpriteTarget
 } from '../../../../shared/sprite-editor'
 import { drawIndices } from './draw'
+import Icon from '../../components/Icon.vue'
 
-const props = defineProps<{ doc: SpritesDoc; target: SpriteTarget }>()
-const emit = defineEmits<{ selectLayer: [index: number]; mutate: [doc: SpritesDoc] }>()
+const props = defineProps<{ doc: SpritesDoc; target: SpriteTarget; hiddenLayers: number[] }>()
+const emit = defineEmits<{
+  selectLayer: [index: number]
+  mutate: [doc: SpritesDoc]
+  toggleLayer: [index: number]
+  moveLayer: [move: { from: number; to: number }]
+}>()
 
 const rgb = computed<Rgb[]>(() => paletteToRgb(props.doc.palette))
 const character = computed(() => props.doc.sprites[props.target.sprite])
@@ -58,6 +64,9 @@ const thumbRefs = ref<(HTMLCanvasElement | null)[]>([])
 /** Moves a plane one step; the buttons only ever swap neighbours, so the selection just follows. */
 function moveLayer(from: number, to: number): void {
   emit('mutate', reorderLayer(props.doc, props.target.sprite, from, to))
+  // The eyes follow for the same reason, and after the mutate: they are indices
+  // into the list the mutate has just reordered.
+  emit('moveLayer', { from, to })
   if (props.target.layer === from) emit('selectLayer', to)
   else if (props.target.layer === to) emit('selectLayer', from)
 }
@@ -79,6 +88,25 @@ watchEffect(redrawThumbs, { flush: 'post' })
 function swatch(index: number): string {
   const c = rgb.value[index] ?? { r: 0, g: 0, b: 0 }
   return `rgb(${c.r}, ${c.g}, ${c.b})`
+}
+
+/**
+ * CC on the first plane is the one setting the VDP silently throws away — it
+ * means "share the priority of the nearest plane above me whose CC is 0", and
+ * above the first plane there is nothing, so that plane is not drawn. The model
+ * clears it either way (`lockLeadingCc`); disabling the box is how the person
+ * finds out, instead of watching a checkbox refuse to stay ticked.
+ */
+const ccLocked = computed(() => props.target.layer === 0)
+const ccTitle = computed(() =>
+  ccLocked.value
+    ? 'The first plane cannot use CC: it OR-blends with the plane above, and there is none. The VDP would not draw this plane at all. Move it below another plane to enable.'
+    : 'OR-blend this plane with the plane above it'
+)
+
+/** Names the fixed TMS9918A entries; a programmable palette has only indices to give. */
+function colorLabel(index: number): string {
+  return props.doc.palette ? `${index}` : `${index} — ${MSX1_COLOR_NAMES[index]}`
 }
 
 function setColor(color: number): void {
@@ -211,9 +239,24 @@ function changeSize(size: SpriteSize): void {
           v-for="(layer, index) in layers"
           :key="index"
           class="row"
-          :class="{ active: index === target.layer, dim: isMeta && (layer.cx !== activeCell.cx || layer.cy !== activeCell.cy) }"
+          :class="{
+            active: index === target.layer,
+            dim: isMeta && (layer.cx !== activeCell.cx || layer.cy !== activeCell.cy),
+            off: hiddenLayers.includes(index)
+          }"
           @click="emit('selectLayer', index)"
         >
+          <button
+            type="button"
+            class="eye"
+            :title="hiddenLayers.includes(index) ? 'Show this plane on the canvas' : 'Hide this plane while drawing (it still exports)'"
+            @click.stop="emit('toggleLayer', index)"
+          >
+            <Icon
+              :name="hiddenLayers.includes(index) ? 'visibility_off' : 'visibility'"
+              :size="14"
+            />
+          </button>
           <canvas
             :ref="(el) => (thumbRefs[index] = el as HTMLCanvasElement)"
             class="thumb"
@@ -286,13 +329,18 @@ function changeSize(size: SpriteSize): void {
     <section v-else-if="activeLayer && doc.mode === 2">
       <div class="section-head">
         <h3>Line colors</h3>
-        <label class="inline">
+        <label
+          class="inline"
+          :class="{ locked: ccLocked }"
+          :title="ccTitle"
+        >
           <input
             type="checkbox"
             :checked="activeLayer.cc"
+            :disabled="ccLocked"
             @change="toggleCc(($event.target as HTMLInputElement).checked)"
           >
-          <span title="OR-blend every line with the sprite above it">CC (all lines)</span>
+          <span>CC (all lines)</span>
         </label>
       </div>
       <div class="lines">
@@ -303,22 +351,24 @@ function changeSize(size: SpriteSize): void {
         >
           <span class="y">{{ y - 1 }}</span>
           <span
-            class="dot"
+            class="chip"
             :style="{ background: swatch(lineByte(y - 1) & 0x0f) }"
-          />
-          <select
-            :value="lineByte(y - 1) & 0x0f"
-            @change="setLineColor(y - 1, Number(($event.target as HTMLSelectElement).value))"
+            :title="colorLabel(lineByte(y - 1) & 0x0f)"
           >
-            <option
-              v-for="c in 16"
-              :key="c - 1"
-              :value="c - 1"
-              :style="{ background: swatch(c - 1) }"
+            <select
+              :value="lineByte(y - 1) & 0x0f"
+              @change="setLineColor(y - 1, Number(($event.target as HTMLSelectElement).value))"
             >
-              {{ c - 1 }}
-            </option>
-          </select>
+              <option
+                v-for="c in 16"
+                :key="c - 1"
+                :value="c - 1"
+                :style="{ background: swatch(c - 1) }"
+              >
+                {{ colorLabel(c - 1) }}
+              </option>
+            </select>
+          </span>
           <label
             class="bit"
             title="Early clock"
@@ -332,18 +382,20 @@ function changeSize(size: SpriteSize): void {
           </label>
           <label
             class="bit"
-            title="OR-color blend"
+            :class="{ locked: ccLocked }"
+            :title="ccTitle"
           >
             <input
               type="checkbox"
               :checked="(lineByte(y - 1) & SPRITE_CC) !== 0"
+              :disabled="ccLocked"
               @change="toggleLineBit(y - 1, SPRITE_CC, ($event.target as HTMLInputElement).checked)"
             >
             CC
           </label>
           <label
             class="bit"
-            title="Invisible (still collides)"
+            title="Inhibit collision — this line stops setting the VDP's collision flag. It stays visible."
           >
             <input
               type="checkbox"
@@ -485,6 +537,26 @@ ul {
   opacity: 0.55;
 }
 
+/* Hidden planes stay legible — the thumbnail is how you find the one to bring
+   back — so the row fades rather than greys out, and the eye keeps full
+   contrast. */
+.row.off .thumb,
+.row.off .label,
+.row.off .dot {
+  opacity: 0.4;
+}
+
+.eye {
+  display: flex;
+  flex: none;
+  padding: 0 2px;
+  color: var(--color-text-muted);
+}
+
+.row.off .eye {
+  color: var(--color-accent);
+}
+
 .cell {
   color: var(--color-text-muted);
 }
@@ -564,12 +636,13 @@ ul {
   color: var(--color-text-muted);
 }
 
+/* No cap and no scroller of its own: sixteen rows fit the sidebar, and `.panel`
+   already scrolls, so capping this only bought a second scrollbar inside the
+   first. */
 .lines {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 320px;
-  overflow-y: auto;
 }
 
 .line-row {
@@ -585,15 +658,32 @@ ul {
   text-align: right;
 }
 
-.line-row select {
+/* The swatch *is* the picker, as in the tile editor's row colours: a transparent
+   native select lies over it, so a line's colour is chosen by clicking the colour
+   rather than by reading its number out of a dropdown beside it. */
+.line-row .chip {
+  position: relative;
   flex: 1;
   min-width: 0;
-  padding: 1px 2px;
+  height: 14px;
   border: 1px solid var(--color-border);
   border-radius: 2px;
-  background: var(--color-bg-tab-inactive);
-  color: var(--color-text);
-  font-size: 10px;
+}
+
+.line-row .chip:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.line-row .chip select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .bit {
@@ -602,6 +692,13 @@ ul {
   gap: 1px;
   color: var(--color-text-muted);
   white-space: nowrap;
+}
+
+/* Faded rather than hidden: the box has to stay visible for its tooltip to be
+   the place someone learns why the first plane can't OR-blend. */
+.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .toggle {

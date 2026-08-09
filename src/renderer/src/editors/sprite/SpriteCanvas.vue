@@ -11,11 +11,18 @@
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { compositeFrame } from '../../../../shared/msx/sprite'
-import type { SpritesDoc } from '../../../../shared/msx/sprite'
+import type { SpriteFrame, SpritesDoc } from '../../../../shared/msx/sprite'
 import { addLayer, floodFill, layerAtCell, paintLine, updateLayer, type SpriteTarget, type SpriteTool } from '../../../../shared/sprite-editor'
 import { drawGrid, drawIndices } from './draw'
 
-const props = defineProps<{ doc: SpritesDoc; target: SpriteTarget; tool: SpriteTool; onionSkin: boolean }>()
+const props = defineProps<{
+  doc: SpritesDoc
+  target: SpriteTarget
+  tool: SpriteTool
+  onionSkin: boolean
+  /** Planes the layer list has an eye closed on — hidden here only, never in the data. */
+  hiddenLayers: number[]
+}>()
 const emit = defineEmits<{ commit: [doc: SpritesDoc]; selectLayer: [index: number] }>()
 
 /** Zoom for a plain 16×16; a 2×2 metasprite would be 640 px at that scale, so it shrinks to fit. */
@@ -145,17 +152,29 @@ function draw(): void {
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   const rgb = paletteToRgb(doc.palette)
 
+  // Read out here rather than inside the filter callbacks: an empty layer list
+  // would never run one, and the prop would never register as a dependency of
+  // this effect — the same trap the `flush: 'post'` note below is about.
+  const hidden = props.hiddenLayers
+  const shown = (layers: SpriteFrame['layers']): SpriteFrame['layers'] => layers.filter((_, i) => !hidden.includes(i))
+
   if (props.onionSkin && props.target.frame > 0) {
     const previous = sprite?.frames[props.target.frame - 1]
     if (previous) {
       ctx.globalAlpha = 0.35
-      drawIndices(ctx, compositeFrame(previous.layers, doc.mode, size, cols, rows), cols * size, scale, rgb)
+      // The onion skin hides the same planes: every frame carries the same layer
+      // list (`removeLayer` strips an index from all of them), so plane 2 here is
+      // plane 2 there — and a ghost of the plane you just hid would be exactly
+      // what you hid it to get out of the way.
+      drawIndices(ctx, compositeFrame(shown(previous.layers), doc.mode, size, cols, rows), cols * size, scale, rgb)
       ctx.globalAlpha = 1
     }
   }
 
+  // Dropped from the composite only. Strokes still index into the frame's real
+  // layer list, so what a pointer paints never depends on what is on screen.
   const frame = sprite?.frames[props.target.frame]
-  if (frame) drawIndices(ctx, compositeFrame(frame.layers, doc.mode, size, cols, rows), cols * size, scale, rgb)
+  if (frame) drawIndices(ctx, compositeFrame(shown(frame.layers), doc.mode, size, cols, rows), cols * size, scale, rgb)
   drawGrid(ctx, cols * size, scale, rows * size, cols * rows > 1 ? size : 0)
 
   // The cell being painted, so it's obvious which hardware sprite a stroke lands on.
@@ -189,10 +208,15 @@ watchEffect(draw, { flush: 'post' })
 </template>
 
 <style scoped>
+/* `safe` on both axes: a zoomed metasprite overflows this pane, and plain
+   centring splits the overflow either side of scroll offset zero, leaving the
+   half above and left of it unreachable at any scroll position. `safe` falls
+   back to start alignment once the canvas stops fitting, so everything spills
+   the one way the scrollbars can follow. */
 .canvas-wrap {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
   flex: 1;
   min-height: 0;
   padding: 12px;

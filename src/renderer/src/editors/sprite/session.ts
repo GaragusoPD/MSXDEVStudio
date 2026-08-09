@@ -37,6 +37,12 @@ export interface SpriteSession {
   playing: boolean
   background: PlaybackBackground
   onionSkin: boolean
+  /**
+   * Planes hidden on the editing canvas, by index within the selected frame.
+   * View state, like `onionSkin`: every plane is a hardware sprite and always
+   * exports, so a hidden one is only hidden from the person drawing.
+   */
+  hiddenLayers: number[]
   status: string
 }
 
@@ -57,6 +63,7 @@ export function spriteSession(path: string): SpriteSession {
     playing: false,
     background: 'checkered',
     onionSkin: false,
+    hiddenLayers: [],
     status: ''
   })
   sessions.set(path, session)
@@ -107,22 +114,55 @@ function clampSelection(session: SpriteSession): void {
   session.selection = { sprite, frame, layer }
 }
 
+function layerCount(session: SpriteSession): number {
+  const { sprite, frame } = session.selection
+  return doc(session).sprites[sprite]?.frames[frame]?.layers.length ?? 0
+}
+
+/**
+ * The eyes are stored by index, and a plane the document doesn't identify can't
+ * be followed through an add or a delete — so those forget which planes were
+ * hidden rather than quietly hiding a different one. Reordering keeps them,
+ * because the panel tells us about it (`swapHiddenLayers`).
+ *
+ * ponytail: forgetting on add/remove; give layers an id if that gets annoying.
+ */
+function forgetHiddenIfListChanged(session: SpriteSession, before: number): void {
+  if (layerCount(session) !== before) session.hiddenLayers = []
+}
+
 /** Every mutation (color changes, list ops, canvas stroke commits, imports) goes through here. */
 export function commit(session: SpriteSession, next: SpritesDoc): void {
   const history = pushHistory(session.history, next)
   if (history === session.history) return
+  const before = layerCount(session)
   session.history = history
   clampSelection(session)
+  forgetHiddenIfListChanged(session, before)
   markDirty(session)
+}
+
+/** The eye toggle in the layer list. Always a fresh array, so the canvas prop changes identity. */
+export function toggleLayerHidden(session: SpriteSession, index: number): void {
+  session.hiddenLayers = session.hiddenLayers.includes(index)
+    ? session.hiddenLayers.filter((i) => i !== index)
+    : [...session.hiddenLayers, index]
+}
+
+/** Keeps an eye with its plane when the list is reordered — the buttons only ever swap neighbours. */
+export function swapHiddenLayers(session: SpriteSession, from: number, to: number): void {
+  session.hiddenLayers = session.hiddenLayers.map((i) => (i === from ? to : i === to ? from : i))
 }
 
 export function selectSprite(session: SpriteSession, index: number): void {
   session.selection = { sprite: index, frame: 0, layer: 0 }
+  session.hiddenLayers = []
 }
 
 export function selectFrame(session: SpriteSession, index: number): void {
   session.selection = { ...session.selection, frame: index }
   clampSelection(session)
+  session.hiddenLayers = []
 }
 
 export function selectLayer(session: SpriteSession, index: number): void {
@@ -132,16 +172,20 @@ export function selectLayer(session: SpriteSession, index: number): void {
 export function undo(session: SpriteSession): void {
   const next = undoHistory(session.history)
   if (next === session.history) return
+  const before = layerCount(session)
   session.history = next
   clampSelection(session)
+  forgetHiddenIfListChanged(session, before)
   markDirty(session)
 }
 
 export function redo(session: SpriteSession): void {
   const next = redoHistory(session.history)
   if (next === session.history) return
+  const before = layerCount(session)
   session.history = next
   clampSelection(session)
+  forgetHiddenIfListChanged(session, before)
   markDirty(session)
 }
 

@@ -261,10 +261,15 @@ watchEffect(() => {
 </template>
 
 <style scoped>
+/* `safe` centring, not plain centring: a wide block — a 4x1 at full zoom is
+   already 1024px — overflows this pane on *both* sides, and the half that spills
+   left of scroll offset zero cannot be scrolled to at all. `safe` falls back to
+   start alignment the moment the canvas stops fitting, so zooming in walks off
+   the right, where the scrollbar can follow. */
 .canvas-pane {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: safe center;
   gap: 8px;
   padding: 12px;
   overflow: auto;
