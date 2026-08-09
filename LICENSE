@@ -93,9 +93,16 @@ property of their respective authors, under the licenses shown:
   Material Symbols (icon font)
                               Apache License 2.0 — full text in licenses/
 
-The tutorials under docs/tutorials/ quote source code from the MSXgl sample
-programs and are therefore licensed under CC BY-SA 4.0, matching MSXgl's own
-license, rather than under the terms above.
+Two parts of this repository are MSXgl's work rather than the author's, and are
+licensed under CC BY-SA 4.0, matching MSXgl's own license, rather than under the
+terms above:
+
+  a) The tutorials under docs/tutorials/, which quote source code from the MSXgl
+     sample programs.
+
+  b) The demo projects' library configuration headers, demo_msx1/msxgl_config.h
+     and demo_msx2/msxgl_config.h, which are MSXgl's own template configuration
+     header with each demo's settings filled in.
 
 
 5. NO WARRANTY

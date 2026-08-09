@@ -501,3 +501,9 @@ Because MSXgl is CC BY-SA 4.0, games built with it are expected to credit it.
 Check [MSXgl's own terms](https://github.com/aoineko-fr/MSXgl) for what it asks
 of you; MSXDEVStudio's attribution requirement is separate from, and additional to,
 MSXgl's.
+
+Two parts of this repository are MSXgl's work rather than mine, and carry
+**CC BY-SA 4.0** rather than the license above: the tutorials under
+[docs/tutorials/](docs/tutorials/), which quote the MSXgl sample programs, and
+the demo projects' `msxgl_config.h` files, which are MSXgl's own template
+configuration header with each demo's settings filled in.
