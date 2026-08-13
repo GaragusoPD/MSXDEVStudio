@@ -25,6 +25,8 @@ describe('agentGuideFiles', () => {
     expect(guide('2')).toContain('g_MyTiles_Upload(256);')
     expect(guide('2')).toContain('g_Hero_Restore')
     expect(guide('1')).not.toContain('VDP_CommandHMMC')
+    expect(guide('1')).not.toContain('_DrawRowOver')
+    expect(guide('2')).toContain('g_Stage_DrawRowOver')
     expect(guide('1')).toContain('This project is MSX1')
   })
 

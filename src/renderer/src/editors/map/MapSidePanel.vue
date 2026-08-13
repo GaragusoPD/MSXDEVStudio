@@ -8,7 +8,7 @@
 import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
-import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setCell, setTileset, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 
@@ -167,6 +167,40 @@ const packing = computed(() => {
         top to bottom. Keep it a power of two and the helper's divide becomes a
         shift. Width must be even: the VDP copies whole bytes, and every bitmap
         mode packs at least two dots into one.
+      </p>
+
+      <label class="inline">
+        <input
+          type="checkbox"
+          :checked="mapDoc.transparent !== null"
+          @change="setTransparent(session, ($event.target as HTMLInputElement).checked ? 0 : null)"
+        >
+        <span title="A cell index that a layer drawn over another skips instead of blitting">
+          Has a transparent cell
+        </span>
+      </label>
+      <div
+        v-if="mapDoc.transparent !== null"
+        class="size-row"
+      >
+        <label>
+          <span>Cell</span>
+          <input
+            :value="mapDoc.transparent"
+            type="number"
+            min="0"
+            max="255"
+            @change="setTransparent(session, Number(($event.target as HTMLInputElement).value))"
+          >
+        </label>
+      </div>
+      <p class="hint">
+        A cell index that means <em>draw nothing</em>, for a layer painted over
+        another. Off by default and never assumed: cell 0 is an ordinary picture
+        like any other, so no index can stand for empty unless you say which.
+        With one set the export also emits <code>_DrawRowOver()</code> — the same
+        row blit, skipping that cell instead of copying it. Draw the background
+        row first, then the overlay.
       </p>
     </section>
 

@@ -559,7 +559,10 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
             `#define ${prefix}_CELL_H ${cell.height}`,
             `#define ${prefix}_ATLAS_COLS ${cell.cols}`
           ]
-        : [])
+        : []),
+      // Only when the map names one — there is no index that can be assumed to
+      // mean empty, so its absence has to stay visible in the header too.
+      ...(resource.doc.transparent !== null ? [`#define ${prefix}_TRANSPARENT ${resource.doc.transparent}`] : [])
     ]
   }
   if (resource.kind === 'btiles') {

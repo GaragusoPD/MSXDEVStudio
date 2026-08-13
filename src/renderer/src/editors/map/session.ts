@@ -340,6 +340,11 @@ export function setCell(session: MapSession, cell: MapCell): void {
   commit(session, { ...doc(session), cell })
 }
 
+/** The cell index a layer drawn over another skips; null for "every cell is drawn". */
+export function setTransparent(session: MapSession, transparent: number | null): void {
+  commit(session, { ...doc(session), transparent })
+}
+
 /** What the canvas and the picker draw cells from, whichever kind of tileset loaded. */
 export function sheet(session: MapSession): Sheet | null {
   const cell = doc(session).cell

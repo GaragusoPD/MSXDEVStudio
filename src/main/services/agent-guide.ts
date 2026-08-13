@@ -309,6 +309,21 @@ g_MyTiles_Draw(cell, x, y, 256);       // one tile onto the screen
 so lines 212+ and the other pages are free VRAM. Keep the sheet at a fixed Y and
 pass the same value everywhere.
 
+A **bitmap-mode map** (one whose tileset is a bitmap tileset or a screen read as
+a grid) exports \`_DrawRow()\` instead of \`_DrawLayer()\` — one \`HMMM\` per cell,
+a row at a time, which is the unit a vertical scroller actually draws. It blits
+every cell, so stacking layers needs the map's **transparent cell** set in the
+editor; that adds \`_DrawRowOver()\`, the same blit with \`_TRANSPARENT\` skipped:
+
+\`\`\`c
+g_Stage_DrawRow(g_Stage_Terrain, row, ATLAS_Y, destY);      // background: every cell
+g_Stage_DrawRowOver(g_Stage_Foreground, row, ATLAS_Y, destY); // then what sits on top
+\`\`\`
+
+There is no default — cell 0 is an ordinary picture, so a map that names no
+transparent cell has none, and the Problems panel says so once it has more than
+one layer.
+
 **Bitmap sprites (software sprites)** are how you get a moving object bigger or
 more colourful than the hardware allows in a bitmap mode. MSXgl ships no module
 for them — the exporter generalises the engine's \`s_swsprt\` sample instead.

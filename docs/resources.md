@@ -121,6 +121,14 @@ a multi-tile stamp. A 32×24 map is exactly one screen; larger maps get a screen
 outline overlay for designing scrolling worlds. Add layers to draw a foreground
 over a background: on any layer above the first, tile 0 means transparent.
 
+In a **bitmap mode** that convention cannot be assumed, because a cell index is
+an atlas position and 0 is a picture like any other. So a layered bitmap map
+names its own **transparent cell** (the checkbox under *Cell*), and the export
+then adds a `_DrawRowOver()` beside `_DrawRow()` that skips that index instead
+of blitting it — draw the background row first, then the overlay. Leave it off
+and every cell is drawn, which is what a single-layer map wants; the Problems
+panel points it out if a map grows a second layer without one.
+
 **Bitmap tiles** — the SCREEN 5/6/7/8 counterpart of a pattern tileset, and a
 different thing from a screen. A screen is one picture used as it is; a tileset
 is a bank of small images addressed by number, which a map indexes and the game

@@ -126,9 +126,11 @@ rows. It is still not the right trade here, for two reasons:
   (`TILE_WIDTH/HEIGHT/BPP/SCREEN_WIDTH`), so it would have to be kept in sync by
   hand with what the atlas resource already knows.
 
-The one thing it has that the exporter does not is `TILE_USE_SKIP` /
-`TILE_SKIP_INDEX` — skipping a designated cell index instead of blitting it,
-which would be worth having for a sparse overlay layer. There is none here.
+Its `TILE_USE_SKIP` / `TILE_SKIP_INDEX` idea was worth taking, and the map
+editor now has it: set a **transparent cell** on a bitmap map and the export
+adds `_DrawRowOver()` beside `_DrawRow()`, skipping that index instead of
+blitting it. `stage.map.json` has one layer and does not set one, so nothing
+here changed — reach for it if the canyon ever grows a foreground layer.
 
 **Two scroll offsets, not one.** `g_MainOffset` is what the logic computed for
 the *next* frame and the V-blank handler installs it; `g_ShownOffset` is what is

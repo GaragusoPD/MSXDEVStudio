@@ -387,6 +387,82 @@ describe('map resource', () => {
     expect(header).not.toContain('VDP_WriteLayout_GM2')
   })
 
+  it('emits nothing about transparency unless the map names a cell', () => {
+    const doc = normalizeMap({
+      tileset: 'res/canyon.screen.json',
+      width: 16,
+      height: 4,
+      cell: { width: 16, height: 16, cols: 16 },
+      layers: [{ name: 'terrain', data: new Array(64).fill(0) }]
+    })
+    expect(doc.transparent).toBeNull()
+    const header = rendered({ kind: 'map', doc }, 'res/stage.map.json', {
+      name: 'g_Stage',
+      format: 'c',
+      out: 'content/stage.h',
+      helpers: true
+    })
+    // Cell 0 is an ordinary picture, so the plain row blit must stay unguarded.
+    expect(header).not.toContain('_TRANSPARENT')
+    expect(header).not.toContain('_DrawRowOver')
+    expect(header).not.toContain('if(cell !=')
+  })
+
+  it('adds an overlay row blit that skips the transparent cell, keeping the plain one unguarded', () => {
+    const doc = normalizeMap({
+      tileset: 'res/canyon.screen.json',
+      width: 16,
+      height: 4,
+      cell: { width: 16, height: 16, cols: 16 },
+      transparent: 7,
+      layers: [
+        { name: 'terrain', data: new Array(64).fill(0) },
+        { name: 'foreground', data: new Array(64).fill(7) }
+      ]
+    })
+    expect(validateResource({ kind: 'map', doc })).toEqual([])
+
+    const header = rendered({ kind: 'map', doc }, 'res/stage.map.json', {
+      name: 'g_Stage',
+      format: 'c',
+      out: 'content/stage.h',
+      helpers: true
+    })
+
+    expect(header).toContain('#define G_STAGE_TRANSPARENT 7')
+    expect(header).toContain('void g_Stage_DrawRowOver(const u8* layer, u8 row, UY atlasY, UY destY)')
+    expect(header).toContain('if(cell != G_STAGE_TRANSPARENT)')
+    // The background layer still pays no compare — that is why there are two.
+    expect(header).toContain('void g_Stage_DrawRow(const u8* layer, u8 row, UY atlasY, UY destY)')
+    // Skipping drops the blit, never the column: both walk the row in step, so
+    // the guard has to sit on the copy alone.
+    expect(header.match(/dx \+= G_STAGE_CELL_W;/g)).toHaveLength(2)
+    expect(header).toContain('if(cell != G_STAGE_TRANSPARENT)\n\t\t\tVDP_CommandHMMM(')
+  })
+
+  it('flags a layered bitmap map that never said which cell is empty', () => {
+    const doc = normalizeMap({
+      tileset: 'res/canyon.screen.json',
+      width: 16,
+      height: 4,
+      cell: { width: 16, height: 16, cols: 16 },
+      layers: [
+        { name: 'terrain', data: new Array(64).fill(0) },
+        { name: 'foreground', data: new Array(64).fill(0) }
+      ]
+    })
+    expect(validateResource({ kind: 'map', doc }).join(' ')).toContain('no transparent cell')
+  })
+
+  it('keeps a transparent cell off pattern-mode maps, which have no per-cell decision', () => {
+    const doc = normalizeMap({
+      tileset: 'res/tiles.tiles.json',
+      transparent: 3,
+      layers: [{ name: 'background', data: new Array(768).fill(0) }]
+    })
+    expect(doc.transparent).toBeNull()
+  })
+
   it('rejects a cell the VDP cannot copy', () => {
     // Every bitmap mode packs at least two dots per byte, and HMMM moves bytes.
     const doc = normalizeMap({

@@ -57,6 +57,20 @@ export interface MapDoc {
   height: number
   /** Pixel geometry for a bitmap-mode map; null means the 8×8 name-table cell of SCREEN 1/2/4. */
   cell: MapCell | null
+  /**
+   * The cell index that means "draw nothing", for maps that stack layers.
+   *
+   * Bitmap-mode only, and null unless the user asks for one — a cell index is
+   * an atlas position like any other, so there is no value that can be assumed
+   * to mean empty. `0` is a perfectly ordinary cell (demo_msx2's canyon uses it
+   * 449 times), which is why this is `number | null` and not a count with 0 as
+   * a sentinel.
+   *
+   * In a pattern mode the name table has no "nothing" either, but the layer is
+   * written with one `VDP_WriteLayout_GM2` covering the whole rectangle — there
+   * is no per-cell decision to hook, so this stays null there.
+   */
+  transparent: number | null
   layers: MapLayer[]
   export: ExportBlock | null
 }
@@ -89,15 +103,24 @@ export function normalizeMap(raw: unknown): MapDoc {
   })
 
 
+  const cell = normalizeCell(input.cell)
   return {
     version: 1,
     tileset: String(input.tileset ?? ''),
     width,
     height,
-    cell: normalizeCell(input.cell),
+    cell,
+    transparent: normalizeTransparent(input.transparent, cell),
     layers,
     export: input.export ?? null
   }
+}
+
+/** A cell index, or null — including for every pattern-mode map, which has no use for one. */
+function normalizeTransparent(raw: unknown, cell: MapCell | null): number | null {
+  if (!cell || typeof raw !== 'number' || !Number.isFinite(raw)) return null
+  const index = raw | 0
+  return index >= 0 && index <= 255 ? index : null
 }
 
 /** Absent in every map written before bitmap modes were supported, so default to the name table. */
@@ -156,6 +179,14 @@ export function validateMap(doc: MapDoc): string[] {
   }
   if (doc.cell && doc.cell.cols * doc.cell.width > 512) {
     problems.push(`Atlas would be ${doc.cell.cols * doc.cell.width} dots wide — wider than VRAM allows`)
+  }
+  // Nothing is wrong with the data — but `_DrawRow` blits every cell, so a
+  // second layer drawn with it paints its empty cells rather than leaving them,
+  // and the only sign is a screen that looks wrong. Say so where the map is.
+  if (doc.cell && doc.layers.length > 1 && doc.transparent === null) {
+    problems.push(
+      `${doc.layers.length} layers but no transparent cell — a layer drawn over another needs one, or its empty cells blit cell 0`
+    )
   }
   const cells = doc.width * doc.height
   doc.layers.forEach((layer) => {
@@ -271,6 +302,7 @@ export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table
 function bitmapMapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
   const prefix = defineName(name)
   const cell = doc.cell!
+  const overlay = bitmapOverlayC(doc, name, prefix)
   const signature = `void ${name}_DrawRow(const u8* layer, u8 row, UY atlasY, UY destY)`
   return {
     header: [
@@ -306,7 +338,8 @@ function bitmapMapHelperC(doc: MapDoc, name: string, compressed: boolean, table:
     '//',
     '// Example:',
     `//   ${name}_DrawRow(${table}, row, ATLAS_Y, (u8)(row * ${cell.height}));`,
-    `${signature};`
+    `${signature};`,
+    ...overlay.header
     ],
     source: [
     '',
@@ -323,6 +356,49 @@ function bitmapMapHelperC(doc: MapDoc, name: string, compressed: boolean, table:
     `\t\tVDP_CommandHMMM((u16)(cell % ${prefix}_ATLAS_COLS) * ${prefix}_CELL_W,`,
     `\t\t                atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${prefix}_CELL_H),`,
     `\t\t                dx, destY, ${prefix}_CELL_W, ${prefix}_CELL_H);`,
+    `\t\tdx += ${prefix}_CELL_W;`,
+    '\t}',
+    '}',
+    ...overlay.source
+    ]
+  }
+}
+
+/**
+ * The overlay twin of `_DrawRow`, emitted only when the map names a transparent
+ * cell — a foreground layer wants the cells it did not paint left alone, and the
+ * background layer wants every cell drawn, including that index.
+ *
+ * Two functions rather than one with a flag: the background row is the one that
+ * runs on every scroll step, and it should not pay a compare per cell for a
+ * decision it never makes. Skipping drops the *blit*, never the column, so the
+ * two walk the row in step.
+ */
+function bitmapOverlayC(doc: MapDoc, name: string, prefix: string): HelperC {
+  if (doc.transparent === null) return { header: [], source: [] }
+  const signature = `void ${name}_DrawRowOver(const u8* layer, u8 row, UY atlasY, UY destY)`
+  return {
+    header: [
+    '',
+    `// Same, for a layer drawn *over* one already on screen: cell`,
+    `// ${prefix}_TRANSPARENT (${doc.transparent}) is skipped instead of blitted, so`,
+    '// whatever is underneath shows through. Draw the background row first.',
+    `${signature};`
+    ],
+    source: [
+    '',
+    signature,
+    '{',
+    `\tconst u8* src = layer + ((u16)row * ${prefix}_W);`,
+    '\tu16 dx = 0;',
+    `\tu8 col = ${prefix}_W;`,
+    '\twhile(col--)',
+    '\t{',
+    '\t\tu8 cell = *src++;',
+    `\t\tif(cell != ${prefix}_TRANSPARENT)`,
+    `\t\t\tVDP_CommandHMMM((u16)(cell % ${prefix}_ATLAS_COLS) * ${prefix}_CELL_W,`,
+    `\t\t\t                atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${prefix}_CELL_H),`,
+    `\t\t\t                dx, destY, ${prefix}_CELL_W, ${prefix}_CELL_H);`,
     `\t\tdx += ${prefix}_CELL_W;`,
     '\t}',
     '}'
