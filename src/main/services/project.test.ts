@@ -48,7 +48,7 @@ describe('createProject', () => {
 
     expect(opened.root).toBe(join(location, 'mygame'))
     expect(opened.projectFile).toBe('mygame.msxproj')
-    for (const rel of ['main.c', 'msxgl_config.h', 'mygame.msxproj', 'project_config.js', 'content', '.gitignore', 'build.sh', 'build.bat']) {
+    for (const rel of ['main.c', 'msxgl_config.h', 'mygame.msxproj', 'project_config.js', 'content', '.gitignore', 'build.sh', 'build.bat', 'CLAUDE.md', 'AGENTS.md']) {
       expect(existsSync(join(opened.root, rel)), rel).toBe(true)
     }
 

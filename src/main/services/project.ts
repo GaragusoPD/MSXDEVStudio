@@ -23,6 +23,7 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { NewProjectRequest, OpenProject } from '../../shared/ipc'
+import { agentGuideFiles } from './agent-guide'
 import {
   generateProjectConfig,
   IMPORTED_CONFIG_KEYS,
@@ -105,8 +106,8 @@ export function launcherScripts(msxglPath: string): { name: string; content: str
 /**
  * Creates `<location>/<name>/` from the MSXgl template: `main.c` and
  * `msxgl_config.h` copied verbatim, a generated `project_config.js`, the
- * `.msxproj`, empty `content/` and `res/` folders, `.gitignore`, and terminal
- * launchers.
+ * `.msxproj`, empty `content/` and `res/` folders, `.gitignore`, terminal
+ * launchers, and the `CLAUDE.md`/`AGENTS.md` agent guide.
  */
 export function createProject(request: NewProjectRequest, msxglPath: string): OpenProject {
   const root = join(request.location, request.name)
@@ -136,6 +137,9 @@ export function createProject(request: NewProjectRequest, msxglPath: string): Op
     { name: request.name, machine: request.machine, target: request.target, libModules: request.libModules },
     request.name
   )
+  for (const file of agentGuideFiles(project, msxglPath)) {
+    writeFileSync(join(root, file.name), file.content, 'utf-8')
+  }
   return saveProject(root, `${request.name}${PROJECT_EXT}`, project)
 }
 

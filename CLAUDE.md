@@ -66,4 +66,5 @@ MSXDEVStudio never reimplements MSXgl's build — it spawns `node <msxgl>/engine
 
 - Toolchain resolution (`toolchain-service.ts`): explicit setting → PATH → platform default; validation shells the real binaries.
 - Tests live next to their module. Non-trivial logic in shared/main gets tests; renderer correctness rides on the shared modules it delegates to.
+- **`agent-guide.ts` is a deliverable, not a comment.** Every new project (and forked sample) ships a `CLAUDE.md`/`AGENTS.md` written from it, and that file is the *only* thing an agent working inside a generated project knows about this IDE. So a feature that changes what the exporter emits, what a generated file is called, how a resource is used from C, or what the build does is not finished until the guide says so — otherwise agents keep writing code against last release's headers. Same for the demos' own `CLAUDE.md`/`AGENTS.md` (`demo_msx1/`, `demo_msx2/`), which are hand-written and cover those projects specifically.
 - `package.json`'s `homepage` is a guessed GitHub URL kept only because the `.deb` builder requires one — correct it when a real repo exists.

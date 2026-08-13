@@ -12,6 +12,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, re
 import { basename, dirname, join } from 'node:path'
 import type { NewProjectRequest, OpenProject } from '../../shared/ipc'
 import { projectFromConfigGlobals, type ConfigGlobals, type RawFileEntry } from '../../shared/msxproj'
+import { agentGuideFiles } from './agent-guide'
 import { launcherScripts, PROJECT_EXT, saveProject } from './project'
 
 export function samplesDir(msxglPath: string): string {
@@ -176,6 +177,9 @@ export function forkSample(
     const scriptPath = join(root, script.name)
     writeFileSync(scriptPath, script.content, 'utf-8')
     if (script.exec) chmodSync(scriptPath, 0o755)
+  }
+  for (const file of agentGuideFiles(project, msxglPath)) {
+    writeFileSync(join(root, file.name), file.content, 'utf-8')
   }
 
   if (copyEntireContent) {
