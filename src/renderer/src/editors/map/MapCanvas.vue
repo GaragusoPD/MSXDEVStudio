@@ -46,13 +46,20 @@ let selectAnchor: Point | null = null
  * how many fit on a screen depends on the mode the atlas was converted for.
  */
 const screenSpan = computed(() => {
-  const cell = doc(props.session).cell
+  const current = doc(props.session)
+  const cell = current.cell
   const atlas = props.session.atlas
-  if (!cell || !atlas) return { cols: SCREEN_COLS, rows: SCREEN_ROWS }
-  const info = MODES[atlas.mode]
+  const info = cell && atlas ? MODES[atlas.mode] : null
+  const tiles = info
+    ? { cols: Math.floor(info.width / cell!.width), rows: Math.floor(info.height / cell!.height) }
+    : { cols: SCREEN_COLS, rows: SCREEN_ROWS }
+  // On a meta map the grid is counted in metas, so a screenful is that many
+  // fewer cells across — the outline has to shrink with them or it marks a
+  // rectangle four times the size of the screen it claims to show.
+  const meta = current.meta ?? { width: 1, height: 1 }
   return {
-    cols: Math.max(1, Math.floor(info.width / cell.width)),
-    rows: Math.max(1, Math.floor(info.height / cell.height))
+    cols: Math.max(1, Math.floor(tiles.cols / meta.width)),
+    rows: Math.max(1, Math.floor(tiles.rows / meta.height))
   }
 })
 

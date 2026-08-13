@@ -229,7 +229,7 @@ including multi-layer maps and MSX2 palettes.
   display), or the screen will briefly show the map through the wrong
   patterns.
 
-## Two things MSXDEVStudio adds
+## Three things MSXDEVStudio adds
 
 **Designs bigger than one tile.** A door or a tree is several tiles, and
 assembling it mentally from 8x8 cells is the tedious part of tile art. The tile
@@ -250,3 +250,10 @@ behind. The catch is that it is all-or-nothing: every use of that tile animates,
 so anything that must hold still needs its own tile. The
 [demo game](../../demo_msx1/README.md) spins its coins this way, keeping the four
 poses as a 4x1 block.
+
+**Maps stored in clumps, not tiles.** A block is an authoring convenience: the
+map records the tiles it stamped, so the clump exists in the editor and nowhere
+in the ROM. If a level is big enough for its 768-bytes-a-screen to matter, a
+**meta-tile set** keeps those clumps as data and lets the map index them
+instead — a quarter of the bytes for 2×2 groups, before compression. It is a
+separate, optional resource; see [Meta-tiles](09-meta-tiles.md).

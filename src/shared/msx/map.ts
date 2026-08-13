@@ -10,6 +10,9 @@
 
 import { packRlep } from './compress'
 import { defineName, type HelperC } from './emitC'
+// Value import, and the only one between these two: `meta-tile.ts` takes `MapCell`
+// from here as a *type*, which erases, so there is no runtime cycle.
+import { MAX_META_SIZE } from './meta-tile'
 import type { ExportBlock } from './resource'
 
 
@@ -57,6 +60,23 @@ export interface MapDoc {
   height: number
   /** Pixel geometry for a bitmap-mode map; null means the 8×8 name-table cell of SCREEN 1/2/4. */
   cell: MapCell | null
+  /**
+   * Set when `tileset` names a **meta-tile set** (`*.meta-tiles.json` /
+   * `*.meta-btiles.json`): the meta size in tiles, and the signal that this
+   * map's cells are meta indices rather than tile indices.
+   *
+   * Null is the ordinary tile map, which is every map written before meta-tiles
+   * existed and every map that does not opt in — those export exactly what they
+   * always did.
+   *
+   * Mirrored here rather than read from the meta set, for the same reason `cell`
+   * is: the exporter renders one resource at a time and never opens another
+   * file, so `_META_W`/`_META_H` have to come from the document in front of it.
+   * `width`/`height` stay the map's own grid, which is now counted in metas —
+   * that is what keeps every editor primitive (`applyStamp`, `floodPoints`,
+   * `copyRect`, `resizeMap`, `remapTiles`) working unchanged on opaque indices.
+   */
+  meta: { width: number; height: number } | null
   /**
    * The cell index that means "draw nothing", for maps that stack layers.
    *
@@ -111,9 +131,25 @@ export function normalizeMap(raw: unknown): MapDoc {
     height,
     cell,
     transparent: normalizeTransparent(input.transparent, cell),
+    meta: normalizeMeta(input.meta),
     layers,
     export: input.export ?? null
   }
+}
+
+/** Absent in every map that does not use a meta-tile set, which is the default. */
+function normalizeMeta(raw: unknown): MapDoc['meta'] {
+  if (typeof raw !== 'object' || raw === null) return null
+  const meta = raw as Partial<{ width: number; height: number }>
+  const at = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.min(MAX_META_SIZE, value | 0) : 1
+  return { width: at(meta.width), height: at(meta.height) }
+}
+
+/** The map's size in tiles — its own grid times the meta size, or the grid itself. */
+export function mapTileSize(doc: MapDoc): { width: number; height: number } {
+  if (!doc.meta) return { width: doc.width, height: doc.height }
+  return { width: doc.width * doc.meta.width, height: doc.height * doc.meta.height }
 }
 
 /** A cell index, or null — including for every pattern-mode map, which has no use for one. */
@@ -188,6 +224,18 @@ export function validateMap(doc: MapDoc): string[] {
       `${doc.layers.length} layers but no transparent cell — a layer drawn over another needs one, or its empty cells blit cell 0`
     )
   }
+  // A pure string check, no file reads: the suffix says what the cells mean, and
+  // `meta` is what the export emits from. Disagreeing means the map draws meta
+  // indices as tiles, or tile indices as metas — both look like garbage on
+  // screen with nothing else to point at the cause.
+  const metaTileset = /\.meta-b?tiles\.json$/i.test(doc.tileset)
+  if (metaTileset && !doc.meta) {
+    problems.push(`Tileset "${doc.tileset}" is a meta-tile set, but this map's cells are still plain tiles`)
+  }
+  if (!metaTileset && doc.meta && doc.tileset) {
+    problems.push(`This map's cells are meta indices, but "${doc.tileset}" is not a meta-tile set`)
+  }
+
   const cells = doc.width * doc.height
   doc.layers.forEach((layer) => {
     if (layer.data.length !== cells) {
@@ -238,6 +286,7 @@ export function mapExport(
  * own, from the `compress` module.
  */
 export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
+  if (doc.meta) return metaMapHelperC(doc, name, compressed, table)
   if (doc.cell) return bitmapMapHelperC(doc, name, compressed, table)
   const prefix = defineName(name)
   const head = [
@@ -361,6 +410,208 @@ function bitmapMapHelperC(doc: MapDoc, name: string, compressed: boolean, table:
     '}',
     ...overlay.source
     ]
+  }
+}
+
+/**
+ * The meta-tile counterpart, for a map whose cells index a `*.meta-tiles.json`
+ * (or `*.meta-btiles.json`) instead of naming tiles directly.
+ *
+ * Everything here is built on one primitive, `_ExpandRow`: given a world *tile*
+ * row, walk the meta row under it and write out the tiles. Decoding a meta is
+ * internal and the callers speak tile coordinates, which is what lets the bitmap
+ * `_DrawRow` keep the signature (and the exact `HMMM` count) it had before this
+ * existed — a scroller written against a plain tilemap ports by adding one
+ * argument.
+ *
+ * `_DrawLayer` is deliberately *not* emitted here: this layer holds meta
+ * indices, and writing them into the name table would draw whatever tiles happen
+ * to share those numbers.
+ */
+function metaMapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
+  const prefix = defineName(name)
+  const meta = doc.meta!
+  const { width: tileW, height: tileH } = mapTileSize(doc)
+  // A map is not capped at 255 cells per axis, and once metas multiply it out an
+  // 8-bit counter silently wraps. Pick the width the numbers actually need.
+  const ux = tileW > 0xff ? 'u16' : 'u8'
+  const uy = tileH > 0xff ? 'u16' : 'u8'
+
+  const expandRow = `void ${name}_ExpandRow(const u8* layer, const u8* metas, u8* dst, ${ux} tx, ${uy} ty, ${ux} w)`
+  const expandAll = `void ${name}_ExpandToRAM(const u8* layer, const u8* metas, u8* buffer)`
+
+  const head = [
+    '',
+    `// ── ${name}: a meta-tile map ──────────────────────────────────────────`,
+    '//',
+    `// Each cell of this map is one meta-tile of ${doc.tileset || 'the meta-tile set'}:`,
+    `// ${meta.width}×${meta.height} tiles, so the ${doc.width}×${doc.height} grid covers ${tileW}×${tileH} tiles.`,
+    '//',
+    '// Every call below takes `metas` — the table that meta-tile set exports.',
+    '// It is passed in rather than named here, the same way the layer is.',
+    ...(compressed
+      ? [
+          '//',
+          '// The layers are RLEp-packed, so `layer` must be a RAM buffer you filled',
+          '// with RLEp_UnpackToRAM first. These read cells in any order and cannot',
+          '// unpack per call — and a meta layer is small enough to keep unpacked',
+          '// anyway, which is rather the point of it.'
+        ]
+      : []),
+    '',
+    '// Expands world tile row `ty`, columns `tx`..`tx+w-1`, into `dst`.',
+    '// Nothing is clipped: keep the window inside the map.',
+    `${expandRow};`,
+    '',
+    `// The whole map as plain tiles — ${tileW}*${tileH} = ${tileW * tileH} bytes of \`buffer\`. This is`,
+    '// what a game wants when it *reads and writes* its map: collision, or',
+    '// turning a collected coin into sky. VRAM cannot do that for you.',
+    '//',
+    '// To only put the map on screen, use _DrawView below instead — same result,',
+    `// ${tileW} bytes of RAM rather than ${tileW * tileH}.`,
+    `${expandAll};`
+  ]
+
+  const body = [
+    '',
+    expandRow,
+    '{',
+    `\tconst u8* row = layer + ((u16)(ty / ${prefix}_META_H) * ${prefix}_W);`,
+    `\tconst u8* src = metas + ((ty % ${prefix}_META_H) * ${prefix}_META_W);`,
+    `\t${ux} mx = tx / ${prefix}_META_W;`,
+    `\tu8 sx = (u8)(tx % ${prefix}_META_W);`,
+    '\twhile(w--)',
+    '\t{',
+    `\t\t*dst++ = src[((u16)row[mx] * ${prefix}_META_CELLS) + sx];`,
+    `\t\tif(++sx == ${prefix}_META_W) { sx = 0; ++mx; }`,
+    '\t}',
+    '}',
+    '',
+    expandAll,
+    '{',
+    `\tfor(${uy} ty = 0; ty < ${prefix}_TILE_H; ++ty)`,
+    '\t{',
+    `\t\t${name}_ExpandRow(layer, metas, buffer, 0, ty, ${prefix}_TILE_W);`,
+    `\t\tbuffer += ${prefix}_TILE_W;`,
+    '\t}',
+    '}'
+  ]
+
+  const draw = doc.cell
+    ? bitmapMetaHelperC(doc, name, prefix, ux, uy)
+    : patternMetaHelperC(name, prefix, table, ux, uy)
+  return { header: [...head, ...draw.header], source: [...body, ...draw.source] }
+}
+
+/** Name-table modes: the visible window, one `VDP_WriteLayout_GM2` per row. */
+function patternMetaHelperC(name: string, prefix: string, table: string, ux: string, uy: string): HelperC {
+  const signature =
+    `void ${name}_DrawView(const u8* layer, const u8* metas, u8* rowbuf,` +
+    ` ${ux} camX, ${uy} camY, u8 dx, u8 dy, u8 w, u8 h)`
+  return {
+    header: [
+      '',
+      '// Paints a window of the map into the name table: `w`×`h` tiles starting at',
+      '// world tile (camX, camY), landing at name-table column/row (dx, dy).',
+      '// `rowbuf` holds `w` bytes — one row is expanded and written at a time, so',
+      '// this never needs the whole map in RAM.',
+      '//',
+      '// This is also how you put the *entire* map on screen, which is the cheaper',
+      `// half of the pair — ${prefix}_TILE_W bytes of RAM rather than`,
+      `// ${prefix}_TILE_W * ${prefix}_TILE_H, against one VDP address setup per row:`,
+      '//',
+      `//   ${name}_DrawView(layer, metas, rowbuf, 0, 0, 0, 0, ${prefix}_TILE_W, ${prefix}_TILE_H);`,
+      '//',
+      '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
+      '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.',
+      '//',
+      '// A name-table mode has no hardware horizontal scroll, so a one-column',
+      '// camera step rewrites the table anyway — that is this call, not a',
+      '// separate _DrawColumn.',
+      '//',
+      '// Example — a 32×20 window at name-table row 4, scrolled by camX:',
+      `//   u8 rowbuf[${prefix}_TILE_W];`,
+      `//   ${name}_DrawView(${table}, metas, rowbuf, camX, 0, 0, 4, 32, 20);`,
+      `${signature};`
+    ],
+    source: [
+      '',
+      signature,
+      '{',
+      '\tfor(u8 row = 0; row < h; ++row)',
+      '\t{',
+      `\t\t${name}_ExpandRow(layer, metas, rowbuf, camX, camY + row, w);`,
+      '\t\tVDP_WriteLayout_GM2(rowbuf, dx, dy + row, w, 1);',
+      '\t}',
+      '}'
+    ]
+  }
+}
+
+/**
+ * Bitmap modes: today's `_DrawRow`, plus `metas`. `row` is still a *cell* row and
+ * the loop still issues one `HMMM` per cell across the map, so the per-frame blit
+ * budget a scroller was written against does not move.
+ */
+function bitmapMetaHelperC(doc: MapDoc, name: string, prefix: string, ux: string, uy: string): HelperC {
+  const cell = doc.cell!
+  const row = (signature: string, over: boolean): string[] => [
+    '',
+    signature,
+    '{',
+    `\tconst u8* mrow = layer + ((u16)(row / ${prefix}_META_H) * ${prefix}_W);`,
+    `\tconst u8* src = metas + ((row % ${prefix}_META_H) * ${prefix}_META_W);`,
+    '\tu16 dx = 0;',
+    '\tu8 sx = 0;',
+    `\t${ux} mx = 0;`,
+    `\t${ux} col = ${prefix}_TILE_W;`,
+    '\twhile(col--)',
+    '\t{',
+    `\t\tu8 cell = src[((u16)mrow[mx] * ${prefix}_META_CELLS) + sx];`,
+    ...(over ? [`\t\tif(cell != ${prefix}_TRANSPARENT)`] : []),
+    `\t${over ? '\t' : ''}\tVDP_CommandHMMM((u16)(cell % ${prefix}_ATLAS_COLS) * ${prefix}_CELL_W,`,
+    `\t${over ? '\t' : ''}\t                atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${prefix}_CELL_H),`,
+    `\t${over ? '\t' : ''}\t                dx, destY, ${prefix}_CELL_W, ${prefix}_CELL_H);`,
+    `\t\tdx += ${prefix}_CELL_W;`,
+    `\t\tif(++sx == ${prefix}_META_W) { sx = 0; ++mx; }`,
+    '\t}',
+    '}'
+  ]
+  const signature = `void ${name}_DrawRow(const u8* layer, const u8* metas, ${uy} row, UY atlasY, UY destY)`
+  const overSignature = `void ${name}_DrawRowOver(const u8* layer, const u8* metas, ${uy} row, UY atlasY, UY destY)`
+  const overlay = doc.transparent === null ? { header: [], source: [] } : { header: [], source: row(overSignature, true) }
+  return {
+    header: [
+      '',
+      `// Draws one *cell* row of the map — ${prefix}_TILE_W cells of ${cell.width}×${cell.height} dots,`,
+      '// starting at dot column 0 of VRAM row `destY`. Cells come from an atlas',
+      '// image parked at (0, `atlasY`) in VRAM; upload it once with a single HMMC.',
+      '//',
+      '// `row` counts cell rows, not meta rows, and the loop issues one HMMM per',
+      '// cell exactly as a plain tilemap does — meta decoding is free at the VDP.',
+      '//',
+      '// A vertical scroller calls this for the one row about to scroll into the',
+      '// hidden lines below the display. Mask `destY` yourself to wrap inside a',
+      '// page: the VDP addresses all of VRAM as one tall column, so 256 is the',
+      '// next page, not row 0 again.',
+      '//',
+      '// Needs MSXgl\'s VDP command engine: MSX2 or later with VDP_USE_COMMAND,',
+      '// and "msxgl.h" included before this header.',
+      '//',
+      '// Example:',
+      `//   ${name}_DrawRow(layer, metas, row, ATLAS_Y, (u8)(row * ${cell.height}));`,
+      `${signature};`,
+      ...(doc.transparent === null
+        ? []
+        : [
+            '',
+            '// Same, for a layer drawn *over* one already on screen: cell',
+            `// ${prefix}_TRANSPARENT (${doc.transparent}) is skipped instead of blitted, so`,
+            '// whatever is underneath shows through. Draw the background row first.',
+            `${overSignature};`
+          ])
+    ],
+    source: [...row(signature, false), ...overlay.source]
   }
 }
 

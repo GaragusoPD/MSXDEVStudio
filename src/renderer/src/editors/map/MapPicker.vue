@@ -138,7 +138,7 @@ watchEffect(() => {
 <template>
   <div class="picker-pane">
     <header>
-      <span class="title">Tileset</span>
+      <span class="title">{{ session.metaSet ? 'Meta-tiles' : 'Tileset' }}</span>
       <span class="readout">{{ hover ?? session.pickerActive }} · {{ hex(hover ?? session.pickerActive) }}</span>
     </header>
     <p
@@ -163,11 +163,12 @@ watchEffect(() => {
       />
     </div>
     <p class="hint">
-      Click to pick a tile · shift+click (or drag) for a multi-tile stamp.
+      Click to pick a {{ session.metaSet ? 'meta-tile' : 'tile' }} · shift+click (or drag) for a
+      multi-cell stamp.
     </p>
 
     <section
-      v-if="hasTileset"
+      v-if="hasTileset && !session.metaSet"
       class="blocks"
     >
       <h3>Blocks</h3>

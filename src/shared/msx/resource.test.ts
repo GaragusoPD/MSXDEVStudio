@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { unpackRlep } from './compress'
 import { defineName, emitBin, emitC } from './emitC'
 import { createMapDoc, normalizeMap } from './map'
+import { normalizeMetaTiles } from './meta-tile'
 import { packGrb } from './palette'
 import {
   RESOURCE_SUFFIXES,
@@ -454,6 +455,33 @@ describe('map resource', () => {
     expect(validateResource({ kind: 'map', doc }).join(' ')).toContain('no transparent cell')
   })
 
+  it('exports a plain tile map exactly as it did before meta-tiles existed', () => {
+    // The additive guard: nothing about an ordinary map may move. If this ever
+    // fails, a meta-tile change has leaked into the path every existing project
+    // and both demos are on.
+    const doc = normalizeMap({
+      tileset: 'res/tiles.tiles.json',
+      width: 4,
+      height: 2,
+      layers: [{ name: 'background', data: [1, 2, 3, 4, 5, 6, 7, 8] }]
+    })
+    expect(doc.meta).toBeNull()
+    const header = rendered({ kind: 'map', doc }, 'res/level.map.json', {
+      name: 'g_Level',
+      format: 'c',
+      out: 'content/level.h',
+      helpers: true
+    })
+    expect(header).toContain('#define G_LEVEL_W 4')
+    expect(header).toContain('#define G_LEVEL_H 2')
+    expect(header).toContain('void g_Level_DrawLayer(const u8* layer, u8 x, u8 y)')
+    expect(header).toContain('VDP_WriteLayout_GM2(layer, x, y, G_LEVEL_W, G_LEVEL_H)')
+    // None of the meta vocabulary may appear on a map that never asked for it.
+    expect(header).not.toContain('_META_')
+    expect(header).not.toContain('_TILE_W')
+    expect(header).not.toContain('ExpandRow')
+  })
+
   it('keeps a transparent cell off pattern-mode maps, which have no per-cell decision', () => {
     const doc = normalizeMap({
       tileset: 'res/tiles.tiles.json',
@@ -470,6 +498,194 @@ describe('map resource', () => {
       cell: { width: 15, height: 16, cols: 16 }
     })
     expect(validateResource({ kind: 'map', doc }).join(' ')).toContain('odd')
+  })
+})
+
+describe('meta-tile resource', () => {
+  const metaSet = (): ResourceDoc => ({
+    kind: 'metatiles',
+    doc: normalizeMetaTiles({
+      tileset: 'res/tiles.tiles.json',
+      width: 2,
+      height: 2,
+      metas: [
+        { name: 'ground', tiles: [1, 2, 3, 4] },
+        { name: 'wall', tiles: [5, 6, 7, 8] },
+        { tiles: [0, 0, 0, 0] }
+      ]
+    })
+  })
+
+  it('emits one table at a fixed stride, with a define per named meta', () => {
+    const header = rendered(metaSet(), 'res/canyon.meta-tiles.json', {
+      name: 'g_CanyonMetas',
+      format: 'c',
+      out: 'content/canyon_metas.h',
+      helpers: true
+    })
+    expect(header).toContain('#define G_CANYONMETAS_META_W 2')
+    expect(header).toContain('#define G_CANYONMETAS_META_H 2')
+    expect(header).toContain('#define G_CANYONMETAS_COUNT 3')
+    expect(header).toContain('#define G_CANYONMETAS_GROUND 0')
+    expect(header).toContain('#define G_CANYONMETAS_WALL 1')
+    // An auto-named meta says nothing its index doesn't, so it gets no define.
+    expect(header).not.toContain('META_2')
+    expect(header).toContain('#define G_CANYONMETAS_SIZE 12')
+    expect([...resourceTables(metaSet())[0].bytes]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0])
+
+    // The runtime stamp: a meta's size is known at compile time, so unlike
+    // _DrawBlock the caller does not pass it.
+    expect(header).toContain('void g_CanyonMetas_DrawMeta(u8 x, u8 y, u8 meta)')
+    expect(header).toContain('VDP_WriteLayout_GM2(g_CanyonMetas + ((u16)meta * 4), x, y')
+  })
+
+  it('stamps a bitmap meta out of the atlas instead, one HMMM per cell', () => {
+    const doc = normalizeMetaTiles({
+      tileset: 'res/canyon.btiles.json',
+      width: 2,
+      height: 2,
+      cell: { width: 16, height: 16, cols: 16 },
+      metas: [{ name: 'rock', tiles: [1, 2, 3, 4] }]
+    })
+    const header = rendered({ kind: 'metabtiles', doc }, 'res/canyon.meta-btiles.json', {
+      name: 'g_CanyonMetas',
+      format: 'c',
+      out: 'content/canyon_metas.h',
+      helpers: true
+    })
+    expect(header).toContain('#define G_CANYONMETAS_CELL_W 16')
+    expect(header).toContain('void g_CanyonMetas_DrawMeta(UX x, UY y, u8 meta, UY atlasY)')
+    expect(header).toContain('VDP_CommandHMMM((u16)(cell % G_CANYONMETAS_ATLAS_COLS) * G_CANYONMETAS_CELL_W')
+    // There is no name table in a bitmap mode.
+    expect(header).not.toContain('VDP_WriteLayout_GM2')
+  })
+})
+
+describe('meta-tile map', () => {
+  /** 4×2 metas of 2×2 tiles — an 8×4 tile world in 8 bytes. */
+  const metaMap = (extra: Record<string, unknown> = {}): ResourceDoc => ({
+    kind: 'map',
+    doc: normalizeMap({
+      tileset: 'res/canyon.meta-tiles.json',
+      width: 4,
+      height: 2,
+      meta: { width: 2, height: 2 },
+      layers: [{ name: 'terrain', data: [0, 1, 1, 0, 1, 0, 0, 1] }],
+      ...extra
+    })
+  })
+
+  it('counts its grid in metas and says what that is in tiles', () => {
+    const resource = metaMap()
+    expect(validateResource(resource)).toEqual([])
+    const header = rendered(resource, 'res/level.map.json', {
+      name: 'g_Level',
+      format: 'c',
+      out: 'content/level.h',
+      helpers: true
+    })
+    expect(header).toContain('#define G_LEVEL_W 4')
+    expect(header).toContain('#define G_LEVEL_H 2')
+    expect(header).toContain('#define G_LEVEL_META_W 2')
+    expect(header).toContain('#define G_LEVEL_META_CELLS 4')
+    expect(header).toContain('#define G_LEVEL_TILE_W 8')
+    expect(header).toContain('#define G_LEVEL_TILE_H 4')
+    // Eight bytes for a world that would have cost thirty-two.
+    expect(resourceTables(resource)[0].bytes).toHaveLength(8)
+  })
+
+  it('emits the expansion helpers and never the plain name-table blit', () => {
+    const header = rendered(metaMap(), 'res/level.map.json', {
+      name: 'g_Level',
+      format: 'c',
+      out: 'content/level.h',
+      helpers: true
+    })
+    expect(header).toContain('void g_Level_ExpandRow(const u8* layer, const u8* metas, u8* dst, u8 tx, u8 ty, u8 w)')
+    expect(header).toContain('void g_Level_ExpandToRAM(const u8* layer, const u8* metas, u8* buffer)')
+    expect(header).toContain('void g_Level_DrawView(const u8* layer, const u8* metas, u8* rowbuf, u8 camX, u8 camY, u8 dx, u8 dy, u8 w, u8 h)')
+    // The layer holds meta indices. Writing it into the name table would draw
+    // whatever tiles happen to share those numbers — which is why _DrawLayer,
+    // the helper every other pattern-mode map gets, must not be here.
+    expect(header).not.toContain('_DrawLayer')
+    expect(header).not.toContain('VDP_WriteLayout_GM2(layer,')
+    // The expansion is a table read at the stride, with no multiply per cell.
+    expect(header).toContain('*dst++ = src[((u16)row[mx] * G_LEVEL_META_CELLS) + sx];')
+  })
+
+  it('keeps the bitmap row blit at one HMMM per cell, so a scroller ports unchanged', () => {
+    const header = rendered(
+      metaMap({ cell: { width: 16, height: 16, cols: 16 }, transparent: 3 }),
+      'res/stage.map.json',
+      { name: 'g_Stage', format: 'c', out: 'content/stage.h', helpers: true }
+    )
+    // Same shape as before meta-tiles, plus `metas`: `row` is still a cell row.
+    expect(header).toContain('void g_Stage_DrawRow(const u8* layer, const u8* metas, u8 row, UY atlasY, UY destY)')
+    expect(header).toContain('void g_Stage_DrawRowOver(const u8* layer, const u8* metas, u8 row, UY atlasY, UY destY)')
+    expect(header).toContain('u8 col = G_STAGE_TILE_W;')
+    expect(header).toContain('if(cell != G_STAGE_TRANSPARENT)')
+    // Skipping drops the blit, never the column — both walk the row in step.
+    expect(header.match(/dx \+= G_STAGE_CELL_W;/g)).toHaveLength(2)
+    expect(header).not.toContain('VDP_WriteLayout_GM2')
+  })
+
+  it('widens the counters when the map is longer than a byte can count', () => {
+    const header = rendered(
+      {
+        kind: 'map',
+        doc: normalizeMap({
+          tileset: 'res/canyon.meta-tiles.json',
+          width: 8,
+          height: 200,
+          meta: { width: 2, height: 2 },
+          layers: [{ name: 'terrain', data: new Array(1600).fill(0) }]
+        })
+      },
+      'res/level.map.json',
+      { name: 'g_Level', format: 'c', out: 'content/level.h', helpers: true }
+    )
+    // 400 tile rows: a u8 row counter would wrap and redraw the top of the map.
+    expect(header).toContain('#define G_LEVEL_TILE_H 400')
+    expect(header).toContain('u16 ty, u8 w)')
+    expect(header).toContain('for(u16 ty = 0; ty < G_LEVEL_TILE_H; ++ty)')
+  })
+
+  it('packs a meta layer with RLEp like any other, since it is just a smaller array', () => {
+    const doc = normalizeMap({
+      tileset: 'res/canyon.meta-tiles.json',
+      width: 16,
+      height: 12,
+      meta: { width: 2, height: 2 },
+      layers: [{ name: 'terrain', data: new Array(192).fill(3) }]
+    })
+    const [table] = resourceTables({ kind: 'map', doc }, 'rlep')
+    expect(table.unpacked).toBe(192)
+    expect([...unpackRlep(table.bytes)]).toEqual(doc.layers[0].data)
+
+    const header = rendered({ kind: 'map', doc }, 'res/level.map.json', {
+      name: 'g_Level',
+      format: 'c',
+      out: 'content/level.h',
+      helpers: true,
+      compress: 'rlep'
+    })
+    // The helpers read an unpacked layer — the game keeps it in RAM to mutate it
+    // anyway, and 192 bytes is why that is affordable.
+    expect(header).toContain('RLEp_UnpackToRAM')
+    expect(header).toContain('must be a RAM buffer you filled')
+  })
+
+  it('catches a map and a tileset that disagree about what a cell means', () => {
+    // Both directions look like garbage on screen with nothing to point at the
+    // cause, so the check is a pure suffix comparison and costs no file read.
+    expect(validateResource(metaMap({ tileset: 'res/canyon.tiles.json' })).join(' ')).toContain(
+      'cells are meta indices'
+    )
+    const noMeta = normalizeMap({
+      tileset: 'res/canyon.meta-tiles.json',
+      layers: [{ name: 'terrain', data: new Array(768).fill(0) }]
+    })
+    expect(validateResource({ kind: 'map', doc: noMeta }).join(' ')).toContain('still plain tiles')
   })
 })
 
@@ -667,6 +883,22 @@ describe('sfx resource', () => {
     })
   })
 
+  it('keeps the meta suffixes out of the plain tileset kinds', () => {
+    // `resourceKindOf` matches by `endsWith` in declaration order, so a dotted
+    // `.meta.tiles.json` would have resolved to `tiles` and opened an editor that
+    // cannot read the file. The hyphen is what makes that impossible.
+    expect(resourceKindOf('res/canyon.meta-tiles.json')).toBe('metatiles')
+    expect(resourceKindOf('res/canyon.meta-btiles.json')).toBe('metabtiles')
+    expect(resourceKindOf('res/canyon.tiles.json')).toBe('tiles')
+    expect(resourceKindOf('res/canyon.btiles.json')).toBe('btiles')
+    expect(resourceBaseName('res/canyon.meta-tiles.json')).toBe('canyon')
+    expect(defaultExport('res/canyon.meta-tiles.json')).toEqual({
+      name: 'g_CanyonMetatiles',
+      format: 'c',
+      out: 'content/canyon_metatiles.h'
+    })
+  })
+
   it('creates a valid default doc from {} for every kind — the Resources panel New button', () => {
     for (const [kind, suffix] of Object.entries(RESOURCE_SUFFIXES)) {
       const path = `untitled${suffix}`
@@ -676,6 +908,8 @@ describe('sfx resource', () => {
       // Blank maps/screens legitimately warn until their editor picks a tileset / imports a source.
       const blankStateWarnings: Record<string, string[]> = {
         map: ['No tileset referenced'],
+        metatiles: ['No tileset referenced', 'No meta-tiles defined'],
+        metabtiles: ['No tileset referenced', 'No meta-tiles defined'],
         screen: ['No source image']
       }
       expect(validateResource(resource)).toEqual(blankStateWarnings[kind] ?? [])

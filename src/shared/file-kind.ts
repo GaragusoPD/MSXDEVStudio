@@ -8,7 +8,19 @@
  * have no registered editor yet (same "no editor registered" fallback as
  * any other unregistered type).
  */
-const RESOURCE_SUFFIXES = ['btiles.json', 'tiles.json', 'sprites.json', 'map.json', 'screen.json', 'sfx.json']
+const RESOURCE_SUFFIXES = [
+  // Longest first: `endsWith` would otherwise hand `hero.btiles.json` to the
+  // `tiles.json` editor. The meta suffixes are hyphenated, so they cannot
+  // collide with these at all — which is exactly why they are.
+  'meta-btiles.json',
+  'meta-tiles.json',
+  'btiles.json',
+  'tiles.json',
+  'sprites.json',
+  'map.json',
+  'screen.json',
+  'sfx.json'
+]
 
 export function extensionFor(filename: string): string {
   const lower = filename.toLowerCase()

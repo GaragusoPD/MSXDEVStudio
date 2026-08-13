@@ -19,6 +19,7 @@ memory.
 | 6 | [Scrolling](06-scrolling.md) | The scroll module, its compile-time configuration, maps bigger than one screen | MSX1 and up |
 | 7 | [Bitmap graphics](07-bitmap-graphics.md) | SCREEN 5 to 8, palettes, showing an image, the VDP command engine, cutting fragments | MSX2 and up |
 | 8 | [Software sprites and tiles](08-software-sprites.md) | Drawing objects without the sprite hardware, its CPU cost, and the runtime MSXDEVStudio generates for it | MSX2 and up |
+| 9 | [Meta-tiles](09-meta-tiles.md) | Storing a map in clumps of tiles rather than tiles: the ROM saving, the RAM trade, and when it isn't worth it | MSX1 and up |
 
 ## Before you start
 

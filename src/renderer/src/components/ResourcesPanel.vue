@@ -26,6 +26,14 @@ const tabsStore = useTabsStore()
 const newKind = ref<ResourceKind>('tiles')
 const newName = ref('')
 
+/** Only where the bare kind is unreadable — `metabtiles` says nothing out loud. */
+const KIND_LABELS: Partial<Record<ResourceKind, string>> = {
+  metatiles: 'meta-tiles',
+  metabtiles: 'meta-tiles (bitmap)'
+}
+
+const label = (kind: string): string => KIND_LABELS[kind as ResourceKind] ?? kind
+
 function openResource(path: string): void {
   tabsStore.openFile(path, path.split('/').pop() ?? path)
 }
@@ -95,7 +103,7 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
             :key="kind"
             :value="kind"
           >
-            {{ kind }}
+            {{ label(kind) }}
           </option>
         </select>
         <input
@@ -153,7 +161,7 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
         v-for="[kind, entries] in grouped"
         :key="kind"
       >
-        <h3>{{ kind }}</h3>
+        <h3>{{ label(kind) }}</h3>
         <div
           v-for="entry in entries"
           :key="entry.path"

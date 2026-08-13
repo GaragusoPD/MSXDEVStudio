@@ -8,6 +8,8 @@ in your project that an editor owns, and each one exports a C header your game
 |---|---|---|---|
 | tiles | `name.tiles.json` | Tile editor | 8×8 patterns for SCREEN 1/2/4 |
 | bitmap tiles | `name.btiles.json` | Bitmap tile editor | Tilesets for the MSX2 bitmap modes (SCREEN 5–8) |
+| meta-tiles | `name.meta-tiles.json` | Meta-tile editor | Named clumps of tiles a map can index instead of tiles |
+| meta-tiles (bitmap) | `name.meta-btiles.json` | Meta-tile editor | The same, over a bitmap tileset |
 | sprites | `name.sprites.json` | Sprite editor | 8×8 or 16×16 hardware sprites |
 | map | `name.map.json` | Map editor | Tile layouts / levels |
 | screen | `name.screen.json` | Screen editor | Full-screen MSX2 bitmaps (SCREEN 5–8) |
@@ -118,16 +120,42 @@ generated header's parameter block always says which of the two happened.
 **Map** — pick a tileset first (dropdown in the side panel), then paint with
 stamp, fill, rectangle and erase. Shift+click or drag in the tile picker takes
 a multi-tile stamp. A 32×24 map is exactly one screen; larger maps get a screen
-outline overlay for designing scrolling worlds. Add layers to draw a foreground
-over a background: on any layer above the first, tile 0 means transparent.
+outline overlay for designing scrolling worlds.
 
-In a **bitmap mode** that convention cannot be assumed, because a cell index is
-an atlas position and 0 is a picture like any other. So a layered bitmap map
-names its own **transparent cell** (the checkbox under *Cell*), and the export
-then adds a `_DrawRowOver()` beside `_DrawRow()` that skips that index instead
-of blitting it — draw the background row first, then the overlay. Leave it off
-and every cell is drawn, which is what a single-layer map wants; the Problems
-panel points it out if a map grows a second layer without one.
+In a **bitmap mode** a layered map needs to know which cell means "nothing",
+because a cell index is an atlas position and 0 is a picture like any other. So
+a layered bitmap map names its own **transparent cell** (the checkbox under
+*Cell*), and the export then adds a `_DrawRowOver()` beside `_DrawRow()` that
+skips that index instead of blitting it — draw the background row first, then
+the overlay. Leave it off and every cell is drawn, which is what a single-layer
+map wants; the Problems panel points it out if a map grows a second layer
+without one.
+
+In a **pattern mode** there is no equivalent, and that is the hardware talking:
+`_DrawLayer()` writes the whole rectangle in one `VDP_WriteLayout_GM2`, so there
+is no per-cell decision to hook. A foreground layer there is something you
+compose yourself, row by row, before writing it — usually by giving the
+see-through tile a flag and testing it as you build each row.
+
+**Meta-tiles** — a map costs one byte per cell, and most art repeats in clumps.
+A **meta-tile set** names those clumps, and a map pointed at the set indexes
+*them*: a 32×24 screen of 2×2 metas is 192 bytes instead of 768, before
+compression. It is a separate resource and entirely optional — a map that names
+an ordinary tileset exports exactly what it always did.
+
+Create one from the Resources panel (`meta-tiles`, or `meta-tiles (bitmap)` over
+a `.btiles.json`), pick the tileset it groups, set the meta size, then build
+metas: **+ Meta** for a blank one, or pick a tile and press **+ From tiles** to
+take the block of tiles starting there. Then, in the map's side panel, choose
+the meta-tile set in the **Tileset** dropdown. The picker now shows metas rather
+than tiles and every tool works as before — the cells just mean something
+bigger. Switching a painted map between tiles and metas asks first, because
+every existing cell value stops meaning anything.
+
+Deleting or moving a meta renumbers the maps drawn with the set, the same way
+deleting a tile renumbers the maps drawn with a tileset. Blocks are not offered
+as stamps on a meta map: a block's cells are tile indices, and this map's are
+not.
 
 **Bitmap tiles** — the SCREEN 5/6/7/8 counterpart of a pattern tileset, and a
 different thing from a screen. A screen is one picture used as it is; a tileset
@@ -282,6 +310,46 @@ u8 tile = g_MyMap_Background[y * 32 + x];
 if (g_MyTiles_Flags[tile] & FLAG_SOLID) { /* blocked */ }
 ```
 
+### Meta-tiles
+
+The set exports one table of tile indices at a fixed stride, plus `_META_W`,
+`_META_H`, `_COUNT`, and a `#define` per meta you named:
+
+```c
+#include "content/canyon_metatiles.h"
+
+// tile (sx, sy) of meta `m`
+u8 tile = g_CanyonMetatiles[m * (G_CANYONMETATILES_META_W * G_CANYONMETATILES_META_H)
+                            + sy * G_CANYONMETATILES_META_W + sx];
+```
+
+A map drawn with it exports its layers as meta indices, and gains `_META_W`,
+`_META_H`, `_META_CELLS` (the stride) and `_TILE_W`/`_TILE_H` — its size in
+tiles, since `_W`/`_H` now count metas. With **Export ready-made C** on:
+
+```c
+// Paint a window straight to the name table — `rowbuf` is _TILE_W bytes.
+u8 rowbuf[G_LEVEL_TILE_W];
+g_Level_DrawView(g_Level_Terrain, g_CanyonMetatiles, rowbuf, camX, camY, 0, 0, 32, 24);
+
+// …or expand it to plain tiles in RAM, when the game reads and writes the map.
+u8 world[G_LEVEL_TILE_W * G_LEVEL_TILE_H];
+g_Level_ExpandToRAM(g_Level_Terrain, g_CanyonMetatiles, world);
+u8 tile = world[y * G_LEVEL_TILE_W + x];
+if (g_MyTiles_Flags[tile] & FLAG_SOLID) { /* blocked */ }
+```
+
+There is no `_DrawLayer()` on a meta map — writing meta indices into the name
+table would draw whichever tiles happen to share those numbers. `_DrawView()`
+over the whole map is the equivalent, and it is the cheaper of the two: a
+`_TILE_W`-byte row buffer instead of the whole map in RAM. A bitmap meta map
+keeps `_DrawRow()` exactly as it was, plus the set's table, and still issues one
+`HMMM` per cell.
+
+If the layers are compressed, unpack them yourself once with `RLEp_UnpackToRAM`
+— the meta helpers read an unpacked layer. That is what you want anyway: a meta
+layer is small enough to keep in RAM and change as the game runs.
+
 ### Screen
 
 Exports `_Palette` (when the mode has one) and `_Data`.
@@ -342,6 +410,16 @@ g_Actors_SetMeta(0, x, y, G_ACTORS_HERO_BASE + frame * G_ACTORS_HERO_PLANES,
 ```c
 g_Scenery_DrawBlock(10, 5, G_SCENERY_DOOR_BASE, G_SCENERY_DOOR_W, G_SCENERY_DOOR_H);
 ```
+
+**Meta-tiles** — the same idea, for a set rather than a tileset. A meta's size is
+known at compile time, so the call is shorter:
+
+```c
+g_CanyonMetatiles_DrawMeta(10, 5, G_CANYONMETATILES_GROUND);
+```
+
+The helpers that expand a whole *map* live on the map's own export, because they
+need its dimensions — see [Meta-tiles](#meta-tiles) above.
 
 **Software sprites** (MSX2, `VDP_USE_COMMAND`) — characters drawn *into* the
 screen, so the per-scanline sprite limit does not apply. The fragments are

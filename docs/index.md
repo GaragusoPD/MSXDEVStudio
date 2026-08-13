@@ -43,6 +43,7 @@ each ending in a complete program you can paste into `main.c` and Run.
 6. [Scrolling](tutorials/06-scrolling.md)
 7. [Bitmap graphics](tutorials/07-bitmap-graphics.md)
 8. [Software sprites and tiles](tutorials/08-software-sprites.md)
+9. [Meta-tiles](tutorials/09-meta-tiles.md)
 
 For the library's own API reference, use **Help ▸ MSXgl Reference**, or the
 **Offline docs** link at the bottom of the Examples panel when you have an

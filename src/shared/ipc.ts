@@ -8,6 +8,7 @@
  * `src/preload/index.ts`.
  */
 
+import type { ResourceKind } from './msx/resource'
 import type { Machine } from './msxgl-consts'
 import type { MsxProject } from './msxproj'
 import type { ProjectTabsState } from './tabs'
@@ -208,7 +209,7 @@ export interface DemoInstallResult {
 export interface ResourceEntry {
   /** Project-root-relative, forward-slash. */
   path: string
-  kind: 'tiles' | 'btiles' | 'sprites' | 'map' | 'screen' | 'sfx'
+  kind: ResourceKind
   /** Its `export.out`, or null when the file has no export block. */
   out: string | null
 }

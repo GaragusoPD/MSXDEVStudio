@@ -4,6 +4,7 @@ import { setupMonacoEnvironment } from './monaco-setup'
 import { useProjectStore } from '../stores/projectStore'
 import * as btiles from './btiles/session'
 import * as map from './map/session'
+import * as meta from './meta/session'
 import * as screen from './screen/session'
 import * as sfx from './sfx/session'
 import * as sprite from './sprite/session'
@@ -13,6 +14,7 @@ import DocsTab from './docs/DocsTab.vue'
 import ExampleViewerTab from './ExampleViewerTab.vue'
 import GitDiffTab from './GitDiffTab.vue'
 import MapEditorTab from './map/MapEditorTab.vue'
+import MetaTileEditorTab from './meta/MetaTileEditorTab.vue'
 import MonacoEditorTab from './MonacoEditorTab.vue'
 import ProjectSettingsTab from './ProjectSettingsTab.vue'
 import ScreenEditorTab from './screen/ScreenEditorTab.vue'
@@ -92,6 +94,21 @@ registerEditor({
   undo: (path) => btiles.undo(btiles.bitmapTileSession(path)),
   redo: (path) => btiles.redo(btiles.bitmapTileSession(path))
 })
+
+// Meta-tile sets: groups of tiles a map can index instead of indexing tiles.
+// One editor for both suffixes — the document is the same, and the kind only
+// decides which `_DrawMeta` the export emits. `file-kind.ts` lists the
+// hyphenated suffixes first so the longer match wins; they cannot collide with
+// `tiles.json`/`btiles.json` anyway, which is why the hyphen is there.
+for (const extension of ['meta-tiles.json', 'meta-btiles.json']) {
+  registerEditor({
+    extensions: [extension],
+    component: MetaTileEditorTab,
+    save: (path) => meta.saveSession(meta.metaSession(path)),
+    undo: (path) => meta.undo(meta.metaSession(path)),
+    redo: (path) => meta.redo(meta.metaSession(path))
+  })
+}
 
 // Spec 09: same compound-extension trick, for `*.sprites.json`.
 registerEditor({

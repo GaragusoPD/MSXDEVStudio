@@ -20,7 +20,16 @@ import {
   type BitmapTilesDoc
 } from './bitmap-tile'
 import { defineName, emitBin, emitC, type EmitTable, type HelperC } from './emitC'
-import { normalizeMap, mapExport, mapHelperC, validateMap, type MapDoc } from './map'
+import { normalizeMap, mapExport, mapHelperC, mapTileSize, validateMap, type MapDoc } from './map'
+import {
+  metaBytes,
+  metaConstants,
+  metaHelperC,
+  metaStride,
+  normalizeMetaTiles,
+  validateMetaTiles,
+  type MetaTilesDoc
+} from './meta-tile'
 import { MODES } from './modes'
 import {
   fragmentRectBytes,
@@ -82,7 +91,7 @@ export interface ExportBlock {
   compress?: 'rlep'
 }
 
-export type ResourceKind = 'tiles' | 'btiles' | 'sprites' | 'map' | 'screen' | 'sfx'
+export type ResourceKind = 'tiles' | 'btiles' | 'metatiles' | 'metabtiles' | 'sprites' | 'map' | 'screen' | 'sfx'
 
 /**
  * Where new resources are created. Nothing *requires* them to live here — the
@@ -92,18 +101,33 @@ export type ResourceKind = 'tiles' | 'btiles' | 'sprites' | 'map' | 'screen' | '
  */
 export const RESOURCE_DIR = 'res'
 
+/**
+ * The hyphen in the meta suffixes is load-bearing, not a style choice:
+ * `resourceKindOf` matches by `endsWith`, so `.meta.tiles.json` would resolve to
+ * `tiles` and silently open the wrong editor on a file it cannot read.
+ * `foo.meta-tiles.json` does not end with `.tiles.json`.
+ */
 export const RESOURCE_SUFFIXES: Readonly<Record<ResourceKind, string>> = {
   tiles: '.tiles.json',
   btiles: '.btiles.json',
+  metatiles: '.meta-tiles.json',
+  metabtiles: '.meta-btiles.json',
   sprites: '.sprites.json',
   map: '.map.json',
   screen: '.screen.json',
   sfx: '.sfx.json'
 }
 
+/** True for the two meta-tile-set suffixes — the kinds a meta map may reference. */
+export function isMetaKind(kind: ResourceKind | null): boolean {
+  return kind === 'metatiles' || kind === 'metabtiles'
+}
+
 export type ResourceDoc =
   | { kind: 'tiles'; doc: TilesDoc }
   | { kind: 'btiles'; doc: BitmapTilesDoc }
+  | { kind: 'metatiles'; doc: MetaTilesDoc }
+  | { kind: 'metabtiles'; doc: MetaTilesDoc }
   | { kind: 'sprites'; doc: SpritesDoc }
   | { kind: 'map'; doc: MapDoc }
   | { kind: 'screen'; doc: ScreenDoc }
@@ -158,6 +182,9 @@ export function parseResource(path: string, text: string): ResourceDoc {
       return { kind, doc: normalizeTiles(raw) }
     case 'btiles':
       return { kind, doc: normalizeBitmapTiles(raw) }
+    case 'metatiles':
+    case 'metabtiles':
+      return { kind, doc: normalizeMetaTiles(raw) }
     case 'sprites':
       return { kind, doc: normalizeSprites(raw) }
     case 'map':
@@ -180,6 +207,9 @@ export function validateResource(resource: ResourceDoc): string[] {
       return validateTiles(resource.doc)
     case 'btiles':
       return validateBitmapTiles(resource.doc)
+    case 'metatiles':
+    case 'metabtiles':
+      return validateMetaTiles(resource.doc)
     case 'sprites':
       return validateSprites(resource.doc)
     case 'map':
@@ -282,6 +312,22 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
         })
       }
       return tables
+    }
+    case 'metatiles':
+    case 'metabtiles': {
+      const { doc } = resource
+      // One table, no suffix: a meta-tile set is nothing but its metas, so
+      // `g_Canyon_Metatiles[]` reads better than `g_Canyon_Metatiles_Metas[]`.
+      return [
+        {
+          suffix: '',
+          bytes: metaBytes(doc),
+          perLine: Math.min(16, metaStride(doc)),
+          comment:
+            `${doc.metas.length} meta-tiles of ${doc.width}×${doc.height} tiles — tile indices row-major, ` +
+            `${metaStride(doc)} bytes each: ${doc.metas.map((meta, index) => `${index}=${meta.name}`).join(', ')}`
+        }
+      ]
     }
     case 'sprites': {
       const { doc } = resource
@@ -472,10 +518,31 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
         `Size: ${resource.doc.width}×${resource.doc.height}`,
         `Layers: ${resource.doc.layers.map((layer) => layer.name).join(', ')}`
       )
+      if (resource.doc.meta) {
+        const tiles = mapTileSize(resource.doc)
+        notes.push(
+          `Cells: meta-tiles of ${resource.doc.meta.width}×${resource.doc.meta.height} tiles ` +
+            `(${tiles.width}×${tiles.height} tiles in all) — layer bytes index the meta-tile set, not the tileset`
+        )
+      }
       if (resource.doc.cell) {
         notes.push(
           `Cell: ${resource.doc.cell.width}×${resource.doc.cell.height} dots, ` +
             `atlas ${resource.doc.cell.cols} cells per row (bitmap mode — cells are copied, not indexed)`
+        )
+      }
+      break
+    case 'metatiles':
+    case 'metabtiles':
+      notes.push(
+        `Tileset: ${resource.doc.tileset}`,
+        `Meta size: ${resource.doc.width}×${resource.doc.height} tiles (${metaStride(resource.doc)} bytes each)`,
+        `Meta-tiles: ${resource.doc.metas.length}`
+      )
+      if (resource.doc.cell) {
+        notes.push(
+          `Cell: ${resource.doc.cell.width}×${resource.doc.cell.height} dots, ` +
+            `atlas ${resource.doc.cell.cols} cells per row (bitmap mode)`
         )
       }
       break
@@ -548,10 +615,24 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
   }
   if (resource.kind === 'map') {
     // The helper C needs the map's shape, and so does anything that walks a layer.
-    const { cell } = resource.doc
+    const { cell, meta } = resource.doc
+    const tiles = mapTileSize(resource.doc)
     return [
       `#define ${prefix}_W ${resource.doc.width}`,
       `#define ${prefix}_H ${resource.doc.height}`,
+      // A meta map's _W/_H count metas, so the size in tiles — what the game
+      // actually draws and collides against — has to be spelled out beside them.
+      // _META_CELLS is the table stride, kept as a define so the expansion never
+      // does a multiply the compiler could have.
+      ...(meta
+        ? [
+            `#define ${prefix}_META_W ${meta.width}`,
+            `#define ${prefix}_META_H ${meta.height}`,
+            `#define ${prefix}_META_CELLS ${meta.width * meta.height}`,
+            `#define ${prefix}_TILE_W ${tiles.width}`,
+            `#define ${prefix}_TILE_H ${tiles.height}`
+          ]
+        : []),
       // A bitmap-mode map also needs what a cell *is*, since nothing else knows.
       ...(cell
         ? [
@@ -586,6 +667,7 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
       })
     ]
   }
+  if (isMetaKind(resource.kind)) return metaConstants(resource.doc as MetaTilesDoc, name)
   if (resource.kind === 'tiles') {
     return blockPlacements(resource.doc).flatMap((placement) => {
       const id = `${prefix}_${defineName(placement.name)}`
@@ -624,6 +706,10 @@ function resourceCode(resource: ResourceDoc, name: string, compress?: ExportBloc
   if (resource.kind === 'screen') {
     const banded = screenDataExport(resource.doc, compress).geometry ? screenUnpackC(name) : NO_CODE
     return resource.doc.fragments.length ? joinHelpers(banded, screenHelperC(resource.doc, name)) : banded
+  }
+  if (isMetaKind(resource.kind)) {
+    const doc = resource.doc as MetaTilesDoc
+    return doc.metas.length ? metaHelperC(doc, name) : NO_CODE
   }
   if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : NO_CODE
   // Unlike pattern tiles, this is worth emitting with no blocks at all: the

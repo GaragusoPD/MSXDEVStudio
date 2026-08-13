@@ -19,6 +19,7 @@ import { paletteToRgb } from '../../../../shared/msx/palette'
 import { screenPixels, screenRgb, type ScreenDoc } from '../../../../shared/msx/screen'
 import { tilePixels, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
 import type { MapCell } from '../../../../shared/msx/map'
+import type { MetaTilesDoc } from '../../../../shared/msx/meta-tile'
 
 export interface Sheet {
   canvas: HTMLCanvasElement
@@ -32,12 +33,19 @@ export interface Sheet {
 }
 
 const TILESET_COLUMNS = 16
+/** How wide the composed meta sheet is. Only the picker's own wrapping is user-visible. */
+const METASHEET_COLUMNS = 8
 
 /** Rebuilt only when the source document changes identity — both panes share one cache. */
 let cachedSource: TilesDoc | ScreenDoc | BitmapTilesDoc | null = null
 /** An atlas sheet also depends on the map's cell size, which is not part of the screen doc. */
 let cachedKey = ''
 let cached: Sheet | null = null
+
+/** `metaSheet`'s own slot — see the note there. */
+let metaCacheBase: HTMLCanvasElement | null = null
+let metaCacheSource: MetaTilesDoc | null = null
+let metaCached: Sheet | null = null
 
 export function tilesetSheet(tileset: TilesDoc): Sheet {
   if (cachedSource === tileset && cachedKey === '' && cached) return cached
@@ -112,6 +120,61 @@ export function bitmapTilesetSheet(tileset: BitmapTilesDoc): Sheet {
   cachedSource = tileset
   cachedKey = 'btiles'
   cached = sheet
+  return sheet
+}
+
+/**
+ * A meta-tile set as a sheet, composed from the sheet of the tileset it groups.
+ *
+ * This is the whole of the map editor's meta support: a meta map's cells index
+ * metas instead of tiles, and since both panes only ever ask `sheet()` for "cell
+ * `n` as an image", handing them a sheet whose cells *are* the metas leaves the
+ * picker, the canvas, the tools, the clipboard and the undo stack untouched.
+ *
+ * Composed by copying out of `base` rather than re-rendering the art, so it
+ * costs nothing per palette and works the same over a pattern tileset, a bitmap
+ * tileset or an atlas.
+ */
+export function metaSheet(base: Sheet, metas: MetaTilesDoc): Sheet {
+  // Its own cache slot, not the shared one: a meta sheet is built *from* another
+  // sheet, so sharing would have the two evict each other on every redraw.
+  if (metaCacheBase === base.canvas && metaCacheSource === metas && metaCached) return metaCached
+  const cellW = base.cellW * metas.width
+  const cellH = base.cellH * metas.height
+  const cols = Math.max(1, Math.min(METASHEET_COLUMNS, metas.metas.length))
+  const rows = Math.max(1, Math.ceil(metas.metas.length / cols))
+  const canvas = document.createElement('canvas')
+  canvas.width = cols * cellW
+  canvas.height = rows * cellH
+  const sheet: Sheet = { canvas, cellW, cellH, cols, count: metas.metas.length }
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return sheet
+  ctx.imageSmoothingEnabled = false
+  metas.metas.forEach((meta, index) => {
+    const ox = (index % cols) * cellW
+    const oy = Math.floor(index / cols) * cellH
+    for (let ty = 0; ty < metas.height; ty++) {
+      for (let tx = 0; tx < metas.width; tx++) {
+        const tile = meta.tiles[ty * metas.width + tx] ?? 0
+        ctx.drawImage(
+          base.canvas,
+          (tile % base.cols) * base.cellW,
+          Math.floor(tile / base.cols) * base.cellH,
+          base.cellW,
+          base.cellH,
+          ox + tx * base.cellW,
+          oy + ty * base.cellH,
+          base.cellW,
+          base.cellH
+        )
+      }
+    }
+  })
+  // Keyed on both: the art changes when the tileset is reloaded (a new base
+  // canvas), and the layout changes when a meta is edited (a new doc).
+  metaCacheBase = base.canvas
+  metaCacheSource = metas
+  metaCached = sheet
   return sheet
 }
 

@@ -83,7 +83,9 @@ meisei was asked to run a non-ROM target. On Linux/macOS they arrive mod 256.
 - \`project_config.js\` — regenerated from the \`.msxproj\` before every build.
   To take it over permanently, set \`customConfig\` in the \`.msxproj\` (Project
   Settings → *use a custom config*); after that the IDE stops touching it.
-- \`content/*.h\` — resource tables exported from \`res/\` (see below).
+- \`content/*.h\` and \`content/*.c\` — resource declarations and tables exported
+  from \`res/\` (see below). Both halves are generated; the \`.c\` is compiled for
+  you, listed in \`ProjModules\`.
 - \`out/\`, \`emul/\`, \`${project.name}_rawdef.h\`, \`version.h\` — build output.
 
 Config values are resolved in this order, last wins:
@@ -94,9 +96,11 @@ So a setting missing from \`project_config.js\` is not unset — it is inherited
 ## Resources: \`res/\` in, \`content/\` out
 
 Graphics and sound are authored in the IDE's editors as JSON under \`res/\`
-(\`.tiles.json\`, \`.btiles.json\`, \`.sprites.json\`, \`.map.json\`, \`.screen.json\`,
-\`.sfx.json\`) and exported to C headers in \`content/\` automatically before
-every build. Edit the \`res/\` file (or the editor), never the header.
+(\`.tiles.json\`, \`.btiles.json\`, \`.meta-tiles.json\`, \`.meta-btiles.json\`,
+\`.sprites.json\`, \`.map.json\`, \`.screen.json\`, \`.sfx.json\`) and exported to C in
+\`content/\` automatically before every build — a \`.h\` of declarations and a
+\`.c\` of tables, both generated. Edit the \`res/\` file (or the editor), never
+either half of the output.
 
 A header carries the data tables plus a \`_SIZE\` define per table, and
 \`#define\`s locating each named group inside them. If the resource's *Export
@@ -139,9 +143,12 @@ It compiles cleanly here and silently writes nothing useful. Use
 }
 
 A map exports one byte-per-cell array *per layer*, named after the layer
-(\`background\` → \`g_MyMap_Background\`), plus \`_W\`/\`_H\`. On layers above the
-first, tile 0 means transparent. Collision comes from the tileset's \`_Flags\`,
-not from the map: \`g_MyTiles_Flags[tile] & FLAG_SOLID\`.
+(\`background\` → \`g_MyMap_Background\`), plus \`_W\`/\`_H\`. Collision comes from the
+tileset's \`_Flags\`, not from the map: \`g_MyTiles_Flags[tile] & FLAG_SOLID\`.
+In a pattern mode there is no transparent cell — \`_DrawLayer\` writes the whole
+rectangle in one call, so a layer over another paints every cell of it. If you
+want holes, compose the rows yourself before writing them (the usual trick is a
+flag bit meaning "see through", tested per cell as the row is built).
 
 A tile *block* (a named rectangle of tiles) gets \`_BASE\`, \`_W\`, \`_H\`, so you can
 stamp it without knowing where it landed in the bank. With helpers on:
@@ -152,6 +159,50 @@ g_Scenery_DrawBlock(10, 4, G_SCENERY_HOUSE_BASE, G_SCENERY_HOUSE_W, G_SCENERY_HO
 // void g_MyMap_DrawLayer(const u8* layer, u8 x, u8 y);
 g_MyMap_DrawLayer(g_MyMap_Background, 0, 0);
 \`\`\`
+
+### Meta-tiles — optional, and only worth it for big maps
+
+A map costs one byte per cell, and most MSX art repeats in clumps: a brick wall,
+a pine tree, a platform end. A **meta-tile set** (\`res/*.meta-tiles.json\`, or
+\`*.meta-btiles.json\` over a bitmap tileset) names those clumps once, and a map
+pointed at the set indexes *them* instead of tiles. A 32×24 screen of 2×2 metas
+is 192 bytes rather than 768, before RLEp.
+
+This is opt-in and nothing else changes: a map that names an ordinary
+\`.tiles.json\` exports exactly what it always did. Use it when a map is large
+enough for the ROM to notice, and skip it when it is not — the indirection costs
+a few cycles per cell drawn and one extra table.
+
+The set exports its metas as one table at a fixed stride, plus
+\`_META_W\`/\`_META_H\`/\`_COUNT\` and a \`#define\` per *named* meta. The map exports
+its own \`_META_W\`/\`_META_H\`, \`_META_CELLS\` (the stride) and \`_TILE_W\`/\`_TILE_H\`
+(its size in tiles — \`_W\`/\`_H\` count metas now). With helpers on the map gains:
+
+\`\`\`c
+// The map's cells are meta indices, so pass the set's table in alongside them.
+u8 rowbuf[G_MYMAP_TILE_W];
+g_MyMap_DrawView(g_MyMap_Background, g_MyMetas, rowbuf, camX, camY, 0, 0, 32, 24);
+
+// Or expand it to plain tiles in RAM, when the game *reads and writes* the map
+// — collision, or turning a collected coin into sky. VRAM cannot do that.
+u8 world[G_MYMAP_TILE_W * G_MYMAP_TILE_H];
+g_MyMap_ExpandToRAM(g_MyMap_Background, g_MyMetas, world);
+\`\`\`
+
+Two rules worth knowing before you use it:
+
+- There is **no \`_DrawLayer\` on a meta map**. Writing meta indices into the name
+  table would draw whichever tiles happen to share those numbers. \`_DrawView\`
+  covering the whole map is the equivalent, and it needs a \`_TILE_W\`-byte row
+  buffer instead of the whole map in RAM.
+- Compressed meta layers are **unpacked by you**, once, with
+  \`RLEp_UnpackToRAM\` — the helpers read an unpacked layer. That is affordable
+  precisely because a meta layer is small, and it is what lets the game keep the
+  map in RAM and change it.
+
+Collision still reads the tileset's \`_Flags\`, indexed by *tile*: either expand
+the map first, or resolve a cell yourself with
+\`g_MyMetas[meta * G_MYMAP_META_CELLS + sy * G_MYMAP_META_W + sx]\`.
 
 ### Animated tiles
 
@@ -324,6 +375,12 @@ There is no default — cell 0 is an ordinary picture, so a map that names no
 transparent cell has none, and the Problems panel says so once it has more than
 one layer.
 
+A bitmap map drawn with a **meta-tile set** (\`*.meta-btiles.json\`) keeps that
+shape exactly, plus the set's table: \`_DrawRow(layer, metas, row, atlasY,
+destY)\`. \`row\` is still a *cell* row and the loop still issues one \`HMMM\` per
+cell across the map, so a scroller written against a plain bitmap map ports by
+adding one argument and its blit budget does not move.
+
 **Bitmap sprites (software sprites)** are how you get a moving object bigger or
 more colourful than the hardware allows in a bitmap mode. MSXgl ships no module
 for them — the exporter generalises the engine's \`s_swsprt\` sample instead.
@@ -368,7 +425,8 @@ they are by default). The generated helpers change shape with it — a compresse
 map's \`_DrawLayer\` takes a scratch buffer you size with \`_UNPACKED_SIZE\`:
 
 \`\`\`c
-u8 buffer[G_MYMAP_UNPACKED_SIZE];
+// The define is per *table*, so it carries the layer's name — not G_MYMAP_UNPACKED_SIZE.
+u8 buffer[G_MYMAP_BACKGROUND_UNPACKED_SIZE];
 g_MyMap_DrawLayer(g_MyMap_Background, buffer, 0, 0);${
     msx1 ? '' : `
 g_Title_Unpack(buffer, 0);   // packed screen: one band at a time, straight to VRAM`
@@ -387,6 +445,11 @@ shrink the data, so read the header's parameter block rather than assuming.
 Compression pays when the data was going to be copied to RAM anyway — a level
 you unpack once at startup and then read and write. Unpacking a map you meant to
 read straight out of ROM costs you the RAM you were trying to save.
+
+Meta-tiles and RLEp stack: the meta layer is just a smaller array, so it packs
+like any other. A meta map's helpers all read an **unpacked** layer, so unpack
+it once at startup rather than per call — which is what you wanted anyway, since
+a meta layer is small enough to keep in RAM and edit.
 
 ## Engine modules
 
