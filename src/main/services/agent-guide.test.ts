@@ -46,4 +46,14 @@ describe('agentGuideFiles', () => {
     expect(guide('2')).toContain('VDP_SetSpriteExMultiColor')
     expect(guide('2')).toContain('CC bit')
   })
+
+  it('warns a dual-machine project that mode 2 is not everywhere', () => {
+    expect(guide('12')).toContain('which includes MSX1')
+    expect(guide('2')).not.toContain('which includes MSX1')
+  })
+
+  it('only offers screen compression where screens exist', () => {
+    expect(guide('1')).toContain('Maps can be exported RLEp-packed')
+    expect(guide('2')).toContain('Maps and screens can be exported RLEp-packed')
+  })
 })

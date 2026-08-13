@@ -209,7 +209,16 @@ ${
 one byte per plane; pass \`g_MyHero_Colors[plane]\`.`
     : `In sprite mode 2 (MSX2+) each of the 16 lines of a sprite has its own colour
 byte, so \`_Colors\` holds **16 bytes per plane** and
-\`VDP_SetSpriteExMultiColor\` takes a pointer into it, not a colour.`
+\`VDP_SetSpriteExMultiColor\` takes a pointer into it, not a colour.${
+        project.machine.includes('1')
+          ? `
+
+Careful: \`Machine\` is \`${project.machine}\`, which includes MSX1 — this ROM is
+expected to boot on a machine that has no sprite mode 2. Branch on the detected
+MSX version at run time and fall back to \`VDP_SetSpriteSM1\`, or drop MSX1 from
+\`Machine\` in Project Settings.`
+          : ''
+      }`
 }
 
 ### Layered sprites (the important one)
@@ -336,7 +345,7 @@ reordering the bank renumbers them.
 
 ### Compression
 
-Maps and screens can be exported RLEp-packed (MSXgl's own format). When they
+Maps${msx1 ? '' : ' and screens'} can be exported RLEp-packed (MSXgl's own format). When they
 are, the header says so and adds \`_UNPACKED_SIZE\`; unpack with the engine's
 \`RLEp_UnpackToRAM\`, which needs \`"compress"\` in **LibModules** (and
 \`COMPRESS_USE_RLEP\`/\`COMPRESS_USE_RLEP_DEFAULT\` TRUE in \`msxgl_config.h\`, as
