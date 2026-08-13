@@ -27,9 +27,12 @@ the edge of the window, and writes just that band of bytes into VRAM. It only
 touches VRAM when the offset has crossed a full 8-pixel tile boundary, so
 calling it every frame is cheap.
 
-On MSX2, the module can also use the VDP's screen adjust register (R#27) to
+On MSX2, the module can also use the VDP's screen adjust register (R#18) to
 shift the whole picture by a sub-tile amount (0-7 pixels) without touching
 VRAM at all, giving smooth pixel-by-pixel scrolling between tile updates.
+`scroll.c` reaches it through MSXgl's `VDP_SetAdjustOffset()`. R#18 is a
+V9938 register, so this works on any MSX2 — it is not the V9958's horizontal
+scroll pair (R#26/R#27), which would need an MSX2+.
 
 ## Configuring the module
 
@@ -52,7 +55,7 @@ register, mask sprites) is not compiled into your ROM at all.
 | `SCROLL_DST_H` | Height of the visible window, in tiles (up to 24). |
 | `SCROLL_SCREEN_W` | Width of the actual screen's name table, in tiles (the row stride used when writing VRAM). Normally 32. |
 | `SCROLL_WRAP` | Loops the source map when scrolling reaches its edge. Horizontal only. |
-| `SCROLL_ADJUST` | Use the VDP adjust register (R#27) for smooth sub-tile scrolling. MSX2 only. |
+| `SCROLL_ADJUST` | Use the VDP adjust register (R#18, via `VDP_SetAdjustOffset()`) for smooth sub-tile scrolling. MSX2 only. |
 | `SCROLL_ADJUST_SPLIT` | Apply the adjust register only inside the destination window (via an H-blank split), so text/HUD areas outside the window aren't shifted. MSX2 only. |
 | `SCROLL_MASK` | Use sprites to hide the ragged tile edge while it's mid pixel-shift. MSX2 only. |
 | `SCROLL_MASK_ID` | First sprite index reserved for the mask sprites. |

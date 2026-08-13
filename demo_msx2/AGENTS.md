@@ -112,6 +112,24 @@ What `scroll.c` adds on top is what MSXgl has no module for — feeding map rows
 into the 256-line ring, the two-offset scheme below, disarming H-blank after the
 split, and `Scroll_HideSprite`. Do not "replace this with the engine's scroller".
 
+**MSXgl's `tile` module, unlike `scroll`, genuinely does apply here** — it is a
+bitmap-mode tile engine for SCREEN 5–8 (`Tile_LoadBank`, `Tile_DrawTile`,
+`Tile_DrawMapChunk`, `Tile_DrawScreen`; sample `s_swtile.c`), and its
+`g_Tile_DrawPage * 256 + y * TILE_HEIGHT` addressing would reach this ring's
+rows. It is still not the right trade here, for two reasons:
+
+- It blits with `LMMM + VDP_OP_TIMP`, a per-pixel logical move. The generated
+  `g_Stage_DrawRow()` uses `HMMM`, the byte-wise high-speed move, which is what
+  an opaque canyon cell wants — and the per-frame blit budget in `Scroll_Mist()`
+  assumes the cheaper one.
+- Its geometry is compile-time `#define`s in `msxgl_config.h`
+  (`TILE_WIDTH/HEIGHT/BPP/SCREEN_WIDTH`), so it would have to be kept in sync by
+  hand with what the atlas resource already knows.
+
+The one thing it has that the exporter does not is `TILE_USE_SKIP` /
+`TILE_SKIP_INDEX` — skipping a designated cell index instead of blitting it,
+which would be worth having for a sparse overlay layer. There is none here.
+
 **Two scroll offsets, not one.** `g_MainOffset` is what the logic computed for
 the *next* frame and the V-blank handler installs it; `g_ShownOffset` is what is
 actually in R#23 and is what every sprite and composited position is measured
