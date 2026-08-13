@@ -58,7 +58,11 @@ What the code demonstrates:
   startup, and the visible 32 columns of a 64 wide map are contiguous there, so
   each screen row is a single `VDP_WriteVRAM_16K`. The camera moves in whole
   tiles and only redraws when it actually changes, which on MSX1 is as smooth as
-  the hardware gets (see below).
+  the hardware gets (see below). The module was weighed and does not fit: with
+  `SCROLL_ADJUST` off — which is what MSX1 gets — `Scroll_Update()` is the same
+  per-row blit with the same whole-tile early-out, but it copies map rows
+  *verbatim*, and the backdrop merge two bullets down has to happen per cell
+  inside that copy.
 - **Collision from tile flags**, not from a list of tile numbers in the code.
   The tile editor's eight flag squares mark a tile solid, collectable or an
   exit, and `main.c` only ever asks `g_Tiles_Flags[tile] & FLAG_SOLID`. Re-order

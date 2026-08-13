@@ -115,6 +115,27 @@ does not include their headers for you.
 `CompileSkipOld` compares source mtimes only. After touching `demo.h` or
 `msxgl_config.h`, run `./build.sh rebuild`. (The IDE guards this itself.)
 
+**MSXgl's `scroll` module does not apply here, and that is not an oversight.**
+`scroll.c` blits raw map rows — `VDP_WriteVRAM_16K` straight out of
+`g_Scroll_Map` — with no per-cell hook of any kind. The two things that live
+inside `DrawView()`'s loop have nowhere to go in it: the `FLAG_TRANS →
+g_Back[col]` backdrop merge, and the `g_RowHasTrans[]` row-skip that costs a
+redraw 1.67 frames instead of 4.45. Using the module means deleting the backdrop.
+
+There is nothing to gain in exchange, either. On MSX1 `SCROLL_ADJUST` is FALSE —
+R#18 does not exist on the TMS9918 — so `Scroll_Update()` reduces to exactly this
+demo's else-branch: one `VDP_WriteVRAM_16K` per row, `src` stepping by
+`SCROLL_SRC_W`, into `g_ScreenLayoutLow + SCROLL_DST_Y * 32`, guarded by an
+early-out when the whole-tile offset is unchanged. That early-out is
+`UpdateCamera()` returning FALSE. Its pixel-level `Scroll_SetOffsetH()` takes a
+*delta*, where the camera here computes an absolute position clamped to the
+player.
+
+And its geometry is compile-time: `SCROLL_SRC_W` is a `#define` in
+`msxgl_config.h` that would have to be hand-kept equal to the exported map width.
+Repaint `level.map.json` wider and it reads garbage, with no compile error. Do
+not "replace this with the engine's scroller".
+
 ## Scope
 
 Scrolling steps a whole tile at a time because MSX1's TMS9918 has no R#18 —
