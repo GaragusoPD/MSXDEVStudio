@@ -98,6 +98,20 @@ while(g_BandOn && g_Split == 0) { __asm halt __endasm; }
 
 A polling loop instead of `halt` is tens of dots of jitter on its own.
 
+**MSXgl's `scroll` module does not apply here, and that is not an oversight.**
+It is a name-table scroller: `scroll.c` writes tile indices with
+`VDP_WriteVRAM_16K` into `g_ScreenLayoutLow` and smooths with R#18
+(`VDP_SetAdjustOffset`). It never touches R#23, and its 14-bit VRAM writes
+cannot even reach a SCREEN 5 page. There is no bitmap-mode path in it and no
+bitmap scrolling sample in MSXgl.
+
+The right reference is `projects/samples/s_gm3.c`, and this demo already follows
+it: R#23 through `VDP_SetVerticalOffset`, the same sprite-Y compensation down to
+stepping over 216, and the same `VDP_SetHBlankLine`/`VDP_EnableHBlank` split.
+What `scroll.c` adds on top is what MSXgl has no module for — feeding map rows
+into the 256-line ring, the two-offset scheme below, disarming H-blank after the
+split, and `Scroll_HideSprite`. Do not "replace this with the engine's scroller".
+
 **Two scroll offsets, not one.** `g_MainOffset` is what the logic computed for
 the *next* frame and the V-blank handler installs it; `g_ShownOffset` is what is
 actually in R#23 and is what every sprite and composited position is measured
