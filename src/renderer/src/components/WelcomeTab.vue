@@ -99,6 +99,15 @@ function openToolchainSetup(): void {
             <span class="recent-name">{{ baseName(path) }}</span>
             <span class="recent-path">{{ path }}</span>
           </button>
+          <button
+            type="button"
+            class="recent-remove"
+            title="Remove from the list (the project itself is left alone)"
+            aria-label="Remove from recent projects"
+            @click="appStore.forgetRecentProject(path)"
+          >
+            ✕
+          </button>
         </li>
       </ul>
       <p
@@ -183,6 +192,28 @@ button.primary {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* The row and its ✕ are siblings, not nested buttons. */
+.recent li {
+  display: flex;
+  align-items: center;
+}
+
+.recent-remove {
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  visibility: hidden;
+}
+
+.recent li:hover .recent-remove {
+  visibility: visible;
+}
+
+.recent-remove:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
 }
 
 .recent-item {

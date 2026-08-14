@@ -66,6 +66,16 @@ export const useAppStore = defineStore('app', {
       await this.persist({ panelLayout: { ...this.panelLayout, ...partial } })
     },
 
+    /** Drops one entry from the Welcome tab's list. The project on disk is untouched. */
+    forgetRecentProject(path: string): void {
+      void this.persist({
+        recentProjects: this.recentProjects.filter((entry) => entry !== path),
+        // App.vue reopens `lastProject` at startup, and opening it would put it
+        // straight back in the list — so forgetting it has to clear that too.
+        ...(this.lastProject === path ? { lastProject: null } : {})
+      })
+    },
+
     setTheme(theme: Theme): void {
       void this.persist({ theme })
     },
