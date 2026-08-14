@@ -7,7 +7,8 @@ What a MSXDEVStudio project is on disk, and how it reaches MSXgl.
 ```
 Game.msxproj        the project: JSON, the only file MSXDEVStudio owns
 project_config.js   generated from it before every build — MSXgl reads this
-main.c              your code
+main.c              your entry point
+src/                kit-authored C (play.c, screens.c, game.h) — New Game… only
 msxgl_config.h      MSXgl's per-project engine configuration
 res/                the editor resources (*.tiles.json, *.map.json, …)
 content/            C headers exported from res/ — generated

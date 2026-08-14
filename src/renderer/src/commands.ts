@@ -130,6 +130,9 @@ export function runMenuCommand(command: MenuCommand): void {
     case 'file.newProject':
       projectStore.newProject()
       break
+    case 'file.newGame':
+      projectStore.newGame()
+      break
     case 'file.openProject':
       void projectStore.openProject()
       break

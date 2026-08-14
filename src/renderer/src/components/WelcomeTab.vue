@@ -57,6 +57,13 @@ function openToolchainSetup(): void {
       </button>
       <button
         type="button"
+        class="primary"
+        @click="projectStore.newGame()"
+      >
+        New Game…
+      </button>
+      <button
+        type="button"
         @click="projectStore.openProject()"
       >
         Open Project…
@@ -109,7 +116,6 @@ function openToolchainSetup(): void {
   height: 100%;
   overflow-y: auto;
   padding: 48px;
-  max-width: 640px;
 }
 
 h1 {

@@ -40,6 +40,7 @@ export function menuTemplate(send: (command: MenuCommand) => void): MenuItemCons
       label: '&File',
       submenu: [
         item('New Project…', 'file.newProject'),
+        item('New Game…', 'file.newGame'),
         item('Open Project…', 'file.openProject'),
         { type: 'separator' },
         item('Save', 'file.save', 'Ctrl+S'),

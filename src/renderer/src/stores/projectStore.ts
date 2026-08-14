@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { NewProjectRequest, OpenProject } from '../../../shared/ipc'
+import type { NewGameRequest, NewProjectRequest, OpenProject } from '../../../shared/ipc'
 import type { MsxProject } from '../../../shared/msxproj'
 import { disposeAll as disposeAllTerminals } from '../editors/terminal/session'
 import { useTabsStore } from './tabsStore'
@@ -15,7 +15,8 @@ export const useProjectStore = defineStore('project', {
     dirty: false,
     /** LibModules candidates scanned from `<msxgl>/engine/src/`; loaded on demand. */
     libModules: [] as string[],
-    wizardVisible: false
+    wizardVisible: false,
+    gameWizardVisible: false
   }),
 
   getters: {
@@ -53,6 +54,10 @@ export const useProjectStore = defineStore('project', {
 
     newProject(): void {
       this.wizardVisible = true
+    },
+
+    newGame(): void {
+      this.gameWizardVisible = true
     },
 
     /**
@@ -102,6 +107,17 @@ export const useProjectStore = defineStore('project', {
         return true
       } catch (error) {
         window.alert(`Couldn't create the project: ${String(error)}`)
+        return false
+      }
+    },
+
+    async createGameProject(request: NewGameRequest): Promise<boolean> {
+      try {
+        await this.afterOpen(await window.api.invoke('project:createGame', request))
+        this.gameWizardVisible = false
+        return true
+      } catch (error) {
+        window.alert(`Couldn't create the game: ${String(error)}`)
         return false
       }
     },

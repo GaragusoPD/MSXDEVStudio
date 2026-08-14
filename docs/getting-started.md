@@ -58,17 +58,21 @@ first time.
 
 ## 4. Make a project
 
-**New Project** on the Welcome tab, or File ▸ New Project.
+**New Project** on the Welcome tab, or File ▸ New Project, is the thin
+hello-world path: a name, a location and a machine. MSXDEVStudio copies
+MSXgl's own project template — the plain one for MSX1, `template_msx2` for
+anything newer — giving you `main.c` and `msxgl_config.h`, and writes a
+`.msxproj` beside them. The defaults are a 32 KB ROM for MSX1 with the
+`system`, `bios`, `vdp`, `print`, `input` and `memory` engine modules; all
+of it is changeable in [Project settings](project-settings.md).
+
+**New Game…** (Welcome tab or File menu) is the other path: pick a genre kit,
+a display mode and which screens to include, and the wizard scaffolds a
+compiling stub with the right modules and a suggested ROM size. See
+[New Game kits](game-kits.md).
 
 ![The Welcome tab: New Project, Open Project, and the projects you opened
 recently](images/editor_welcome_tab.png)
-
-You choose a name, a location and a machine. MSXDEVStudio copies MSXgl's own
-project template — the plain one for MSX1, `template_msx2` for anything
-newer — giving you `main.c` and `msxgl_config.h`, and writes a `.msxproj`
-beside them. The defaults are a 32 KB ROM for MSX1 with the `system`, `bios`,
-`vdp`, `print`, `input` and `memory` engine modules; all of it is changeable in
-[Project settings](project-settings.md).
 
 To open a project later: double-click any `.msxproj` file, run
 `msxdevstudio path/to/Game.msxproj`, or use the recent list on the Welcome tab. If

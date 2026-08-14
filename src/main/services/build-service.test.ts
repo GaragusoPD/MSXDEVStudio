@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { REAL_MSXGL, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
+import { REAL_MSXGL, emulatorConfigured, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
 import type { BuildFinished, IpcEvents, OpenProject } from '../../shared/ipc'
 import { BuildService, type BuildDeps } from './build-service'
 import { createProject, resolveNodeBinary, saveProject } from './project'
@@ -87,7 +87,7 @@ afterEach(() => {
   for (const service of services.splice(0)) service.dispose()
   while (tmpDirs.length) {
     const dir = tmpDirs.pop()
-    if (dir) rmSync(dir, { recursive: true, force: true })
+    if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })
 
@@ -283,7 +283,9 @@ describe('BuildService WebMSX run', () => {
     BUILD_TIMEOUT
   )
 
-  it.runIf(runsBuilds)(
+  // Skipped against a clone whose `projects/default_config.js` names an
+  // emulator: MSXgl's RUN step launches it for real and waits for the window.
+  it.runIf(runsBuilds && !emulatorConfigured())(
     'hands the run step to MSXgl (not the browser) when openMSX is preferred',
     async () => {
       // defaultProject() → emulator.preferred: 'openmsx'.

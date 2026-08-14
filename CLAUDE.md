@@ -49,7 +49,9 @@ Compression is opt-in per resource (`ExportBlock.compress`), for maps and screen
 `resourceTables()` emits data; `resourceConstants()` emits `#define`s locating each group in it (`..._BASE/_W/_H`, `..._BASE/_PLANES/_FRAMES`); `resourceCode()` emits working C, gated on `ExportBlock.helpers` (a checkbox per editor, off by default) because it calls MSXgl and a data-only header must not. The emitted C calls **MSXgl's own API, never a reimplementation** — `VDP_SetSpriteExMultiColor`/`VDP_SetSpriteSM1`, `VDP_WriteLayout_GM2`, `VDP_CommandHMMC`/`HMMM`/`LMMM`. The one exception is software sprites: MSXgl ships no module for them, only the `s_swsprt` sample, so `screenHelperC` generalises that sample's save/restore/blit cycle.
 
 Emitted C is not verified by compiling it in your head. Build a scratch project from `~/MSXgl/projects/template{,_msx2}` **outside `/tmp`** (MSXgl renames `.rel` files across directories and `rename(2)` will not cross filesystems), then boot the ROM:
-`OPENMSX_SYSTEM_DATA=<openmsx>/share <openmsx>/bin/openmsx -machine C-BIOS_MSX2_EU -cart <rom> -script <tcl>` with `after time 12 { screenshot -raw <png>; exit }` — C-BIOS needs ~10s before the cartridge runs.
+`OPENMSX_SYSTEM_DATA=<openmsx>/share <openmsx>/bin/openmsx -machine C-BIOS_MSX2_EU -cart <rom> -script <tcl>` with `after time 12 { screenshot -raw <png>; exit }` — C-BIOS needs ~10s before the cartridge runs. (Windows: `"C:/Program Files/openMSX/openmsx.exe"`, no env var needed.) A stub that waits for input needs input: `keymatrixdown 8 0x01` / `keymatrixup 8 0x01` presses SPACE from the same script — row 8 is SPACE(0x01), LEFT(0x10), UP(0x20), DOWN(0x40), RIGHT(0x80). Shoot before *and* after: one screenshot cannot tell a scrolling camera from a still one.
+
+The game-kit wizard's own emitted C is checked that way by `game-kit-build.test.ts`, which builds one project per `emitPlayC` branch against the real engine — the only thing that catches a stub calling an API that doesn't exist, or a `msxgl_config.h` default that leaves a module's symbols unresolved (`PAWN_USE_SPRT_FX` wanting the `spritefx` module nothing links).
 
 ### The build pipeline (the core of the app)
 

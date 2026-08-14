@@ -1,7 +1,9 @@
 import { type BrowserWindow, dialog, ipcMain } from 'electron'
 import { existsSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import type { NewGameRequest } from '../../shared/game-kit'
 import type { NewProjectRequest, OpenProject } from '../../shared/ipc'
+import { createGameProject } from './game-kit'
 import type { MsxProject } from '../../shared/msxproj'
 import type { ProjectTabsState } from '../../shared/tabs'
 import {
@@ -45,6 +47,7 @@ export class ProjectService {
 
   registerIpc(): void {
     ipcMain.handle('project:create', (_e, req: NewProjectRequest) => this.create(req))
+    ipcMain.handle('project:createGame', (_e, req: NewGameRequest) => this.createGame(req))
     ipcMain.handle('project:open', (_e, req: { path?: string }) => this.open(req?.path))
     ipcMain.handle('project:save', (_e, req: { project: MsxProject }) => this.save(req.project))
     ipcMain.handle('project:close', () => this.close())
@@ -73,6 +76,10 @@ export class ProjectService {
 
   async create(request: NewProjectRequest): Promise<OpenProject> {
     return this.activate(createProject(request, this.msxglPath()))
+  }
+
+  async createGame(request: NewGameRequest): Promise<OpenProject> {
+    return this.activate(createGameProject(request, this.msxglPath()))
   }
 
   /** Spec 12: the examples browser forks a sample straight to disk itself, then routes the

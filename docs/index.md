@@ -16,6 +16,7 @@ through the [tutorials](tutorials/README.md) in order.
 | Guide | What it covers |
 |---|---|
 | [Getting started](getting-started.md) | First launch, the toolchain download, choosing an emulator, and your first project |
+| [New Game kits](game-kits.md) | The game-kit wizard: genres, screen modes, what is generated |
 | [The demo games](demos.md) | Installing the two bundled games, and a step-by-step first session on each |
 | [Project settings](project-settings.md) | Machine, target and ROM size, mappers, library modules, the ISR options, and the escape hatch to a hand-written config |
 | [Building and running](building-and-running.md) | Build, Rebuild and Clean, the Problems panel, incremental builds, and running in openMSX or WebMSX |

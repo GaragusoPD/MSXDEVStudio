@@ -7,6 +7,12 @@
  * examples fork write both families the same way. Electron-free.
  */
 
+import {
+  attributionLines,
+  GAME_SOURCE_DIR,
+  isBitmapMode,
+  type NewGameRequest
+} from '../../shared/game-kit'
 import type { MsxProject } from '../../shared/msxproj'
 
 /** Sprite mode 1 is MSX1's; everything newer gets mode 2 (same split as `templateDirFor`). */
@@ -19,16 +25,21 @@ const isMsx1 = (machine: string): boolean => machine === '1'
  */
 export function agentGuideFiles(
   project: MsxProject,
-  msxglPath: string
+  msxglPath: string,
+  kit?: Pick<NewGameRequest, 'kit' | 'audio' | 'displayMode'>
 ): { name: string; content: string }[] {
-  const content = agentGuide(project, msxglPath)
+  const content = agentGuide(project, msxglPath, kit)
   return [
     { name: 'CLAUDE.md', content },
     { name: 'AGENTS.md', content }
   ]
 }
 
-function agentGuide(project: MsxProject, msxglPath: string): string {
+function agentGuide(
+  project: MsxProject,
+  msxglPath: string,
+  kit?: Pick<NewGameRequest, 'kit' | 'audio' | 'displayMode'>
+): string {
   const msx1 = isMsx1(project.machine)
   const path = msxglPath.split('\\').join('/')
   return `# ${project.name}
@@ -476,5 +487,64 @@ calls** — it is the fastest way to get a signature right.
    from MSXgl's types, and globals beat locals for anything hot.
 4. When a resource looks wrong, fix it in the editor / \`res/\` file, then
    rebuild — not in \`content/\`.
+${kit ? kitChapter(kit) : ''}`
+}
+
+function kitChapter(kit: Pick<NewGameRequest, 'kit' | 'audio' | 'displayMode'>): string {
+  const credits = attributionLines(kit)
+    .map((line) => `- ${line}`)
+    .join('\n')
+  const bitmap = isBitmapMode(kit.displayMode)
+  return `
+## This project's game kit
+
+Created from the **${kit.kit}** kit (display \`${kit.displayMode}\`).
+
+Authored C lives in \`${GAME_SOURCE_DIR}/\` — \`${GAME_SOURCE_DIR}/play.c\` is the
+play state, \`${GAME_SOURCE_DIR}/screens.c\` is title/menu/credits. \`main.c\` at
+the root only starts the state machine. Do not move those files to the root;
+\`ProjModules\` lists them as \`${GAME_SOURCE_DIR}/play\` and \`${GAME_SOURCE_DIR}/screens\`.
+
+### The state machine
+
+\`State_Play()\` runs \`Play_Init()\` **once** and hands over to \`State_Resume()\`,
+which is the per-frame loop — put gameplay code there, not in \`State_Play\`, or
+it re-initializes on every frame. A state returning \`TRUE\` ends the frame;
+\`FALSE\` runs the next state immediately (that is how the hand-over works).
+
+### Fonts
+
+\`Game_SetFont()\` in \`${GAME_SOURCE_DIR}/screens.c\` installs the right font for
+this display mode${
+    bitmap
+      ? ": bitmap modes have no pattern table, so it uses MSXgl's own\n`g_Font_MGL_Sample8` rather than the BIOS font"
+      : ': the BIOS font, from pattern 1 up. It overwrites tile\npatterns, which is why `Play_Init()` calls it *before* loading the tileset'
+  }.
+
+### msxgl_config.h was tuned for this kit
+
+The wizard rewrote a few \`#define\`s the engine modules need — leave them alone
+unless you know why they were set:
+\`PAWN_USE_SPRT_FX\`/\`PAWN_USE_RT_LOAD\` off (nothing links \`spritefx\`),
+\`PAWN_TILEMAP_SRC_VRAM\` (collision reads the map you uploaded), and
+\`SCROLL_SRC_W\`/\`SCROLL_SRC_H\`, which **must** stay equal to the exported map's
+size — resize \`res/*.map.json\` and you resize these too.
+${
+  bitmap
+    ? `
+### Pictures in a bitmap mode
+
+A SCREEN ${kit.displayMode.slice(2)} picture is ~27 KB and does not fit in the 32 KB the mapper pages
+in at boot, so this kit ships **no** screen resource — \`Play_Init()\` fills the
+panel with a VDP command instead. To ship a real one: export it as a raw file
+(\`format: "bin"\`), place it in the \`.msxproj\`'s \`files.rawFiles\` at an offset
+whose bitmap starts on an 8 KB segment boundary, then page that segment into
+bank 3 and blit it with \`VDP_CommandHMMC\` — the way \`demo_msx2\` does.
+`
+    : ''
+}
+### Credits you must keep
+
+${credits}
 `
 }
