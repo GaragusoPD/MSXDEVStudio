@@ -16,7 +16,7 @@ import {
   findOpenmsxOnPath,
   getMsxglVersion,
   pullMsxgl,
-  runOpenmsxVersion,
+  inspectOpenmsx,
   validateMsxglRoot,
   writeEmulatorConfig
 } from './toolchain'
@@ -86,28 +86,29 @@ export class ToolchainService {
   }
 
   private async validateOpenmsx(path: string | null): Promise<OpenmsxStatus> {
-    if (!path || !existsSync(path)) return { valid: false, path, version: null }
-    const version = await runOpenmsxVersion(path)
-    return { valid: version !== null, path, version }
+    return inspectOpenmsx(path)
   }
 
   async getStatus(): Promise<ToolchainStatus> {
     const msxgl = this.validateMsxgl(this.resolveMsxglPath())
     const openmsx = await this.validateOpenmsx(this.resolveOpenmsxPath())
+    this.persistEmulator(msxgl, openmsx)
     return { msxgl, openmsx, platform: process.platform }
   }
 
   async setPaths(partial: Partial<ToolchainSettings>): Promise<ToolchainStatus> {
     this.stateService.update({ toolchain: { ...this.settings(), ...partial } })
-    const status = await this.getStatus()
-    if (status.msxgl.valid && status.openmsx.valid && status.msxgl.path && status.openmsx.path) {
-      try {
-        writeEmulatorConfig(status.msxgl.path, status.openmsx.path)
-      } catch (error) {
-        console.error('[ToolchainService] failed to write default_config.js', error)
-      }
+    return this.getStatus()
+  }
+
+  /** MSXgl's run step reads `projects/default_config.js`, not the IDE settings. */
+  private persistEmulator(msxgl: MsxglStatus, openmsx: OpenmsxStatus): void {
+    if (!msxgl.valid || !openmsx.valid || !msxgl.path || !openmsx.path) return
+    try {
+      writeEmulatorConfig(msxgl.path, openmsx.path)
+    } catch (error) {
+      console.error('[ToolchainService] failed to write default_config.js', error)
     }
-    return status
   }
 
   async downloadMsxgl(targetDir?: string): Promise<ToolchainStatus> {

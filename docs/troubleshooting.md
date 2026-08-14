@@ -19,6 +19,11 @@ the MSXgl path. MSXDEVStudio resolves each tool in the same order — an explici
 setting, then your `PATH`, then the platform default — and validates by running
 the binaries, so a path that merely *looks* right can still fail here.
 
+**openMSX path is correct but the settings page said "Not found" (Windows).**
+The Windows `openmsx.exe` is a GUI program: `--version` exits successfully and
+prints nothing, so an older check treated a real install as missing. Current
+builds read the file's ProductVersion instead and accept the exe if it exists.
+
 **The MSXgl download worked but builds fail on Linux.** MSXgl bundles its own
 SDCC and tools, and a ZIP archive cannot record the executable bit. MSXDEVStudio
 sets it after extracting; if you unpacked MSXgl yourself, you may need to do it
@@ -27,6 +32,18 @@ by hand. Re-running the download from Toolchain Settings is the easy fix.
 **"Unknown LibModules entry".** An engine module name in
 [Project settings](project-settings.md) is not one MSXgl has. Check the spelling
 against the module list.
+
+**"Options come first" when assembling.** MSXgl passes `-I<project dir>` to
+sdasz80 without quotes. A space in the project path (for example
+`C:\Users\...\My Game\...`) makes the assembler treat the rest of the path as
+a filename and then reject the next flag. The IDE now starts the build from the
+Windows 8.3 short path so that flag stays one token. If 8.3 names are disabled
+on the volume, put the project in a folder with no spaces.
+
+**A new game kit fails compiling `src/screens.c` at `Aoineko`.** An earlier
+wizard wrote `Print_DrawText("... \"Aoineko\" ...")` without escaping the
+nickname quotes. Recreate the project, or change that line to use
+`'Aoineko'` instead.
 
 ## Building
 

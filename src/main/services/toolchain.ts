@@ -98,6 +98,30 @@ export function parseOpenmsxVersion(output: string): string | null {
   return match ? match[1] : null
 }
 
+/**
+ * Windows openMSX is a GUI-subsystem binary: `openmsx --version` exits 0 and
+ * writes nothing to stdout/stderr when spawned without a console (Electron's
+ * main process, `execFile`, redirected PowerShell). The PE version resource
+ * still has ProductVersion ("21.0"), so we read that instead of calling the
+ * file "not found".
+ */
+export function productVersionFromPe(buf: Buffer): string | null {
+  const needle = Buffer.from('ProductVersion\0', 'utf16le')
+  const at = buf.indexOf(needle)
+  if (at < 0) return null
+  let i = at + needle.length
+  while (i + 1 < buf.length && buf[i] === 0 && buf[i + 1] === 0) i += 2
+  const chars: string[] = []
+  while (i + 1 < buf.length) {
+    const code = buf[i] | (buf[i + 1] << 8)
+    if (code === 0) break
+    chars.push(String.fromCharCode(code))
+    i += 2
+  }
+  const version = chars.join('').trim()
+  return version || null
+}
+
 export function findOpenmsxOnPath(): string | null {
   const cmd = process.platform === 'win32' ? 'where' : 'which'
   try {
@@ -125,14 +149,42 @@ export function openmsxSystemDataDir(execPath: string | null): string | null {
 
 export function runOpenmsxVersion(execPath: string): Promise<string | null> {
   return new Promise((resolvePromise) => {
-    execFile(execPath, ['--version'], { timeout: 5000 }, (error, stdout, stderr) => {
-      if (error) {
-        resolvePromise(null)
-        return
-      }
-      resolvePromise(parseOpenmsxVersion(stdout || stderr))
-    })
+    try {
+      execFile(execPath, ['--version'], { timeout: 5000 }, (error, stdout, stderr) => {
+        if (error) {
+          resolvePromise(null)
+          return
+        }
+        resolvePromise(parseOpenmsxVersion(stdout || stderr))
+      })
+    } catch {
+      // Windows `execFile` of a non-PE file throws spawn UNKNOWN instead of calling back.
+      resolvePromise(null)
+    }
   })
+}
+
+/** The file is there. Version is optional — Windows GUI builds often have none from `--version`. */
+export async function inspectOpenmsx(path: string | null): Promise<{
+  valid: boolean
+  path: string | null
+  version: string | null
+}> {
+  if (!path || !existsSync(path)) return { valid: false, path, version: null }
+  try {
+    if (!statSync(path).isFile()) return { valid: false, path, version: null }
+  } catch {
+    return { valid: false, path, version: null }
+  }
+  const fromFlag = await runOpenmsxVersion(path)
+  if (fromFlag) return { valid: true, path, version: fromFlag }
+  let fromPe: string | null = null
+  try {
+    fromPe = productVersionFromPe(readFileSync(path))
+  } catch {
+    // Unreadable or not a PE file: the binary is still there, just unversioned.
+  }
+  return { valid: true, path, version: fromPe }
 }
 
 // ---------------------------------------------------------------------------

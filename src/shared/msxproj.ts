@@ -240,7 +240,13 @@ export function generateProjectConfig(
    * include the header; that `.c` has to be compiled, and expecting the user to
    * list every resource by hand would make the export a trap.
    */
-  generatedModules: readonly string[] = []
+  generatedModules: readonly string[] = [],
+  /**
+   * Space-free directory MSXgl should use as `ProjDir`. Needed on Windows when
+   * the real project path has spaces: compiler.js concatenates `-I${ProjDir}`
+   * unquoted. Omit when `process.cwd()` is already safe.
+   */
+  projDir?: string
 ): string {
   const out: string[] = [
     `${GENERATED_BANNER_PREFIX} ${projectFileName} — edit settings in the IDE, or set`,
@@ -259,6 +265,10 @@ export function generateProjectConfig(
 
   section('Project')
   emit('ProjName', project.name)
+  if (projDir) {
+    const slash = projDir.replace(/\\/g, '/').replace(/\/?$/, '/')
+    out.push(`ProjDir = ${jsLiteral(slash)};`)
+  }
   const projModules = [...project.projModules, ...generatedModules.filter((m) => !project.projModules.includes(m))]
   emit('ProjModules', projModules, `[${projModules.map((m) => JSON.stringify(m)).join(', ')}]`)
   emit('LibModules', project.libModules, `[${project.libModules.map((m) => JSON.stringify(m)).join(', ')}]`)

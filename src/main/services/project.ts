@@ -34,6 +34,7 @@ import {
 } from '../../shared/msxproj'
 import { RESOURCE_DIR } from '../../shared/msx/resource'
 import type { ProjectTabsState } from '../../shared/tabs'
+import { pathNeedsShortForm, windowsShortPath } from './win-short-path'
 
 export const PROJECT_EXT = '.msxproj'
 export const IDE_STATE_DIR = '.msxdevstudio'
@@ -60,7 +61,18 @@ export function writeGeneratedConfig(
   generatedModules: readonly string[] = []
 ): void {
   if (project.customConfig) return
-  writeFileSync(join(root, CONFIG_FILE), generateProjectConfig(project, projectFile, generatedModules), 'utf-8')
+  const safe = windowsShortPath(root)
+  if (pathNeedsShortForm(root) && pathNeedsShortForm(safe)) {
+    throw new Error(
+      `The project path contains spaces ("${root}") and Windows has no 8.3 short name for it. ` +
+        'Move the project to a folder without spaces — MSXgl cannot compile from a path with spaces.'
+    )
+  }
+  writeFileSync(
+    join(root, CONFIG_FILE),
+    generateProjectConfig(project, projectFile, generatedModules, pathNeedsShortForm(root) ? safe : undefined),
+    'utf-8'
+  )
 }
 
 export function saveProject(root: string, projectFile: string, project: MsxProject): OpenProject {

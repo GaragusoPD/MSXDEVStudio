@@ -12,9 +12,12 @@ import {
   getMsxglVersion,
   isExecutable,
   openmsxSystemDataDir,
+  inspectOpenmsx,
   parseOpenmsxVersion,
+  productVersionFromPe,
   pullMsxgl,
   validateMsxglRoot,
+  WINDOWS_DEFAULT_OPENMSX_PATH,
   writeEmulatorConfig
 } from './toolchain'
 
@@ -44,7 +47,7 @@ function makeTmpDir(prefix: string): string {
 afterEach(() => {
   while (tmpDirs.length) {
     const dir = tmpDirs.pop()
-    if (dir) rmSync(dir, { recursive: true, force: true })
+    if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })
 
@@ -127,6 +130,56 @@ describe('parseOpenmsxVersion', () => {
   it('returns null for unrecognized output', () => {
     expect(parseOpenmsxVersion('command not found')).toBeNull()
   })
+
+  it('returns null for empty output — Windows GUI builds print nothing to stdout', () => {
+    expect(parseOpenmsxVersion('')).toBeNull()
+  })
+})
+
+describe('productVersionFromPe', () => {
+  it('reads the UTF-16 ProductVersion string out of a PE version resource', () => {
+    const block = Buffer.concat([
+      Buffer.from([0, 1, 2, 3]),
+      Buffer.from('ProductVersion\0', 'utf16le'),
+      Buffer.from('21.0\0', 'utf16le')
+    ])
+    expect(productVersionFromPe(block)).toBe('21.0')
+    expect(productVersionFromPe(Buffer.from('no version here'))).toBeNull()
+  })
+
+  it.runIf(existsSync(WINDOWS_DEFAULT_OPENMSX_PATH))(
+    'reads 21.x from the installed Windows openMSX.exe',
+    () => {
+      const version = productVersionFromPe(readFileSync(WINDOWS_DEFAULT_OPENMSX_PATH))
+      expect(version).toMatch(/^21\./)
+    }
+  )
+})
+
+describe('inspectOpenmsx', () => {
+  it('treats a real file as valid even when --version prints nothing', async () => {
+    const dir = makeTmpDir('openmsx-silent-')
+    const exe = join(dir, 'openmsx.exe')
+    writeFileSync(exe, 'not a real binary')
+    const status = await inspectOpenmsx(exe)
+    expect(status.valid).toBe(true)
+    expect(status.path).toBe(exe)
+    expect(status.version).toBeNull()
+  })
+
+  it('rejects a missing path', async () => {
+    expect(await inspectOpenmsx(null)).toEqual({ valid: false, path: null, version: null })
+    expect((await inspectOpenmsx(join(makeTmpDir('openmsx-gone-'), 'nope.exe'))).valid).toBe(false)
+  })
+
+  it.runIf(existsSync(WINDOWS_DEFAULT_OPENMSX_PATH))(
+    'accepts the Windows installer and reports its file version',
+    async () => {
+      const status = await inspectOpenmsx(WINDOWS_DEFAULT_OPENMSX_PATH)
+      expect(status.valid).toBe(true)
+      expect(status.version).toMatch(/^21\./)
+    }
+  )
 })
 
 describe('findOpenmsxOnPath', () => {

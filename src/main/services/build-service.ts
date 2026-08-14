@@ -37,6 +37,7 @@ import {
   runnableArtifact,
   stripAnsi,
   webmsxUrl,
+  windowsBuildCwd,
   writeBuildStamp
 } from './build'
 
@@ -213,7 +214,7 @@ export class BuildService {
         : process.env
 
     const child = spawn(node, args, {
-      cwd: root,
+      cwd: windowsBuildCwd(root),
       env,
       // Own process group (POSIX) so the kill button can take down sdcc too.
       detached: process.platform !== 'win32',
