@@ -68,6 +68,8 @@ export class GitService {
   private topLevel: Promise<string> | null = null
   private watcher: FSWatcher | null = null
   private gitAvailable = true
+  /** Tail of the one-at-a-time git chain; see `run`. */
+  private queue: Promise<void> = Promise.resolve()
 
   /** `onChanged` is called with the fresh status after every mutation and on out-of-band `.git` changes. */
   constructor(private readonly onChanged: (status: GitStatus) => void) {}
@@ -101,8 +103,16 @@ export class GitService {
     }
   }
 
-  dispose(): void {
-    void this.watcher?.close()
+  /**
+   * Resolves once nothing of ours is touching the repo any more: the watcher's
+   * handles are closed *and* the last git child has exited. On Windows a folder
+   * that is some process's cwd cannot be removed (EBUSY), and the watcher fires
+   * a status refresh after every index change — so a `git status` can easily
+   * outlive the command that triggered it.
+   */
+  async dispose(): Promise<void> {
+    await this.watcher?.close()
+    await this.queue
   }
 
   // ── plumbing ────────────────────────────────────────────────────────────
@@ -112,6 +122,24 @@ export class GitService {
   private async run(args: string[], explicitCwd?: string): Promise<ExecResult> {
     const cwd = explicitCwd ?? (await this.topLevel)
     if (!cwd) return Promise.reject(new Error('No project is open'))
+    // Git takes `.git/index.lock` even to refresh the index for `status`, and
+    // the watcher fires a status on every index change — so a status and the
+    // command that triggered it can collide ("Unable to create index.lock",
+    // reliably on Windows). One chain, one git at a time. The cwd is resolved
+    // *before* queueing: `resolveTopLevel` runs git too, and awaiting it from
+    // inside the queue would wait on a command queued behind this one.
+    const result = this.queue.then(
+      () => this.exec(args, cwd),
+      () => this.exec(args, cwd)
+    )
+    this.queue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
+  private exec(args: string[], cwd: string): Promise<ExecResult> {
     return new Promise((resolvePromise, reject) => {
       execFile('git', args, { cwd, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error) {

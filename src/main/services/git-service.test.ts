@@ -43,11 +43,12 @@ function harness(): Harness {
   return { service, events }
 }
 
-afterEach(() => {
-  for (const service of services.splice(0)) service.dispose()
+afterEach(async () => {
+  // Awaited: the watcher's handles have to be gone before the folder can go.
+  await Promise.all(services.splice(0).map((service) => service.dispose()))
   while (tmpDirs.length) {
     const dir = tmpDirs.pop()
-    if (dir) rmSync(dir, { recursive: true, force: true })
+    if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })
 
