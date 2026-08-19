@@ -1,0 +1,8 @@
+{
+  "openPaths": [
+    "res/stage.map.json",
+    "res/canyon.btiles.json",
+    "res/fleet.sprites.json"
+  ],
+  "activePath": "res/stage.map.json"
+}

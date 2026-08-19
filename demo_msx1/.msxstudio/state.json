@@ -1,0 +1,10 @@
+{
+  "openPaths": [
+    "res/level.map.json",
+    "res/intro.tiles.json",
+    "res/background.map.json",
+    "res/intro.map.json",
+    "main.c"
+  ],
+  "activePath": null
+}
