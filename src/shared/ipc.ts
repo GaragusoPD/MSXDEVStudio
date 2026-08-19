@@ -8,6 +8,7 @@
  * `src/preload/index.ts`.
  */
 
+import type { NewGameRequest } from './game-kit'
 import type { ResourceKind } from './msx/resource'
 import type { Machine } from './msxgl-consts'
 import type { MsxProject } from './msxproj'
@@ -143,6 +144,8 @@ export interface NewProjectRequest {
   target: string
   libModules: string[]
 }
+
+export type { NewGameRequest }
 
 /** What the Build/Run buttons ask for (Spec 04). `run` = build, then launch the preferred emulator. */
 export type BuildCommand = 'build' | 'rebuild' | 'clean' | 'run'
@@ -292,6 +295,8 @@ export interface IpcApi {
   'toolchain:pickFile': { req: void; res: string | null }
   /** Scaffolds a new project from the MSXgl template and opens it. */
   'project:create': { req: NewProjectRequest; res: OpenProject }
+  /** Scaffolds a game-kit project (Spec 14) and opens it. */
+  'project:createGame': { req: NewGameRequest; res: OpenProject }
   /** Opens a folder or `.msxproj` path; with no `path`, shows a folder picker (null if canceled).
    *  A folder holding only `project_config.js` is imported (`customConfig: true`). */
   'project:open': { req: { path?: string }; res: OpenProject | null }
@@ -419,6 +424,7 @@ export interface IpcEvents {
  */
 export type MenuCommand =
   | 'file.newProject'
+  | 'file.newGame'
   | 'file.openProject'
   | 'file.save'
   | 'file.saveAll'

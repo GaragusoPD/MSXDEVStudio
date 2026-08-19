@@ -55,6 +55,7 @@ touches MSXgl.
 | 4 | [10](10-map-screen-editors.md) | Map & bitmap-screen editors | Sonnet 5 |
 | 5 | [11](11-sfx-editor.md) | PSG sound-effect editor (ayFX) | Opus 5 |
 | 5 | [13](13-packaging.md) | Packaging & distribution | Sonnet 5 |
+| 6 | [14](14-game-kits.md) | Game-kit wizard (templates + screen flow) | Opus 5 |
 
 **Phase 1 = the core loop:** create a project from the MSXgl template, edit C code,
 press F5, watch it boot in openMSX. Everything else layers on top. Within Phase 1

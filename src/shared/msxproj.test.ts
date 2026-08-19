@@ -121,6 +121,13 @@ describe('generateProjectConfig', () => {
     )
   })
 
+  it('emits ProjDir only when the caller supplies a space-free override', () => {
+    expect(generateProjectConfig(project(), 'x.msxproj')).not.toContain('ProjDir')
+    expect(generateProjectConfig(project(), 'x.msxproj', [], 'C:/Users/pablo/DOWNLO~1/TELEGR~1/mygame')).toContain(
+      'ProjDir = "C:/Users/pablo/DOWNLO~1/TELEGR~1/mygame/";'
+    )
+  })
+
   it('resolves target aliases the way setup_target.js does', () => {
     expect(generateProjectConfig(project((p) => (p.target = 'rom')), 'x.msxproj')).toContain('Target = "ROM_32K";')
     expect(generateProjectConfig(project((p) => (p.target = 'DOS')), 'x.msxproj')).toContain('Target = "DOS1";')

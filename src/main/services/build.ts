@@ -23,6 +23,10 @@ import type { BuildArtifact, BuildCommand, BuildProblem } from '../../shared/ipc
 import type { MsxProject } from '../../shared/msxproj'
 import { resolveTarget } from '../../shared/msxgl-consts'
 import { CONFIG_FILE } from './project'
+import { windowsShortPath } from './win-short-path'
+
+/** @deprecated import `windowsShortPath` — kept so existing tests keep their name. */
+export const windowsBuildCwd = windowsShortPath
 
 // ── build invocation ────────────────────────────────────────────────────────
 

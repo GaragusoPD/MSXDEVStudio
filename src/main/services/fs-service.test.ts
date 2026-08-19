@@ -9,7 +9,7 @@ const tmpDirs: string[] = []
 afterEach(() => {
   while (tmpDirs.length) {
     const dir = tmpDirs.pop()
-    if (dir) rmSync(dir, { recursive: true, force: true })
+    if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })
 

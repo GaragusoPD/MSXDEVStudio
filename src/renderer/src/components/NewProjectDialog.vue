@@ -5,6 +5,7 @@ import { defaultProject } from '../../../shared/msxproj'
 import { useExamplesStore } from '../stores/examplesStore'
 import { useProjectStore } from '../stores/projectStore'
 import { useToolchainStore } from '../stores/toolchainStore'
+import Modal from './Modal.vue'
 
 const projectStore = useProjectStore()
 const examplesStore = useExamplesStore()
@@ -87,171 +88,141 @@ async function create(): Promise<void> {
 </script>
 
 <template>
-  <div
-    class="backdrop"
-    @click.self="close"
+  <Modal
+    :title="forking ? 'New Project from Example' : 'New Project'"
+    @close="close"
   >
-    <div class="dialog">
-      <h2>{{ forking ? 'New Project from Example' : 'New Project' }}</h2>
-      <p
-        v-if="forking && examplesStore.forkSource"
-        class="hint"
-      >
-        From <strong>{{ examplesStore.forkSource.title }}</strong> —
-        {{ MSX_MACHINES.find((m) => m.value === machine)?.label ?? machine }} · {{ target }}
-      </p>
+    <p
+      v-if="forking && examplesStore.forkSource"
+      class="hint"
+    >
+      From <strong>{{ examplesStore.forkSource.title }}</strong> —
+      {{ MSX_MACHINES.find((m) => m.value === machine)?.label ?? machine }} · {{ target }}
+    </p>
 
-      <label>
-        <span>Name</span>
+    <label>
+      <span>Name</span>
+      <input
+        v-model="name"
+        type="text"
+        spellcheck="false"
+      >
+    </label>
+    <p
+      v-if="!nameValid"
+      class="hint bad"
+    >
+      Letters, digits, dash and underscore only.
+    </p>
+
+    <label>
+      <span>Location</span>
+      <span class="path-row">
         <input
-          v-model="name"
+          v-model="location"
           type="text"
-          spellcheck="false"
+          placeholder="Parent folder"
         >
+        <button
+          type="button"
+          @click="browse"
+        >Browse…</button>
+      </span>
+    </label>
+    <p class="hint">
+      Creates <code>{{ location || '<location>' }}/{{ name }}</code>
+    </p>
+
+    <template v-if="!forking">
+      <label>
+        <span>Machine</span>
+        <select v-model="machine">
+          <option
+            v-for="entry in MSX_MACHINES"
+            :key="entry.value"
+            :value="entry.value"
+          >{{ entry.label }}</option>
+        </select>
       </label>
-      <p
-        v-if="!nameValid"
-        class="hint bad"
-      >
-        Letters, digits, dash and underscore only.
-      </p>
 
       <label>
-        <span>Location</span>
-        <span class="path-row">
-          <input
-            v-model="location"
-            type="text"
-            placeholder="Parent folder"
-          >
-          <button
-            type="button"
-            @click="browse"
-          >Browse…</button>
-        </span>
+        <span>Target</span>
+        <select v-model="target">
+          <option
+            v-for="entry in targets"
+            :key="entry.value"
+            :value="entry.value"
+          >{{ entry.value }} — {{ entry.label }}</option>
+        </select>
       </label>
-      <p class="hint">
-        Creates <code>{{ location || '<location>' }}/{{ name }}</code>
-      </p>
-
-      <template v-if="!forking">
-        <label>
-          <span>Machine</span>
-          <select v-model="machine">
-            <option
-              v-for="entry in MSX_MACHINES"
-              :key="entry.value"
-              :value="entry.value"
-            >{{ entry.label }}</option>
-          </select>
-        </label>
-
-        <label>
-          <span>Target</span>
-          <select v-model="target">
-            <option
-              v-for="entry in targets"
-              :key="entry.value"
-              :value="entry.value"
-            >{{ entry.value }} — {{ entry.label }}</option>
-          </select>
-        </label>
-        <label class="inline">
-          <input
-            v-model="showAllTargets"
-            type="checkbox"
-          >
-          <span>Show all targets</span>
-        </label>
-
-        <p class="hint">
-          Template: <code>{{ template }}</code>
-        </p>
-
-        <div class="modules">
-          <span class="modules-title">Library modules</span>
-          <div class="module-list">
-            <label
-              v-for="module in projectStore.libModules"
-              :key="module"
-              class="inline"
-            >
-              <input
-                type="checkbox"
-                :checked="libModules.includes(module)"
-                @change="toggleModule(module)"
-              >
-              <span>{{ module }}</span>
-            </label>
-            <p
-              v-if="!projectStore.libModules.length"
-              class="hint"
-            >
-              Set up MSXgl in Settings to list its modules.
-            </p>
-          </div>
-        </div>
-      </template>
-
-      <label
-        v-else
-        class="inline"
-      >
+      <label class="inline">
         <input
-          v-model="copyEntireContent"
+          v-model="showAllTargets"
           type="checkbox"
         >
-        <span>Copy the entire samples <code>content/</code> folder (instead of only what the sample includes)</span>
+        <span>Show all targets</span>
       </label>
 
-      <div class="actions">
-        <button
-          type="button"
-          @click="close"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          :disabled="!canCreate"
-          @click="create"
-        >
-          Create
-        </button>
+      <p class="hint">
+        Template: <code>{{ template }}</code>
+      </p>
+
+      <div class="modules">
+        <span class="modules-title">Library modules</span>
+        <div class="module-list">
+          <label
+            v-for="module in projectStore.libModules"
+            :key="module"
+            class="inline"
+          >
+            <input
+              type="checkbox"
+              :checked="libModules.includes(module)"
+              @change="toggleModule(module)"
+            >
+            <span>{{ module }}</span>
+          </label>
+          <p
+            v-if="!projectStore.libModules.length"
+            class="hint"
+          >
+            Set up MSXgl in Settings to list its modules.
+          </p>
+        </div>
       </div>
+    </template>
+
+    <label
+      v-else
+      class="inline"
+    >
+      <input
+        v-model="copyEntireContent"
+        type="checkbox"
+      >
+      <span>Copy the entire samples <code>content/</code> folder (instead of only what the sample includes)</span>
+    </label>
+
+    <div class="actions">
+      <button
+        type="button"
+        @click="close"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        :disabled="!canCreate"
+        @click="create"
+      >
+        Create
+      </button>
     </div>
-  </div>
+  </Modal>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 100;
-}
-
-.dialog {
-  width: 520px;
-  max-height: 85vh;
-  overflow-y: auto;
-  padding: 20px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg-editor);
-  color: var(--color-text);
-}
-
-h2 {
-  margin: 0 0 16px;
-  font-size: 16px;
-  font-weight: 600;
-}
-
 label {
   display: block;
   margin-bottom: 10px;

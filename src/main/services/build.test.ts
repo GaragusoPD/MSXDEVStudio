@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -19,6 +19,7 @@ import {
   targetExtension,
   webmsxMachine,
   webmsxUrl,
+  windowsBuildCwd,
   writeBuildStamp
 } from './build'
 
@@ -39,13 +40,35 @@ function makeTmpDir(prefix: string): string {
 afterEach(() => {
   while (tmpDirs.length) {
     const dir = tmpDirs.pop()
-    if (dir) rmSync(dir, { recursive: true, force: true })
+    if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })
 
 function project(overrides: Partial<MsxProject> = {}): MsxProject {
   return { ...defaultProject('mygame'), ...overrides }
 }
+
+describe('windowsBuildCwd', () => {
+  it('leaves a clean path alone', () => {
+    expect(windowsBuildCwd('C:\\dev\\game', 'win32')).toBe('C:\\dev\\game')
+    expect(windowsBuildCwd('C:\\My Game\\foo', 'linux')).toBe('C:\\My Game\\foo')
+  })
+
+  // Shells out to PowerShell for the 8.3 name, which is far slower than the
+  // default 5s test timeout on a cold or busy Windows box.
+  it.runIf(process.platform === 'win32')(
+    'collapses a spaced Windows path to 8.3',
+    () => {
+      const parent = makeTmpDir('msx build-')
+      const spaced = join(parent, 'My Game')
+      mkdirSync(spaced)
+      const short = windowsBuildCwd(spaced)
+      expect(short).not.toMatch(/\s/)
+      expect(existsSync(short)).toBe(true)
+    },
+    60_000
+  )
+})
 
 describe('build arguments', () => {
   it('maps each IDE command to MSXgl build steps', () => {

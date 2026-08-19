@@ -17,6 +17,7 @@ describe('menuTemplate', () => {
     expect(new Set(sent).size).toBe(sent.length) // no command wired to two items
     expect(sent).toContain('file.save')
     expect(sent).toContain('file.saveAll')
+    expect(sent).toContain('file.newGame')
     // Answered in the main process, not the renderer — see `EXTERNAL_DOCS` in index.ts.
     expect(sent).toContain('help.msxgl')
     expect(sent).toContain('help.msx2Handbook')

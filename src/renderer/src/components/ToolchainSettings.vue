@@ -181,7 +181,7 @@ function update(): void {
         :class="store.status.openmsx.valid ? 'ok' : 'bad'"
       >
         <template v-if="store.status.openmsx.valid">
-          ✓ openMSX {{ store.status.openmsx.version }}
+          ✓ openMSX{{ store.status.openmsx.version ? ` ${store.status.openmsx.version}` : '' }}
         </template>
         <template v-else>
           ✗ Not found

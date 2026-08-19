@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { REAL_MSXGL, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
@@ -12,8 +13,10 @@ import {
   readIdeState,
   saveProject,
   scanLibModules,
+  writeGeneratedConfig,
   writeIdeState
 } from './project'
+import { normalizeProject } from '../../shared/msxproj'
 
 // The same real MSXgl checkout `toolchain.test.ts` uses. Never referenced from
 // product code — ProjectService gets the root from ToolchainService.
@@ -29,7 +32,7 @@ function makeTmpDir(prefix: string): string {
 afterEach(() => {
   while (tmpDirs.length) {
     const dir = tmpDirs.pop()
-    if (dir) rmSync(dir, { recursive: true, force: true })
+    if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })
 
@@ -64,10 +67,14 @@ describe('createProject', () => {
     expect(config).toContain('LibModules = ["system", "bios", "vdp"];')
 
     // Launchers default to the configured MSXgl path but honour MSXGL_PATH.
+    // build.sh is a POSIX script, so its copy of a Windows path uses `/`.
     const sh = readFileSync(join(opened.root, 'build.sh'), 'utf-8')
-    expect(sh).toContain(`MSXGL_PATH="\${MSXGL_PATH:-${REAL_MSXGL}}"`)
+    expect(sh).toContain(`MSXGL_PATH="\${MSXGL_PATH:-${REAL_MSXGL.split('\\').join('/')}}"`)
     expect(sh).toContain('engine/script/js/build.js')
-    expect(statSync(join(opened.root, 'build.sh')).mode & 0o111).not.toBe(0)
+    // NTFS has no execute bit — chmod is a no-op there, not a broken launcher.
+    if (process.platform !== 'win32') {
+      expect(statSync(join(opened.root, 'build.sh')).mode & 0o111).not.toBe(0)
+    }
     expect(readFileSync(join(opened.root, 'build.bat'), 'utf-8')).toContain('if not defined MSXGL_PATH set MSXGL_PATH=')
   })
 
@@ -90,6 +97,24 @@ describe('createProject', () => {
       createProject({ name: 'once', location, machine: '1', target: 'ROM_32K', libModules: [] }, REAL_MSXGL)
     ).toThrow(/already exists/)
   })
+})
+
+describe('writeGeneratedConfig', () => {
+  it.runIf(process.platform === 'win32')(
+    'writes an 8.3 ProjDir when the project folder name has a space',
+    () => {
+      const parent = mkdtempSync(join(tmpdir(), 'msxproj-td-'))
+      tmpDirs.push(parent)
+      const root = join(parent, 'Telegram Desktop', 'mygame')
+      mkdirSync(root, { recursive: true })
+      writeGeneratedConfig(root, 'mygame.msxproj', normalizeProject({ name: 'mygame' }, 'mygame'))
+      const text = readFileSync(join(root, 'project_config.js'), 'utf-8')
+      expect(text).toMatch(/ProjDir = "[^"]+\/";/)
+      expect(text).not.toContain('Telegram Desktop')
+    },
+    // The 8.3 lookup shells out to PowerShell; 5s is not enough on Windows.
+    60_000
+  )
 })
 
 describe('saveProject / loadProject', () => {
