@@ -383,7 +383,16 @@ export async function setTileset(session: MapSession, tilesetPath: string): Prom
   // tile size is the tileset's own, and the column count is the sheet's.
   const tiles = session.bitmapTileset
   if (tiles) {
-    setCell(session, { width: tiles.width, height: tiles.height, cols: sheetCols(tiles) })
+    // `sc3` rides along with the geometry because it *is* geometry as far as the
+    // exporter is concerned: a 2×2 SCREEN 3 tile is one name-table entry, so its
+    // map is drawn by the VDP rather than blitted, and the exporter never opens
+    // the tileset to find that out.
+    setCell(session, {
+      width: tiles.width,
+      height: tiles.height,
+      cols: sheetCols(tiles),
+      ...(tiles.mode === 'sc3' ? { sc3: true } : {})
+    })
     return
   }
   // An atlas only says how many cells fit across it; its cell size is a guess.

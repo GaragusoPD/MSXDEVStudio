@@ -4,6 +4,7 @@ import { quantize, type RgbaImage } from './msx/quantize'
 import {
   blankConverted,
   createScreenDoc,
+  decodeIndices,
   encodeIndices,
   fragmentRectBytes,
   fragmentStrip,
@@ -21,6 +22,7 @@ import {
   clearRetouch,
   createHistory,
   paintRetouch,
+  paintScreen,
   pushHistory,
   redo,
   retouchFillPoints,
@@ -276,5 +278,38 @@ describe('a blank canvas', () => {
 
   it('has no palette in the modes whose index is the color', () => {
     expect(blankConverted('sc8').palette).toBeNull()
+  })
+})
+
+/**
+ * `retouch` and `converted` are two different things to be editing, and which
+ * one a stroke lands in decides whether the file grows three numbers per pixel
+ * or stays the size of the picture.
+ */
+describe('paintScreen', () => {
+  function drawn(): ScreenDoc {
+    // No source: this document *is* the picture, so there is nothing to re-run
+    // a conversion from and nothing for a stroke to have to survive.
+    return { ...normalizeScreen({ mode: 'sc3' }), converted: blankConverted('sc3') }
+  }
+
+  it('commits into the picture when there is no source image', () => {
+    const next = paintScreen(drawn(), [{ x: 3, y: 2 }], 9)
+    expect(next.retouch).toEqual([])
+    expect(decodeIndices(next.converted!.indices)[2 * 64 + 3]).toBe(9)
+  })
+
+  it('keeps using retouch when a source image is set, so a reconversion replays it', () => {
+    const converted = paintScreen({ ...drawn(), source: 'art/title.png' }, [{ x: 3, y: 2 }], 9)
+    expect(converted.retouch).toEqual([3, 2, 9])
+    // The cached conversion is untouched — re-running it must not lose the stroke.
+    expect(decodeIndices(converted.converted!.indices)[2 * 64 + 3]).toBe(0)
+  })
+
+  it('returns the same document when nothing changed, so the undo stack does not grow', () => {
+    const doc = paintScreen(drawn(), [{ x: 1, y: 1 }], 4)
+    expect(paintScreen(doc, [{ x: 1, y: 1 }], 4)).toBe(doc)
+    // And a point outside the picture is ignored rather than throwing.
+    expect(paintScreen(doc, [{ x: 999, y: 999 }], 4)).toBe(doc)
   })
 })

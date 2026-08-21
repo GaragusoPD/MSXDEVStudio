@@ -18,7 +18,14 @@ the **bundled MSXimg** binary (MSXgl ships Linux + Windows builds in
   RGB distance).
 - `modes.ts` — one table for sc0–sc8 (+10/12 metadata): resolution, color model,
   tile/bitmap kind, sprite mode, constraint descriptor. Single source of truth
-  consumed by all editors.
+  consumed by all editors. `BITMAP_MODES` is the *index-per-pixel* set rather
+  than the V9938 set: **sc3 is in it**, because a multicolor document is one
+  palette index per 4×4 block and that is the same shape sc5–8 have.
+- `sc3.ts` — everything SCREEN 3 does not share with any other mode: the VRAM
+  address of a block (`((y & 0xF8) << 5) | ((x >> 1) << 3) | (y & 7)`, the closed
+  form of the name-table indirection), the name-table boilerplate that makes the
+  pattern table a framebuffer, the row-agnostic 8-byte pattern a 2×2 tile packs
+  into, and the emitted C — MSXgl ships none of it. See `msxgl-notes.md`.
 - `tile.ts` — hardware byte layouts (pattern/color per row for sc2/sc4, group
   colors for sc1), `paintPixel` conflict logic (Spec 08), validators.
 - `sprite.ts` — mode 1/2 layouts, EC/CC/IC bit handling, OR-color composite
@@ -36,7 +43,8 @@ the **bundled MSXimg** binary (MSXgl ships Linux + Windows builds in
 
 Every editor file (`*.tiles.json`, `*.sprites.json`, `*.map.json`, `*.screen.json`)
 carries an `export` block: `{ name: "g_MyTiles", format: "c" | "bin",
-out: "content/mytiles.h" }`. `ResourceService` (main) exposes
+out: "content/mytiles.h" }`, plus the opt-in `helpers`, `compress` and
+`doubleBuffer` switches (the last is SCREEN 3's page flip; see Spec 10). `ResourceService` (main) exposes
 `resources:exportOne` / `resources:exportAll`; Spec 04 calls exportAll before every
 build (skip when source mtime ≤ output mtime). Exports are deterministic (stable
 byte output for identical input — no timestamps in generated files).

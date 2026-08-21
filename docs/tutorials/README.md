@@ -20,6 +20,7 @@ memory.
 | 7 | [Bitmap graphics](07-bitmap-graphics.md) | SCREEN 5 to 8, palettes, showing an image, the VDP command engine, cutting fragments | MSX2 and up |
 | 8 | [Software sprites and tiles](08-software-sprites.md) | Drawing objects without the sprite hardware, its CPU cost, and the runtime MSXDEVStudio generates for it | MSX2 and up |
 | 9 | [Meta-tiles](09-meta-tiles.md) | Storing a map in clumps of tiles rather than tiles: the ROM saving, the RAM trade, and when it isn't worth it | MSX1 and up |
+| 10 | [SCREEN 3: chunky graphics](10-screen3-chunky.md) | The MSX1 mode with no colour clash: its two runtime shapes, the RAM shadow and dirty-strip flush, page flipping, chunky software sprites | MSX1 and up |
 
 ## Before you start
 

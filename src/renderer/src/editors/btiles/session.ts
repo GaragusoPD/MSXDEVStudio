@@ -42,6 +42,7 @@ import {
   type BitmapTilesDoc
 } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
+import type { BitmapMode } from '../../../../shared/msx/modes'
 import {
   canRedo as historyCanRedo,
   canUndo as historyCanUndo,
@@ -313,6 +314,26 @@ export function setPaletteEntry(session: BitmapTileSession, index: number, grb: 
 
 export function setTileSize(session: BitmapTileSession, width: number, height: number): void {
   commit(session, resizeTiles(doc(session), width, height))
+}
+
+/**
+ * Switches the tileset to another mode. The pixels are palette indices either
+ * way, so they survive; what changes is how they are packed on export and, for
+ * sc3, what a "pixel" means — a 4×4 block rather than a dot.
+ *
+ * Goes through `normalizeBitmapTiles` rather than a spread, because the mode
+ * carries constraints with it: sc3 forces an even width and caps the tile at the
+ * screen, and only the V9938 modes keep a palette.
+ */
+export function setMode(session: BitmapTileSession, mode: BitmapMode): void {
+  const current = doc(session)
+  if (current.mode === mode) return
+  commit(session, normalizeBitmapTiles({ ...current, mode, palette: undefined }))
+}
+
+/** The index a masked blit treats as see-through — what turns a tile bank into a software-sprite sheet. */
+export function setTransparent(session: BitmapTileSession, transparent: number | null): void {
+  commit(session, { ...doc(session), transparent })
 }
 
 /** Gives a tileset an export target, named after the file like every other kind. */

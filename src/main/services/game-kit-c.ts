@@ -16,6 +16,9 @@ import {
   isScrollKit,
   isTextMode,
   isTiledMode,
+  isSc3Mode,
+  hasNameTable,
+  textModeMacroFor,
   vdpModeMacro,
   type DisplayMode,
   type NewGameRequest,
@@ -132,7 +135,17 @@ export function emitGameH(request: NewGameRequest): string {
 #include "msxgl.h"
 ${usesState(request) ? '#include "game/state.h"\n' : ''}
 #define GAME_VDP_MODE ${vdpModeMacro(request.displayMode)}
-
+${
+  isSc3Mode(request.displayMode)
+    ? `// Title, menu and credits run in SCREEN 1, because MSXgl's Print module is an
+// empty case in MULTICOLOR — and worse, the pattern table it would load a font
+// into *is* the picture there. Play_Init() switches to SCREEN 3; every state
+// that comes back to play goes through State_Play, which re-initializes.
+#define GAME_TEXT_VDP_MODE ${vdpModeMacro(textModeMacroFor(request.displayMode))}
+`
+    : `#define GAME_TEXT_VDP_MODE GAME_VDP_MODE
+`
+}
 // Installs the font this display mode needs (see ${GAME_SOURCE_DIR}/screens.c).
 void Game_SetFont(void);
 
@@ -167,7 +180,7 @@ void main()
 {
 	BIOS_SetKeyClick(FALSE);
 	Game_SetState(${startFun});
-	Game_Start(GAME_VDP_MODE, FALSE);
+	Game_Start(GAME_TEXT_VDP_MODE, FALSE);
 }
 `
 }
@@ -187,7 +200,7 @@ static void WaitSpace(void)
 function stubState(request: NewGameRequest, name: string, title: string, next: string): string {
   return `bool ${name}(void)
 {
-	VDP_SetMode(GAME_VDP_MODE);
+	VDP_SetMode(GAME_TEXT_VDP_MODE);
 	VDP_ClearVRAM();
 	Game_SetFont();
 	Print_SetPosition(${at(request, 1, 1)});
@@ -199,6 +212,15 @@ function stubState(request: NewGameRequest, name: string, title: string, next: s
 	return FALSE;
 }
 `
+}
+
+/**
+ * What `Play_Init()` does before drawing. In SCREEN 3 the pattern table is the
+ * picture, so loading a font into it would write glyphs across the playfield —
+ * the text screens have their own SCREEN 1 pass for that.
+ */
+function playFont(request: NewGameRequest): string {
+  return isSc3Mode(request.displayMode) ? '' : '\tGame_SetFont();\n'
 }
 
 function setFont(request: NewGameRequest): string {
@@ -301,8 +323,112 @@ export function emitPlayC(request: NewGameRequest): string {
     return emitTextPlay(request)
   }
   if (request.kit === 'vn') return emitVnPlay(request)
+  if (request.kit === 'chunky') return emitChunkyPlay(request)
   if (isScrollKit(request.kit)) return emitScrollPlay(request)
   return emitPawnPlay(request)
+}
+
+/**
+ * The SCREEN 3 chunky loop — the shape recent ZX Spectrum chunky-pixel games
+ * (Twinlight, Yazzie Junior) build by hand, on the MSX1 that has it in hardware.
+ *
+ * The whole playfield is a 1536-byte RAM shadow of the framebuffer. Everything
+ * is drawn there, and only the 8-byte column strips that changed are uploaded —
+ * a full upload is about two thirds of a 50 Hz frame, one strip is under half a
+ * percent. The page flip on top means a moving actor never shows half-drawn.
+ *
+ * Collision is reading the picture back (`_Get`): with no colour clash and no
+ * name table in the way, "is this block the background colour" *is* the test,
+ * which is why this genre suits the mode.
+ *
+ * Single screen, so there is no camera and nothing to clip. A SCREEN 3 game that
+ * wants to scroll uses the name-table shape instead — the side-scroller kit on
+ * SCREEN 3 does exactly that, with MSXgl's real `scroll` module.
+ */
+function emitChunkyPlay(request: NewGameRequest): string {
+  return `#include "${GAME_SOURCE_DIR}/game.h"
+#include "content/playfield.h"
+#include "content/tiles.h"
+#include "content/level_map.h"
+
+// Chunky SCREEN 3 stub: a 64x48 playfield of 4x4 blocks, double buffered.
+// No win condition — this is a place to start, not a game.
+
+// Blocks per tile side, and how far the actor moves in a frame. Both are even
+// because two blocks share a VRAM byte and the blitters copy bytes; 2 blocks is
+// 8 dots, which is the horizontal step this mode gives you.
+#define TILE G_LEVELMAP_CELL_W
+#define STEP 2
+// Tile 2 is the actor, tile 1 the ground, tile 0 the background. Colour 0 is the
+// tileset's transparent index, so the actor is blitted through a mask.
+#define ACTOR_TILE 2
+
+// The playfield in RAM. 1536 bytes of the 16 KB an MSX1 ROM game gets, and the
+// reason nothing here talks to VRAM until the flush.
+static u8 g_Screen[G_PLAYFIELD_SIZE];
+// What the actor is covering, so it can be put back before it moves.
+static u8 g_Under[(TILE / 2) * TILE];
+static u8 g_X, g_Y;
+
+static void DrawLevel(void)
+{
+	u8 row;
+	for (row = 0; row < G_LEVELMAP_H; ++row)
+		g_LevelMap_DrawRow(g_Screen, g_Tiles_Tiles, g_LevelMap_Background, row, 0, row * TILE);
+}
+
+// Anything that is not the background colour is solid. That is the whole
+// collision system: in a mode with no colour clash, the picture is the map.
+static bool Blocked(u8 x, u8 y)
+{
+	if ((x + TILE > G_PLAYFIELD_W) || (y + TILE > G_PLAYFIELD_H))
+		return TRUE;
+	return g_Playfield_Get(g_Screen, x, y)
+		|| g_Playfield_Get(g_Screen, x + TILE - 1, y)
+		|| g_Playfield_Get(g_Screen, x, y + TILE - 1)
+		|| g_Playfield_Get(g_Screen, x + TILE - 1, y + TILE - 1);
+}
+
+void Play_Init(void)
+{
+	g_Playfield_InitScreen();
+	// The exported picture is the backdrop — draw it in res/play.screen.json and
+	// it appears here. The level tiles go on top of it.
+	g_Playfield_ToBuffer(g_Screen);
+	DrawLevel();
+	g_X = TILE;
+	g_Y = TILE;
+	g_Playfield_Save(g_Screen, g_Under, g_X, g_Y, TILE, TILE);
+	g_Tiles_DrawTileMasked(g_Screen, ACTOR_TILE, g_X, g_Y);
+	// Both pages, so the first flip does not reveal an empty one.
+	g_Playfield_FlushAll(g_Screen);
+	g_Playfield_FlushAll(g_Screen);
+}
+
+${playStates(
+  request,
+  `	u8 row = Keyboard_Read(8);
+	u8 nx = g_X;
+	u8 ny = g_Y;
+	// Lift the actor first, so the collision test reads the real background and
+	// the background it was covering is already back where it belongs.
+	g_Playfield_Restore(g_Screen, g_Under, g_X, g_Y, TILE, TILE);
+	if (IS_KEY_PRESSED(row, KEY_RIGHT)) nx += STEP;
+	if (IS_KEY_PRESSED(row, KEY_LEFT) && (g_X >= STEP)) nx -= STEP;
+	if (IS_KEY_PRESSED(row, KEY_DOWN)) ny += STEP;
+	if (IS_KEY_PRESSED(row, KEY_UP) && (g_Y >= STEP)) ny -= STEP;
+	if (!Blocked(nx, g_Y)) g_X = nx;
+	if (!Blocked(g_X, ny)) g_Y = ny;
+	g_Playfield_Save(g_Screen, g_Under, g_X, g_Y, TILE, TILE);
+	g_Tiles_DrawTileMasked(g_Screen, ACTOR_TILE, g_X, g_Y);
+	// The tileset's blitters cannot reach the screen's dirty flags — different
+	// header — so say what moved. Without this the actor's new strips are never
+	// uploaded and it smears whenever it crosses a byte column.
+	g_Playfield_Mark(g_X, g_Y, TILE, TILE);
+	// Uploads only the strips that changed, waits for the interrupt, flips.
+	g_Playfield_Flush(g_Screen);
+`
+)}`
 }
 
 /** The HUD screen is a line of status text over the play field, drawn once. */
@@ -423,8 +549,33 @@ ${playStates(
  * both are MSXgl's `s_game` pawn with physics, which is also why they need
  * `configPatches`' `PAWN_*` values.
  */
+/**
+ * Getting the tileset into the pattern table, which is not the same call twice.
+ *
+ * `VDP_LoadPattern_GM2`/`VDP_LoadColor_GM2` triple-write across GRAPHIC 2's
+ * three 2 KB banks and touch a colour table — neither of which MULTICOLOR has.
+ * There the tileset's own `_Upload()` writes its 8-byte patterns to 0x0000 and
+ * that is the whole job: the colour *is* the pattern.
+ */
+function uploadPatterns(request: NewGameRequest): string {
+  return isSc3Mode(request.displayMode)
+    ? `	g_Tiles_Upload();
+`
+    : `	VDP_LoadPattern_GM2(g_Tiles_Patterns, G_TILES_PATTERNS_SIZE / 8, 0);
+	VDP_LoadColor_GM2(g_Tiles_Colors, G_TILES_COLORS_SIZE / 8, 0);
+`
+}
+
+/** The patterns, then the map straight into the name table — the same call in both modes. */
+function uploadTilemap(request: NewGameRequest): string {
+  return `${uploadPatterns(request)}	VDP_WriteVRAM_16K(g_LevelMap_Background, g_ScreenLayoutLow, G_LEVELMAP_W * G_LEVELMAP_H);
+`
+}
+
 function emitPawnPlay(request: NewGameRequest): string {
-  const tiled = isTiledMode(request.displayMode)
+  // SCREEN 3 counts here: a 2x2-block tile is one name-table entry, so the pawn's
+  // tilemap collision reads the same layout bytes it does in SCREEN 2.
+  const tiled = hasNameTable(request.displayMode)
   const jumps = request.kit === 'platformer'
 
   const includes = [
@@ -449,12 +600,7 @@ function emitPawnPlay(request: NewGameRequest): string {
 }
 `
 
-  const drawLevel = tiled
-    ? `	VDP_LoadPattern_GM2(g_Tiles_Patterns, G_TILES_PATTERNS_SIZE / 8, 0);
-	VDP_LoadColor_GM2(g_Tiles_Colors, G_TILES_COLORS_SIZE / 8, 0);
-	VDP_WriteVRAM_16K(g_LevelMap_Background, g_ScreenLayoutLow, G_LEVELMAP_W * G_LEVELMAP_H);
-`
-    : ''
+  const drawLevel = tiled ? uploadTilemap(request) : ''
 
   const move = jumps
     ? `	g_DX = 0;
@@ -531,8 +677,7 @@ void Play_Init(void)
 {
 	VDP_SetMode(GAME_VDP_MODE);
 	VDP_ClearVRAM();
-	Game_SetFont();
-${drawLevel}	VDP_SetSpriteFlag(VDP_SPRITE_SIZE_16);
+${playFont(request)}${drawLevel}	VDP_SetSpriteFlag(VDP_SPRITE_SIZE_16);
 	VDP_LoadSpritePattern(g_PlayerSprites_Patterns, 0, G_PLAYERSPRITES_PATTERNS_SIZE / 8);
 	VDP_DisableSpritesFrom(1);
 ${hudPrint(request)}	Pawn_Initialize(&g_Player, g_Layers, numberof(g_Layers), 0, g_Actions);
@@ -552,7 +697,7 @@ ${move}	Pawn_SetMovement(&g_Player, g_DX, g_DY);
 
 function emitScrollPlay(request: NewGameRequest): string {
   const horiz = request.kit === 'side-scroll'
-  if (!isTiledMode(request.displayMode)) {
+  if (!hasNameTable(request.displayMode)) {
     return `#include "${GAME_SOURCE_DIR}/game.h"
 #include "content/player_sprites.h"
 
@@ -608,10 +753,7 @@ void Play_Init(void)
 {
 	VDP_SetMode(GAME_VDP_MODE);
 	VDP_ClearVRAM();
-	Game_SetFont();
-	VDP_LoadPattern_GM2(g_Tiles_Patterns, G_TILES_PATTERNS_SIZE / 8, 0);
-	VDP_LoadColor_GM2(g_Tiles_Colors, G_TILES_COLORS_SIZE / 8, 0);
-	g_Sprite = Scroll_Initialize((u16)g_LevelMap_Background);
+${playFont(request)}${uploadPatterns(request)}	g_Sprite = Scroll_Initialize((u16)g_LevelMap_Background);
 	VDP_SetSpriteFlag(VDP_SPRITE_SIZE_16);
 	VDP_LoadSpritePattern(g_PlayerSprites_Patterns, 0, G_PLAYERSPRITES_PATTERNS_SIZE / 8);
 	${setSprite(request.displayMode, 'g_Sprite', '120', '96', 'COLOR_WHITE')};

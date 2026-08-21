@@ -18,7 +18,18 @@ import {
   validateResource,
   type ResourceDoc
 } from './resource'
-import { encodeIndices, normalizeScreen, packBitmap, palettePairBytes, screenPixels } from './screen'
+import {
+  blankConverted,
+  decodeIndices,
+  encodeIndices,
+  normalizeScreen,
+  packBitmap,
+  palettePairBytes,
+  screenPixels,
+  type ScreenDoc
+} from './screen'
+import { normalizeBitmapTiles } from './bitmap-tile'
+import { sc3Offset } from './sc3'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS, type SfxDoc } from './sfx'
 import { createSpritesDoc } from './sprite'
 import { addLayer, setCharacterGrid } from '../sprite-editor'
@@ -910,10 +921,174 @@ describe('sfx resource', () => {
         map: ['No tileset referenced'],
         metatiles: ['No tileset referenced', 'No meta-tiles defined'],
         metabtiles: ['No tileset referenced', 'No meta-tiles defined'],
-        screen: ['No source image']
+        screen: ['No source image, and nothing drawn yet']
       }
       expect(validateResource(resource)).toEqual(blankStateWarnings[kind] ?? [])
       expect(parseResource(path, serializeResource(resource))).toEqual(resource)
     }
+  })
+})
+
+/**
+ * SCREEN 3 is the only mode whose *byte order* differs rather than just its
+ * packing, and the only one whose helpers are the mode itself rather than an
+ * optional extra — so these check the seams where it forks from the V9938
+ * bitmap modes it shares a document type with.
+ */
+describe('SCREEN 3 export', () => {
+  function sc3Screen(over: Partial<ScreenDoc> = {}): ResourceDoc {
+    const doc = normalizeScreen({ mode: 'sc3', ...over })
+    return { kind: 'screen', doc: { ...doc, converted: doc.converted ?? blankConverted('sc3') } }
+  }
+
+  it('emits the whole framebuffer, in VRAM order', () => {
+    const doc = normalizeScreen({ mode: 'sc3' })
+    const converted = blankConverted('sc3')
+    const indices = decodeIndices(converted.indices)
+    // (2, 1): second byte-column, second block row — so both terms of the
+    // address are non-zero and a linear packer would put it somewhere else.
+    indices[1 * 64 + 2] = 0x0c
+    const resource: ResourceDoc = {
+      kind: 'screen',
+      doc: { ...doc, converted: { ...converted, indices: encodeIndices(indices) } }
+    }
+    const [table] = resourceTables(resource)
+    expect(table.bytes.length).toBe(1536)
+    expect(table.bytes[sc3Offset(2, 1)]).toBe(0xc0)
+  })
+
+  it('states the page addresses only when double buffering is asked for', () => {
+    const resource = sc3Screen()
+    const block = { name: 'g_Play', format: 'c' as const, out: 'content/play.h', helpers: true }
+    expect(rendered(resource, 'res/play.screen.json', block)).not.toContain('G_PLAY_PAGE1')
+    const both = rendered(resource, 'res/play.screen.json', { ...block, doubleBuffer: true })
+    expect(both).toContain('#define G_PLAY_PAGE1 0x1000')
+    expect(both).toContain('void g_Play_Flip(void);')
+  })
+
+  it('emits the runtime even with no fragments — the helpers are the mode, not an extra', () => {
+    const text = rendered(sc3Screen(), 'res/play.screen.json', {
+      name: 'g_Play',
+      format: 'c',
+      out: 'content/play.h',
+      helpers: true
+    })
+    expect(text).toContain('void g_Play_InitScreen(void);')
+    expect(text).toContain('VDP_SetMode(VDP_MODE_MULTICOLOR);')
+    // No V9938 command engine anywhere on this path.
+    expect(text).not.toContain('VDP_CommandHMMC')
+    expect(text).not.toContain('VDP_CommandLMMM')
+  })
+
+  it('states the picture`s size once, even when it is smaller than the screen', () => {
+    // `fitToMode` only shrinks, so an imported picture can be under 64x48 — and
+    // then the mode's size and the picture's size are different numbers. Emitting
+    // both would be a conflicting macro redefinition, not a harmless repeat.
+    const doc = normalizeScreen({ mode: 'sc3' })
+    const converted = { ...blankConverted('sc3'), width: 48, height: 32 }
+    const resource: ResourceDoc = {
+      kind: 'screen',
+      doc: { ...doc, converted: { ...converted, indices: encodeIndices(new Uint8Array(48 * 32)) } }
+    }
+    const text = rendered(resource, 'res/play.screen.json', {
+      name: 'g_Play',
+      format: 'c',
+      out: 'content/play.h',
+      helpers: true
+    })
+    expect(text.match(/#define G_PLAY_W /g)).toHaveLength(1)
+    expect(text).toContain('#define G_PLAY_W 48')
+    expect(text).toContain('#define G_PLAY_SIZE 1536')
+  })
+
+  it('refuses a meta-tile set over a SCREEN 3 tileset rather than exporting V9938 calls', () => {
+    const doc = normalizeMap({
+      tileset: 'res/set.meta-btiles.json',
+      cell: { width: 2, height: 2, cols: 16, sc3: true },
+      meta: { width: 2, height: 2 }
+    })
+    expect(validateResource({ kind: 'map', doc }).join(' ')).toContain('not supported yet')
+  })
+
+  it('rejects a fragment that starts or ends mid-byte', () => {
+    const odd = sc3Screen({ fragments: [{ name: 'hero', x: 3, y: 0, width: 4, height: 4 }] })
+    expect(validateResource(odd).join(' ')).toContain('even column')
+    const even = sc3Screen({ fragments: [{ name: 'hero', x: 4, y: 0, width: 4, height: 4 }] })
+    expect(validateResource(even)).toEqual([])
+  })
+
+  it('packs fragments one after another, and says where each starts in bytes', () => {
+    const resource = sc3Screen({
+      fragments: [
+        { name: 'a', x: 0, y: 0, width: 4, height: 4 },
+        { name: 'b', x: 8, y: 0, width: 2, height: 2 }
+      ]
+    })
+    const tables = resourceTables(resource)
+    const strip = tables.find((table) => table.suffix === '_Strip')
+    const rects = tables.find((table) => table.suffix === '_Rects')
+    // 4x4 blocks is 2 bytes a row over 4 rows, then 2x2 is 1 byte over 2 rows.
+    expect(strip?.bytes.length).toBe(8 + 2)
+    expect([...(rects?.bytes ?? [])]).toEqual([0, 0, 4, 4, 8, 0, 2, 2])
+  })
+
+  it('gives a 2x2 tileset a pattern table, and a bigger one blit data', () => {
+    const small: ResourceDoc = { kind: 'btiles', doc: normalizeBitmapTiles({ mode: 'sc3', count: 4 }) }
+    const smallTables = resourceTables(small)
+    expect(smallTables[0].suffix).toBe('_Patterns')
+    expect(smallTables[0].bytes.length).toBe(4 * 8)
+
+    const big: ResourceDoc = {
+      kind: 'btiles',
+      doc: normalizeBitmapTiles({ mode: 'sc3', width: 4, height: 4, count: 4 })
+    }
+    const bigTables = resourceTables(big)
+    expect(bigTables[0].suffix).toBe('_Tiles')
+    expect(bigTables[0].bytes.length).toBe(4 * 2 * 4)
+  })
+
+  it('holds no palette table — the sixteen colours are the hardware`s', () => {
+    const doc = normalizeBitmapTiles({ mode: 'sc3', count: 2 })
+    expect(doc.palette).toBeNull()
+    expect(resourceTables({ kind: 'btiles', doc }).some((table) => table.suffix === '_Palette')).toBe(false)
+  })
+
+  it('rounds `cell.sc3` through the file, so a reopened map still exports as SCREEN 3', () => {
+    const doc = normalizeMap({
+      tileset: 'res/tiles.btiles.json',
+      width: 4,
+      height: 4,
+      cell: { width: 2, height: 2, cols: 16, sc3: true }
+    })
+    // The round trip is the point: `setTileset` sets the flag, but every export
+    // after that reads a file.
+    const reloaded = parseResource('res/level.map.json', serializeResource({ kind: 'map', doc }))
+    const text = rendered(reloaded, 'res/level.map.json', {
+      name: 'g_Level',
+      format: 'c',
+      out: 'content/level.h',
+      helpers: true
+    })
+    // 2x2 is one name-table entry, so this is the VDP path, not a blit.
+    expect(text).toContain('VDP_WriteLayout_GM2')
+    expect(text).not.toContain('VDP_CommandHMMM')
+    expect(text).toContain('VDP_MODE_SCREEN3')
+  })
+
+  it('blits a map whose tiles are bigger than a name-table entry', () => {
+    const doc = normalizeMap({
+      tileset: 'res/tiles.btiles.json',
+      width: 4,
+      height: 4,
+      cell: { width: 4, height: 4, cols: 16, sc3: true }
+    })
+    const text = rendered({ kind: 'map', doc }, 'res/level.map.json', {
+      name: 'g_Level',
+      format: 'c',
+      out: 'content/level.h',
+      helpers: true
+    })
+    expect(text).toContain('void g_Level_DrawRow(u8* buf, const u8* tiles, const u8* layer, u8 row, u8 x, u8 y)')
+    expect(text).not.toContain('VDP_CommandHMMM')
   })
 })

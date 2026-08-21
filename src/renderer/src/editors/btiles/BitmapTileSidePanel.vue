@@ -9,8 +9,10 @@
  */
 import { computed, ref } from 'vue'
 import Icon from '../../components/Icon.vue'
+import BitmapTileAnimation from './BitmapTileAnimation.vue'
 import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex } from '../../../../shared/msx/palette'
-import { MAX_TILE_SIZE } from '../../../../shared/msx/bitmap-tile'
+import { MAX_TILE_SIZE, sc3NameTableCapable } from '../../../../shared/msx/bitmap-tile'
+import { BITMAP_MODES, MODES, type BitmapMode } from '../../../../shared/msx/modes'
 import { sheetCols } from '../../../../shared/msx/bitmap-tile'
 import {
   activeBlock,
@@ -23,8 +25,10 @@ import {
   renameBlock,
   patchExport,
   setFlagBit,
+  setMode,
   setPaletteEntry,
   setTileSize,
+  setTransparent,
   setupExport,
   type BitmapTileSession
 } from './session'
@@ -35,6 +39,8 @@ const props = defineProps<{ session: BitmapTileSession }>()
 const emit = defineEmits<{ color: [index: number] }>()
 
 const tileset = computed(() => doc(props.session))
+/** SCREEN 3: a "pixel" is a 4×4 block, so sizes read in blocks and dots both. */
+const blockMode = computed(() => tileset.value.mode === 'sc3')
 const rgb = computed(() => paletteToRgb(tileset.value.palette))
 const flags = computed(() => tileset.value.flags[props.session.selected] ?? 0)
 
@@ -107,6 +113,68 @@ function applySize(): void {
           :value="toHex(grbToRgb(tileset.palette[session.color] ?? 0))"
           @input="pickColor(session.color, ($event.target as HTMLInputElement).value)"
         >
+      </label>
+    </section>
+
+    <section>
+      <h3>Mode</h3>
+      <label class="row">
+        <span>Screen</span>
+        <select
+          :value="tileset.mode"
+          @change="setMode(session, ($event.target as HTMLSelectElement).value as BitmapMode)"
+        >
+          <option
+            v-for="id in BITMAP_MODES"
+            :key="id"
+            :value="id"
+          >
+            {{ MODES[id].label }}
+          </option>
+        </select>
+      </label>
+      <p
+        v-if="blockMode"
+        class="hint"
+      >
+        A pixel here is one 4×4 block, so {{ tileset.width }}×{{ tileset.height }} is
+        {{ tileset.width * 4 }}×{{ tileset.height * 4 }} dots.
+        <template v-if="sc3NameTableCapable(tileset)">
+          At 2×2 each tile is one name-table entry, so a map over this set is drawn by the
+          VDP — 768 bytes a screen, and it can scroll.
+        </template>
+        <template v-else>
+          Bigger than a name-table entry, so maps over this set are blitted into the shadow
+          buffer. Use 2×2 if it needs to scroll.
+        </template>
+      </p>
+    </section>
+
+    <section v-if="blockMode">
+      <h3>Transparent colour</h3>
+      <p class="hint">
+        The index a masked blit leaves alone. Set one to use this bank as software sprites —
+        tiles are frames, and a 1×N block is an animation.
+      </p>
+      <label class="row">
+        <span>Index</span>
+        <select
+          :value="tileset.transparent === null ? '' : String(tileset.transparent)"
+          @change="setTransparent(session, ($event.target as HTMLSelectElement).value === ''
+            ? null
+            : Number(($event.target as HTMLSelectElement).value))"
+        >
+          <option value="">
+            None — opaque tiles
+          </option>
+          <option
+            v-for="index in 16"
+            :key="index - 1"
+            :value="String(index - 1)"
+          >
+            {{ index - 1 }}
+          </option>
+        </select>
       </label>
     </section>
 
@@ -226,6 +294,14 @@ function applySize(): void {
           </button>
         </li>
       </ul>
+      <!-- A 1xN block is a sequence of poses — the idiom `agent-guide.ts` already
+           documents. A grid of frames cannot show whether a walk cycle reads. -->
+      <BitmapTileAnimation
+        v-if="block && block.tiles.length > 1"
+        :key="session.block ?? -1"
+        :tileset="tileset"
+        :block="block"
+      />
       <button
         class="wide"
         :disabled="!marquee"

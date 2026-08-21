@@ -23,6 +23,9 @@ import {
   renameFragment,
   setColor,
   setPalette,
+  setCellGuide,
+  setFilled,
+  setGrid,
   setTool,
   type ScreenSession,
   type ScreenTool
@@ -31,6 +34,8 @@ import {
 const props = defineProps<{ session: ScreenSession }>()
 
 const screenDoc = computed(() => doc(props.session))
+/** SCREEN 3: a "pixel" is a 4×4 block, which changes what the guides mean. */
+const blockMode = computed(() => screenDoc.value.mode === 'sc3')
 const info = computed(() => MODES[screenDoc.value.mode])
 const editablePalette = computed(() => info.value.palette === 'grb333')
 const swatchRgb = computed(() => {
@@ -42,7 +47,10 @@ const convertedPalette = computed(() => screenDoc.value.converted?.palette ?? nu
 
 const TOOLS: { id: ScreenTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'pencil', icon: 'edit', title: 'Pencil' },
+  { id: 'line', icon: 'timeline', title: 'Line — drag from one end to the other' },
+  { id: 'rect', icon: 'crop_square', title: 'Rectangle — hold the Filled switch for a solid one' },
   { id: 'fill', icon: 'format_color_fill', title: 'Fill (flood)' },
+  { id: 'pick', icon: 'colorize', title: 'Pick the colour under the cursor' },
   { id: 'cut', icon: 'crop_free', title: 'Cut a fragment — drag a rectangle on the converted image' }
 ]
 
@@ -160,6 +168,34 @@ function patchExport(patch: Partial<ExportBlock>): void {
           <Icon :name="tool.icon" />
         </button>
       </div>
+      <label class="flag">
+        <input
+          type="checkbox"
+          :checked="session.filled"
+          @change="setFilled(session, ($event.target as HTMLInputElement).checked)"
+        >
+        <span>Filled rectangle</span>
+      </label>
+      <label class="flag">
+        <input
+          type="checkbox"
+          :checked="session.grid"
+          @change="setGrid(session, ($event.target as HTMLInputElement).checked)"
+        >
+        <span>Show the pixel grid</span>
+      </label>
+      <label class="flag">
+        <input
+          type="checkbox"
+          :checked="session.cellGuide"
+          @change="setCellGuide(session, ($event.target as HTMLInputElement).checked)"
+        >
+        <span
+          :title="blockMode
+            ? 'Every 8 dots — 2×2 blocks, which is one name-table entry, so it is where the art has to line up to become tiles'
+            : 'Every 8 dots — the character cell'"
+        >Show the 8-dot cell guide</span>
+      </label>
     </section>
 
     <section>
@@ -325,6 +361,28 @@ function patchExport(patch: Partial<ExportBlock>): void {
             Export ready-made C
           </span>
         </label>
+        <label
+          v-if="blockMode"
+          class="inline"
+        >
+          <input
+            type="checkbox"
+            :checked="screenDoc.export.doubleBuffer === true"
+            @change="patchExport({ doubleBuffer: ($event.target as HTMLInputElement).checked })"
+          >
+          <span title="SCREEN 3 has room for two pattern tables, and R#4 picks between them — so the flip is one register write and nothing is copied.">
+            Double buffer
+          </span>
+        </label>
+        <p
+          v-if="blockMode && screenDoc.export.doubleBuffer"
+          class="hint"
+        >
+          <code>_Flush()</code> uploads the strips that changed to the page you cannot see, waits
+          for the interrupt and swaps <code>R#4</code>. Costs 192 bytes of RAM for the per-page
+          dirty flags and 2&nbsp;KB of VRAM nothing else was using — and stops a moving object
+          ever showing half-drawn.
+        </p>
         <p
           v-if="screenDoc.export.compress === 'rlep' && packing?.saved"
           class="hint"

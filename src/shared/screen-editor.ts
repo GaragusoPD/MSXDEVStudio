@@ -11,7 +11,7 @@
  * relationship `shared/tile-editor.ts` has with `shared/msx/tile.ts`.
  */
 
-import { encodeIndices, screenPixels, type ConvertedScreen, type ScreenDoc } from './msx/screen'
+import { decodeIndices, encodeIndices, screenPixels, type ConvertedScreen, type ScreenDoc } from './msx/screen'
 import type { Point } from './tile-editor'
 import type { History } from './history'
 
@@ -64,6 +64,36 @@ export function paintRetouch(doc: ScreenDoc, points: readonly Point[], color: nu
   let out = doc
   for (const p of points) out = setRetouchPixel(out, p.x, p.y, color)
   return out
+}
+
+/**
+ * Where a stroke goes, which depends on whether this document is a *conversion*
+ * or a *drawing*.
+ *
+ * `retouch` exists so a stroke survives re-running the conversion — it replays
+ * on top. A document with no source image has no conversion to re-run and no
+ * conversion to survive, so the stroke belongs in the picture itself: a flat
+ * `x, y, colour` triple list costs three numbers per pixel and grows forever,
+ * which is fine for touching up a photo and wrong for drawing one.
+ *
+ * The rule is the source, not the mode: a hand-drawn SCREEN 5 screen gets the
+ * same treatment, and every document that names a source keeps behaving exactly
+ * as it did.
+ */
+export function paintScreen(doc: ScreenDoc, points: readonly Point[], color: number): ScreenDoc {
+  if (doc.source || !doc.converted) return paintRetouch(doc, points, color)
+  const { width, height } = doc.converted
+  const indices = decodeIndices(doc.converted.indices)
+  let changed = false
+  for (const p of points) {
+    if (p.x < 0 || p.y < 0 || p.x >= width || p.y >= height) continue
+    const at = p.y * width + p.x
+    if (indices[at] === (color & 0xff)) continue
+    indices[at] = color & 0xff
+    changed = true
+  }
+  if (!changed) return doc
+  return { ...doc, converted: { ...doc.converted, indices: encodeIndices(indices) } }
 }
 
 /** 4-connected flood over the doc's currently rendered pixels (conversion + retouch already applied). */

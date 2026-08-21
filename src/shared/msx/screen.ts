@@ -13,6 +13,7 @@ import { isBitmapMode, MODES, type BitmapMode } from './modes'
 import { MSX1_PALETTE_GRB, paletteToRgb, type Rgb } from './palette'
 import type { ExportBlock } from './resource'
 import { rgb332Palette, type DitherMode } from './quantize'
+import { sc3LinearBytes, sc3LinearPack, sc3Pack, sc3ScreenHelperC } from './sc3'
 
 export interface ScreenConvert {
   dither: DitherMode
@@ -92,11 +93,16 @@ export function normalizeScreen(raw: unknown): ScreenDoc {
   const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<ScreenDoc>
   const mode: BitmapMode = isBitmapMode(String(input.mode)) ? (input.mode as BitmapMode) : 'sc5'
   const convert = (input.convert ?? {}) as Partial<ScreenConvert>
-  const palette = Array.isArray(convert.palette)
-    ? convert.palette.map(Number)
-    : convert.palette === 'msx1'
+  // sc3 has the TMS9918A's sixteen and no way to change them, so median-cutting
+  // an optimised palette out of the image would only mislead the preview.
+  const palette: ScreenConvert['palette'] =
+    mode === 'sc3'
       ? 'msx1'
-      : 'optimized'
+      : Array.isArray(convert.palette)
+        ? convert.palette.map(Number)
+        : convert.palette === 'msx1'
+          ? 'msx1'
+          : 'optimized'
   return {
     version: 1,
     mode,
@@ -164,8 +170,14 @@ export function screenPixels(doc: ScreenDoc): { width: number; height: number; i
  * Packs indexed pixels into VRAM bytes for `mode`: 2 pixels/byte (sc5, sc7),
  * 4 pixels/byte (sc6), 1 byte/pixel (sc8 — the index *is* the RGB332 value).
  * YJK modes (sc10/12) are import-only and pass through unpacked.
+ *
+ * sc3 is the one mode where the byte *order* differs too, not just the packing:
+ * its framebuffer is the pattern table read through the name table, so a row is
+ * not contiguous. `sc3.ts` owns that address, and the result is always the full
+ * 1536 bytes regardless of the source size.
  */
 export function packBitmap(indices: Uint8Array, width: number, height: number, mode: BitmapMode): Uint8Array {
+  if (mode === 'sc3') return sc3Pack(indices, width, height)
   const perByte = MODES[mode].pixelsPerByte
   if (perByte === 1) return Uint8Array.from(indices)
   const bits = 8 / perByte
@@ -291,12 +303,55 @@ export function fragmentStripPixels(doc: ScreenDoc): Uint8Array {
 }
 
 export function fragmentStripBytes(doc: ScreenDoc): Uint8Array {
+  if (doc.mode === 'sc3') return sc3FragmentBytes(doc)
   const strip = fragmentStrip(doc)
   return packBitmap(fragmentStripPixels(doc), strip.width, strip.height, doc.mode)
 }
 
-/** Per fragment: `xLo, xHi, width, height` — the rectangle inside the strip, for the runtime's frame table. */
+/**
+ * sc3's fragments, each packed on its own rather than side by side.
+ *
+ * The strip layout exists because one `HMMC` uploads it into VRAM and each frame
+ * is then a rectangle inside it. sc3 has no command engine and no off-screen
+ * strip to blit from — frames are read straight out of ROM by the CPU — so
+ * side-by-side buys nothing and costs correctness: two blocks share a byte, so a
+ * frame at an odd column would start mid-byte and could not be blitted at all.
+ */
+function sc3FragmentBytes(doc: ScreenDoc): Uint8Array {
+  const source = screenPixels(doc)
+  const parts = doc.fragments.map((fragment) =>
+    source
+      ? sc3LinearPack(source.indices, fragment.x, fragment.y, fragment.width, fragment.height, source.width)
+      : new Uint8Array(sc3LinearBytes(fragment.width, fragment.height))
+  )
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0))
+  let at = 0
+  for (const part of parts) {
+    out.set(part, at)
+    at += part.length
+  }
+  return out
+}
+
+/**
+ * Per fragment: `offsetLo, offsetHi, width, height` — where that frame sits in
+ * `_Strip` and how big it is, for the runtime's frame table.
+ *
+ * In the bitmap modes the offset is a dot column inside one wide image; in sc3
+ * it is a byte offset, because the frames are packed one after another. Both are
+ * "where this frame starts", which is all the helpers ask of it.
+ */
 export function fragmentRectBytes(doc: ScreenDoc): Uint8Array {
+  if (doc.mode === 'sc3') {
+    let at = 0
+    return Uint8Array.from(
+      doc.fragments.flatMap((fragment) => {
+        const offset = at
+        at += sc3LinearBytes(fragment.width, fragment.height)
+        return [offset & 0xff, (offset >> 8) & 0xff, fragment.width & 0xff, fragment.height & 0xff]
+      })
+    )
+  }
   const strip = fragmentStrip(doc)
   return Uint8Array.from(
     doc.fragments.flatMap((fragment, index) => [
@@ -317,7 +372,11 @@ export function fragmentRectBytes(doc: ScreenDoc): Uint8Array {
  * Opt-in (`ExportBlock.helpers`); needs MSXgl's VDP command engine, so MSX2+
  * with `VDP_USE_COMMAND`.
  */
-export function screenHelperC(doc: ScreenDoc, name: string): HelperC {
+export function screenHelperC(doc: ScreenDoc, name: string, doubleBuffer = false): HelperC {
+  // sc3 shares none of this: no command engine, so no HMMC upload and no LMMM
+  // blit, and the whole picture lives in a RAM shadow that is flushed by the
+  // strip. `sc3.ts` emits that runtime, software sprites included.
+  if (doc.mode === 'sc3') return sc3ScreenHelperC(name, name, doubleBuffer, doc.fragments.length > 0)
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
   const first = doc.fragments[0]?.name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase() ?? 'FRAGMENT'
   return {
@@ -403,8 +462,39 @@ export function screenHelperC(doc: ScreenDoc, name: string): HelperC {
  * band is unpacked into a small RAM buffer and blitted before the next is
  * touched, so the whole 27 KB picture never has to be anywhere but VRAM.
  */
-export function screenUnpackC(name: string): HelperC {
+export function screenUnpackC(name: string, mode: BitmapMode = 'sc5'): HelperC {
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
+  if (mode === 'sc3') {
+    // 1536 bytes is under one band's budget, so there is only ever one — and no
+    // command engine to blit it with, so it goes straight to the page.
+    const signature = `void ${name}_Unpack(u8* buffer)`
+    return {
+      header: [
+        '',
+        `// ── ${name}: the picture, RLEp-packed ─────────────────────────────────`,
+        '//',
+        `// Unpacks into \`buffer\` (${prefix}_SIZE bytes — the same shadow buffer the`,
+        '// drawing helpers use) and writes it to the visible page.',
+        '//',
+        '// Needs MSXgl\'s "compress" library module, with COMPRESS_USE_RLEP TRUE and',
+        '// COMPRESS_USE_RLEP_DEFAULT TRUE in msxgl_config.h.',
+        '//',
+        '// Example:',
+        `//   u8 g_Screen[${prefix}_SIZE];`,
+        `//   ${name}_InitScreen();`,
+        `//   ${name}_Unpack(g_Screen);`,
+        `${signature};`
+      ],
+      source: [
+        '',
+        signature,
+        '{',
+        `\tRLEp_UnpackToRAM(${name}_Data, buffer);`,
+        `\t${name}_FlushAll(buffer);`,
+        '}'
+      ]
+    }
+  }
   const signature = `void ${name}_Unpack(u8* buffer, UY y)`
   return {
     header: [
@@ -465,7 +555,11 @@ export function validateScreen(doc: ScreenDoc): string[] {
   const problems: string[] = []
   if (doc.version !== 1) problems.push(`Unsupported version ${doc.version}`)
   if (!isBitmapMode(doc.mode)) problems.push(`"${doc.mode}" is not a bitmap mode`)
-  if (!doc.source) problems.push('No source image')
+  // A screen drawn from scratch has no source and never will — `blankConverted`
+  // exists for exactly that, and everything downstream reads `converted` without
+  // caring where it came from. What is not exportable is a document with
+  // *neither*: nothing to convert and nothing converted.
+  if (!doc.source && !doc.converted) problems.push('No source image, and nothing drawn yet')
   const info = MODES[doc.mode]
   if (doc.converted) {
     if (doc.converted.width > info.width || doc.converted.height > info.height) {
@@ -475,6 +569,18 @@ export function validateScreen(doc: ScreenDoc): string[] {
     if (palette) {
       if (palette.length > info.colors) problems.push(`${palette.length} palette entries, ${doc.mode} allows ${info.colors}`)
       if (palette.some((value) => (value & ~0x0777) !== 0)) problems.push('Palette entry outside the GRB333 space')
+    }
+  }
+  if (doc.mode === 'sc3') {
+    // Two blocks share a byte, and the blitter copies bytes. A frame starting or
+    // ending mid-byte cannot be drawn without a shift the runtime does not do.
+    for (const fragment of doc.fragments) {
+      if (fragment.x % 2 || fragment.width % 2) {
+        problems.push(
+          `Fragment "${fragment.name}" is at x=${fragment.x} and ${fragment.width} wide; ` +
+            'SCREEN 3 frames need an even column and an even width (two blocks per byte)'
+        )
+      }
     }
   }
   return problems

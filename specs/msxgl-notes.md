@@ -128,3 +128,70 @@ tables (on the include path as `-I…/engine/content`).
 -font x y first last` — full help in `tools/MSXtk/bin/MSXimg.txt`. Output headers
 carry a round-trippable "Generation parameters" comment block and per-byte ASCII
 art.
+
+## SCREEN 3 (MULTICOLOR) — what MSXgl does and does not give you
+
+Extracted from the real checkout; the notes above say nothing about this mode and
+neither does any sample. **MSXgl supports SCREEN 3 at the "set the mode and poke
+VRAM" level and nothing above it.**
+
+- `VDP_MODE_SCREEN3 = VDP_MODE_MULTICOLOR` (`vdp.h`, `enum VDP_MODE`). Note the
+  enum is not in BASIC screen order — MC sits between TEXT1 and GRAPHIC1.
+- Table bases (`vdp.h`): `VDP_MC_ADDR_NT 0x0800`, `VDP_MC_ADDR_PT 0x0000`,
+  `VDP_MC_ADDR_SAT 0x1B00`, `VDP_MC_ADDR_SPT 0x3800`. There is **no colour
+  table** — the pattern byte *is* two 4-bit colours.
+- `VDP_SetModeMultiColor()` (`vdp.c`) sets the mode flag and those bases, and
+  **nothing else**. In particular it does not write the name table, so the mode
+  is not a framebuffer until you do.
+
+**Two traps worth stating outright:**
+
+1. `VDP_USE_MODE_MC` has **no engine-side default** (`config_option.h` and
+   `config_default.h` do not mention it) and when it is `FALSE`,
+   `VDP_SetMode(VDP_MODE_SCREEN3)` is a **silent no-op** — `g_VDP_Data.Mode` is
+   assigned before the switch, so `VDP_GetMode()` afterwards still reports
+   MULTICOLOR while the VDP never changed. `projects/template*` ship it `TRUE`;
+   `projects/targets/msxgl_config.h` ships it `FALSE`.
+2. `VDP_SetSpriteMultiColor` / `VDP_SetSpriteExMultiColor` are **sprite mode 2**
+   (MSX2, per-line colour) functions and have nothing to do with this mode. The
+   SCREEN 3 sprite API is `VDP_SetSpriteSM1(index, x, y, shape, color)`, sprite
+   mode 1, same as SCREEN 1/2 — `s_sm1.c` is the only reference code for it.
+
+**What works:**
+
+- `VDP_WriteVRAM` / `VDP_FillVRAM` / `VDP_Peek` / `VDP_Poke` are mode-agnostic,
+  and MC is explicitly in the MSX1 **29 cc** VRAM timing tier alongside G1/G2
+  (`vdp.c`), so the hand-written `outi` loops are correctly tuned for it. Nothing
+  written in C will beat them.
+- `VDP_WriteLayout_GM2` / `VDP_FillLayout_GM2` are pure `g_ScreenLayoutLow + dy *
+  32 + dx` arithmetic and MC's name table is the same 32×24, so **they work
+  here** — but they are gated `#if (VDP_USE_MODE_G2 || VDP_USE_MODE_G3)`, which
+  does not mention MC. A SCREEN 3 project that wants them must set
+  `VDP_USE_MODE_G2 TRUE` as well.
+- `scroll.c` is likewise name-table-only (`g_ScreenLayoutLow` +
+  `VDP_WriteVRAM_16K`), and `SCROLL_ADJUST` — its one V9938 part — is `FALSE` on
+  MSX1. So MSXgl's real scrolling camera drives a SCREEN 3 map unchanged.
+- `COLOR_MERGE(a, b)` (`color.h`) packs two colours into the nibble pair a MC
+  byte holds.
+
+**What is missing, and so is ours to emit:**
+
+- **The name table.** SCREEN 3's 64×48 framebuffer only exists once the 768-byte
+  name table holds `NT[cx,cy] = (cy >> 2) * 32 + cx`. MSXgl has no function for
+  it; `BIOS_InitScreen3()` (`R_INIMLT`) does it at the cost of a BIOS dependency
+  and a full screen reset.
+- **Pixel plotting.** `draw.h` is gated `#if ((MSX_VERSION >= MSX_2) &&
+  (VDP_USE_COMMAND))` — `Draw_Point`, `Draw_Line`, `Draw_FillBox` are all V9938
+  command wrappers and simply do not exist on MSX1.
+- **Image conversion.** MSXimg's `-mode` takes `bmp|txt|gm1|gm2|sprt|mglv`
+  (`exporter.h`, `MSXimg.txt`) — there is no multicolor exporter. `MGLV.h`
+  reserves `MGLV_SCR_MODE_MC 3` but `parser.cpp` only ever emits
+  `MGLV_SCR_MODE_BITMAP`, so it is a documented constant with no implementation.
+- **Print.** `print.c`'s `case VDP_MODE_MULTICOLOR:` is an empty `break` — no
+  tab size, no `ScreenWidth`. And the pattern table a font would load into *is*
+  the picture. Text in a SCREEN 3 game means switching to another mode for it.
+- **Software sprites and tiles.** `s_swsprt` and `tile.h` are bitmap-mode only
+  (`tile.h`: "Tile support for bitmap mode", `TILE_BPP 4`,
+  `TILE_SCREEN_WIDTH 256`). `game_pawn` does have `PAWN_SPT_MODE_MSX1`, which
+  works here because sprite mode 1 is mode-independent.
+- **No sample uses SCREEN 3 at all** — 0 of 56.

@@ -36,6 +36,7 @@ import { isBitmapMode, MODES, type BitmapMode } from './modes'
 import type { TileBlock } from './tile'
 import { MAX_BLOCK } from './tile'
 import { decodeIndices, encodeIndices, packBitmap } from './screen'
+import { sc3PatternBytes, sc3TileBytes, sc3TileHelperC, SC3_COLS, SC3_ROWS, SC3_TILE_BLOCKS } from './sc3'
 import type { ExportBlock } from './resource'
 
 /** VRAM is this many dots across in every bitmap mode, so it caps a sheet row. */
@@ -67,13 +68,33 @@ export interface BitmapTilesDoc {
   flags: number[]
   /** Named multi-tile designs, exactly `TilesDoc.blocks` — the same type. */
   blocks: TileBlock[]
+  /**
+   * The index a blit treats as see-through, or null for an opaque tileset.
+   *
+   * Exactly `MapDoc.transparent`, for exactly its reason: an index is a colour
+   * like any other and none of them can be *assumed* to mean nothing. It is what
+   * turns a tile bank into a software-sprite sheet — with it, `_DrawTileMasked`
+   * puts a character over a background instead of a rectangle over it.
+   *
+   * Only sc3 reads it today: the V9938 modes blit with the command engine, whose
+   * transparency comes from the logical operation rather than from the data.
+   */
+  transparent: number | null
   export: ExportBlock | null
 }
 
 const zeros = (n: number): number[] => new Array<number>(n).fill(0)
 
-/** How many tiles fit across a VRAM row — and so the shape of the exported sheet. */
+/**
+ * How many tiles fit across a VRAM row — and so the shape of the exported sheet.
+ *
+ * sc3 has no sheet: its tiles are read out of ROM by the CPU (or loaded into the
+ * pattern table), never parked in VRAM as an image. The number is still what the
+ * editors lay the bank out with, so it returns a readable grid rather than the
+ * 128 the dot arithmetic would give for a 2-block tile.
+ */
 export function sheetCols(doc: BitmapTilesDoc): number {
+  if (doc.mode === 'sc3') return 16
   return Math.max(1, Math.floor(SHEET_WIDTH / doc.width))
 }
 
@@ -95,8 +116,8 @@ function size(value: unknown, fallback: number): number {
 export function normalizeBitmapTiles(raw: unknown): BitmapTilesDoc {
   const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<BitmapTilesDoc>
   const mode: BitmapMode = isBitmapMode(String(input.mode)) ? (input.mode as BitmapMode) : 'sc5'
-  const width = size(input.width, 16)
-  const height = size(input.height, 16)
+  const width = sc3Size(mode, size(input.width, mode === 'sc3' ? SC3_TILE_BLOCKS : 16), SC3_COLS, true)
+  const height = sc3Size(mode, size(input.height, mode === 'sc3' ? SC3_TILE_BLOCKS : 16), SC3_ROWS, false)
   const count = Math.max(1, Math.min(MAX_BITMAP_TILES, Math.round(Number(input.count)) || 16))
   const per = width * height
 
@@ -119,12 +140,36 @@ export function normalizeBitmapTiles(raw: unknown): BitmapTilesDoc {
     pixels: encodeIndices(pixels),
     flags: Array.from({ length: count }, (_, i) => (Number(rawFlags[i]) || 0) & 0xff),
     blocks: rawBlocks.map(normalizeBlock).filter((block): block is TileBlock => block !== null),
+    transparent:
+      typeof input.transparent === 'number' && Number.isFinite(input.transparent)
+        ? Math.max(0, Math.min(15, input.transparent | 0))
+        : null,
     export: (input.export as ExportBlock) ?? null
   }
 }
 
+/**
+ * sc3 tiles are measured in 4×4 blocks, not dots, so they are small and the
+ * limits are the screen. The width is forced **even** because two blocks share a
+ * VRAM byte and the blitter copies bytes — an odd width would start the next row
+ * mid-byte and could not be drawn.
+ *
+ * 2×2 is the default and the interesting size: that is exactly one name-table
+ * entry, which is what lets a sc3 tileset also be a real tilemap.
+ */
+function sc3Size(mode: BitmapMode, value: number, limit: number, even: boolean): number {
+  if (mode !== 'sc3') return value
+  const clamped = Math.max(1, Math.min(limit, value))
+  return even ? Math.max(2, clamped - (clamped % 2)) : clamped
+}
+
+/**
+ * Only the V9938's programmable modes have a palette to hold. sc8 is RGB332 and
+ * sc3 is the TMS9918A's fixed sixteen — both read their colours from the index
+ * itself, so storing sixteen zeroes for them would render everything black.
+ */
 function defaultPalette(mode: BitmapMode): number[] | null {
-  return MODES[mode].colors === 256 ? null : zeros(16)
+  return MODES[mode].palette === 'grb333' ? zeros(16) : null
 }
 
 function normalizeBlock(raw: unknown): TileBlock | null {
@@ -393,10 +438,32 @@ export function sheetPixels(doc: BitmapTilesDoc): { width: number; height: numbe
   return { width, height, indices }
 }
 
-/** The sheet, packed for the mode — what `_Tiles` holds. */
+/**
+ * The sheet, packed for the mode — what `_Tiles` holds.
+ *
+ * sc3 does not go through the sheet at all. The sheet exists so one `HMMC` can
+ * park every tile in VRAM and each draw is then a VDP-to-VDP copy; sc3 has no
+ * command engine, so its tiles are blitted out of ROM by the CPU and are laid
+ * out for that reader — each tile on its own, `ceil(width / 2)` bytes per row.
+ */
 export function bitmapTileBytes(doc: BitmapTilesDoc): Uint8Array {
+  if (doc.mode === 'sc3') {
+    return sc3NameTableCapable(doc)
+      ? sc3PatternBytes(tilePixels(doc), doc.count)
+      : sc3TileBytes(tilePixels(doc), doc.count, doc.width, doc.height)
+  }
   const sheet = sheetPixels(doc)
   return packBitmap(sheet.indices, sheet.width, sheet.height, doc.mode)
+}
+
+/** True when this sc3 tileset's tiles are one name-table entry each, so a map can draw it through the VDP. */
+export function sc3NameTableCapable(doc: BitmapTilesDoc): boolean {
+  return doc.mode === 'sc3' && doc.width === SC3_TILE_BLOCKS && doc.height === SC3_TILE_BLOCKS
+}
+
+/** The table suffix a sc3 tileset exports under — `_Patterns` when it can also be a name-table map. */
+export function sc3TableSuffix(doc: BitmapTilesDoc): string {
+  return sc3NameTableCapable(doc) ? '_Patterns' : '_Tiles'
 }
 
 /** Blocks flattened to tile indices, row-major, in declaration order. */
@@ -441,6 +508,12 @@ export function validateBitmapTiles(doc: BitmapTilesDoc): string[] {
  * over blitting from ROM: the CPU writes coordinates, not pixels.
  */
 export function bitmapTileHelperC(doc: BitmapTilesDoc, name: string): HelperC {
+  // No command engine on an MSX1: sc3 blits with the CPU, into the shadow buffer
+  // the screen resource flushes. `sc3.ts` emits that, plus the pattern-table
+  // upload when the tiles are 2×2 and so can be a name-table map as well.
+  if (doc.mode === 'sc3') {
+    return sc3TileHelperC(name, doc.width, doc.height, doc.count, doc.transparent)
+  }
   const prefix = defineName(name)
   const cols = sheetCols(doc)
   const drawSignature = `void ${name}_Draw(u8 tile, UX x, UY y, UY sheetY)`

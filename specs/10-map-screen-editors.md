@@ -36,10 +36,15 @@ UI:
 Export via Spec 07: raw tile-index binary per layer (+ optional RLE variant if the
 MSXgl side supports one — decided in Spec 07), flags as a separate C table.
 
-## B. Bitmap screen editor (`*.screen.json` = import settings + retouch strokes)
+## B. Screen editor (`*.screen.json` = import settings + retouch strokes, or a drawing)
 
-For screens 5, 6, 7, 8 (and 10/12 YJK as import-only). Source of truth is a source
-image + conversion settings, not a hand-painted document:
+For screens 5, 6, 7, 8 (and 10/12 YJK as import-only), **and SCREEN 3**, whose
+64×48 grid of 4×4 blocks is the same index-per-pixel document at a different
+scale. Source of truth is a source image + conversion settings — *unless there is
+no source*, in which case the document is a drawing and strokes commit straight
+into `converted.indices` rather than growing a `retouch` triple list. Tools are
+`bitmap-tile-editor.ts`'s `bitmapToolPoints` (pencil / line / rect / fill), plus
+eyedropper and the fragment cut.
 
 ```jsonc
 {
@@ -50,6 +55,25 @@ image + conversion settings, not a hand-painted document:
   "retouch": [ …stroke list applied post-conversion… ]
 }
 ```
+
+### SCREEN 3
+
+Two runtime shapes, and the arithmetic picks between them: a 50 Hz frame is
+~71,600 T-states at ~30 cc per VRAM byte, so the 1536-byte framebuffer is ~64 %
+of a frame and the 768-byte name table ~32 %.
+
+- **Framebuffer** (`*.screen.json` at sc3) — the name table is boilerplate, the
+  pattern table is the picture. Drawn into a RAM shadow; only the 8-byte column
+  strips that changed are uploaded. `ExportBlock.doubleBuffer` adds the page
+  flip: two pattern tables, one `VDP_SetPatternTable()`, no copy.
+- **Name table** (`*.btiles.json` at sc3, 2×2 blocks, plus a map) — one tile is
+  one name entry, so the map draws with `VDP_WriteLayout_GM2` exactly as SCREEN
+  1/2 and MSXgl's `scroll` module drives it. `MapCell.sc3` is the mirrored flag
+  that routes the export; `cell` stays set so the editors are unchanged.
+
+A sc3 `*.btiles.json` is also the **software-sprite sheet**: tiles are frames, a
+1×N block is an animation (the idiom `agent-guide.ts` already documents), and
+`transparent` gives the masked blit.
 
 UI: side-by-side (or toggle) original vs converted preview at real MSX resolution
 and aspect; palette panel (editable GRB333 for sc5/6/7, fixed for sc8, YJK preview

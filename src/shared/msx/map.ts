@@ -45,6 +45,21 @@ export interface MapCell {
   height: number
   /** Cells per row in the atlas image. A power of two turns the helper's divide into a shift. */
   cols: number
+  /**
+   * Set when the tileset is a SCREEN 3 one, mirrored here by `setTileset` for
+   * the reason `cell` and `meta` are mirrored: the exporter renders one resource
+   * at a time and never opens the tileset to ask.
+   *
+   * It routes the export, not the editors. A 2×2 sc3 tileset is one name-table
+   * entry per tile, so its map draws with `VDP_WriteLayout_GM2` exactly as a
+   * SCREEN 1/2 map does — 768 bytes for a whole screen, which is what makes
+   * SCREEN 3 scroll. Any other sc3 tile size has no name-table shape, so its map
+   * blits cells into the shadow buffer instead.
+   *
+   * `cell` stays set either way, so the map editor keeps rendering from the
+   * bitmap-tileset atlas with nothing to change.
+   */
+  sc3?: boolean
 }
 
 export interface MapDoc {
@@ -93,6 +108,11 @@ export interface MapDoc {
   transparent: number | null
   layers: MapLayer[]
   export: ExportBlock | null
+}
+
+/** A SCREEN 3 map whose cells are name-table entries, so the VDP draws it rather than the CPU. */
+export function isSc3NameTable(doc: MapDoc): boolean {
+  return doc.cell?.sc3 === true && doc.cell.width === 2 && doc.cell.height === 2
 }
 
 /** One screen's worth of cells — the outline overlay the map editor draws. */
@@ -165,7 +185,14 @@ function normalizeCell(raw: unknown): MapCell | null {
   const cell = raw as Partial<MapCell>
   const at = (value: unknown, fallback: number): number =>
     typeof value === 'number' && Number.isFinite(value) && value >= 1 ? value | 0 : fallback
-  return { width: at(cell.width, 16), height: at(cell.height, 16), cols: at(cell.cols, 16) }
+  return {
+    width: at(cell.width, 16),
+    height: at(cell.height, 16),
+    cols: at(cell.cols, 16),
+    // Round-trips, or reopening a SCREEN 3 map would silently export it as a
+    // V9938 one — which compiles, and draws nothing.
+    ...(cell.sc3 === true ? { sc3: true } : {})
+  }
 }
 
 export function cellIndex(doc: MapDoc, x: number, y: number): number {
@@ -236,6 +263,18 @@ export function validateMap(doc: MapDoc): string[] {
     problems.push(`This map's cells are meta indices, but "${doc.tileset}" is not a meta-tile set`)
   }
 
+  // Meta-tile sets over a SCREEN 3 tileset are not supported yet: `mapHelperC`
+  // answers `meta` before `cell`, and the meta helper's bitmap path is built on
+  // the V9938 command engine, which an MSX1 has not got. Blocking the export is
+  // the honest failure — the alternative is a header full of `VDP_CommandHMMM`
+  // that compiles, links, and draws nothing.
+  if (doc.meta && doc.cell?.sc3) {
+    problems.push(
+      'Meta-tile sets over a SCREEN 3 tileset are not supported yet — point this map at the ' +
+        'tileset directly, or use a 2×2 tileset so the map draws through the name table'
+    )
+  }
+
   const cells = doc.width * doc.height
   doc.layers.forEach((layer) => {
     if (layer.data.length !== cells) {
@@ -246,6 +285,7 @@ export function validateMap(doc: MapDoc): string[] {
     }
   })
   return problems
+
 }
 
 /** One layer as raw bytes — the name table (or flag table) MSXgl reads. */
@@ -287,13 +327,31 @@ export function mapExport(
  */
 export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
   if (doc.meta) return metaMapHelperC(doc, name, compressed, table)
-  if (doc.cell) return bitmapMapHelperC(doc, name, compressed, table)
+  // A SCREEN 3 map over 2×2 tiles is a name-table map: one tile is one name
+  // entry, and `VDP_WriteLayout_GM2` is address arithmetic over the layout base,
+  // which `VDP_SetModeMultiColor` sets correctly. So it takes the path below,
+  // unchanged — the same call, the same bytes, at a quarter of the cost of
+  // blitting. Larger sc3 tiles have no name-table shape and blit.
+  if (doc.cell && !isSc3NameTable(doc)) return bitmapMapHelperC(doc, name, compressed, table)
   const prefix = defineName(name)
+  const sc3 = isSc3NameTable(doc)
   const head = [
     '',
     `// Draws one layer of ${name} into the name table at tile column/row (x, y).`,
-    '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
-    '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.'
+    ...(sc3
+      ? [
+          '// SCREEN 3: each cell is one name-table entry — 2×2 blocks, 8×8 dots — so',
+          '// a whole screen is 768 bytes and a scroll edge is a couple of dozen.',
+          `// Upload the tileset's patterns first (its _Upload()), and set the mode`,
+          '// with VDP_SetMode(VDP_MODE_SCREEN3) — *not* the framebuffer _InitScreen(),',
+          '// whose boilerplate name table is what this one replaces.',
+          '// Needs VDP_USE_MODE_MC TRUE, and VDP_USE_MODE_G2 TRUE as well: that is',
+          '// what compiles VDP_WriteLayout_GM2, which is mode-agnostic in body.'
+        ]
+      : [
+          '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
+          '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.'
+        ])
   ]
   if (!compressed) {
     const signature = `void ${name}_DrawLayer(const u8* layer, u8 x, u8 y)`
@@ -351,6 +409,7 @@ export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table
 function bitmapMapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
   const prefix = defineName(name)
   const cell = doc.cell!
+  if (cell.sc3) return sc3MapHelperC(doc, name, compressed, table)
   const overlay = bitmapOverlayC(doc, name, prefix)
   const signature = `void ${name}_DrawRow(const u8* layer, u8 row, UY atlasY, UY destY)`
   return {
@@ -409,6 +468,81 @@ function bitmapMapHelperC(doc: MapDoc, name: string, compressed: boolean, table:
     '\t}',
     '}',
     ...overlay.source
+    ]
+  }
+}
+
+/**
+ * A SCREEN 3 map whose cells are bigger than a name-table entry, so the CPU
+ * draws them: a row of tiles blitted into the shadow buffer the screen
+ * resource flushes.
+ *
+ * `tiles` is a parameter rather than a symbol this file names, for the same
+ * reason `_DrawView` takes `metas`: the tileset is a different resource in a
+ * different header, and the exporter renders one at a time. Pass the tileset's
+ * `_Tiles` table.
+ *
+ * A row at a time, because that is the unit a scrolling playfield redraws — and
+ * because the whole point of the dirty-strip flush is not touching the rest.
+ */
+function sc3MapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
+  const prefix = defineName(name)
+  const cell = doc.cell!
+  const rowBytes = Math.ceil(cell.width / 2)
+  const signature = `void ${name}_DrawRow(u8* buf, const u8* tiles, const u8* layer, u8 row, u8 x, u8 y)`
+  return {
+    header: [
+      '',
+      `// ── ${name}: a SCREEN 3 tilemap, blitted ──────────────────────────────`,
+      '//',
+      `// Draws map row \`row\` as ${doc.width} cells of ${cell.width}×${cell.height} blocks into \`buf\`, the`,
+      '// shadow buffer, starting at block (x, y). Nothing reaches the screen until',
+      `// the screen resource's _Flush(); this only marks nothing, so call its`,
+      `// _Mark(x, y, ${doc.width * cell.width}, ${cell.height}) after, or _FlushAll for a whole redraw.`,
+      '//',
+      '// `x` must be even: two blocks share a VRAM byte and this copies bytes.',
+      '//',
+      `// The tiles are ${cell.width}×${cell.height} blocks, which is more than one name-table entry`,
+      '// holds — a 2×2 tileset would export a real `_DrawLayer` instead and let the',
+      '// VDP do this, at a quarter of the cost. Worth knowing if this map scrolls.',
+      ...(compressed
+        ? [
+            '//',
+            '// The layers are RLEp-packed, so `layer` must be a RAM buffer of',
+            '// ..._UNPACKED_SIZE bytes you filled with RLEp_UnpackToRAM first — this',
+            '// reads rows in any order and cannot unpack per call.'
+          ]
+        : []),
+      '//',
+      '// Example:',
+      `//   for(u8 r = 0; r < ${prefix}_H; ++r)`,
+      `//     ${name}_DrawRow(g_Screen, g_Tiles_Tiles, ${table}, r, 0, r * ${cell.height});`,
+      `${signature};`
+    ],
+    source: [
+      '',
+      `static u16 ${name}_Offset(u8 x, u8 y)`,
+      '{',
+      '\treturn ((u16)(y & 0xF8) << 5) | ((u16)(x >> 1) << 3) | (y & 7);',
+      '}',
+      '',
+      signature,
+      '{',
+      `\tconst u8* src = layer + ((u16)row * ${prefix}_W);`,
+      `\tu8 col = ${prefix}_W;`,
+      '\twhile(col--)',
+      '\t{',
+      `\t\tconst u8* t = tiles + ((u16)(*src++) * ${rowBytes * cell.height});`,
+      '\t\tu8 r, c;',
+      `\t\tfor(r = 0; r < ${cell.height}; ++r)`,
+      '\t\t{',
+      `\t\t\tu16 d = ${name}_Offset(x, y + r);`,
+      `\t\t\tfor(c = 0; c < ${rowBytes}; ++c)`,
+      '\t\t\t\tbuf[d + ((u16)c << 3)] = *t++;',
+      '\t\t}',
+      `\t\tx += ${cell.width};`,
+      '\t}',
+      '}'
     ]
   }
 }

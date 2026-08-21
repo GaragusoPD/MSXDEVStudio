@@ -9,7 +9,7 @@
 
 import { onUnmounted, reactive, ref, watch, type Ref } from 'vue'
 import type { LossReport, PaletteChoice, DitherMode } from '../../../shared/msx/quantize'
-import type { ScreenMode } from '../../../shared/msx/modes'
+import { MODES, type ScreenMode } from '../../../shared/msx/modes'
 import type { Rgb } from '../../../shared/msx/palette'
 import type { QuantizeRequest, QuantizeResponse } from '../workers/quantize.worker'
 
@@ -39,6 +39,33 @@ export interface ImageImport {
   reset(): void
   /** Paints an ImageData of the converted result — the "after" preview. */
   toImageData(result: ImportResult): ImageData
+}
+
+/**
+ * Scales an image to what the mode can actually hold, when it is larger.
+ *
+ * Only SCREEN 3 needs it in practice: its screen is 64×48 *blocks*, so a 256×192
+ * picture has to be reduced 4:1 before quantizing rather than cropped — the
+ * aspect is unchanged because a block is square, and reducing first is also what
+ * gives the quantizer a fair average of each block's colours.
+ *
+ * The browser's own scaler does the work; there is no resampler here to get
+ * wrong. Images already small enough are returned untouched.
+ */
+export function fitToMode(image: ImageData, mode: ScreenMode): ImageData {
+  const info = MODES[mode]
+  if (image.width <= info.width && image.height <= info.height) return image
+  const scale = Math.min(info.width / image.width, info.height / image.height)
+  const width = Math.max(1, Math.round(image.width * scale))
+  const height = Math.max(1, Math.round(image.height * scale))
+  const from = new OffscreenCanvas(image.width, image.height)
+  const fromContext = from.getContext('2d')
+  const to = new OffscreenCanvas(width, height)
+  const context = to.getContext('2d')
+  if (!fromContext || !context) return image
+  fromContext.putImageData(image, 0, 0)
+  context.drawImage(from, 0, 0, width, height)
+  return context.getImageData(0, 0, width, height)
 }
 
 /** Decodes any image the browser understands into raw RGBA. Exported (Spec 10): the screen editor
@@ -93,8 +120,12 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
   }
 
   function convert(): void {
-    const image = source.value
-    if (!image) return
+    const picked = source.value
+    if (!picked) return
+    // Reduce before quantizing, not after: SCREEN 3's 64×48 is four times
+    // smaller than the art it is usually made from, and averaging the colours
+    // down is the conversion, not a step after it.
+    const image = fitToMode(picked, options.mode)
     busy.value = true
     pending = ++nextId
     // The worker consumes the buffer, so hand it a copy: the source stays live

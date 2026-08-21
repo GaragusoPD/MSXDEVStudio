@@ -78,9 +78,18 @@ shipped in 1983.
   ends](docs/images/editor_msx2_bitmap_map_editor.png)
 
 - **Screen editor** for the MSX2 bitmap modes, converting a PNG into SCREEN 5
-  to 8 data with an editable palette and pencil-and-fill retouching. Drag a
-  rectangle to cut a named **fragment** — a bitmap-mode block, and the frame of
-  a software sprite.
+  to 8 data with an editable palette, and a full pencil / line / rectangle /
+  fill / eyedropper toolset for drawing one from scratch. Drag a rectangle to
+  cut a named **fragment** — a bitmap-mode block, and the frame of a software
+  sprite.
+- **SCREEN 3 (MULTICOLOR)**, the MSX1 mode with **no colour clash**: 64×48
+  blocks of 4×4 dots, any of the sixteen colours each. Draw a playfield, cut
+  frames, and get a runtime MSXgl does not ship — a RAM shadow of the
+  framebuffer, uploads limited to the 8-byte column strips that changed, and
+  **double buffering that costs one register write** because the two pages are
+  two pattern tables. Chunky software sprites are a tileset with a transparent
+  colour, animations are named blocks in it, and 2×2-block tiles are one
+  name-table entry each, so a SCREEN 3 map scrolls under MSXgl's own camera.
 - **Ready-made C, on request.** Tick a box and the exported header carries
   working code for what you drew: one call places a whole metasprite, stamps a
   block into the name table, or runs a software sprite — background save,

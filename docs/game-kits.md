@@ -25,10 +25,34 @@ those are not templates.
 | Vertical scroller | Hardware scroll on Y | `s_scroll` |
 | Top-down | Four-way walk, no gravity | `s_game` pawn, gravity off |
 | Visual novel | Picture on top, dialogue below | custom, using `print` |
+| Chunky arcade | Move a block-grid actor around a 64×48 SCREEN 3 playfield | custom — MSXgl has no SCREEN 3 sample |
 
 A SCREEN 5 platformer is a real option — Vampire Killer did it. On MSX2 the
 graphic kits offer SCREEN 1 through 8. SCREEN 0 is for the text kit and for a
 visual novel that wants no picture.
+
+### SCREEN 3, and the chunky arcade kit
+
+SCREEN 3 is the MSX1 mode with **no colour clash**: 64×48 blocks of 4×4 dots,
+any of the fixed 16 colours each, plus the 32 hardware sprites. It is what recent
+chunky-pixel ZX Spectrum games build in software, and it works on every machine.
+
+The **chunky arcade** kit is built around it. The whole playfield is a
+1536-byte RAM shadow of the framebuffer; drawing happens there and only the
+8-byte column strips that changed go to VRAM, so a moving actor costs a fraction
+of a frame instead of two thirds of one. It is **double buffered** — the two
+pages are two pattern tables and the flip is a single register write, so nothing
+is copied and nothing tears. Collision is reading the picture back: with no
+colour clash there is nothing between you and the blocks.
+
+Every *other* kit on SCREEN 3 takes the other path — 2×2-block tiles are one
+name-table entry each, so a map draws with the same call SCREEN 2 uses and a
+scroller gets MSXgl's real camera.
+
+One rule to know: **do not `Print` in SCREEN 3.** MSXgl's Print module does
+nothing there, and the pattern table a font would load into is the picture. A
+SCREEN 3 kit runs its title, menu and credits in SCREEN 1 and switches to
+SCREEN 3 for play — that is what `GAME_TEXT_VDP_MODE` in `src/game.h` is.
 
 The stub has no coins, lives, or win condition. You replace the art in `res/`
 and the rules in `src/play.c`.
@@ -68,6 +92,10 @@ boot, so a kit in a bitmap mode ships no screen resource: the visual novel fills
 its picture panel with a VDP command and says so in a comment. To ship a real
 picture, export it as a raw file and place it on an 8 KB segment boundary via
 the project's `files.rawFiles` — `demo_msx2` is the worked example.
+
+SCREEN 3 is the exception: a whole screen is 1536 bytes, so the chunky kit does
+scaffold `res/playfield.screen.json` and it fits with room to spare. Draw in it
+and it becomes the backdrop the level tiles are laid over.
 
 ## Credits
 

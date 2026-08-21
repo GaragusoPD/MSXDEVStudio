@@ -48,8 +48,13 @@ let selectAnchor: Point | null = null
 const screenSpan = computed(() => {
   const current = doc(props.session)
   const cell = current.cell
-  const atlas = props.session.atlas
-  const info = cell && atlas ? MODES[atlas.mode] : null
+  // Whichever kind of tileset is loaded knows the mode; a `.screen.json` atlas
+  // was the only one that did before bitmap tilesets existed, which is why a map
+  // over a `.btiles.json` used to fall back to 32x24 and draw an outline twice
+  // the width of the screen it claims to mark. It matters most in SCREEN 3,
+  // where the screen is 64x48 blocks and a 4x4-block cell fits 16 across.
+  const mode = props.session.atlas?.mode ?? props.session.bitmapTileset?.mode ?? null
+  const info = cell && mode ? MODES[mode] : null
   const tiles = info
     ? { cols: Math.floor(info.width / cell!.width), rows: Math.floor(info.height / cell!.height) }
     : { cols: SCREEN_COLS, rows: SCREEN_ROWS }

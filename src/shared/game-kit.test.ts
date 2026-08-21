@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   GAME_SOURCE_DIR,
   attributionLines,
+  availableScreens,
   configPatches,
   defaultDisplayMode,
   defaultScreens,
@@ -214,5 +215,36 @@ describe('isGraphicKit', () => {
     for (const kit of ['platformer', 'side-scroll', 'vert-scroll', 'top-down', 'vn'] as GameKitId[]) {
       expect(isGraphicKit(kit)).toBe(true)
     }
+  })
+})
+
+describe('SCREEN 3', () => {
+  it('offers the chunky kit nothing but SCREEN 3, on every machine', () => {
+    expect(displayModesFor('chunky', '1')).toEqual(['sc3'])
+    expect(displayModesFor('chunky', '2')).toEqual(['sc3'])
+    expect(defaultDisplayMode('chunky', '2')).toBe('sc3')
+  })
+
+  it('keeps SCREEN 3 out of the visual novel, which needs Print', () => {
+    expect(displayModesFor('vn', '2')).not.toContain('sc3')
+    expect(displayModesFor('vn', '1')).not.toContain('sc3')
+    // Every other graphic kit still offers it.
+    expect(displayModesFor('platformer', '1')).toContain('sc3')
+  })
+
+  it('states both mode switches, because neither has a safe default', () => {
+    // VDP_SetMode is a silent no-op without MC, and VDP_WriteLayout_GM2 is not
+    // compiled without G2 even though its body is mode-agnostic.
+    const patches = configPatches({ kit: 'side-scroll', displayMode: 'sc3' })
+    expect(patches.VDP_USE_MODE_MC).toBe('TRUE')
+    expect(patches.VDP_USE_MODE_G2).toBe('TRUE')
+    // And the scroll settings still come through — SCREEN 3 has a name table.
+    expect(patches.SCROLL_SRC_W).toBe(String(kitMapSize('side-scroll').width))
+    expect(configPatches({ kit: 'platformer', displayMode: 'sc2' }).VDP_USE_MODE_MC).toBeUndefined()
+  })
+
+  it('has no HUD, because Print does not work over the play field there', () => {
+    expect(availableScreens('chunky')).not.toContain('hud')
+    expect(availableScreens('platformer')).toContain('hud')
   })
 })

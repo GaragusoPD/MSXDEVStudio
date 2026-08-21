@@ -15,7 +15,7 @@ export type ColorModel =
   | 'perPixel'
   /** Text: one FG/BG pair for the whole screen. */
   | 'screen2'
-  /** sc3's 4×4 color blocks — displayed, never authored by these editors. */
+  /** sc3's 4×4 color blocks: one palette index per block, two blocks per byte. */
   | 'block'
 
 export interface ModeInfo {
@@ -89,8 +89,17 @@ export const MODES: Readonly<Record<ScreenMode, ModeInfo>> = {
 export const TILE_MODES = ['sc1', 'sc2', 'sc4'] as const
 export type TileMode = (typeof TILE_MODES)[number]
 
-/** Modes the bitmap-screen editor (Spec 10) offers; 10/12 are import-only. */
-export const BITMAP_MODES = ['sc5', 'sc6', 'sc7', 'sc8', 'sc10', 'sc12'] as const
+/**
+ * Modes whose document is **one palette index per pixel** — what the screen and
+ * bitmap-tileset editors author, as against the pattern+colour tables of
+ * `TILE_MODES`. 10/12 are import-only.
+ *
+ * `sc3` is in here despite being an MSX1 name-table mode, because its *document*
+ * is exactly this shape: its "pixel" is a 4×4 block, two to a byte. Only three
+ * things differ from the V9938 modes, and each is one branch — the VRAM byte
+ * order (`sc3.ts`), the fixed palette (as sc8), and no command engine.
+ */
+export const BITMAP_MODES = ['sc3', 'sc5', 'sc6', 'sc7', 'sc8', 'sc10', 'sc12'] as const
 export type BitmapMode = (typeof BITMAP_MODES)[number]
 
 export function modeInfo(mode: ScreenMode): ModeInfo {
@@ -104,3 +113,9 @@ export function isTileMode(mode: string): mode is TileMode {
 export function isBitmapMode(mode: string): mode is BitmapMode {
   return (BITMAP_MODES as readonly string[]).includes(mode)
 }
+
+/**
+ * Dots per side of one sc3 block. `MODES.sc3` is 64×48 *blocks*, so a renderer
+ * that wants real screen proportions (256×192) multiplies by this.
+ */
+export const SC3_BLOCK_DOTS = 4

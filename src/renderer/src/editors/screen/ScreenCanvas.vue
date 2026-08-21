@@ -6,10 +6,10 @@
  * this file only turns pointer events into pixels and draws both canvases.
  */
 import { computed, ref, watchEffect } from 'vue'
-import { MODES } from '../../../../shared/msx/modes'
+import { MODES, SC3_BLOCK_DOTS } from '../../../../shared/msx/modes'
 import { screenPixels, screenRgb } from '../../../../shared/msx/screen'
 import { linePoints, type Point } from '../../../../shared/tile-editor'
-import { addFragment, doc, fillAt, finishDrag, paintDrag, type ScreenSession } from './session'
+import { addFragment, doc, fillAt, finishDrag, paintDrag, pickAt, toolDrag, type ScreenSession } from './session'
 
 const props = defineProps<{ session: ScreenSession }>()
 
@@ -22,6 +22,14 @@ const cutTo = ref<Point | null>(null)
 
 const modeInfo = computed(() => MODES[doc(props.session).mode])
 const convertedPixels = computed(() => screenPixels(doc(props.session)))
+
+/**
+ * Screen dots per document pixel. One everywhere except SCREEN 3, whose "pixel"
+ * is a 4×4 block — so its 64×48 document is drawn at the 256×192 the machine
+ * actually shows, and a zoom step means the same thing in every mode.
+ */
+const dotScale = computed(() => (doc(props.session).mode === 'sc3' ? SC3_BLOCK_DOTS : 1))
+const scale = computed(() => props.session.zoom * dotScale.value)
 
 const originalDims = computed(() => {
   const image = props.session.sourceImage
@@ -40,7 +48,38 @@ const originalStyle = computed(() => {
 const convertedStyle = computed(() => {
   const pixels = convertedPixels.value
   if (!pixels) return {}
-  return { width: `${pixels.width * props.session.zoom}px`, height: `${pixels.height * props.session.zoom}px` }
+  return { width: `${pixels.width * scale.value}px`, height: `${pixels.height * scale.value}px` }
+})
+
+/**
+ * The grid overlays, as a CSS background rather than a second canvas: one line
+ * per block, and one per 8-dot cell.
+ *
+ * The cell guide is the useful one in SCREEN 3 — 8 dots is 2×2 blocks, which is
+ * exactly one name-table entry, so it is where the art has to line up if this
+ * picture is ever cut into tiles.
+ */
+const gridStyle = computed(() => {
+  const step = scale.value
+  const cell = step * (8 / dotScale.value)
+  const layers: string[] = []
+  const sizes: string[] = []
+  if (props.session.cellGuide) {
+    layers.push(
+      'linear-gradient(to right, rgba(255,255,255,0.45) 1px, transparent 1px)',
+      'linear-gradient(to bottom, rgba(255,255,255,0.45) 1px, transparent 1px)'
+    )
+    sizes.push(`${cell}px ${cell}px`, `${cell}px ${cell}px`)
+  }
+  if (props.session.grid && step >= 4) {
+    layers.push(
+      'linear-gradient(to right, rgba(255,255,255,0.18) 1px, transparent 1px)',
+      'linear-gradient(to bottom, rgba(255,255,255,0.18) 1px, transparent 1px)'
+    )
+    sizes.push(`${step}px ${step}px`, `${step}px ${step}px`)
+  }
+  if (!layers.length) return { display: 'none' }
+  return { backgroundImage: layers.join(', '), backgroundSize: sizes.join(', ') }
 })
 
 function pixelAt(event: PointerEvent): Point {
@@ -53,6 +92,9 @@ function pixelAt(event: PointerEvent): Point {
   return { x: Math.min(width - 1, Math.max(0, x)), y: Math.min(height - 1, Math.max(0, y)) }
 }
 
+/** Where a rubber-band drag started; `last` is where a pencil drag has walked to. */
+let anchor: Point | null = null
+
 function onDown(event: PointerEvent): void {
   if (!convertedPixels.value) return
   const cell = pixelAt(event)
@@ -62,12 +104,17 @@ function onDown(event: PointerEvent): void {
     cutTo.value = cell
     return
   }
+  if (props.session.tool === 'pick') {
+    pickAt(props.session, cell)
+    return
+  }
   if (props.session.tool === 'fill') {
     fillAt(props.session, cell)
     return
   }
   last = cell
-  paintDrag(props.session, [cell])
+  anchor = cell
+  toolDrag(props.session, cell, cell)
 }
 
 function onMove(event: PointerEvent): void {
@@ -75,10 +122,16 @@ function onMove(event: PointerEvent): void {
     cutTo.value = pixelAt(event)
     return
   }
-  if (!last || props.session.tool !== 'pencil') return
+  if (!last || !anchor) return
   const cell = pixelAt(event)
   if (cell.x === last.x && cell.y === last.y) return
-  paintDrag(props.session, linePoints(last, cell))
+  // A pencil walks — each step draws from where the last one ended, so a fast
+  // drag leaves no gaps. Line and rectangle rubber-band from the anchor instead.
+  if (props.session.tool === 'pencil') {
+    paintDrag(props.session, linePoints(last, cell))
+  } else {
+    toolDrag(props.session, anchor, cell)
+  }
   last = cell
 }
 
@@ -94,6 +147,7 @@ function onUp(): void {
   if (!last) return
   finishDrag(props.session)
   last = null
+  anchor = null
 }
 
 /** The drag rectangle, normalised so it can be dragged in any direction. */
@@ -108,7 +162,7 @@ const cutRect = computed(() => {
 
 /** Overlay boxes: the live drag, then every fragment already cut. */
 const overlays = computed(() => {
-  const zoom = props.session.zoom
+  const zoom = scale.value
   const boxes = doc(props.session).fragments.map((fragment, index) => ({
     key: `f${index}`,
     live: false,
@@ -188,7 +242,7 @@ watchEffect(() => {
       </div>
     </figure>
     <figure>
-      <figcaption>{{ modeInfo.label }} — {{ convertedDims }} (retouch here)</figcaption>
+      <figcaption>{{ modeInfo.label }} — {{ convertedDims }} {{ modeInfo.colorModel === 'block' ? 'blocks (draw here)' : '(retouch here)' }}</figcaption>
       <div class="scroller">
         <p
           v-if="!convertedPixels"
@@ -211,6 +265,10 @@ watchEffect(() => {
             @pointercancel="onUp"
           />
           <span
+            class="grid"
+            :style="gridStyle"
+          />
+          <span
             v-for="box in overlays"
             :key="box.key"
             class="cut-box"
@@ -227,6 +285,12 @@ watchEffect(() => {
 .stage {
   position: relative;
   flex-shrink: 0;
+}
+
+.grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 .cut-box {

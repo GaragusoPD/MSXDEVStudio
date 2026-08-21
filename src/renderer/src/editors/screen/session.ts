@@ -18,18 +18,24 @@
 
 import { shallowReactive } from 'vue'
 import type { ImportResult } from '../../composables/useImageImport'
-import { decode } from '../../composables/useImageImport'
-import { isBitmapMode, type BitmapMode, type ScreenMode } from '../../../../shared/msx/modes'
+import { decode, fitToMode } from '../../composables/useImageImport'
+import { BITMAP_MODES, isBitmapMode, type BitmapMode, type ScreenMode } from '../../../../shared/msx/modes'
 import { quantize } from '../../../../shared/msx/quantize'
 import { serializeResource } from '../../../../shared/msx/resource'
-import { blankConverted, normalizeScreen, type ScreenConvert, type ScreenDoc } from '../../../../shared/msx/screen'
+import {
+  blankConverted,
+  normalizeScreen,
+  screenPixels,
+  type ScreenConvert,
+  type ScreenDoc
+} from '../../../../shared/msx/screen'
 import {
   applyConversion,
   canRedo,
   canUndo,
   clearRetouch,
   createHistory,
-  paintRetouch,
+  paintScreen,
   pushHistory,
   redo as redoHistory,
   retouchFillPoints,
@@ -38,9 +44,16 @@ import {
   type Point,
   type ScreenHistory
 } from '../../../../shared/screen-editor'
+import { bitmapToolPoints, type TileTool } from '../../../../shared/bitmap-tile-editor'
 import { useTabsStore } from '../../stores/tabsStore'
 
-export type ScreenTool = 'pencil' | 'fill' | 'cut'
+/**
+ * `TileTool`'s four plus the two this editor adds. Pencil/line/rect/fill are
+ * `bitmapToolPoints`' — the same geometry the bitmap tileset editor uses, over
+ * whatever index buffer it is handed — so this editor gains line and rectangle
+ * without a second implementation of Bresenham.
+ */
+export type ScreenTool = TileTool | 'pick' | 'cut'
 
 export interface ScreenSession {
   path: string
@@ -54,8 +67,13 @@ export interface ScreenSession {
   sourceError: string | null
 
   tool: ScreenTool
+  /** Rectangle tool: filled or outline. Ignored by every other tool. */
+  filled: boolean
   color: number
   zoom: number
+  /** Overlays on the canvas: the block grid, and the 8-dot cell the name table addresses. */
+  grid: boolean
+  cellGuide: boolean
   status: string
   busy: boolean
 
@@ -78,8 +96,11 @@ export function screenSession(path: string): ScreenSession {
     sourceImage: null,
     sourceError: null,
     tool: 'pencil',
+    filled: false,
     color: 1,
     zoom: 2,
+    grid: false,
+    cellGuide: false,
     status: '',
     busy: false,
     preview: null
@@ -172,7 +193,7 @@ function defaultSourcePath(basePath: string, fileName: string): string {
  */
 export async function importSource(session: ScreenSession, result: ImportResult, file: File | null, mode: ScreenMode): Promise<void> {
   if (!isBitmapMode(mode)) {
-    session.status = `${mode} isn't a bitmap mode — pick one of sc5/6/7/8/10/12.`
+    session.status = `${mode} has no screen document — pick one of ${BITMAP_MODES.join('/')}.`
     return
   }
   const current = doc(session)
@@ -201,13 +222,16 @@ export function reconvertWith(session: ScreenSession, patch: { mode?: BitmapMode
     mode: patch.mode ?? current.mode,
     convert: { ...current.convert, ...(patch.convert ?? {}) }
   }
-  const image = session.sourceImage
-  if (!image) {
-    commit(session, next)
+  const picked = session.sourceImage
+  if (!picked) {
+    // No artwork to re-run, but the mode may have changed under a drawn canvas —
+    // and a 64×48 SCREEN 3 buffer is not a 256×212 SCREEN 5 one.
+    commit(session, next.mode === current.mode ? next : { ...next, converted: blankConverted(next.mode) })
     return
   }
   session.busy = true
   try {
+    const image = fitToMode(picked, next.mode)
     const result = quantize(
       { width: image.width, height: image.height, data: image.data },
       { mode: next.mode, dither: next.convert.dither, palette: next.convert.palette }
@@ -240,6 +264,19 @@ export function setPalette(session: ScreenSession, index: number, grb: number): 
 }
 
 // ── retouch ──────────────────────────────────────────────────────────────
+
+/** View and tool switches: they live on the session, not the document, so none of them is undoable. */
+export function setFilled(session: ScreenSession, filled: boolean): void {
+  session.filled = filled
+}
+
+export function setGrid(session: ScreenSession, grid: boolean): void {
+  session.grid = grid
+}
+
+export function setCellGuide(session: ScreenSession, cellGuide: boolean): void {
+  session.cellGuide = cellGuide
+}
 
 export function setTool(session: ScreenSession, tool: ScreenTool): void {
   session.tool = tool
@@ -279,7 +316,41 @@ export function setColor(session: ScreenSession, index: number): void {
 /** `points` come from `linePoints` (`shared/tile-editor.ts`) between drag samples, in image pixels. */
 export function paintDrag(session: ScreenSession, points: Point[]): void {
   const base = session.preview ?? session.history.present
-  session.preview = paintRetouch(base, points, session.color)
+  session.preview = paintScreen(base, points, session.color)
+}
+
+/**
+ * One drag step for the pencil, line and rectangle tools, in image pixels.
+ *
+ * Pencil and the rubber-band tools differ only in what `from` means: a pencil
+ * walks, so each step starts where the last ended, while a line or rectangle is
+ * redrawn from the anchor every time. That is the same split the bitmap tileset
+ * editor makes, and this calls the same `bitmapToolPoints` to make it.
+ */
+export function toolDrag(session: ScreenSession, from: Point, point: Point): void {
+  const current = session.history.present
+  const pixels = screenPixels(current)
+  if (!pixels) return
+  const points = bitmapToolPoints(
+    session.tool === 'pencil' || session.tool === 'line' || session.tool === 'rect' ? session.tool : 'pencil',
+    from,
+    point,
+    pixels.indices,
+    pixels.width,
+    pixels.height,
+    session.filled
+  )
+  // Rubber-band tools redraw from the anchor, so each step replaces the last
+  // rather than adding to it — one undo entry either way.
+  const base = session.tool === 'pencil' ? (session.preview ?? current) : current
+  session.preview = paintScreen(base, points, session.color)
+}
+
+/** The eyedropper: takes the colour already under the cursor rather than painting one. */
+export function pickAt(session: ScreenSession, point: Point): void {
+  const pixels = screenPixels(doc(session))
+  if (!pixels || point.x < 0 || point.y < 0 || point.x >= pixels.width || point.y >= pixels.height) return
+  session.color = pixels.indices[point.y * pixels.width + point.x]
 }
 
 /** Ends the drag started by `paintDrag`: folds the preview into one undo step (no-op if nothing changed). */
@@ -293,7 +364,7 @@ export function fillAt(session: ScreenSession, start: Point): void {
   const current = doc(session)
   const points = retouchFillPoints(current, start)
   if (!points.length) return
-  commit(session, paintRetouch(current, points, session.color))
+  commit(session, paintScreen(current, points, session.color))
 }
 
 export function clearRetouchAction(session: ScreenSession): void {

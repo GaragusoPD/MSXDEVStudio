@@ -332,16 +332,118 @@ vanish. Every cell and every layer costs one, so a 6-plane hero and two 6-plane
 enemies at the same height is already over. Watch the per-line limit before the
 total; the sprite editor shows what each character spends.
 
+### SCREEN 3 (MULTICOLOR) — the mode with no colour clash
+
+Available on **every** machine, MSX1 included. 64×48 blocks of 4×4 dots, any of
+the fixed 16 colours per block, plus the 32 hardware sprites (mode 1). It is the
+hardware version of what recent chunky-pixel ZX Spectrum games do by hand.
+
+MSXgl gives you \`VDP_SetModeMultiColor()\` and nothing else — no name-table
+initialiser, no conversion, no sample, and \`Draw_*\` is V9938-only. Everything
+below is emitted by the exporter, and it calls MSXgl for every VRAM access.
+
+**Two runtime shapes, and a game is in one of them.** The name table decides:
+
+| | Resource | How a screen is drawn | Use it for |
+|---|---|---|---|
+| Framebuffer | \`*.screen.json\` at \`sc3\` | The name table is boilerplate that makes the pattern table a 1536-byte bitmap | Chunky arcade and puzzle, software sprites, per-block collision |
+| Name table | \`*.btiles.json\` at \`sc3\`, **2×2 blocks**, plus a map | \`VDP_WriteLayout_GM2\`, exactly as SCREEN 1/2 | Multi-screen worlds and scrolling |
+
+The cost decides which: a 50 Hz frame is about 71,600 T-states and MSX1 VRAM
+runs at ~30 per byte, so a whole framebuffer is 1536 bytes ≈ **64 % of a frame**
+and a whole name table is 768 ≈ 32 %. That is why the framebuffer shape never
+uploads all of itself per frame, and why a scrolling SCREEN 3 game uses the name
+table — where a scroll edge is a couple of dozen bytes and MSXgl's \`scroll\`
+module drives it unchanged.
+
+Both shapes need \`VDP_USE_MODE_MC TRUE\` in \`msxgl_config.h\`. **Check it before
+anything else if the screen stays blank:** with it FALSE,
+\`VDP_SetMode(VDP_MODE_SCREEN3)\` is a silent no-op — no error, and
+\`VDP_GetMode()\` still reports MULTICOLOR. The name-table shape also needs
+\`VDP_USE_MODE_G2 TRUE\`, which is what compiles \`VDP_WriteLayout_GM2\`.
+
+**Do not \`Print\` in SCREEN 3.** MSXgl's Print module is an empty \`case\` for
+this mode, and the pattern table a font would load into *is* the picture. Run
+title, menu and credits in SCREEN 1 and switch to SCREEN 3 for play — the
+game-kit wizard emits \`GAME_TEXT_VDP_MODE\` for exactly this.
+
+#### The framebuffer shape
+
+\`_InitScreen()\` is not optional: it sets the mode *and* writes the 768-byte
+name table that makes the pattern table a bitmap. Then everything is drawn into a
+RAM shadow you own, and only the 8-byte column strips that changed go to VRAM:
+
+\`\`\`c
+static u8 g_Screen[G_PLAY_SIZE];          // 1536 bytes
+
+g_Play_InitScreen();
+g_Play_ToBuffer(g_Screen);                // start from the exported picture
+g_Play_FlushAll(g_Screen);
+// every frame:
+g_Play_Plot(g_Screen, x, y, COLOR_WHITE); // blocks, 0..63 by 0..47
+g_Play_Flush(g_Screen);                   // only what changed
+\`\`\`
+
+\`_Get(buf, x, y)\` reads a block back, and in a mode with no colour clash that
+*is* your collision test — the picture is the map. \`_Plot\`, \`_FillRect\`,
+\`_Blit\` and \`_DrawTile\` all mark what they touched, so \`_Flush()\` finds it.
+
+Positions and widths must be **even horizontally** (two blocks share a VRAM byte
+and the blitters copy bytes); vertically every block row is free.
+
+Turn on **double buffering** in the resource's export block and \`_Flush()\` also
+flips the page. It costs no copy: the two pages are two pattern tables and the
+flip is one \`VDP_SetPatternTable()\` — the name table holds *indices*, so it is
+written once and shared.
+
+#### Chunky software sprites
+
+A SCREEN 3 software sprite is a small block image, which is a \`*.btiles.json\`
+tile — so the frames are tiles and, exactly as with animated tiles above, **a
+1×N block is the animation**. Set the tileset's transparent colour and you get
+the masked blit:
+
+\`\`\`c
+g_Hero_DrawTileMasked(g_Screen, G_HERO_WALK_BASE + step, x, y);
+\`\`\`
+
+Save what it covers before drawing and put it back before it moves, with the
+screen's \`_Save\`/\`_Restore\` (or \`_SaveFrame\`/\`_RestoreFrame\` when the frames
+are screen *fragments* rather than tiles). Hardware sprites still work over all
+of it, and are the cheaper choice for actors that only move.
+
+#### The name-table shape
+
+A 2×2-block tile is exactly one name-table entry, and nothing else can be. Its
+pattern is the tile's two bytes repeated four times, which is what makes it draw
+the same at every screen row — the exporter does that, but it is why the table
+is \`_Patterns\` and 8 bytes a tile rather than 2.
+
+\`\`\`c
+VDP_SetMode(VDP_MODE_SCREEN3);   // not _InitScreen(): the map replaces that name table
+g_Tiles_Upload();                // patterns to 0x0000
+g_Level_DrawLayer(g_Level_Background, 0, 0);
+\`\`\`
+
+Bigger tiles have no name-table shape at all: their map exports a \`_DrawRow\`
+that blits into the shadow buffer instead.
+
+**Meta-tile sets do not work over a SCREEN 3 tileset yet.** A meta map's helper
+is built on the V9938 command engine, so the export is refused rather than
+emitting \`VDP_CommandHMMM\` an MSX1 cannot run — point the map at the tileset
+directly.
+
 ${
   msx1
     ? `### What this machine does not have
 
-Screen resources (\`.screen.json\`) and bitmap tiles (\`.btiles.json\`) are
-SCREEN 5–12 only, so on MSX1 they are not available — and neither is the VDP
-command engine (\`VDP_Command*\`), the programmable palette, or software sprites
-built on them. Everything on screen here is patterns, colour attributes and the
-32 hardware sprites. A full-screen picture is a tileset plus a map that uses
-every tile once; that is what the title screen of \`demo_msx1\` is.`
+Screen resources (\`.screen.json\`) and bitmap tiles (\`.btiles.json\`) also come
+in SCREEN 5–12 flavours, and those need an MSX2 — as do the VDP command engine
+(\`VDP_Command*\`), the programmable palette, and the software sprites built on
+them. On this machine those two file kinds are useful at \`sc3\` only, described
+above. Everything else on screen here is patterns, colour attributes and the 32
+hardware sprites. A full-screen SCREEN 2 picture is a tileset plus a map that
+uses every tile once; that is what the title screen of \`demo_msx1\` is.`
     : `### Screens, bitmap tiles and bitmap sprites
 
 A converted picture exports \`_Data\` (+ \`_Palette\` where the mode has one) and

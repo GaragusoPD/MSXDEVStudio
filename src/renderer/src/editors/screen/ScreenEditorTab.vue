@@ -173,10 +173,17 @@ function sourceButtonLabel(active: ScreenSession): string {
         v-if="!doc(session).source"
         class="hint"
       >
-        Bitmap screens are for the MSX2 modes (SCREEN 5–12): import a source image,
-        then retouch the conversion with the pencil/fill tools and palette panel.
-        For MSX1 full-screen art (SCREEN 1/2), draw a tileset in the tile editor and
-        place it in a map instead — a 32×24 map is one screen.
+        <template v-if="doc(session).mode === 'sc3'">
+          SCREEN 3 is 64×48 blocks of 4×4 dots with no colour clash, on any machine —
+          draw here with the pencil, line, rectangle and fill tools, or import an image
+          and it is reduced to fit. Cut named fragments for software-sprite frames.
+        </template>
+        <template v-else>
+          Bitmap screens are for the MSX2 modes (SCREEN 5–12): import a source image,
+          then retouch the conversion with the pencil/fill tools and palette panel.
+          For MSX1 full-screen art, either switch this to SCREEN 3 and draw, or draw a
+          tileset in the tile editor and place it in a map — a 32×24 map is one screen.
+        </template>
         <template v-if="!doc(session).converted">
           Or
           <button

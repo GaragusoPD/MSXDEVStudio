@@ -162,4 +162,26 @@ describe.runIf(runsBuilds)('every game kit builds against real MSXgl', () => {
     () => expectClean(buildKit({ kit: 'vn', displayMode: 'sc0w40' })),
     BUILD_TIMEOUT
   )
+
+  // SCREEN 3's two runtime shapes, which no other kit exercises: the chunky one
+  // links the framebuffer runtime and the page flip, the pawn and scroll ones
+  // link the name-table path — including `VDP_WriteLayout_GM2`, which is gated
+  // on VDP_USE_MODE_G2 even in MULTICOLOR, and MSXgl's scroll module.
+  it(
+    'chunky arcade, MSX1 SCREEN 3 (framebuffer, double buffered)',
+    () => expectClean(buildKit({ kit: 'chunky', displayMode: 'sc3' })),
+    BUILD_TIMEOUT
+  )
+
+  it(
+    'platformer, MSX1 SCREEN 3 (name table)',
+    () => expectClean(buildKit({ kit: 'platformer', displayMode: 'sc3' })),
+    BUILD_TIMEOUT
+  )
+
+  it(
+    'side scroller, MSX1 SCREEN 3 (name table, real camera)',
+    () => expectClean(buildKit({ kit: 'side-scroll', displayMode: 'sc3' })),
+    BUILD_TIMEOUT
+  )
 })

@@ -26,7 +26,18 @@ Not a mini-game. Demos are not copied.
 
 Graphic kits on MSX2 offer SCREEN 1–8 (a SCREEN 5 platformer is valid).
 Text kit: SCREEN 0/40, and SCREEN 0/80 on MSX2+. VN defaults to picture-top +
-text-bottom; SCREEN 0 is the text-only opt-out.
+text-bottom; SCREEN 0 is the text-only opt-out — and VN excludes SCREEN 3 for the
+same reason it excludes SCREEN 1: it needs `Print`, which MULTICOLOR has not got.
+
+The **chunky arcade** kit is SCREEN 3 only, on every machine: a 64×48 playfield
+of 4×4 blocks with no colour clash, drawn into a RAM shadow and page-flipped.
+Every other kit on SCREEN 3 takes the name-table path instead, so a scroller gets
+MSXgl's real camera.
+
+A SCREEN 3 kit runs its title, menu and credits in **SCREEN 1** — MSXgl's `Print`
+is an empty case in MULTICOLOR and the pattern table it would load a font into is
+the picture. `GAME_TEXT_VDP_MODE` is that second macro; it equals
+`GAME_VDP_MODE` in every other mode.
 
 ## Layout
 
@@ -54,5 +65,9 @@ credits *screen* prints the same strings.
   patches `msxgl_config.h` for the modules it turns on (`PAWN_*`, `SCROLL_SRC_*`),
   and `game-kit-build.test.ts` builds one project per `emitPlayC` branch.
 - A bitmap-mode kit scaffolds no screen resource — 27 KB of picture does not fit
-  in the 32 KB an ASCII-8 ROM pages in at boot.
+  in the 32 KB an ASCII-8 ROM pages in at boot. A **SCREEN 3** kit does scaffold
+  one: 1536 bytes fits with room to spare.
+- `configPatches` writes `VDP_USE_MODE_MC TRUE` (which has no engine default, and
+  makes `VDP_SetMode` a silent no-op when FALSE) and `VDP_USE_MODE_G2 TRUE`
+  (which is what compiles `VDP_WriteLayout_GM2`) for every SCREEN 3 kit.
 - `npm run check` and the new `game-kit` tests pass.

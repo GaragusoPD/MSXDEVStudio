@@ -11,6 +11,8 @@
 import {
   bitmapBlockBytes,
   bitmapBlockOffsets,
+  sc3NameTableCapable,
+  sc3TableSuffix,
   bitmapTileBytes,
   bitmapTileHelperC,
   normalizeBitmapTiles,
@@ -31,6 +33,7 @@ import {
   type MetaTilesDoc
 } from './meta-tile'
 import { MODES } from './modes'
+import { sc3Constants, sc3LinearBytes } from './sc3'
 import {
   fragmentRectBytes,
   fragmentStrip,
@@ -89,6 +92,19 @@ export interface ExportBlock {
    * it when packing wouldn't shrink the data.
    */
   compress?: 'rlep'
+  /**
+   * SCREEN 3 only: emit the double-buffered runtime.
+   *
+   * MULTICOLOR has two pattern tables' worth of spare VRAM and R#4 picks between
+   * them in 2 KB steps, while the name table holds *indices* — so the whole
+   * picture swaps with one register write and nothing is copied. The cost is
+   * 192 bytes of RAM for the per-page dirty flags and 2 KB of otherwise-idle
+   * VRAM; the gain is that a moving software sprite never shows half-drawn.
+   *
+   * Off by default, and ignored by every other mode, so nothing an existing
+   * project exports changes.
+   */
+  doubleBuffer?: boolean
 }
 
 export type ResourceKind = 'tiles' | 'btiles' | 'metatiles' | 'metabtiles' | 'sprites' | 'map' | 'screen' | 'sfx'
@@ -287,11 +303,18 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
         tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
       }
       tables.push({
-        suffix: '_Tiles',
+        suffix: sc3TableSuffix(doc),
         bytes: bitmapTileBytes(doc),
         comment:
-          `${doc.count} tiles of ${doc.width}×${doc.height}, as one ${sheet.width}×${sheet.height} sheet ` +
-          `${sheetCols(doc)} across — upload it whole, then blit a tile at a time`
+          doc.mode === 'sc3'
+            ? sc3NameTableCapable(doc)
+              ? `${doc.count} tiles of 2×2 blocks — one name-table entry each, so the two bytes are repeated ` +
+                'four times to make an 8-byte pattern that draws the same at every screen row. Upload it to ' +
+                'the pattern table and draw maps with VDP_WriteLayout_GM2, or blit tiles from it.'
+              : `${doc.count} tiles of ${doc.width}×${doc.height} blocks, ${Math.ceil(doc.width / 2) * doc.height} bytes each — blitted by the CPU ` +
+                'into a shadow buffer; there is no command engine on an MSX1.'
+            : `${doc.count} tiles of ${doc.width}×${doc.height}, as one ${sheet.width}×${sheet.height} sheet ` +
+              `${sheetCols(doc)} across — upload it whole, then blit a tile at a time`
       })
       // Same rule as pattern tiles: only worth the ROM once a tile carries a bit.
       if (doc.flags.some((value) => value !== 0)) {
@@ -580,7 +603,12 @@ export function compressionApplied(resource: ResourceDoc, compress: ExportBlock[
  * Where each character starts in the flat plane order, so game code can place
  * one character out of a sheet: `..._BASE + frame * ..._PLANES`.
  */
-function resourceConstants(resource: ResourceDoc, name: string, compress?: ExportBlock['compress']): string[] {
+function resourceConstants(
+  resource: ResourceDoc,
+  name: string,
+  compress?: ExportBlock['compress'],
+  doubleBuffer = false
+): string[] {
   const prefix = defineName(name)
   if (resource.kind === 'screen') {
     const { doc } = resource
@@ -601,6 +629,30 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
           ]
         : [])
     ]
+    // sc3's frames are packed one after another in ROM rather than side by side
+    // in VRAM, so the strip geometry means nothing there; what a game needs
+    // instead is how big a save buffer has to be, and the page addresses.
+    if (doc.mode === 'sc3') {
+      const sizes = doc.fragments.map((fragment) => sc3LinearBytes(fragment.width, fragment.height))
+      return [
+        ...banded,
+        // `banded` already stated _W/_H, from the converted image rather than
+        // from the mode — and an imported picture smaller than the screen makes
+        // those two different numbers, so taking both would be a contradictory
+        // redefinition rather than a harmless repeat.
+        ...sc3Constants(name, doubleBuffer).filter(
+          (line) => !line.startsWith(`#define ${prefix}_W `) && !line.startsWith(`#define ${prefix}_H `)
+        ),
+        ...(doc.fragments.length
+          ? [
+              `#define ${prefix}_FRAMES ${doc.fragments.length}`,
+              // One buffer big enough for the largest frame serves any of them.
+              `#define ${prefix}_SAVE_BYTES ${Math.max(0, ...sizes)}`,
+              ...doc.fragments.map((fragment, index) => `#define ${prefix}_${defineName(fragment.name)} ${index}`)
+            ]
+          : [])
+      ]
+    }
     if (!doc.fragments.length) return banded
     const strip = fragmentStrip(doc)
     return [
@@ -654,9 +706,19 @@ function resourceConstants(resource: ResourceDoc, name: string, compress?: Expor
       `#define ${prefix}_COUNT ${doc.count}`,
       `#define ${prefix}_TILE_W ${doc.width}`,
       `#define ${prefix}_TILE_H ${doc.height}`,
-      `#define ${prefix}_COLS ${sheetCols(doc)}`,
-      `#define ${prefix}_SHEET_W ${sheet.width}`,
-      `#define ${prefix}_SHEET_H ${sheet.height}`,
+      // sc3 has no VRAM sheet to park — its tiles are read out of ROM, or loaded
+      // into the pattern table — so what it states is the stride the blitter
+      // steps by, and the colour a masked blit leaves alone.
+      ...(doc.mode === 'sc3'
+        ? [
+            `#define ${prefix}_TILE_BYTES ${sc3NameTableCapable(doc) ? 8 : Math.ceil(doc.width / 2) * doc.height}`,
+            ...(doc.transparent !== null ? [`#define ${prefix}_TRANSPARENT ${doc.transparent}`] : [])
+          ]
+        : [
+            `#define ${prefix}_COLS ${sheetCols(doc)}`,
+            `#define ${prefix}_SHEET_W ${sheet.width}`,
+            `#define ${prefix}_SHEET_H ${sheet.height}`
+          ]),
       ...doc.blocks.flatMap((block, index) => {
         const id = `${prefix}_${defineName(block.name)}`
         return [
@@ -697,14 +759,27 @@ const joinHelpers = (...parts: HelperC[]): HelperC => ({
 })
 
 /** The opt-in ready-made C for this resource; empty when the kind has none (yet). */
-function resourceCode(resource: ResourceDoc, name: string, compress?: ExportBlock['compress']): HelperC {
+function resourceCode(
+  resource: ResourceDoc,
+  name: string,
+  compress?: ExportBlock['compress'],
+  doubleBuffer = false
+): HelperC {
   if (resource.kind === 'map') {
     const first = resource.doc.layers[0]
     if (!first) return NO_CODE
     return mapHelperC(resource.doc, name, mapExport(resource.doc, compress).compressed, `${name}_${pascal(first.name)}`)
   }
   if (resource.kind === 'screen') {
-    const banded = screenDataExport(resource.doc, compress).geometry ? screenUnpackC(name) : NO_CODE
+    const banded = screenDataExport(resource.doc, compress).geometry
+      ? screenUnpackC(name, resource.doc.mode)
+      : NO_CODE
+    // In a bitmap mode these helpers *are* the software sprites, so a screen with
+    // no fragments has nothing to emit. sc3's are the mode itself — the name-table
+    // boilerplate, the flush — and a picture with no fragments still needs them.
+    if (resource.doc.mode === 'sc3') {
+      return joinHelpers(screenHelperC(resource.doc, name, doubleBuffer), banded)
+    }
     return resource.doc.fragments.length ? joinHelpers(banded, screenHelperC(resource.doc, name)) : banded
   }
   if (isMetaKind(resource.kind)) {
@@ -758,8 +833,8 @@ export function renderResourceFiles(
     tables,
     notes: resourceNotes(resource, sourceName, block),
     defines: true,
-    constants: resourceConstants(resource, name, block.compress),
-    code: block.helpers ? resourceCode(resource, name, block.compress) : undefined
+    constants: resourceConstants(resource, name, block.compress, block.doubleBuffer === true),
+    code: block.helpers ? resourceCode(resource, name, block.compress, block.doubleBuffer === true) : undefined
   })
   return { header, source }
 }
