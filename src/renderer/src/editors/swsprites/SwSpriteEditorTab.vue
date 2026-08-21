@@ -15,6 +15,7 @@
 import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
 import Icon from '../../components/Icon.vue'
 import { MODES } from '../../../../shared/msx/modes'
+import { useTabsStore } from '../../stores/tabsStore'
 import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex } from '../../../../shared/msx/palette'
 import { defaultExport } from '../../../../shared/msx/resource'
 import {
@@ -40,6 +41,7 @@ import {
   framePixels,
   patchExport,
   pickAt,
+  pruneSwSpriteSessions,
   redo,
   renameSprite,
   saveSession,
@@ -59,8 +61,12 @@ import {
   type SwTool
 } from './session'
 
-const props = defineProps<{ id: string }>()
-const session = computed(() => swSpriteSession(props.id))
+// `EditorArea` mounts the registered component with no props at all, so a tab
+// takes its own path off the tabs store, and the session is keyed on it — the
+// same way every other resource editor does it.
+const tabs = useTabsStore()
+const path = computed(() => tabs.activeTab?.filePath ?? '')
+const session = computed(() => swSpriteSession(path.value))
 const sheet = computed(() => doc(session.value))
 const open = computed(() => character(session.value))
 const rgb = computed(() => paletteToRgb(sheet.value.palette))
@@ -69,6 +75,15 @@ const family = computed(() => swSpriteFamily(sheet.value.mode))
 const dots = computed(() => swSpriteDots(sheet.value.mode))
 const unit = computed(() => (dots.value > 1 ? 'blocks' : 'dots'))
 const step = computed(() => swSizeStep(sheet.value.mode))
+
+// Sessions outlive tab switches; drop the ones whose tab is gone. Keyed on
+// `filePath`, which is what a session is keyed on — `id` is the tab's own
+// identity and would prune every live session on the first change.
+watch(
+  () => tabs.tabs.length,
+  () => pruneSwSpriteSessions(new Set(tabs.tabs.map((tab) => tab.filePath ?? ''))),
+  { immediate: true }
+)
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const newName = ref('')

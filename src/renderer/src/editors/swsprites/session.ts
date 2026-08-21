@@ -115,6 +115,13 @@ export function framePixels(session: SwSpriteSession): Uint8Array {
 }
 
 async function load(session: SwSpriteSession): Promise<void> {
+  // A session keyed on an empty path is a tab that has not resolved yet; reading
+  // it produces "Path escapes project root: undefined" rather than anything a
+  // user could act on.
+  if (!session.path) {
+    session.loading = false
+    return
+  }
   try {
     const text = (await window.api.invoke('fs:read', { path: session.path })) as string
     session.history = createHistory(normalizeSwSprites(JSON.parse(text) as unknown))
