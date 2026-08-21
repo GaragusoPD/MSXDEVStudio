@@ -6,12 +6,13 @@
  * block Spec 07's converter reads.
  */
 import type { MaterialSymbol } from '@material-symbols/font-400'
-import { computed } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { BITMAP_MODES, MODES, type BitmapMode } from '../../../../shared/msx/modes'
 import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex, unpackGrb } from '../../../../shared/msx/palette'
 import type { DitherMode } from '../../../../shared/msx/quantize'
 import { rgb332Palette } from '../../../../shared/msx/quantize'
 import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
+import { isScreenWorld, MAX_SCREEN_SIZE } from '../../../../shared/msx/screen'
 import Icon from '../../components/Icon.vue'
 import { screenDataExport } from '../../../../shared/msx/screen'
 import {
@@ -26,6 +27,9 @@ import {
   setCellGuide,
   setFilled,
   setGrid,
+  setScreenOutline,
+  setShowOriginal,
+  resize,
   setTool,
   type ScreenSession,
   type ScreenTool
@@ -36,6 +40,22 @@ const props = defineProps<{ session: ScreenSession }>()
 const screenDoc = computed(() => doc(props.session))
 /** SCREEN 3: a "pixel" is a 4×4 block, which changes what the guides mean. */
 const blockMode = computed(() => screenDoc.value.mode === 'sc3')
+const world = computed(() => isScreenWorld(screenDoc.value))
+/** What the picture costs in ROM — the ceiling a world actually runs into. */
+const worldBytes = computed(
+  () => Math.ceil(screenDoc.value.width / MODES[screenDoc.value.mode].pixelsPerByte) * screenDoc.value.height
+)
+
+const widthInput = ref(0)
+const heightInput = ref(0)
+watchEffect(() => {
+  widthInput.value = screenDoc.value.width
+  heightInput.value = screenDoc.value.height
+})
+
+function applySize(): void {
+  resize(props.session, widthInput.value, heightInput.value)
+}
 const info = computed(() => MODES[screenDoc.value.mode])
 const editablePalette = computed(() => info.value.palette === 'grb333')
 const swatchRgb = computed(() => {
@@ -155,6 +175,54 @@ function patchExport(patch: Partial<ExportBlock>): void {
     </section>
 
     <section>
+      <h3>Size</h3>
+      <p class="hint">
+        {{ screenDoc.width }}×{{ screenDoc.height }} {{ blockMode ? 'blocks' : 'dots' }} —
+        <template v-if="world">
+          bigger than the {{ MODES[screenDoc.mode].width }}×{{ MODES[screenDoc.mode].height }} on screen, so this is
+          a <strong>world</strong>: it exports packed row by row with a <code>_DrawWindow()</code> that
+          scrolls a view over it, instead of a picture uploaded whole. A map and a screen differ
+          only here — and a tilemap is far cheaper whenever the art repeats, which
+          <strong>{{ worldBytes }} bytes</strong> of ROM is worth weighing against.
+        </template>
+        <template v-else>
+          exactly one screenful, so it exports as a picture to upload. Make it larger and it
+          becomes a scrollable world instead.
+        </template>
+        Resizing crops; it does not scale.
+      </p>
+      <div class="field">
+        <input
+          v-model.number="widthInput"
+          type="number"
+          min="1"
+          :max="MAX_SCREEN_SIZE"
+        >
+        <span>×</span>
+        <input
+          v-model.number="heightInput"
+          type="number"
+          min="1"
+          :max="MAX_SCREEN_SIZE"
+        >
+        <button @click="applySize">
+          Apply
+        </button>
+      </div>
+      <label
+        v-if="world"
+        class="flag"
+      >
+        <input
+          type="checkbox"
+          :checked="session.screenOutline"
+          @change="setScreenOutline(session, ($event.target as HTMLInputElement).checked)"
+        >
+        <span>Show where each screenful falls</span>
+      </label>
+    </section>
+
+    <section>
       <h3>Tool</h3>
       <div class="tool-row">
         <button
@@ -183,6 +251,19 @@ function patchExport(patch: Partial<ExportBlock>): void {
           @change="setGrid(session, ($event.target as HTMLInputElement).checked)"
         >
         <span>Show the pixel grid</span>
+      </label>
+      <label
+        v-if="screenDoc.source"
+        class="flag"
+      >
+        <input
+          type="checkbox"
+          :checked="session.showOriginal"
+          @change="setShowOriginal(session, ($event.target as HTMLInputElement).checked)"
+        >
+        <span title="Hide the source image to give the canvas the whole pane. A screen with no source never shows one.">
+          Show the source image
+        </span>
       </label>
       <label class="flag">
         <input

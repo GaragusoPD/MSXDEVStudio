@@ -50,6 +50,18 @@ export interface ScreenFragment {
 export interface ScreenDoc {
   version: 1
   mode: BitmapMode
+  /**
+   * The picture's size, in the mode's own unit — 4×4 blocks in SCREEN 3, dots
+   * elsewhere. Defaults to one screenful and may be **larger**.
+   *
+   * That is the whole of what separates a screen from a map: a map is W×H
+   * continuous data you scroll a window over, and so is this once the size is
+   * free. A picture bigger than the display exports as a *world* — packed
+   * linearly rather than in the VDP's own byte order — and its helpers window
+   * into it instead of uploading it whole.
+   */
+  width: number
+  height: number
   /** Project-relative path of the original artwork. */
   source: string
   convert: ScreenConvert
@@ -79,13 +91,14 @@ export function createScreenDoc(mode: BitmapMode = 'sc5', source = ''): ScreenDo
  * The palette is the one the machine boots with, so what the editor shows and
  * what an un-`VDP_SetPalette`d game shows are the same sixteen colors.
  */
-export function blankConverted(mode: BitmapMode): ConvertedScreen {
+export function blankConverted(mode: BitmapMode, width?: number, height?: number): ConvertedScreen {
   const info = MODES[mode]
+  const size = snapScreenSize(mode, width ?? info.width, height ?? info.height)
   return {
-    width: info.width,
-    height: info.height,
+    width: size.width,
+    height: size.height,
     palette: info.palette === 'grb333' ? [...MSX1_PALETTE_GRB] : null,
-    indices: encodeIndices(new Uint8Array(info.width * info.height))
+    indices: encodeIndices(new Uint8Array(size.width * size.height))
   }
 }
 
@@ -103,9 +116,21 @@ export function normalizeScreen(raw: unknown): ScreenDoc {
         : convert.palette === 'msx1'
           ? 'msx1'
           : 'optimized'
+  const info = MODES[mode]
+  // Every file written before the size existed states it only through the
+  // conversion it cached, so that is where the default comes from — taking the
+  // mode's screen size instead would crop or pad art that was already right.
+  const cached = input.converted
+  const size = snapScreenSize(
+    mode,
+    size1(input.width, cached ? size1(cached.width, info.width) : info.width),
+    size1(input.height, cached ? size1(cached.height, info.height) : info.height)
+  )
   return {
     version: 1,
     mode,
+    width: size.width,
+    height: size.height,
     source: String(input.source ?? ''),
     convert: {
       dither: convert.dither === 'floyd' || convert.dither === 'bayer4' ? convert.dither : 'none',
@@ -113,9 +138,60 @@ export function normalizeScreen(raw: unknown): ScreenDoc {
     },
     retouch: Array.isArray(input.retouch) ? input.retouch.map((value) => Number(value) || 0) : [],
     fragments: normalizeFragments(input.fragments),
-    converted: input.converted ?? null,
+    // The cache has to agree with the size, or every consumer downstream reads a
+    // different picture from the one the document claims to be.
+    converted: input.converted ? fitConverted(input.converted, size.width, size.height) : null,
     export: input.export ?? null
   }
+}
+
+/** Past this a "screen" is a memory problem, not a picture. Dimensions only; `validateScreen` reports the bytes. */
+export const MAX_SCREEN_SIZE = 1024
+
+function size1(value: unknown, fallback: number): number {
+  const n = Math.round(Number(value))
+  return Number.isFinite(n) && n >= 1 ? Math.min(MAX_SCREEN_SIZE, n) : fallback
+}
+
+/**
+ * Rounds the width up to what the mode can address.
+ *
+ * Every one of these is a byte boundary the exporter and the blitters cannot see
+ * past: two SCREEN 3 blocks share a byte, four SCREEN 6 dots do, and a picture
+ * whose row ends mid-byte cannot be windowed at all.
+ */
+export function snapScreenSize(mode: BitmapMode, width: number, height: number): { width: number; height: number } {
+  const step = MODES[mode].pixelsPerByte
+  return { width: Math.max(step, Math.ceil(width / step) * step), height: Math.max(1, height) }
+}
+
+/** Crops or zero-pads a cached conversion to the document's size. */
+function fitConverted(converted: ConvertedScreen, width: number, height: number): ConvertedScreen {
+  if (converted.width === width && converted.height === height) return converted
+  const from = decodeIndices(converted.indices)
+  const out = new Uint8Array(width * height)
+  for (let y = 0; y < Math.min(height, converted.height); y++) {
+    for (let x = 0; x < Math.min(width, converted.width); x++) {
+      out[y * width + x] = from[y * converted.width + x] ?? 0
+    }
+  }
+  return { ...converted, width, height, indices: encodeIndices(out) }
+}
+
+/**
+ * True when the picture is bigger than the display — the case that makes it a
+ * world rather than a screen, and the one thing the export forks on.
+ */
+export function isScreenWorld(doc: ScreenDoc): boolean {
+  const info = MODES[doc.mode]
+  return doc.width > info.width || doc.height > info.height
+}
+
+/** Resizes the picture, cropping rather than scaling — the same rule tilesets follow. */
+export function resizeScreen(doc: ScreenDoc, width: number, height: number): ScreenDoc {
+  const size = snapScreenSize(doc.mode, width, height)
+  if (size.width === doc.width && size.height === doc.height) return doc
+  return normalizeScreen({ ...doc, ...size })
 }
 
 /** Absent in files written before fragments existed, so default to none. */
@@ -204,6 +280,20 @@ export function packBitmap(indices: Uint8Array, width: number, height: number, m
  */
 export const BAND_BUDGET = 2048
 
+/**
+ * The symbol the picture table is exported under.
+ *
+ * `resourceTables` gives it `_Data` only when something else is already in the
+ * file — a palette, or the band offsets a compressed picture needs beside it —
+ * and the bare base name otherwise. The helpers have to name the same symbol,
+ * and guessing either way produces a header that references one that does not
+ * exist. So it is computed once, here, and both sides ask.
+ */
+export function screenTableSuffix(doc: ScreenDoc, compress: ExportBlock['compress']): string {
+  const geometry = screenDataExport(doc, compress).geometry
+  return doc.converted?.palette || geometry ? '_Data' : ''
+}
+
 export interface ScreenDataExport {
   /** The packed bands back to back, or the raw bitmap when compression wasn't taken. */
   bytes: Uint8Array
@@ -223,8 +313,20 @@ export interface ScreenDataExport {
 export function screenDataExport(doc: ScreenDoc, compress: ExportBlock['compress']): ScreenDataExport {
   const pixels = screenPixels(doc)
   if (!pixels) throw new Error('no converted image')
-  const raw = packBitmap(pixels.indices, pixels.width, pixels.height, doc.mode)
-  if (compress !== 'rlep') return { bytes: raw }
+  // SCREEN 3's VRAM byte order exists because the VDP reads it that way, which
+  // is only useful for a picture that gets uploaded whole. A world is read by
+  // the CPU a window at a time, so it is packed for that reader instead — rows
+  // in order, `ceil(w / 2)` bytes each.
+  const world = isScreenWorld(doc)
+  const raw =
+    doc.mode === 'sc3' && world
+      ? sc3LinearPack(pixels.indices, 0, 0, pixels.width, pixels.height, pixels.width)
+      : packBitmap(pixels.indices, pixels.width, pixels.height, doc.mode)
+  // A world is read a row at a time by `_DrawWindow`; RLEp bands are not rows.
+  // Unpacking one would also want a buffer the size of the whole world, which is
+  // the thing a world is too big for. Declined rather than half-supported, and
+  // `validateScreen` says why so the checkbox is not a mystery.
+  if (compress !== 'rlep' || world) return { bytes: raw }
 
   const stride = Math.ceil(pixels.width / MODES[doc.mode].pixelsPerByte)
   const rows = Math.max(1, Math.floor(BAND_BUDGET / Math.max(1, stride)))
@@ -372,11 +474,14 @@ export function fragmentRectBytes(doc: ScreenDoc): Uint8Array {
  * Opt-in (`ExportBlock.helpers`); needs MSXgl's VDP command engine, so MSX2+
  * with `VDP_USE_COMMAND`.
  */
-export function screenHelperC(doc: ScreenDoc, name: string, doubleBuffer = false): HelperC {
+export function screenHelperC(doc: ScreenDoc, name: string, doubleBuffer = false, table = name): HelperC {
   // sc3 shares none of this: no command engine, so no HMMC upload and no LMMM
   // blit, and the whole picture lives in a RAM shadow that is flushed by the
   // strip. `sc3.ts` emits that runtime, software sprites included.
-  if (doc.mode === 'sc3') return sc3ScreenHelperC(name, name, doubleBuffer, doc.fragments.length > 0)
+  if (doc.mode === 'sc3') {
+    const world = isScreenWorld(doc) ? { width: doc.width, height: doc.height } : null
+    return sc3ScreenHelperC(name, table, doubleBuffer, doc.fragments.length > 0, world)
+  }
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
   const first = doc.fragments[0]?.name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase() ?? 'FRAGMENT'
   return {
@@ -457,12 +562,70 @@ export function screenHelperC(doc: ScreenDoc, name: string, doubleBuffer = false
 }
 
 /**
+ * Windowing a bitmap-mode **world** — a picture bigger than the display.
+ *
+ * The world stays in ROM: one that fits VRAM would not need windowing, and one
+ * that does not could not be parked there anyway. So a row of the view is one
+ * `HMMC` out of ROM, because a row of the *world* is contiguous while a row of
+ * the *window* is not — there is no rectangle copy that can stride a source.
+ *
+ * That makes a full redraw one command per line, which is a screen transition's
+ * price, not a frame's. A scroller calls `_DrawRow` for the line coming into
+ * view and leaves the rest alone, which is the whole point of the shape.
+ */
+export function screenWorldHelperC(doc: ScreenDoc, name: string, table = `${name}_Data`): HelperC {
+  const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
+  const info = MODES[doc.mode]
+  const rowSignature = `void ${name}_DrawRow(UX camX, UY camY, u8 row, UY destY)`
+  const windowSignature = `void ${name}_DrawWindow(UX camX, UY camY, UY destY)`
+  return {
+    header: [
+      '',
+      `// ── ${name}: a ${doc.width}×${doc.height} world, windowed ${'─'.repeat(20)}`,
+      '//',
+      `// Bigger than the ${info.width}×${info.height} on screen, so this is scrolled rather than`,
+      '// shown: the picture stays in ROM and the visible rectangle is copied out of',
+      '// it a line at a time.',
+      '//',
+      `// \`camX\` must be a multiple of ${info.pixelsPerByte} — that is how many dots share a byte in`,
+      `// ${doc.mode}, and the copy cannot start inside one.`,
+      '//',
+      '// `destY` is the VRAM row the view starts at, so the same call serves a page',
+      '// the display is not showing.',
+      '//',
+      '// Needs MSXgl\'s VDP command engine: MSX2 or later with VDP_USE_COMMAND.',
+      '//',
+      '// Example — redraw once, then one row per scroll step:',
+      `//   ${name}_DrawWindow(camX, camY, 0);`,
+      `//   ${name}_DrawRow(camX, camY, ${prefix}_VIEW_H - 1, 0);`,
+      `${rowSignature};`,
+      `${windowSignature};`
+    ],
+    source: [
+      '',
+      rowSignature,
+      '{',
+      `\tVDP_CommandHMMC(${table} + ((u16)(camY + row) * ${prefix}_STRIDE) + (camX / ${prefix}_PPB),`,
+      `\t                0, destY + row, ${prefix}_VIEW_W, 1);`,
+      '}',
+      '',
+      windowSignature,
+      '{',
+      '\tu8 row;',
+      `\tfor(row = 0; row < ${prefix}_VIEW_H; ++row)`,
+      `\t\t${name}_DrawRow(camX, camY, row, destY);`,
+      '}'
+    ]
+  }
+}
+
+/**
  * Draws an RLEp-compressed picture. It arrives as bands (see
  * `screenDataExport`) precisely so this can exist on a 32K-ROM machine: one
  * band is unpacked into a small RAM buffer and blitted before the next is
  * touched, so the whole 27 KB picture never has to be anywhere but VRAM.
  */
-export function screenUnpackC(name: string, mode: BitmapMode = 'sc5'): HelperC {
+export function screenUnpackC(name: string, mode: BitmapMode = 'sc5', table = `${name}_Data`): HelperC {
   const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
   if (mode === 'sc3') {
     // 1536 bytes is under one band's budget, so there is only ever one — and no
@@ -489,7 +652,7 @@ export function screenUnpackC(name: string, mode: BitmapMode = 'sc5'): HelperC {
         '',
         signature,
         '{',
-        `\tRLEp_UnpackToRAM(${name}_Data, buffer);`,
+        `\tRLEp_UnpackToRAM(${table}, buffer);`,
         `\t${name}_FlushAll(buffer);`,
         '}'
       ]
@@ -520,7 +683,7 @@ export function screenUnpackC(name: string, mode: BitmapMode = 'sc5'): HelperC {
     '\tu8 band;',
     `\tfor(band = 0; band < ${prefix}_BANDS; ++band)`,
     '\t{',
-    `\t\tconst u8* src = ${name}_Data + (${name}_Bands[band * 2] + ((u16)${name}_Bands[band * 2 + 1] << 8));`,
+    `\t\tconst u8* src = ${table} + (${name}_Bands[band * 2] + ((u16)${name}_Bands[band * 2 + 1] << 8));`,
     '\t\tu16 size = RLEp_UnpackToRAM(src, buffer);',
     // The last band is short, so its height comes from what it unpacked to.
     `\t\tVDP_CommandHMMC(buffer, 0, y + (band * ${prefix}_BAND_ROWS), ${prefix}_W, size / ${prefix}_STRIDE);`,
@@ -561,14 +724,40 @@ export function validateScreen(doc: ScreenDoc): string[] {
   // *neither*: nothing to convert and nothing converted.
   if (!doc.source && !doc.converted) problems.push('No source image, and nothing drawn yet')
   const info = MODES[doc.mode]
+  if (doc.width % info.pixelsPerByte) {
+    problems.push(
+      `Width ${doc.width} is not a multiple of ${info.pixelsPerByte} — ${doc.mode} packs that many per byte, ` +
+        'and a row that ends mid-byte cannot be windowed'
+    )
+  }
   if (doc.converted) {
-    if (doc.converted.width > info.width || doc.converted.height > info.height) {
-      problems.push(`Converted image ${doc.converted.width}×${doc.converted.height} exceeds ${doc.mode}`)
+    if (doc.converted.width !== doc.width || doc.converted.height !== doc.height) {
+      problems.push(
+        `Converted image is ${doc.converted.width}×${doc.converted.height} but the screen is ${doc.width}×${doc.height}`
+      )
     }
     const palette = doc.converted.palette
     if (palette) {
       if (palette.length > info.colors) problems.push(`${palette.length} palette entries, ${doc.mode} allows ${info.colors}`)
       if (palette.some((value) => (value & ~0x0777) !== 0)) problems.push('Palette entry outside the GRB333 space')
+    }
+  }
+  if (isScreenWorld(doc)) {
+    const bytes = Math.ceil(doc.width / info.pixelsPerByte) * doc.height
+    // The emitted window helpers index the world with a u16, and a Z80 has 64 KB
+    // of address space in total — past this the arithmetic wraps and the export
+    // would be quietly wrong rather than obviously too big.
+    if (bytes > 0xffff) {
+      problems.push(
+        `${doc.width}×${doc.height} packs to ${bytes} bytes — past the 65535 a u16 offset can reach. ` +
+          'Cut it into several screens, or use a tilemap, which is what repetition is for.'
+      )
+    }
+    if (doc.export?.compress === 'rlep') {
+      problems.push(
+        'A screen larger than the display cannot be compressed yet — its helpers read raw rows out of the ' +
+          'table, and RLEp bands are not rows. Turn compression off, or keep the picture to one screenful.'
+      )
     }
   }
   if (doc.mode === 'sc3') {

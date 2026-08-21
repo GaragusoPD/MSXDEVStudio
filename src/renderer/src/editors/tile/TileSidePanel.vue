@@ -310,6 +310,13 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
           {{ MODES[id].label }}
         </option>
       </select>
+      <p class="blurb">
+        These are the pattern modes: a tile is 8×8 one-bit pixels plus colour attributes.
+        <strong>SCREEN 3 is not one of them</strong> — its tile is a grid of 4×4 colour blocks
+        with no attributes at all, so it lives in a bitmap tileset
+        (<code>.btiles.json</code>) instead. Create one from the Resources panel and pick
+        SCREEN 3 there.
+      </p>
 
       <h3>Blocks</h3>
       <p class="blurb">

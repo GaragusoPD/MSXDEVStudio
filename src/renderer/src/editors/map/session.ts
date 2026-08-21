@@ -257,6 +257,7 @@ async function loadFromPath(session: MapSession, path: string, meta: MetaTilesDo
     session.bitmapTileset = parsed.doc
     session.atlas = null
     session.tilesetError = null
+    reconcileSc3(session, parsed.doc.mode === 'sc3')
     return
   }
   if (parsed.kind !== 'tiles') throw new Error(`${path} is not a tileset`)
@@ -267,6 +268,27 @@ async function loadFromPath(session: MapSession, path: string, meta: MetaTilesDo
   // A meta map's cells are metas, so a *tile* reorder must not touch them — the
   // set absorbs it instead, and the map replayed the set's own log above.
   if (!meta) await replayPersistedReorders(session, text)
+}
+
+/**
+ * Keeps `cell.sc3` honest against the tileset that is actually loaded.
+ *
+ * `setTileset` mirrors it when the reference changes, but that is the only
+ * moment it ever ran — so a map whose tileset was *switched to* SCREEN 3 in the
+ * tileset editor, or one written by hand, kept exporting down the V9938 path
+ * with nothing on screen to say so. The flag routes the export and the editor
+ * has the tileset open in front of it, so it can simply be right.
+ *
+ * A commit rather than a silent patch: it changes what the file exports, so it
+ * belongs in the undo stack and gets saved like any other edit.
+ */
+function reconcileSc3(session: MapSession, sc3: boolean): void {
+  const current = doc(session)
+  if (!current.cell || (current.cell.sc3 === true) === sc3) return
+  const cell = { ...current.cell }
+  if (sc3) cell.sc3 = true
+  else delete cell.sc3
+  commit(session, { ...current, cell })
 }
 
 /**

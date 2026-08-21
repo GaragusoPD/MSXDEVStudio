@@ -56,6 +56,26 @@ eyedropper and the fragment cut.
 }
 ```
 
+### Any size: a screen is a map with different W×H
+
+`ScreenDoc` carries its own `width`/`height`, defaulting to the mode's screen
+size and allowed to exceed it. Past one screenful the document is a **world**:
+
+- packed **linearly** (rows in order) rather than in the VDP's byte order, since
+  it is read a window at a time rather than uploaded whole;
+- exported with `_VIEW_W`/`_VIEW_H` (the display) beside `_W`/`_H` (the picture)
+  and `_STRIDE`;
+- given `_DrawWindow()` — into the shadow buffer in SCREEN 3, one `HMMC` per
+  line out of ROM in the bitmap modes, where `_DrawRow()` is what a scroller
+  actually calls.
+
+Files written before the field default their size from the conversion they
+cached, so nothing existing is cropped or padded. A one-screenful picture
+exports byte-identically to before.
+
+This is what "edit the pixels directly over a W×H area" means: the map editor
+still owns *tile* worlds, which stay far cheaper in ROM when the art repeats.
+
 ### SCREEN 3
 
 Two runtime shapes, and the arithmetic picks between them: a 50 Hz frame is

@@ -1092,3 +1092,79 @@ describe('SCREEN 3 export', () => {
     expect(text).not.toContain('VDP_CommandHMMM')
   })
 })
+
+/**
+ * A screen and a map differ only in width and height — so once the size is free,
+ * a scrolling world *is* a big screen, and these are the seams that fork on it.
+ */
+describe('screens bigger than the display', () => {
+  const block = { name: 'g_World', format: 'c' as const, out: 'content/world.h', helpers: true }
+
+  function world(mode: 'sc3' | 'sc5', width: number, height: number): ResourceDoc {
+    const doc = normalizeScreen({ mode, width, height })
+    return { kind: 'screen', doc: { ...doc, converted: blankConverted(mode, width, height) } }
+  }
+
+  it('takes its size from the cached conversion when the file predates the field', () => {
+    // Every `.screen.json` written before `width`/`height` existed says its size
+    // only through what it converted; defaulting to the mode would crop it.
+    const doc = normalizeScreen({
+      mode: 'sc5',
+      converted: { width: 64, height: 32, palette: null, indices: encodeIndices(new Uint8Array(64 * 32)) }
+    })
+    expect([doc.width, doc.height]).toEqual([64, 32])
+  })
+
+  it('packs a SCREEN 3 world linearly, not in the VDP`s byte order', () => {
+    const [table] = resourceTables(world('sc3', 128, 96))
+    // 64 bytes a row, 96 rows — and emphatically not the 1536 of a framebuffer.
+    expect(table.bytes.length).toBe(64 * 96)
+  })
+
+  it('still packs a one-screen SCREEN 3 picture for direct upload', () => {
+    const [table] = resourceTables(world('sc3', 64, 48))
+    expect(table.bytes.length).toBe(1536)
+  })
+
+  it('gives a SCREEN 3 world a window instead of an upload', () => {
+    const big = rendered(world('sc3', 128, 96))
+    expect(big).toContain('void g_World_DrawWindow(u8* buf, u16 camX, u16 camY);')
+    expect(big).toContain('#define G_WORLD_STRIDE 64')
+    // The display's size is stated apart from the picture's, or the window loop
+    // would run over the whole world.
+    expect(big).toContain('#define G_WORLD_VIEW_H 48')
+    expect(big).toContain('#define G_WORLD_W 128')
+    // A picture that cannot be uploaded whole must not offer to be.
+    expect(big).not.toContain('void g_World_Draw(void);')
+
+    const small = rendered(world('sc3', 64, 48))
+    expect(small).toContain('void g_World_Draw(void);')
+    expect(small).not.toContain('_DrawWindow')
+  })
+
+  it('windows a bitmap world a row at a time, out of ROM', () => {
+    const text = rendered(world('sc5', 512, 424))
+    expect(text).toContain('void g_World_DrawRow(UX camX, UY camY, u8 row, UY destY);')
+    expect(text).toContain('#define G_WORLD_VIEW_W 256')
+    expect(text).toContain('#define G_WORLD_PPB 2')
+    expect(text).toContain('VDP_CommandHMMC')
+  })
+
+  it('snaps the width to a whole number of bytes, per mode', () => {
+    // SCREEN 6 packs four dots a byte, so 250 cannot be a row length.
+    expect(normalizeScreen({ mode: 'sc6', width: 250, height: 100 }).width).toBe(252)
+    expect(normalizeScreen({ mode: 'sc3', width: 65, height: 50 }).width).toBe(66)
+  })
+
+  it('crops the picture with the document rather than letting the two disagree', () => {
+    const big = world('sc3', 64, 48)
+    const shrunk = normalizeScreen({ ...big.doc, width: 32, height: 24 })
+    expect(shrunk.converted?.width).toBe(32)
+    expect(validateResource({ kind: 'screen', doc: shrunk })).toEqual([])
+  })
+
+  function rendered(resource: ResourceDoc): string {
+    const files = renderResourceFiles(resource, 'res/world.screen.json', block)
+    return `${files.header ?? ''}\n${files.source ?? ''}`
+  }
+})

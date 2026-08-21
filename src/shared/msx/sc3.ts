@@ -196,11 +196,16 @@ function prefixOf(name: string): string {
  * The `#define`s every SCREEN 3 helper reads. Emitted by whichever resource
  * owns the screen, so the geometry is stated once in the header the game sees.
  */
-export function sc3Constants(name: string, doubleBuffer: boolean): string[] {
+export function sc3Constants(name: string, doubleBuffer: boolean, pictureWidth = SC3_COLS): string[] {
   const prefix = prefixOf(name)
   return [
-    `#define ${prefix}_W ${SC3_COLS}`,
-    `#define ${prefix}_H ${SC3_ROWS}`,
+    // The display, which is fixed — as against _W/_H, which are the picture's and
+    // may be larger. They are the same numbers until the picture becomes a world.
+    `#define ${prefix}_VIEW_W ${SC3_COLS}`,
+    `#define ${prefix}_VIEW_H ${SC3_ROWS}`,
+    // Bytes per row: of the picture, and of one screenful of it.
+    `#define ${prefix}_STRIDE ${Math.ceil(pictureWidth / 2)}`,
+    `#define ${prefix}_STRIDE_VIEW ${SC3_COLS / 2}`,
     `#define ${prefix}_SIZE ${SC3_VRAM_BYTES}`,
     `#define ${prefix}_STRIPS ${SC3_STRIPS}`,
     `#define ${prefix}_NT 0x${SC3_NT_ADDR.toString(16).toUpperCase().padStart(4, '0')}`,
@@ -226,7 +231,9 @@ export function sc3ScreenHelperC(
   name: string,
   table: string,
   doubleBuffer: boolean,
-  hasFragments: boolean
+  hasFragments: boolean,
+  /** Set when the picture is bigger than the display: its size, in blocks. */
+  world: { width: number; height: number } | null = null
 ): HelperC {
   const prefix = prefixOf(name)
   const header: string[] = [
@@ -260,8 +267,18 @@ export function sc3ScreenHelperC(
     `//   ${name}_Flush(g_Screen);`,
     '',
     `void ${name}_InitScreen(void);`,
-    `void ${name}_Draw(void);`,
-    `void ${name}_ToBuffer(u8* buf);`,
+    ...(world
+      ? [
+          `// The picture is ${world.width}×${world.height} blocks — bigger than the 64×48 on screen — so it is a`,
+          '// world you scroll a window over rather than a screen you upload. It is',
+          '// packed linearly for that, row by row, not in the VDP\'s byte order.',
+          '//',
+          '// `camX` must be even (a byte is two blocks). Redrawing the whole view is',
+          `// ${Math.ceil(64 / 2) * 48} bytes of copying; a scroller usually moves the camera and calls this,`,
+          '// which is still far cheaper than the flush that follows it.',
+          `void ${name}_DrawWindow(u8* buf, u16 camX, u16 camY);`
+        ]
+      : [`void ${name}_Draw(void);`, `void ${name}_ToBuffer(u8* buf);`]),
     `void ${name}_Clear(u8* buf, u8 colour);`,
     `void ${name}_Plot(u8* buf, u8 x, u8 y, u8 colour);`,
     `u8   ${name}_Get(const u8* buf, u8 x, u8 y);`,
@@ -352,28 +369,48 @@ export function sc3ScreenHelperC(
     `\tMem_Set(0, ${name}_Dirty, ${prefix}_STRIPS);`,
     '}',
     '',
-    '// The picture straight into VRAM, no shadow buffer involved — for a title',
-    '// screen that never changes.',
-    `void ${name}_Draw(void)`,
-    '{',
-    ...(doubleBuffer
+    ...(world
       ? [
-          `\tVDP_WriteVRAM(${table}, ${prefix}_PAGE0, 0, ${prefix}_SIZE);`,
-          `\tVDP_WriteVRAM(${table}, ${prefix}_PAGE1, 0, ${prefix}_SIZE);`
+          `// Copies the 64×48 window at (camX, camY) out of the world into the shadow`,
+          '// buffer. One source row is contiguous; the destination steps eight bytes',
+          '// per byte-column, which is what SCREEN 3\'s byte order costs here.',
+          `void ${name}_DrawWindow(u8* buf, u16 camX, u16 camY)`,
+          '{',
+          '\tu8 row, col;',
+          `\tfor(row = 0; row < ${prefix}_VIEW_H; ++row)`,
+          '\t{',
+          `\t\tconst u8* src = ${table} + ((u16)(camY + row) * ${prefix}_STRIDE) + (camX >> 1);`,
+          `\t\tu16 d = ${name}_Offset(0, row);`,
+          `\t\tfor(col = 0; col < ${prefix}_STRIDE_VIEW; ++col)`,
+          '\t\t\tbuf[d + ((u16)col << 3)] = *src++;',
+          '\t}',
+          `\t${name}_Mark(0, 0, ${prefix}_VIEW_W, ${prefix}_VIEW_H);`,
+          '}'
         ]
-      : [`\tVDP_WriteVRAM(${table}, ${prefix}_PAGE0, 0, ${prefix}_SIZE);`]),
-    '}',
-    '',
-    `void ${name}_ToBuffer(u8* buf)`,
-    '{',
-    `\tMem_Copy(${table}, buf, ${prefix}_SIZE);`,
-    `\t${name}_Mark(0, 0, ${prefix}_W, ${prefix}_H);`,
-    '}',
+      : [
+          '// The picture straight into VRAM, no shadow buffer involved — for a title',
+          '// screen that never changes.',
+          `void ${name}_Draw(void)`,
+          '{',
+          ...(doubleBuffer
+            ? [
+                `\tVDP_WriteVRAM(${table}, ${prefix}_PAGE0, 0, ${prefix}_SIZE);`,
+                `\tVDP_WriteVRAM(${table}, ${prefix}_PAGE1, 0, ${prefix}_SIZE);`
+              ]
+            : [`\tVDP_WriteVRAM(${table}, ${prefix}_PAGE0, 0, ${prefix}_SIZE);`]),
+          '}',
+          '',
+          `void ${name}_ToBuffer(u8* buf)`,
+          '{',
+          `\tMem_Copy(${table}, buf, ${prefix}_SIZE);`,
+          `\t${name}_Mark(0, 0, ${prefix}_VIEW_W, ${prefix}_VIEW_H);`,
+          '}'
+        ]),
     '',
     `void ${name}_Clear(u8* buf, u8 colour)`,
     '{',
     `\tMem_Set((colour << 4) | (colour & 0x0F), buf, ${prefix}_SIZE);`,
-    `\t${name}_Mark(0, 0, ${prefix}_W, ${prefix}_H);`,
+    `\t${name}_Mark(0, 0, ${prefix}_VIEW_W, ${prefix}_VIEW_H);`,
     '}',
     '',
     `void ${name}_Plot(u8* buf, u8 x, u8 y, u8 colour)`,

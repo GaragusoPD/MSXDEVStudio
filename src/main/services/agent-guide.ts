@@ -332,6 +332,44 @@ vanish. Every cell and every layer costs one, so a 6-plane hero and two 6-plane
 enemies at the same height is already over. Watch the per-line limit before the
 total; the sprite editor shows what each character spends.
 
+### Software sprites (\`*.swsprites.json\`)
+
+A different file from \`*.sprites.json\`, and a different thing: those are the
+VDP's 32 hardware sprites, these are images blitted **into** the picture. Use
+them when the hardware runs out — of colours, of size, or of the four (MSX1) or
+eight (MSX2) per scanline.
+
+**Every character carries its own size**, which is why this is not a tileset
+with named blocks: a 16×16 hero and an 8×8 bullet live in one sheet. Frames of
+one character are all the same size — that is what makes them an animation.
+
+The export is always \`_Data\` plus \`_Info\` (offsetLo, offsetHi, width, height,
+frames per character) and a \`#define\` per name, but the *runtime* is whatever
+the mode actually has:
+
+| Mode | How a frame is drawn |
+|---|---|
+| SCREEN 3 | Blitted from ROM by the CPU into the shadow buffer, transparent index skipped |
+| SCREEN 5–8 | Every frame in one strip, uploaded once with \`HMMC\`; each draw is one \`LMMM\` with \`VDP_OP_TIMP\` |
+| SCREEN 1/2/4 | No pixels to blit — the frame's 8×8 cells are written into a reserved pattern range and the name table points at them |
+
+\`\`\`c
+// SCREEN 3, with a screen resource's shadow buffer:
+g_Sw_Restore(g_Screen, under, G_SW_HERO, oldX, oldY);
+g_Sw_Save(g_Screen, under, G_SW_HERO, x, y);
+g_Sw_Draw(g_Screen, G_SW_HERO, frame, x, y);
+g_Play_Mark(x, y, g_Sw_Width(G_SW_HERO), g_Sw_Height(G_SW_HERO));
+g_Play_Flush(g_Screen);
+\`\`\`
+
+Sizes snap to what the blitter can address and the editor will not let you past
+it: multiples of 2 blocks across in SCREEN 3, of the mode's dots-per-byte in a
+bitmap mode, of 8 in a pattern mode. In SCREEN 1/2/4 the two-colours-per-row
+rule applies to sprite art as much as to tiles, and the Problems panel says so
+before the export flattens it. The pattern-mode runtime also **borrows real
+patterns** — reserve that range in your tileset (\`..._FIRST_PATTERN\` up) or the
+sprite overwrites tiles the map is using.
+
 ### SCREEN 3 (MULTICOLOR) — the mode with no colour clash
 
 Available on **every** machine, MSX1 included. 64×48 blocks of 4×4 dots, any of
@@ -367,6 +405,28 @@ this mode, and the pattern table a font would load into *is* the picture. Run
 title, menu and credits in SCREEN 1 and switch to SCREEN 3 for play — the
 game-kit wizard emits \`GAME_TEXT_VDP_MODE\` for exactly this.
 
+#### Pictures bigger than the screen
+
+A \`*.screen.json\` states its own \`width\`/\`height\`, and they may be **larger
+than the display**. That is the only thing separating a screen from a map: past
+one screenful the same document is a *world* — packed row by row rather than in
+the VDP's byte order, and windowed instead of uploaded.
+
+\`\`\`c
+// SCREEN 3: copy the 64x48 view at (camX, camY) into the shadow buffer.
+g_World_DrawWindow(g_Screen, camX, camY);   // camX even
+g_World_Flush(g_Screen);
+\`\`\`
+
+\`_W\`/\`_H\` are the world's size; \`_VIEW_W\`/\`_VIEW_H\` are the display's, and
+\`_STRIDE\` is the world's bytes per row. In the bitmap modes the world stays in
+ROM and \`_DrawRow(camX, camY, row, destY)\` copies one line with \`HMMC\` — a
+scroller calls it for the line coming into view and leaves the rest alone.
+
+Use a world when the art is one continuous picture; use a tilemap when it
+repeats, which is almost always cheaper in ROM. They are not exclusive: a map's
+tileset can be cut from a world.
+
 #### The framebuffer shape
 
 \`_InitScreen()\` is not optional: it sets the mode *and* writes the 768-byte
@@ -398,19 +458,14 @@ written once and shared.
 
 #### Chunky software sprites
 
-A SCREEN 3 software sprite is a small block image, which is a \`*.btiles.json\`
-tile — so the frames are tiles and, exactly as with animated tiles above, **a
-1×N block is the animation**. Set the tileset's transparent colour and you get
-the masked blit:
+Use \`*.swsprites.json\` (above): each character its own size, its own frames,
+and a \`_Draw\`/\`_Save\`/\`_Restore\` cycle over the shadow buffer.
 
-\`\`\`c
-g_Hero_DrawTileMasked(g_Screen, G_HERO_WALK_BASE + step, x, y);
-\`\`\`
-
-Save what it covers before drawing and put it back before it moves, with the
-screen's \`_Save\`/\`_Restore\` (or \`_SaveFrame\`/\`_RestoreFrame\` when the frames
-are screen *fragments* rather than tiles). Hardware sprites still work over all
-of it, and are the cheaper choice for actors that only move.
+Two lighter alternatives exist and are worth knowing. A \`*.btiles.json\` tile is
+a frame too, and a 1×N block of them is an animation — fine when everything is
+one size. And a screen's named **fragments** are frames cut straight out of the
+picture, with \`_DrawFrame\`/\`_SaveFrame\` to match. Hardware sprites still float
+over all of it, and are the cheaper choice for actors that only move.
 
 #### The name-table shape
 

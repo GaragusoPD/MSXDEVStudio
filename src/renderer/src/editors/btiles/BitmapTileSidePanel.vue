@@ -247,12 +247,23 @@ function applySize(): void {
     </section>
 
     <section>
-      <h3>Blocks</h3>
+      <h3>{{ blockMode ? 'Blocks and animations' : 'Blocks' }}</h3>
       <p class="hint">
         Named groups of tiles — a door, a tree. Drag across the bank to select a
         rectangle, then keep it. Open one to draw across it as a single picture:
         a block owns no pixels, only references, so painting it paints the tiles
         it points at — everywhere else they are used.
+      </p>
+      <p
+        v-if="blockMode"
+        class="hint"
+      >
+        <strong>A 1×N block is an animation.</strong> Draw each pose as its own tile, drag
+        across that run in the bank, and keep it as a block named <code>walk</code> — the
+        export gives the game <code>..._WALK_BASE</code> and <code>..._WALK_W</code>, and the
+        player below shows whether the cycle reads. With a transparent colour set above, this
+        bank <em>is</em> a SCREEN 3 software-sprite sheet: tiles are frames, and
+        <code>_DrawTileMasked()</code> puts one over the playfield.
       </p>
       <ul class="blocks">
         <li>

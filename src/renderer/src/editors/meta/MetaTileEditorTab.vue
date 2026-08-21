@@ -16,6 +16,7 @@
 import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
+import { MODES } from '../../../../shared/msx/modes'
 import { fitColumns } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -57,6 +58,13 @@ const active = computed(() => metaDoc.value.metas[session.value.active] ?? null)
 
 /** A meta-tile set groups tiles, so only the kinds that *have* tiles qualify. */
 const TILESET_KINDS: ResourceKind[] = ['tiles', 'btiles', 'screen']
+
+/** Read from whichever tileset loaded; a meta set has no mode of its own. */
+const targetMode = computed(
+  () => session.value.bitmapTileset?.mode ?? session.value.atlas?.mode ?? session.value.tileset?.mode ?? null
+)
+const targetLabel = computed(() => (targetMode.value ? MODES[targetMode.value].label : null))
+const sc3Tileset = computed(() => targetMode.value === 'sc3')
 const tilesetOptions = computed(() =>
   resourcesStore.entries.filter((entry) => TILESET_KINDS.includes(entry.kind)).map((entry) => entry.path)
 )
@@ -471,6 +479,23 @@ onMounted(() => void resourcesStore.refresh())
               class="hint error"
             >
               {{ session.tilesetError }}
+            </p>
+            <p
+              v-if="sc3Tileset"
+              class="hint error"
+            >
+              This is a <strong>SCREEN 3</strong> tileset, and meta-tiles over one are not
+              supported yet — a meta map's helper is built on the V9938 command engine, which
+              an MSX1 has not got, so the export is refused rather than emitting code the
+              machine cannot run. Point the map at the tileset directly. If the tiles are
+              2×2 blocks the map draws through the name table anyway, which is already the
+              cheap path meta-tiles exist to buy.
+            </p>
+            <p
+              v-else-if="targetLabel"
+              class="hint"
+            >
+              Target: <strong>{{ targetLabel }}</strong> — the mode comes from the tileset.
             </p>
           </section>
 

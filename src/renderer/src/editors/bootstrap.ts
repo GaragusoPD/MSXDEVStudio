@@ -8,6 +8,7 @@ import * as meta from './meta/session'
 import * as screen from './screen/session'
 import * as sfx from './sfx/session'
 import * as sprite from './sprite/session'
+import * as swsprite from './swsprites/session'
 import * as tile from './tile/session'
 import BitmapTileEditorTab from './btiles/BitmapTileEditorTab.vue'
 import DocsTab from './docs/DocsTab.vue'
@@ -20,6 +21,7 @@ import ProjectSettingsTab from './ProjectSettingsTab.vue'
 import ScreenEditorTab from './screen/ScreenEditorTab.vue'
 import SfxEditorTab from './sfx/SfxEditorTab.vue'
 import SpriteEditorTab from './sprite/SpriteEditorTab.vue'
+import SwSpriteEditorTab from './swsprites/SwSpriteEditorTab.vue'
 import TerminalTab from './terminal/TerminalTab.vue'
 import TileEditorTab from './tile/TileEditorTab.vue'
 import { dispose as disposeTerminal } from './terminal/session'
@@ -117,6 +119,17 @@ registerEditor({
   save: (path) => sprite.saveSession(sprite.spriteSession(path)),
   undo: (path) => sprite.undo(sprite.spriteSession(path)),
   redo: (path) => sprite.redo(sprite.spriteSession(path))
+})
+
+// Software sprites: images blitted into the picture, as against the hardware's
+// 32 slots. `file-kind.ts` lists `swsprites.json` before `sprites.json` so the
+// longer suffix wins the match.
+registerEditor({
+  extensions: ['swsprites.json'],
+  component: SwSpriteEditorTab,
+  save: (path) => swsprite.saveSession(swsprite.swSpriteSession(path)),
+  undo: (path) => swsprite.undo(swsprite.swSpriteSession(path)),
+  redo: (path) => swsprite.redo(swsprite.swSpriteSession(path))
 })
 
 // Spec 11: the ayFX sound-effect bank editor.

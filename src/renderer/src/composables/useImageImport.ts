@@ -17,6 +17,9 @@ export interface ImportOptions {
   mode: ScreenMode
   palette: PaletteChoice
   dither: DitherMode
+  /** The target document's size, when it has one of its own — see `fitToMode`. */
+  fitWidth?: number
+  fitHeight?: number
 }
 
 export interface ImportResult {
@@ -52,10 +55,15 @@ export interface ImageImport {
  * The browser's own scaler does the work; there is no resampler here to get
  * wrong. Images already small enough are returned untouched.
  */
-export function fitToMode(image: ImageData, mode: ScreenMode): ImageData {
+export function fitToMode(image: ImageData, mode: ScreenMode, fitWidth?: number, fitHeight?: number): ImageData {
   const info = MODES[mode]
-  if (image.width <= info.width && image.height <= info.height) return image
-  const scale = Math.min(info.width / image.width, info.height / image.height)
+  // The target is the *document's* size when it has one — a screen larger than
+  // the display is a world, and importing into it should fill the world rather
+  // than shrink it back to one screenful.
+  const limitW = fitWidth ?? info.width
+  const limitH = fitHeight ?? info.height
+  if (image.width <= limitW && image.height <= limitH) return image
+  const scale = Math.min(limitW / image.width, limitH / image.height)
   const width = Math.max(1, Math.round(image.width * scale))
   const height = Math.max(1, Math.round(image.height * scale))
   const from = new OffscreenCanvas(image.width, image.height)
@@ -125,7 +133,7 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
     // Reduce before quantizing, not after: SCREEN 3's 64×48 is four times
     // smaller than the art it is usually made from, and averaging the colours
     // down is the conversion, not a step after it.
-    const image = fitToMode(picked, options.mode)
+    const image = fitToMode(picked, options.mode, options.fitWidth, options.fitHeight)
     busy.value = true
     pending = ++nextId
     // The worker consumes the buffer, so hand it a copy: the source stays live
@@ -141,7 +149,7 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
     worker.postMessage(request, [data])
   }
 
-  watch(() => [options.mode, options.palette, options.dither], convert)
+  watch(() => [options.mode, options.palette, options.dither, options.fitWidth, options.fitHeight], convert)
 
   async function loadFile(file: File): Promise<void> {
     try {

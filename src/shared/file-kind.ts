@@ -16,6 +16,7 @@ const RESOURCE_SUFFIXES = [
   'meta-tiles.json',
   'btiles.json',
   'tiles.json',
+  'swsprites.json',
   'sprites.json',
   'map.json',
   'screen.json',

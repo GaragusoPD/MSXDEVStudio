@@ -13,7 +13,7 @@ import { useProjectStore } from '../stores/projectStore'
 import { useResourcesStore } from '../stores/resourcesStore'
 import Icon from './Icon.vue'
 
-const props = withDefaults(defineProps<{ mode?: ScreenMode; standalone?: boolean }>(), {
+const props = withDefaults(defineProps<{ mode?: ScreenMode; standalone?: boolean; fitWidth?: number; fitHeight?: number }>(), {
   mode: 'sc2',
   standalone: true
 })
@@ -25,7 +25,7 @@ const emit = defineEmits<{ close: []; imported: [result: ImportResult, file: Fil
 
 const projectStore = useProjectStore()
 const resourcesStore = useResourcesStore()
-const importer = useImageImport({ mode: props.mode })
+const importer = useImageImport({ mode: props.mode, fitWidth: props.fitWidth, fitHeight: props.fitHeight })
 const beforeCanvas = ref<HTMLCanvasElement | null>(null)
 const afterCanvas = ref<HTMLCanvasElement | null>(null)
 const targetName = ref('imported')

@@ -7,6 +7,7 @@ import { normalizeBitmapTiles } from './bitmap-tile'
 import { renderResourceFiles } from './resource'
 import { blankConverted, encodeIndices, decodeIndices, normalizeScreen } from './screen'
 import { sc3Offset, SC3_COLS, SC3_ROWS, SC3_VRAM_BYTES } from './sc3'
+import { normalizeSwSprites, setSwFramePixels } from './swsprite'
 
 /**
  * Compiles the **emitted C itself** with the host compiler and runs it.
@@ -76,7 +77,35 @@ static void VDP_FillVRAM(u8 value, u16 low, u8 high, u16 count)
 }
 static void Mem_Copy(const void* src, void* dest, u16 size) { memcpy(dest, src, size); }
 static void Mem_Set(u8 value, void* dest, u16 size) { memset(dest, value, size); }
+
+/* The V9938 blitter, recorded rather than performed — enough to compile and run
+   the bitmap-mode helpers, which is what catches a table symbol that does not
+   exist. */
+#define VDP_OP_TIMP 0
+static int g_Commands = 0;
+static const u8* g_LastSrc = 0;
+static void VDP_CommandHMMC(const u8* src, UX x, UY y, u16 w, u16 h)
+{
+	(void)x; (void)y; (void)w; (void)h;
+	g_LastSrc = src;
+	g_Commands++;
+}
+static void VDP_CommandHMMM(UX sx, UY sy, UX dx, UY dy, u16 w, u16 h)
+{
+	(void)sx; (void)sy; (void)dx; (void)dy; (void)w; (void)h;
+	g_Commands++;
+}
+static void VDP_CommandLMMM(UX sx, UY sy, UX dx, UY dy, u16 w, u16 h, u8 op)
+{
+	(void)sx; (void)sy; (void)dx; (void)dy; (void)w; (void)h; (void)op;
+	g_Commands++;
+}
+
+/* MSXgl's compress module. Only needs to link — these cases assert that the
+   unpack helper names a table that exists, not that RLEp works. */
+static u16 RLEp_UnpackToRAM(const u8* src, u8* dest) { (void)src; (void)dest; return 0; }
 `
+
 
 function compileAndRun(sources: string[], main: string, dir: string): string {
   const path = join(dir, 'probe.c')
@@ -323,7 +352,135 @@ describe.runIf(hasCompiler())('the emitted SCREEN 3 C, compiled and run', () => 
     // Two byte-columns wide, one strip row: two strips, and only after _Mark.
     expect(out.trim()).toBe('0 2 102')
   })
+  it('draws a software sprite of its own size, masking the transparent index', () => {
+    // Two characters with *different* sizes in one sheet — the thing a tileset
+    // cannot express, and the reason this resource exists.
+    let doc = normalizeSwSprites({
+      mode: 'sc3',
+      transparent: 0,
+      sprites: [
+        { name: 'hero', width: 4, height: 4, frames: 2 },
+        { name: 'bullet', width: 2, height: 2, frames: 1 }
+      ]
+    })
+    const hero = new Uint8Array(16).fill(7)
+    hero[0] = 0 // one transparent corner, so the mask is observable
+    doc = setSwFramePixels(doc, 0, 0, hero)
+    doc = setSwFramePixels(doc, 1, 0, new Uint8Array(4).fill(12))
+    const files = renderResourceFiles({ kind: 'swsprites', doc }, 'res/hero.swsprites.json', {
+      name: 'g_Sw',
+      format: 'c',
+      out: 'content/sw.h',
+      helpers: true
+    })
+    const out = compileAndRun(
+      [screenSource(new Uint8Array(SC3_COLS * SC3_ROWS), false), strip(files.header ?? ''), strip(files.source ?? '')],
+      `int main(void)
+{
+	static u8 buf[G_PLAY_SIZE];
+	static u8 under[G_SW_SAVE_BYTES];
+	g_Play_FillRect(buf, 0, 0, ${SC3_COLS}, ${SC3_ROWS}, 3);
+	g_Sw_Save(buf, under, G_SW_HERO, 10, 8);
+	g_Sw_Draw(buf, G_SW_HERO, 0, 10, 8);
+	printf("%d %d %d %d ",
+		(int)g_Play_Get(buf, 10, 8),   /* transparent — the fill shows through */
+		(int)g_Play_Get(buf, 11, 8),   /* the sprite */
+		(int)g_Sw_Width(G_SW_HERO),
+		(int)g_Sw_Width(G_SW_BULLET));
+	/* The smaller character draws at its own size, out of the same table. */
+	g_Sw_Draw(buf, G_SW_BULLET, 0, 20, 20);
+	printf("%d %d ", (int)g_Play_Get(buf, 20, 20), (int)g_Play_Get(buf, 22, 20));
+	g_Sw_Restore(buf, under, G_SW_HERO, 10, 8);
+	printf("%d\\n", (int)g_Play_Get(buf, 11, 8));
+	return 0;
+}`,
+      scratch()
+    )
+    // fill shows through the hole, 7 where the sprite is, 4 and 2 wide,
+    // the bullet's own 12 then fill beside it, and the restore puts 3 back.
+    expect(out.trim()).toBe('3 7 4 2 12 3 3')
+  })
+  it('windows a world into the buffer, taking the right row out of the right place', () => {
+    // A 128x96-block world: twice the display each way.
+    const base = normalizeScreen({ mode: 'sc3', width: 128, height: 96 })
+    const converted = blankConverted('sc3', 128, 96)
+    const indices = decodeIndices(converted.indices)
+    // Mark one block well inside the second screenful, so a wrong stride or a
+    // wrong start lands somewhere visibly different.
+    indices[60 * 128 + 70] = 9
+    const doc = { ...base, converted: { ...converted, indices: encodeIndices(indices) } }
+    const files = renderResourceFiles({ kind: 'screen', doc }, 'res/world.screen.json', {
+      name: 'g_World',
+      format: 'c',
+      out: 'content/world.h',
+      helpers: true
+    })
+    const out = compileAndRun(
+      [strip(files.header ?? ''), strip(files.source ?? '')],
+      `int main(void)
+{
+	static u8 buf[G_WORLD_SIZE];
+	g_World_InitScreen();
+	/* Camera at (64, 48) puts world (70, 60) at view (6, 12). */
+	g_World_DrawWindow(buf, 64, 48);
+	printf("%d %d %d\\n",
+		(int)g_World_Get(buf, 6, 12),
+		(int)g_World_Get(buf, 7, 12),
+		(int)G_WORLD_STRIDE);
+	return 0;
+}`,
+      scratch()
+    )
+    expect(out.trim()).toBe('9 0 64')
+  })
+  it('names the picture table the exporter actually emitted, in every combination', () => {
+    // The suffix is `_Data` only when something else shares the file. Three cases
+    // where a helper guessing the wrong one is an undefined symbol, and the only
+    // way to see it is to compile.
+    const cases: { label: string; doc: ReturnType<typeof normalizeScreen>; compress?: 'rlep' }[] = [
+      {
+        // sc8: no palette table, so the picture is the bare base name.
+        label: 'sc8 world',
+        doc: worldDoc('sc8', 320, 256)
+      },
+      {
+        // sc5 world: a palette table exists, so the picture is `_Data`.
+        label: 'sc5 world',
+        doc: worldDoc('sc5', 320, 256)
+      },
+      {
+        // sc3 compressed: band offsets sit beside it, so `_Data` again — and the
+        // unpack helper has to name the same one.
+        label: 'sc3 compressed',
+        doc: worldDoc('sc3', 64, 48),
+        compress: 'rlep'
+      }
+    ]
+    for (const entry of cases) {
+      const files = renderResourceFiles({ kind: 'screen', doc: entry.doc }, 'res/world.screen.json', {
+        name: 'g_World',
+        format: 'c',
+        out: 'content/world.h',
+        helpers: true,
+        compress: entry.compress
+      })
+      // Compiling is the assertion: an undefined symbol is an error, not a diff.
+      expect(() =>
+        compileAndRun(
+          [strip(files.header ?? ''), strip(files.source ?? '')],
+          'int main(void) { printf("ok\\n"); return 0; }',
+          scratch()
+        )
+      , entry.label).not.toThrow()
+    }
+  })
 })
+
+/** A picture of a given size, with a conversion to match. */
+function worldDoc(mode: 'sc3' | 'sc5' | 'sc8', width: number, height: number): ReturnType<typeof normalizeScreen> {
+  const base = normalizeScreen({ mode, width, height })
+  return { ...base, converted: blankConverted(mode, width, height) }
+}
 
 /** Guards the constant the helpers size their buffers from. */
 it('sizes the framebuffer at 1536 bytes', () => {

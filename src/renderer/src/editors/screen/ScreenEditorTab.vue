@@ -184,18 +184,35 @@ function sourceButtonLabel(active: ScreenSession): string {
           For MSX1 full-screen art, either switch this to SCREEN 3 and draw, or draw a
           tileset in the tile editor and place it in a map — a 32×24 map is one screen.
         </template>
-        <template v-if="!doc(session).converted">
-          Or
+      </p>
+
+      <!-- An empty document is a dead editor until this is pressed, so it is a
+           button in its own right rather than a link inside a paragraph. New
+           screens are created with a canvas already, so this is the way back
+           from a document that has none. -->
+      <div
+        v-if="!doc(session).converted"
+        class="empty"
+      >
+        <p>Nothing to draw on yet.</p>
+        <div class="empty-actions">
           <button
             type="button"
-            class="link"
+            class="primary"
             @click="startBlank(session)"
           >
-            start a blank canvas
+            <Icon name="add" />
+            Start a blank canvas
           </button>
-          and draw here — which is what an atlas or a sprite sheet usually wants.
-        </template>
-      </p>
+          <button
+            type="button"
+            @click="importVisible = true"
+          >
+            <Icon name="image" />
+            Import an image…
+          </button>
+        </div>
+      </div>
 
       <div class="panes">
         <ScreenCanvas :session="session" />
@@ -213,6 +230,8 @@ function sourceButtonLabel(active: ScreenSession): string {
     <ImportImageDialog
       v-if="importVisible"
       :mode="doc(session).mode"
+      :fit-width="doc(session).width"
+      :fit-height="doc(session).height"
       :standalone="false"
       @close="importVisible = false"
       @imported="onImported"
@@ -221,6 +240,24 @@ function sourceButtonLabel(active: ScreenSession): string {
 </template>
 
 <style scoped>
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 2rem 1rem;
+}
+
+.empty p {
+  margin: 0;
+  opacity: 0.75;
+}
+
+.empty-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .screen-editor {
   display: flex;
   flex-direction: column;

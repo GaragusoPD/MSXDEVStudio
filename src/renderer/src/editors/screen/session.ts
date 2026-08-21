@@ -25,6 +25,7 @@ import { serializeResource } from '../../../../shared/msx/resource'
 import {
   blankConverted,
   normalizeScreen,
+  resizeScreen,
   screenPixels,
   type ScreenConvert,
   type ScreenDoc
@@ -71,9 +72,18 @@ export interface ScreenSession {
   filled: boolean
   color: number
   zoom: number
-  /** Overlays on the canvas: the block grid, and the 8-dot cell the name table addresses. */
+  /** Overlays on the canvas: the block grid, the 8-dot cell, and one screenful. */
   grid: boolean
   cellGuide: boolean
+  screenOutline: boolean
+  /**
+   * Whether the source image sits beside the canvas.
+   *
+   * Only ever consulted when there *is* a source — a document drawn from
+   * scratch has no "before" to compare against, and half a pane showing a
+   * placeholder is half a pane not being drawn on.
+   */
+  showOriginal: boolean
   status: string
   busy: boolean
 
@@ -101,6 +111,8 @@ export function screenSession(path: string): ScreenSession {
     zoom: 2,
     grid: false,
     cellGuide: false,
+    screenOutline: true,
+    showOriginal: true,
     status: '',
     busy: false,
     preview: null
@@ -226,12 +238,15 @@ export function reconvertWith(session: ScreenSession, patch: { mode?: BitmapMode
   if (!picked) {
     // No artwork to re-run, but the mode may have changed under a drawn canvas —
     // and a 64×48 SCREEN 3 buffer is not a 256×212 SCREEN 5 one.
-    commit(session, next.mode === current.mode ? next : { ...next, converted: blankConverted(next.mode) })
+    commit(
+      session,
+      next.mode === current.mode ? next : { ...next, converted: blankConverted(next.mode, next.width, next.height) }
+    )
     return
   }
   session.busy = true
   try {
-    const image = fitToMode(picked, next.mode)
+    const image = fitToMode(picked, next.mode, next.width, next.height)
     const result = quantize(
       { width: image.width, height: image.height, data: image.data },
       { mode: next.mode, dither: next.convert.dither, palette: next.convert.palette }
@@ -255,7 +270,7 @@ export function reconvertNow(session: ScreenSession): void {
  */
 export function startBlank(session: ScreenSession): void {
   const current = doc(session)
-  commit(session, { ...current, converted: blankConverted(current.mode) })
+  commit(session, { ...current, converted: blankConverted(current.mode, current.width, current.height) })
   session.status = 'Blank canvas'
 }
 
@@ -276,6 +291,26 @@ export function setGrid(session: ScreenSession, grid: boolean): void {
 
 export function setCellGuide(session: ScreenSession, cellGuide: boolean): void {
   session.cellGuide = cellGuide
+}
+
+export function setScreenOutline(session: ScreenSession, screenOutline: boolean): void {
+  session.screenOutline = screenOutline
+}
+
+export function setShowOriginal(session: ScreenSession, showOriginal: boolean): void {
+  session.showOriginal = showOriginal
+}
+
+/**
+ * Resizes the picture. Past the mode's screen size it becomes a **world** — the
+ * same document, scrolled rather than shown, which is all that separates a
+ * screen from a map.
+ *
+ * Cropping, not scaling: the same rule every other resource follows, and the one
+ * that makes the operation reversible by resizing back.
+ */
+export function resize(session: ScreenSession, width: number, height: number): void {
+  commit(session, resizeScreen(doc(session), width, height))
 }
 
 export function setTool(session: ScreenSession, tool: ScreenTool): void {

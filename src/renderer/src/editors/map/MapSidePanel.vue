@@ -7,6 +7,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
+import { MODES } from '../../../../shared/msx/modes'
 import { defaultExport, isMetaKind, resourceKindOf, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
 import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
@@ -56,6 +57,30 @@ async function chooseTileset(path: string): Promise<void> {
 const meta = computed(() => mapDoc.value.meta)
 
 const cell = computed(() => mapDoc.value.cell)
+const sc3 = computed(() => cell.value?.sc3 === true)
+
+/**
+ * What this map is actually going to draw on, read from the tileset the editor
+ * has open rather than stored here — a map has no mode of its own, and that is
+ * exactly why it needed saying out loud somewhere.
+ */
+const target = computed(() => {
+  const mode = props.session.bitmapTileset?.mode ?? props.session.atlas?.mode ?? null
+  if (!mode) {
+    return {
+      label: props.session.tileset ? MODES[props.session.tileset.mode].label : 'no tileset yet',
+      how: props.session.tileset ? 'name table, one VDP_WriteLayout_GM2' : 'pick one below'
+    }
+  }
+  if (mode === 'sc3') {
+    const nameTable = cell.value?.width === 2 && cell.value?.height === 2
+    return {
+      label: MODES.sc3.label,
+      how: nameTable ? 'name table, drawn by the VDP — scrolls' : 'blitted into the shadow buffer'
+    }
+  }
+  return { label: MODES[mode].label, how: 'blitted with the VDP command engine' }
+})
 
 function patchCell(patch: Partial<NonNullable<typeof cell.value>>): void {
   const current = cell.value
@@ -109,6 +134,9 @@ const packing = computed(() => {
   <div class="side">
     <section>
       <h3>Tileset</h3>
+      <p class="hint target">
+        Target: <strong>{{ target.label }}</strong> — {{ target.how }}
+      </p>
       <div class="tileset-row">
         <select
           :value="mapDoc.tileset"
@@ -191,7 +219,27 @@ const packing = computed(() => {
           >
         </label>
       </div>
-      <p class="hint">
+      <p
+        v-if="sc3"
+        class="hint"
+      >
+        SCREEN 3: a cell is {{ cell?.width }}×{{ cell?.height }} blocks of 4×4 dots.
+        <template v-if="cell?.width === 2 && cell?.height === 2">
+          At 2×2 a cell is exactly one name-table entry, so this map is drawn by the VDP with
+          one <code>VDP_WriteLayout_GM2</code> — 768 bytes for a whole screen, and it can scroll
+          under MSXgl's camera. That is the fast path; keep it if the world is bigger than a screen.
+        </template>
+        <template v-else>
+          Bigger than a name-table entry, so this map is blitted cell by cell into the shadow
+          buffer the screen resource flushes. Fine for a single-screen playfield; switch the
+          tileset to 2×2 blocks if it needs to scroll.
+        </template>
+        The mode comes from the tileset — change it there, not here.
+      </p>
+      <p
+        v-else
+        class="hint"
+      >
         This map draws in a bitmap mode, where there is no name table: a cell is
         a rectangle of dots the game copies out of the atlas image, not an index
         the VDP resolves. <strong>Cols</strong> is how many cells fit across that

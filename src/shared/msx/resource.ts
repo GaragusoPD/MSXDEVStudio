@@ -35,13 +35,25 @@ import {
 import { MODES } from './modes'
 import { sc3Constants, sc3LinearBytes } from './sc3'
 import {
+  normalizeSwSprites,
+  swSpriteConstants,
+  swSpriteHelperC,
+  swSpriteInfoBytes,
+  swSpriteLayout,
+  validateSwSprites,
+  type SwSpritesDoc
+} from './swsprite'
+import {
   fragmentRectBytes,
   fragmentStrip,
   fragmentStripBytes,
   palettePairBytes,
   normalizeScreen,
   screenDataExport,
+  isScreenWorld,
   screenHelperC,
+  screenTableSuffix,
+  screenWorldHelperC,
   screenPixels,
   screenUnpackC,
   validateScreen,
@@ -107,7 +119,16 @@ export interface ExportBlock {
   doubleBuffer?: boolean
 }
 
-export type ResourceKind = 'tiles' | 'btiles' | 'metatiles' | 'metabtiles' | 'sprites' | 'map' | 'screen' | 'sfx'
+export type ResourceKind =
+  | 'tiles'
+  | 'btiles'
+  | 'metatiles'
+  | 'metabtiles'
+  | 'sprites'
+  | 'swsprites'
+  | 'map'
+  | 'screen'
+  | 'sfx'
 
 /**
  * Where new resources are created. Nothing *requires* them to live here — the
@@ -129,6 +150,9 @@ export const RESOURCE_SUFFIXES: Readonly<Record<ResourceKind, string>> = {
   metatiles: '.meta-tiles.json',
   metabtiles: '.meta-btiles.json',
   sprites: '.sprites.json',
+  // Listed before `sprites` for the same reason the meta suffixes are hyphenated:
+  // `resourceKindOf` matches by `endsWith` over this record's insertion order.
+  swsprites: '.swsprites.json',
   map: '.map.json',
   screen: '.screen.json',
   sfx: '.sfx.json'
@@ -145,6 +169,7 @@ export type ResourceDoc =
   | { kind: 'metatiles'; doc: MetaTilesDoc }
   | { kind: 'metabtiles'; doc: MetaTilesDoc }
   | { kind: 'sprites'; doc: SpritesDoc }
+  | { kind: 'swsprites'; doc: SwSpritesDoc }
   | { kind: 'map'; doc: MapDoc }
   | { kind: 'screen'; doc: ScreenDoc }
   | { kind: 'sfx'; doc: SfxDoc }
@@ -203,6 +228,8 @@ export function parseResource(path: string, text: string): ResourceDoc {
       return { kind, doc: normalizeMetaTiles(raw) }
     case 'sprites':
       return { kind, doc: normalizeSprites(raw) }
+    case 'swsprites':
+      return { kind, doc: normalizeSwSprites(raw) }
     case 'map':
       return { kind, doc: normalizeMap(raw) }
     case 'screen':
@@ -228,6 +255,8 @@ export function validateResource(resource: ResourceDoc): string[] {
       return validateMetaTiles(resource.doc)
     case 'sprites':
       return validateSprites(resource.doc)
+    case 'swsprites':
+      return validateSwSprites(resource.doc)
     case 'map':
       return validateMap(resource.doc)
     case 'screen':
@@ -432,7 +461,9 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
         tables.push({
           // A compressed picture always takes `_Data`, because `_Bands` sits next
           // to it and a bare `g_Title` reading as "the packed one" helps nobody.
-          suffix: tables.length || geometry ? '_Data' : '',
+          // `screenTableSuffix` is the same decision, and it is what the emitted
+          // helpers name — the two disagreeing is an undefined symbol.
+          suffix: screenTableSuffix(doc, compress),
           bytes: picture.bytes,
           unpacked: picture.unpacked,
           perLine: geometry ? 16 : undefined,
@@ -467,6 +498,31 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
           comment: 'Fragment rectangles inside the strip — xLo, xHi, width, height'
         })
       }
+      return tables
+    }
+    case 'swsprites': {
+      const { doc } = resource
+      const layout = swSpriteLayout(doc)
+      const tables: EmitTable[] = []
+      if (doc.palette) {
+        tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
+      }
+      tables.push({
+        suffix: '_Data',
+        bytes: layout.bytes,
+        comment: layout.sheet
+          ? `${doc.sprites.length} sprites, every frame side by side as one ${layout.sheet.width}×${layout.sheet.height} ` +
+            'image — upload it once with HMMC, then each draw is one LMMM out of it'
+          : `${doc.sprites.length} sprites, frames end to end: ${doc.sprites
+              .map((character) => `${character.name} ${character.width}×${character.height}×${character.frames}`)
+              .join(', ')}`
+      })
+      tables.push({
+        suffix: '_Info',
+        bytes: swSpriteInfoBytes(doc),
+        perLine: 5,
+        comment: 'Per sprite: offsetLo, offsetHi, width, height, frames — what the helpers index'
+      })
       return tables
     }
     // One table: the whole ayFX bank, exactly the bytes `ayFX_InitBank` wants a pointer to.
@@ -640,9 +696,10 @@ function resourceConstants(
         // from the mode — and an imported picture smaller than the screen makes
         // those two different numbers, so taking both would be a contradictory
         // redefinition rather than a harmless repeat.
-        ...sc3Constants(name, doubleBuffer).filter(
-          (line) => !line.startsWith(`#define ${prefix}_W `) && !line.startsWith(`#define ${prefix}_H `)
-        ),
+        // `banded` already stated _W/_H — the *picture's* size, which may be a
+        // world larger than the display. `sc3Constants` states the display's,
+        // under its own names, so the two never mean the same thing.
+        ...sc3Constants(name, doubleBuffer, pixels?.width ?? 0),
         ...(doc.fragments.length
           ? [
               `#define ${prefix}_FRAMES ${doc.fragments.length}`,
@@ -653,10 +710,21 @@ function resourceConstants(
           : [])
       ]
     }
-    if (!doc.fragments.length) return banded
+    // A world's helper needs the display's size and the picture's row stride;
+    // `banded` only states the latter when the picture is compressed.
+    const worldDefines = isScreenWorld(doc)
+      ? [
+          `#define ${prefix}_VIEW_W ${MODES[doc.mode].width}`,
+          `#define ${prefix}_VIEW_H ${MODES[doc.mode].height}`,
+          `#define ${prefix}_PPB ${MODES[doc.mode].pixelsPerByte}`,
+          ...(geometry ? [] : [`#define ${prefix}_STRIDE ${Math.ceil((pixels?.width ?? 0) / MODES[doc.mode].pixelsPerByte)}`])
+        ]
+      : []
+    if (!doc.fragments.length) return [...banded, ...worldDefines]
     const strip = fragmentStrip(doc)
     return [
       ...banded,
+      ...worldDefines,
       `#define ${prefix}_STRIP_W ${strip.width}`,
       `#define ${prefix}_STRIP_H ${strip.height}`,
       // Backgrounds are saved side by side under the strip; the widest frame
@@ -665,6 +733,7 @@ function resourceConstants(
       ...doc.fragments.map((fragment, index) => `#define ${prefix}_${defineName(fragment.name)} ${index}`)
     ]
   }
+  if (resource.kind === 'swsprites') return swSpriteConstants(resource.doc, name)
   if (resource.kind === 'map') {
     // The helper C needs the map's shape, and so does anything that walks a layer.
     const { cell, meta } = resource.doc
@@ -772,15 +841,23 @@ function resourceCode(
   }
   if (resource.kind === 'screen') {
     const banded = screenDataExport(resource.doc, compress).geometry
-      ? screenUnpackC(name, resource.doc.mode)
+      ? screenUnpackC(name, resource.doc.mode, `${name}${screenTableSuffix(resource.doc, compress)}`)
       : NO_CODE
     // In a bitmap mode these helpers *are* the software sprites, so a screen with
     // no fragments has nothing to emit. sc3's are the mode itself — the name-table
     // boilerplate, the flush — and a picture with no fragments still needs them.
+    const table = `${name}${screenTableSuffix(resource.doc, compress)}`
     if (resource.doc.mode === 'sc3') {
-      return joinHelpers(screenHelperC(resource.doc, name, doubleBuffer), banded)
+      return joinHelpers(screenHelperC(resource.doc, name, doubleBuffer, table), banded)
     }
-    return resource.doc.fragments.length ? joinHelpers(banded, screenHelperC(resource.doc, name)) : banded
+    // A world is scrolled rather than shown, so it needs the window helper
+    // whether or not anything was cut out of it as a sprite frame.
+    const world = isScreenWorld(resource.doc) ? screenWorldHelperC(resource.doc, name, table) : NO_CODE
+    const sprites = resource.doc.fragments.length ? screenHelperC(resource.doc, name) : NO_CODE
+    return joinHelpers(joinHelpers(banded, world), sprites)
+  }
+  if (resource.kind === 'swsprites') {
+    return resource.doc.sprites.length ? swSpriteHelperC(resource.doc, name) : NO_CODE
   }
   if (isMetaKind(resource.kind)) {
     const doc = resource.doc as MetaTilesDoc

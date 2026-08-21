@@ -82,6 +82,10 @@ shipped in 1983.
   fill / eyedropper toolset for drawing one from scratch. Drag a rectangle to
   cut a named **fragment** — a bitmap-mode block, and the frame of a software
   sprite.
+- **Screens of any size.** A screen states its own width and height, so past one
+  screenful the same document is a scrollable **world** — drawn pixel by pixel,
+  exported packed row by row, and windowed with a `_DrawWindow()` instead of
+  uploaded. A map and a screen differ only in how big they are.
 - **SCREEN 3 (MULTICOLOR)**, the MSX1 mode with **no colour clash**: 64×48
   blocks of 4×4 dots, any of the sixteen colours each. Draw a playfield, cut
   frames, and get a runtime MSXgl does not ship — a RAM shadow of the
@@ -90,6 +94,13 @@ shipped in 1983.
   two pattern tables. Chunky software sprites are a tileset with a transparent
   colour, animations are named blocks in it, and 2×2-block tiles are one
   name-table entry each, so a SCREEN 3 map scrolls under MSXgl's own camera.
+- **Software sprite editor** (`*.swsprites.json`) — images blitted *into* the
+  picture, for when the hardware's 32 sprites run out of colours, size or
+  per-line slots. Every character carries **its own size** and its own animation
+  frames, with a playback preview. Works in every mode that has pixels, and the
+  exported runtime is whatever that mode actually has: a CPU blit in SCREEN 3, a
+  VDP `LMMM` out of an off-screen sheet in the MSX2 bitmap modes, and borrowed
+  pattern-table characters in SCREEN 1/2/4.
 - **Ready-made C, on request.** Tick a box and the exported header carries
   working code for what you drew: one call places a whole metasprite, stamps a
   block into the name table, or runs a software sprite — background save,

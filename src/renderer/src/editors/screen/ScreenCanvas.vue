@@ -7,7 +7,7 @@
  */
 import { computed, ref, watchEffect } from 'vue'
 import { MODES, SC3_BLOCK_DOTS } from '../../../../shared/msx/modes'
-import { screenPixels, screenRgb } from '../../../../shared/msx/screen'
+import { isScreenWorld, screenPixels, screenRgb } from '../../../../shared/msx/screen'
 import { linePoints, type Point } from '../../../../shared/tile-editor'
 import { addFragment, doc, fillAt, finishDrag, paintDrag, pickAt, toolDrag, type ScreenSession } from './session'
 
@@ -28,6 +28,13 @@ const convertedPixels = computed(() => screenPixels(doc(props.session)))
  * is a 4×4 block — so its 64×48 document is drawn at the 256×192 the machine
  * actually shows, and a zoom step means the same thing in every mode.
  */
+/**
+ * Whether there is a "before" to show at all. A document with no source was
+ * drawn here rather than converted, so the original pane would be a placeholder
+ * taking half the width — which is most of the working area at SCREEN 3's size.
+ */
+const hasSource = computed(() => Boolean(doc(props.session).source || props.session.sourceImage))
+
 const dotScale = computed(() => (doc(props.session).mode === 'sc3' ? SC3_BLOCK_DOTS : 1))
 const scale = computed(() => props.session.zoom * dotScale.value)
 
@@ -49,6 +56,34 @@ const convertedStyle = computed(() => {
   const pixels = convertedPixels.value
   if (!pixels) return {}
   return { width: `${pixels.width * scale.value}px`, height: `${pixels.height * scale.value}px` }
+})
+
+/**
+ * Where one screenful falls inside the picture — only interesting once the
+ * picture is bigger than one, which is exactly when it stops being a screen and
+ * starts being a world to scroll around.
+ */
+const screenBoxes = computed(() => {
+  const current = doc(props.session)
+  const pixels = convertedPixels.value
+  if (!props.session.screenOutline || !pixels || !isScreenWorld(current)) return []
+  const info = MODES[current.mode]
+  const step = scale.value
+  const boxes: { key: string; style: Record<string, string> }[] = []
+  for (let y = 0; y < pixels.height; y += info.height) {
+    for (let x = 0; x < pixels.width; x += info.width) {
+      boxes.push({
+        key: `${x}:${y}`,
+        style: {
+          left: `${x * step}px`,
+          top: `${y * step}px`,
+          width: `${Math.min(info.width, pixels.width - x) * step}px`,
+          height: `${Math.min(info.height, pixels.height - y) * step}px`
+        }
+      })
+    }
+  }
+  return boxes
 })
 
 /**
@@ -224,7 +259,7 @@ watchEffect(() => {
 
 <template>
   <div class="canvas-pane">
-    <figure>
+    <figure v-if="hasSource && session.showOriginal">
       <figcaption>Original — {{ originalDims }}</figcaption>
       <div class="scroller">
         <p
@@ -269,6 +304,12 @@ watchEffect(() => {
             :style="gridStyle"
           />
           <span
+            v-for="box in screenBoxes"
+            :key="box.key"
+            class="screen-box"
+            :style="box.style"
+          />
+          <span
             v-for="box in overlays"
             :key="box.key"
             class="cut-box"
@@ -290,6 +331,14 @@ watchEffect(() => {
 .grid {
   position: absolute;
   inset: 0;
+  pointer-events: none;
+}
+
+/* One screenful of the world, so you can see where a camera would sit. */
+.screen-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid rgba(0, 200, 255, 0.55);
   pointer-events: none;
 }
 

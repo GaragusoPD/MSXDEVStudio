@@ -1,5 +1,13 @@
 # Software sprites and tiles
 
+> **There is an editor for these now.** `*.swsprites.json` holds software
+> sprites directly — each character its own size, its own frames, and a playback
+> preview — and exports the right runtime for whichever mode you pick: a CPU
+> blit in SCREEN 3, the `LMMM`-out-of-a-sheet cycle described below in the MSX2
+> bitmap modes, and borrowed pattern-table characters in SCREEN 1/2/4. This page
+> is still the explanation of *why* it works the way it does.
+
+
 Hardware sprites are fast but scarce: the VDP gives you 32 of them, a handful
 per scanline, and one color each. Software sprites and software tiles get
 around that by drawing straight into the screen's bitmap data with the VDP's

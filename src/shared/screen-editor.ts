@@ -32,7 +32,10 @@ export function applyConversion(doc: ScreenDoc, result: ConversionOutput): Scree
     palette: result.palette,
     indices: encodeIndices(result.indices)
   }
-  return { ...doc, converted }
+  // The picture the conversion produced *is* the document's size now. Keeping
+  // the old one would leave `converted` disagreeing with `width`/`height`, which
+  // is a validation error and, worse, a silent crop on the next load.
+  return { ...doc, width: result.width, height: result.height, converted }
 }
 
 /** sc5/6/7's editable palette: touches up one converted-image entry directly, no requantize. No-op on a fixed palette. */
