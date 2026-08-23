@@ -36,7 +36,7 @@ export interface Point {
   y: number
 }
 
-export type TileTool = 'pencil' | 'line' | 'rect' | 'fill'
+export type TileTool = 'pencil' | 'line' | 'rect' | 'fill' | 'spray'
 
 const inTile = (p: Point): boolean => p.x >= 0 && p.x < TILE_SIZE && p.y >= 0 && p.y < TILE_SIZE
 

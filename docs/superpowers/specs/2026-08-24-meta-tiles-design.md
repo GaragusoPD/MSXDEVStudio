@@ -97,8 +97,16 @@ When `true`:
   blank tiles, so it renders through `TileCanvas.vue:127`'s existing "palette
   index 0 is the MSX's transparent entry" checker with no new drawing code;
 - a meta cell holding 0 is skipped when the meta is drawn;
-- painting a meta cell blank resolves to tile 0 through ordinary dedup, so the
-  eraser needs no special case — it is "paint palette index 0".
+- painting a meta cell blank resolves to tile 0, so the eraser is just "paint
+  palette index 0".
+
+  This last one needed one explicit branch, contrary to what this document
+  first claimed. `paintPixel` has no reason to express an erased row the way
+  `blankTileEntry` does: it leaves whatever FG/BG pair the row was carrying, so
+  a fully-erased cell comes out as pattern `0x00` with colour `0x01` rather
+  than colour `0x00`. Identical on screen, different to the dedup — so without
+  canonicalising an all-index-0 cell, the eraser mints a fresh near-duplicate
+  tile on every stroke. `meta-paint.ts`'s `canonical()` is that branch.
 
 Pointing a meta at a tileset without the flag prompts once:
 
