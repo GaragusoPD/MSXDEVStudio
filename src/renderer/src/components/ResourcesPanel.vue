@@ -56,7 +56,7 @@ const label = (kind: string): string => KIND_LABELS[kind as ResourceKind] ?? kin
 const KIND_HELP: Record<ResourceKind, string> = {
   tiles: '8×8 patterns with colour attributes, for SCREEN 1, 2 and 4. Two colours per row.',
   btiles: 'A bank of small images addressed by number — SCREEN 3 blocks, or MSX2 bitmap tiles. One size for the whole bank.',
-  metatiles: 'Groups of tiles a map indexes instead of tiles, so a big world costs less ROM.',
+  metatiles: 'One design bigger than a tile — a tree, a door, a coin — with its own frames and flags, that a map places.',
   metabtiles: 'The same, over a bitmap tileset.',
   sprites: 'Hardware sprites: 8×8 or 16×16, one colour per plane, four or eight per scanline.',
   swsprites:

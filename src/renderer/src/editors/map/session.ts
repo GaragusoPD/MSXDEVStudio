@@ -214,14 +214,15 @@ async function load(session: MapSession): Promise<void> {
 /**
  * Loads whichever kind of tileset the map points at.
  *
- * Four of them now. A `.tiles.json` is the name-table case and carries blocks
- * and a reorder log. A `.btiles.json` is the bitmap tileset: it carries its own
- * tile size, so the map takes its cell geometry from the tileset rather than
+ * Three of them. A `.tiles.json` is the name-table case and carries blocks and
+ * a reorder log. A `.btiles.json` is the bitmap tileset: it carries its own tile
+ * size, so the map takes its cell geometry from the tileset rather than
  * guessing. A `.screen.json` is the older bitmap path — a picture read as a
- * grid, with anonymous cells and nothing to name. A `.meta-tiles.json` /
- * `.meta-btiles.json` is a meta-tile set, which is not art at all: it is a
- * grouping *over* one of the first two, so the tileset underneath is loaded as
- * well and the map's cells index the groups.
+ * grid, with anonymous cells and nothing to name.
+ *
+ * Meta-tiles are not among them: a map draws with a tileset and *places* metas
+ * over the grid, rather than indexing them instead of tiles. `loadMetaDocs`
+ * finds the ones that apply.
  */
 async function loadTileset(session: MapSession): Promise<void> {
   const tilesetPath = doc(session).tileset

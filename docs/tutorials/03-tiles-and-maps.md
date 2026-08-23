@@ -251,9 +251,10 @@ so anything that must hold still needs its own tile. The
 [demo game](../../demo_msx1/README.md) spins its coins this way, keeping the four
 poses as a 4x1 block.
 
-**Maps stored in clumps, not tiles.** A block is an authoring convenience: the
-map records the tiles it stamped, so the clump exists in the editor and nowhere
-in the ROM. If a level is big enough for its 768-bytes-a-screen to matter, a
-**meta-tile set** keeps those clumps as data and lets the map index them
-instead — a quarter of the bytes for 2×2 groups, before compression. It is a
-separate, optional resource; see [Meta-tiles](09-meta-tiles.md).
+**Designs bigger than a cell.** A block is an authoring convenience: the map
+records the tiles it stamped, so the clump exists in the editor and nowhere in
+the ROM. A **meta-tile** is the same clump kept as a resource — with its own
+animation frames, its own gameplay flags, and a pixel editor rather than a tile
+picker — that a map *places* alongside the tiles you painted by hand. Transparent
+where it holds tile 0, so it can sit over a background. See
+[Meta-tiles](09-meta-tiles.md).

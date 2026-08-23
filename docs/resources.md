@@ -8,7 +8,7 @@ in your project that an editor owns, and each one exports a C header your game
 |---|---|---|---|
 | tiles | `name.tiles.json` | Tile editor | 8×8 patterns for SCREEN 1/2/4 |
 | bitmap tiles | `name.btiles.json` | Bitmap tile editor | Tilesets for the MSX2 bitmap modes (SCREEN 5–8) |
-| meta-tiles | `name.meta-tiles.json` | Meta-tile editor | Named clumps of tiles a map can index instead of tiles |
+| meta-tiles | `name.meta-tiles.json` | Meta-tile editor | One design bigger than a tile, with frames and flags, that a map places |
 | meta-tiles (bitmap) | `name.meta-btiles.json` | Meta-tile editor | The same, over a bitmap tileset |
 | sprites | `name.sprites.json` | Sprite editor | 8×8 or 16×16 hardware sprites |
 | map | `name.map.json` | Map editor | Tile layouts / levels |
@@ -137,25 +137,46 @@ is no per-cell decision to hook. A foreground layer there is something you
 compose yourself, row by row, before writing it — usually by giving the
 see-through tile a flag and testing it as you build each row.
 
-**Meta-tiles** — a map costs one byte per cell, and most art repeats in clumps.
-A **meta-tile set** names those clumps, and a map pointed at the set indexes
-*them*: a 32×24 screen of 2×2 metas is 192 bytes instead of 768, before
-compression. It is a separate resource and entirely optional — a map that names
-an ordinary tileset exports exactly what it always did.
+**Meta-tiles** — the hardware's unit is an 8×8 cell, and almost nothing in a
+game is 8×8. A **meta-tile** is one design several cells across — a tree, a
+door, a spinning coin — with its own size, its own animation frames and its own
+eight gameplay flag bits. One file is one meta-tile.
 
-Create one from the Resources panel (`meta-tiles`, or `meta-tiles (bitmap)` over
-a `.btiles.json`), pick the tileset it groups, set the meta size, then build
-metas: **+ Meta** for a blank one, or pick a tile and press **+ From tiles** to
-take the block of tiles starting there. Then, in the map's side panel, choose
-the meta-tile set in the **Tileset** dropdown. The picker now shows metas rather
-than tiles and every tool works as before — the cells just mean something
-bigger. Switching a painted map between tiles and metas asks first, because
-every existing cell value stops meaning anything.
+It owns no pixels. Like a tileset's blocks, a meta holds tile *indices*; the
+editor shows it as a picture and resolves every stroke to tiles in the tileset
+it references, creating them as it goes and reusing one whenever the same 8×8
+appears twice. So painting a meta grows the tileset, and never changes a tile
+something else is already using.
 
-Deleting or moving a meta renumbers the maps drawn with the set, the same way
-deleting a tile renumbers the maps drawn with a tileset. Blocks are not offered
-as stamps on a meta map: a block's cells are tile indices, and this map's are
-not.
+**Tile 0 is the transparent one.** A tileset opts in (side panel → **Reserve
+tile 0**), after which tile 0 is locked blank, drawn as a checkerboard, and
+*skipped* when a meta is stamped — which is the only transparency a name table
+has. Reserving it on a tileset that already uses tile 0 as art shifts every
+index up by one and renumbers the maps drawn with it, so the editor asks first.
+
+Create one from the Resources panel (`meta-tiles`), point it at a tileset, set
+its size, and draw: pencil, line, rectangle, fill, spray and erase, over the
+MSX1 palette or the tileset's SCREEN 4 one. **Frames** are along the bottom, with
+onion skin and playback. Painting in SCREEN 1 offers only the two colours that
+tile's group already spends, because all eight tiles in a group share one pair.
+
+To use one, open a map and pick it from the **lower half** of the left sidebar —
+tiles above, meta-tiles below. Only metas drawn over that map's tileset are
+offered. Click to place, click a placed one to select it, drag to move, Delete
+to remove.
+
+A placement is a **live reference** by default: the grid under it holds tile 0,
+the game draws it from the placement table each time, and it can animate. Tick
+**Bake into the layer** for static scenery instead — frame 0's tiles go into the
+grid, so the ordinary layer write already draws it and it costs nothing at
+runtime. Painting a tile inside a baked placement drops its record, because the
+grid no longer holds what the record claims.
+
+Undo leaves tiles behind: a stroke that created a tile and was then undone still
+grew the bank. **Compact unused tiles** in the meta's side panel reclaims the
+ones *this editing session* created and no longer uses. It is deliberately not
+"every tile nothing refers to" — a tile used only by a map you do not have open
+would look exactly the same, and removing it would silently change that map.
 
 **Bitmap tiles** — the SCREEN 5/6/7/8 counterpart of a pattern tileset, and a
 different thing from a screen. A screen is one picture used as it is; a tileset
@@ -412,14 +433,24 @@ g_Scenery_DrawBlock(10, 5, G_SCENERY_DOOR_BASE, G_SCENERY_DOOR_W, G_SCENERY_DOOR
 ```
 
 **Meta-tiles** — the same idea, for a set rather than a tileset. A meta's size is
-known at compile time, so the call is shorter:
+known at compile time, so the call takes a frame rather than a size:
 
 ```c
-g_CanyonMetatiles_DrawMeta(10, 5, G_CANYONMETATILES_GROUND);
+g_Tree_Draw(10, 5, 0);        // frame 0 at tile column 10, row 5
 ```
 
-The helpers that expand a whole *map* live on the map's own export, because they
-need its dimensions — see [Meta-tiles](#meta-tiles) above.
+A map that places meta-tiles exports a placement table beside its layers, and
+with helpers on, the runtime that walks it:
+
+```c
+u8 frames[G_LEVEL_METAS] = { 0 };
+g_Level_DrawLayer(g_Level_Background, 0, 0);   // the grid, one call
+g_Level_DrawPlacements(frames);                // the live metas over it
+```
+
+`frames[slot]` is the frame each meta currently shows, so animating a placed
+meta is advancing that array and calling `_DrawPlacements` again. Baked
+placements are skipped — their tiles are already in the layer.
 
 **Software sprites** (MSX2, `VDP_USE_COMMAND`) — characters drawn *into* the
 screen, so the per-scanline sprite limit does not apply. The fragments are

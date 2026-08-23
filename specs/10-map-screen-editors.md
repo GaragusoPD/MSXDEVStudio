@@ -101,44 +101,75 @@ for sc10/12); pencil/fill retouch on the converted indexed image; re-running the
 conversion re-applies retouch strokes on top. Export via Spec 07 (bin for
 `VDP_CommandHMMC`-style blits or the MSXgl image format — Spec 07 decides).
 
-## C. Meta-tile sets (`*.meta-tiles.json`, `*.meta-btiles.json`) — added after A
+## C. Meta-tiles (`*.meta-tiles.json`, `*.meta-btiles.json`) — rewritten after A
 
-Same-sized groups of tiles that a map may index **instead of** indexing tiles: a
-32×24 screen of 2×2 metas is 192 bytes rather than 768, before RLEp. Purely
-additive — a map that names a plain tileset is unchanged in model, editor and
-export.
+**One meta-tile per file**: a design several cells across — a tree, a door, a
+coin — with its own size in tiles, its own animation frames and its own eight
+gameplay flag bits. Not a compression scheme; an *object* a level places.
+
+This replaces the meta-tile *set* model (one commit, no project ever held a
+file in that format), where a map indexed metas **instead of** tiles.
 
 ```jsonc
 {
-  "version": 1,
-  "tileset": "res/main.tiles.json",  // the .tiles.json / .btiles.json being grouped
-  "width": 2, "height": 2,           // every meta is exactly this, in tiles
-  "cell": { "width": 16, "height": 16, "cols": 16 },  // bitmap sets only, mirrored from the tileset
-  "metas": [ { "name": "ground", "width": 2, "height": 2, "tiles": [1,2,3,4] } ]
+  "version": 2,
+  "tileset": "res/main.tiles.json",  // the .tiles.json / .btiles.json it references
+  "width": 2, "height": 3,           // this meta's own size, in tiles
+  "cell": { "width": 16, "height": 16, "cols": 16 },  // bitmap only, mirrored from the tileset
+  "frames": [ { "tiles": [1,2,3,4,5,6] } ],           // frames[0] is the resting pose
+  "flags": 1                                          // eight bits, as TilesDoc.flags per tile
 }
 ```
 
-A meta is a `TileBlock` verbatim, so `blockPixels` and the marquee machinery are
-reused as they are. `MapDoc` gains `meta: {width,height} | null`, mirrored from
-the set for the same reason `cell` is mirrored — the exporter renders one
-resource at a time and never opens another file. A meta map's `width`/`height`
-count metas; `_TILE_W`/`_TILE_H` carry the size in tiles.
+A meta owns no pixels — it holds tile indices, as `TileBlock` does. The editor
+presents a canvas and resolves every stroke through `meta-paint.ts`:
+**copy-on-write** into the referenced tileset. A stroke derives what the touched
+cell would now look like, finds-or-creates that tile in the bank, and repoints
+the cell. The bank is append-only, so no existing index ever shifts and painting
+a meta cannot change a map. Orphans left by undo are reclaimed by an explicit
+Compact, which only removes tiles the session itself created — reachability
+across closed files is not knowable.
+
+`TilesDoc` gains `reserveTile0`. When set, tile 0 is locked all-blank (pattern
+and colour both zero, so it renders through the canvas's existing index-0
+checkerboard) and a meta cell holding 0 is *skipped* when drawn. That skipped
+write is the only transparency a name table has. Off in every pre-existing file:
+tile 0 is real art in `demo_msx1`, drawn 274 times.
 
 The hyphen in the suffixes is load-bearing: `resourceKindOf` matches by
 `endsWith` over `RESOURCE_SUFFIXES`, so `.meta.tiles.json` would resolve to
 `tiles` and open the wrong editor.
 
-Two reorder seams meet and cannot cross, because a document only ever replays the
-log of the file it *references*: a set replays its tileset's (renumbering the
-tiles inside its metas), a meta map replays the set's (renumbering its cells), a
-plain map replays its tileset's as before.
+**Maps place metas rather than indexing them.** `MapDoc` gains `metas: MetaRef[]`
+— path, export symbol, size, frame count, flags, mirrored for the reason `cell`
+is mirrored — and `MapLayer` gains `placements: {slot, x, y, baked?}[]`. The grid
+stays a grid of tile indices and exports exactly what it always did. A *live*
+placement leaves tile 0 under it and is drawn at runtime; a *baked* one has
+frame 0 written into the grid and is skipped, at the cost of not animating.
+`baked` rides in bit 7 of the slot byte, which is why `MAX_MAP_METAS` is 128.
 
-Export: the set emits one table at a fixed stride plus `_META_W`/`_META_H`/
-`_COUNT` and a `#define` per named meta, and (helpers on) `_DrawMeta`. The map
-emits `_ExpandRow`, `_ExpandToRAM` and — pattern modes — `_DrawView`, or the
-`metas`-taking `_DrawRow`/`_DrawRowOver` in bitmap modes. It emits **no**
-`_DrawLayer`: the layer holds meta indices, and writing them into the name table
-would draw whichever tiles share those numbers.
+One reorder seam remains, running one way: a meta replays its tileset's log. It
+publishes none — there are no metas-within-a-set to renumber, and a map's own
+`metas` list is local to it.
+
+**The tileset store.** Painting a meta writes into another document, so the same
+`.tiles.json` cannot be a separate copy per editor. `renderer/stores/tilesetStore.ts`
+holds one per path, shared by the tile editor and every meta editor; undo stays
+per editor and rebases when the store changes underneath it, which is safe only
+because painting appends and never edits in place.
+
+Export: a meta emits one table of its frames end to end, plus `_META_W`/`_META_H`/
+`_CELLS`/`_FRAMES`/`_FLAGS`, and (helpers on) `_Draw(x, y, frame)` — written as
+runs of non-transparent cells, since a transparent cell is a skipped write. A map
+emits its layers as before, plus `_Placements` (three bytes each) with `_METAS`,
+`_PLACEMENTS`, a `#define` per meta and its mirrored flags, and (helpers on)
+`_DrawPlacements(frames)`, which `extern`s each meta's symbol and skips the baked
+entries.
+
+**Stage 2** brings pixel painting and placement to the bitmap and multicolour
+modes. Until then `.meta-btiles.json` shares the document shape and exports a
+`_Draw` that blits out of the atlas, but has no pixel editor and no map
+placement.
 
 ## Acceptance
 
@@ -148,6 +179,9 @@ would draw whichever tiles share those numbers.
 - Import a 24-bit PNG → sc5 conversion produces ≤16-color 256×212 output whose
   palette validates against the 512-color space; retouch survives reconversion.
 - Undo/redo across stamp/fill/layer ops.
-- A meta map builds and boots showing the same picture as the tile map it was
-  converted from, and a map with no meta set exports byte-identical output to
-  before section C existed.
+- A painted meta-tile placed on a map builds and boots, drawing over the grid
+  where it is opaque and showing the grid through where it holds tile 0.
+- A map that places nothing exports byte-identical output to before section C
+  existed.
+- Painting the same 8×8 in two cells grows the tileset by one tile, not two, and
+  never alters a tile another resource already references.

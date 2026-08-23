@@ -1,248 +1,203 @@
-# Meta-tiles: bigger maps in less ROM
+# Meta-tiles: designs bigger than a cell
 
-A tile map costs one byte per cell. A 32×24 screen is 768 bytes, a 128×24
-four-screen level is 3072, and on a 32 KB ROM that adds up faster than the art
-does. This tutorial is about spending a quarter of it, by noticing something
-about MSX art that the hardware does not: **it repeats in clumps.**
+The VDP's unit is an 8×8 cell. Almost nothing in a game is 8×8. A tree is
+2×3 cells, a door is 2×3, a coin is 1×1 but has four poses, and every one of
+them is something you think about as *one thing* while the hardware insists on
+seeing twelve.
 
-Nothing here is required. A map that names an ordinary `.tiles.json` works
-exactly as it always has, and everything in
-[Tiles and maps](03-tiles-and-maps.md) still applies. Meta-tiles are a second
-resource you create when a map is big enough to be worth it.
+A **meta-tile** is that one thing, kept as a resource: its own size in tiles,
+its own animation frames, its own gameplay flags. You paint it as a picture, and
+you drop it on a map next to the tiles you painted by hand.
 
-**MSXDEVStudio resources:** a `.meta-tiles.json` (or `.meta-btiles.json`) over a
-tileset, and a `.map.json` pointed at it · **Machine:** MSX1 and up
+**MSXDEVStudio resources:** a `.meta-tiles.json` over a `.tiles.json`, and a
+`.map.json` that places it · **Machine:** MSX1 and up (SCREEN 1, 2 or 4)
 
-## The idea
+## A meta-tile owns no pixels
 
-Look at almost any MSX screen and you will find the same 2×2 or 4×4 groups over
-and over: a brick, a section of wall, a treetop, the end of a platform. The name
-table stores them one 8×8 tile at a time because that is what the VDP reads —
-but *your level data* does not have to.
+This is the part worth understanding before you draw anything, because it
+explains everything else.
 
-A **meta-tile set** names those groups. A map pointed at the set stores one byte
-per *group* instead of one per tile:
+A meta-tile stores **tile indices**, not art — the same way a tileset's named
+blocks do. The editor shows you a canvas and lets you draw on it, and every
+stroke is resolved, immediately, into tiles:
 
-```
-  tiles                        metas (2×2)
-  ┌──┬──┬──┬──┬──┬──┐          ┌─────┬─────┬─────┐
-  │ 4│ 5│ 4│ 5│ 8│ 9│          │     │     │     │
-  ├──┼──┼──┼──┼──┼──┤          │  0  │  0  │  1  │
-  │ 6│ 7│ 6│ 7│10│11│          │     │     │     │
-  └──┴──┴──┴──┴──┴──┘          └─────┴─────┴─────┘
-  12 bytes                     3 bytes
-```
+1. Work out which 8×8 cell the pixel landed in.
+2. Take that cell's current tile, apply the stroke to a copy of it.
+3. Look for a tile in the bank that already looks exactly like that. If one
+   exists, point the cell at it. If not, append it and point the cell there.
 
-The saving is exactly the number of tiles per meta: 4× for 2×2, 16× for 4×4.
-And it composes with RLEp compression, which still packs whatever is left.
+Three things follow, and they are the whole design:
 
-What you pay is one extra table (the set itself — 4 bytes per meta, so a
-64-meta set is 256 bytes) and a little arithmetic per cell when the map is
-drawn. For one screen that trade is not worth making. For a level, it usually
-is.
+- **Painting a meta grows the tileset.** That is not a side effect, it is the
+  mechanism. Open the tile editor after drawing and you will see the tiles your
+  strokes created.
+- **Painting a meta can never damage a map.** Existing tiles are never edited in
+  place and never renumbered, so a map drawn with tile 12 still has tile 12.
+- **Identical cells cost one tile.** Draw a brick in two cells of the same meta
+  and the bank grows by one, not two. Draw the same brick in a second meta
+  tomorrow and it grows by nothing.
 
-## Building a set
+## Tile 0 is the hole
 
-1. In the **Resources** panel, pick **meta-tiles** (or **meta-tiles (bitmap)**
-   if the art is a `.btiles.json` for SCREEN 5–8), type a name, press **New**.
-2. In the new editor's side panel, choose the **tileset** to group. The left
-   pane fills with its tiles.
-3. Set the **meta size** — 2×2 is the usual choice. Every meta in the set is
-   this size; the exported table is read at one stride, so they have to be.
-4. Add metas. **+ Meta** gives you a blank one to fill by clicking a tile on the
-   left and then the cells on the canvas. **+ From tiles** is faster when the
-   art was drawn as a block already: pick the top-left tile and it takes the
-   whole W×H group starting there.
-5. Name the ones you will refer to from C. A named meta exports a `#define`;
-   unnamed ones are just their index.
+A name table has no transparency. Every cell holds a tile index and the VDP
+draws it; there is no value meaning "nothing here". The only way to see through
+a cell is for the game **not to write it**.
 
-Then open the map, and in **Tileset** choose the meta-tile set instead of the
-tileset. The picker now shows metas, and stamp, fill, rectangle, erase,
-rect-select and copy/paste all work as before — the cells simply mean something
-bigger. (If the map already has art, MSXDEVStudio asks first: the old cell values
-cannot survive the change, because a 3 that meant "brick" now means "meta 3".)
+So meta-tiles reserve tile 0 for that. A tileset opts in — side panel →
+**Reserve tile 0** — and after that:
 
-## What you get in C
+- tile 0 is locked blank and drawn as a checkerboard, in the tile editor and in
+  the meta editor both;
+- a meta cell holding 0 is skipped when the meta is stamped, so the background
+  shows through;
+- the eraser is simply "paint colour 0": erase a whole cell and it resolves back
+  to tile 0 through the same dedup as everything else.
 
-The set exports one table and its geometry:
+If the tileset already uses tile 0 as artwork — a solid block, say — reserving
+it has to shift every index up by one, and every map drawn with that tileset is
+renumbered to match. The editor tells you and asks first. Reserving it on a
+tileset you have just created is free, and new tilesets do it automatically.
 
-```c
-#include "content/level_metatiles.h"
+## Drawing one
 
-// #define G_LEVELMETAS_META_W 2
-// #define G_LEVELMETAS_META_H 2
-// #define G_LEVELMETAS_COUNT 24
-// #define G_LEVELMETAS_GROUND 0        // one per meta you named
-// extern const unsigned char g_LevelMetas[];
-```
+Create a `meta-tiles` resource from the Resources panel, point it at a tileset,
+and set its size — 2×3 for a tree, say.
 
-The map exports its layers as meta indices, plus enough to make sense of them:
-`_W`/`_H` now count **metas**, and `_TILE_W`/`_TILE_H` are the size in tiles.
+The tools are the tile editor's, plus one: **pencil**, **line**, **rectangle**,
+**fill**, **erase**, and **spray**. Spray is an ordered dither rather than
+random scatter, keyed to the canvas coordinates, so overlapping passes agree
+about the pixels they share and a slow drag builds one clean texture instead of
+mottle. Its density slider is the threshold.
 
-```c
-#include "content/level_map.h"
+Fill crosses tile seams. You drew one shape, not four.
 
-// #define G_LEVEL_W 32          // metas across
-// #define G_LEVEL_TILE_W 64     // tiles across
-// #define G_LEVEL_META_CELLS 4  // the table stride
-```
+### What the hardware refuses
 
-With **Export ready-made C** ticked on the map you also get the code that turns
-one back into the other. Note that every call takes the set's table as an
-argument — the map does not know its name, the same way `_DrawLayer` has always
-taken the layer rather than baking it in.
+SCREEN 2 and 4 allow two colours per 8×1 pixel row. SCREEN 1 allows two per
+*group of eight tiles*. A stroke that asks for a third colour cannot be shown,
+so those pixels are **dropped**, and the status bar says how many. No dialog
+interrupts the drag — you keep drawing, and you can see what landed.
 
-### Drawing straight to the screen
+In SCREEN 1 the palette only offers the two colours that tile's group already
+spends, because offering the other fourteen would just produce dropped pixels.
+To change them you change the group's pair, which recolours all eight tiles in
+it — the editor says so before it does it.
 
-```c
-u8 rowbuf[G_LEVEL_TILE_W];
+### Frames
 
-// A 32×20 window at name-table row 4, scrolled by camX:
-g_Level_DrawView(g_Level_Terrain, g_LevelMetas, rowbuf, camX, 0, 0, 4, 32, 20);
-```
+The strip along the bottom is the animation. **Duplicate** copies the current
+frame, which is usually what you want — a walk cycle starts from a pose, not
+from a blank canvas. **Onion skin** shows the previous frame underneath, faint,
+so the next one can be lined up against it.
 
-`_DrawView` expands one row at a time into `rowbuf` and writes it, so it never
-needs the map in RAM. Call it with the whole map's size and it is your
-"draw everything" — that is the cheapest way to put a meta map on screen.
+There is no per-frame duration. Timing is the game's decision, exactly as it is
+for hardware sprites.
 
-There is deliberately no `_DrawColumn`. SCREEN 1/2/4 have no hardware horizontal
-scroll, so stepping the camera one column rewrites the whole name table anyway;
-`_DrawView` *is* that.
+### Reclaiming tiles
 
-There is also no `_DrawLayer` on a meta map, and this is the one thing that will
-catch you out if you come from a plain tile map. The layer holds meta indices.
-Writing it into the name table would draw whichever tiles happen to share those
-numbers — a screen of noise, with nothing to point at the cause. The exporter
-therefore does not emit it.
+Undo repoints a cell but leaves the tile it created in the bank. Draw and undo
+for an hour and the bank fills with experiments. **Compact unused tiles** clears
+them out.
 
-### Expanding to RAM
+It only removes tiles *this editing session* created and no longer uses. That
+looks over-cautious until you consider the alternative: a tile used solely by a
+map you do not happen to have open is indistinguishable, from here, from an
+orphan. Removing it would silently change a level you were not even looking at.
 
-A game that only *shows* its map wants `_DrawView`. A game that **reads and
-writes** it — collision, or turning a collected coin into sky — wants the tiles
-in memory:
+## Placing one on a map
 
-```c
-u8 g_World[G_LEVEL_TILE_W * G_LEVEL_TILE_H];
+Open a map over the same tileset. The left sidebar is now two pickers: **tiles
+above, meta-tiles below**. Only metas drawn over *this* map's tileset appear —
+one built over a different bank names tiles that mean something else here, and
+placing it would paint garbage.
 
-g_Level_ExpandToRAM(g_Level_Terrain, g_LevelMetas, g_World);
+Pick one and click. Click a placed meta to select it, drag to move it, Delete to
+remove it.
 
-// Now it is an ordinary tile map, and everything you already know works:
-u8 tile = g_World[ty * G_LEVEL_TILE_W + tx];
-if (g_Tiles_Flags[tile] & FLAG_SOLID) { /* blocked */ }
-g_World[ty * G_LEVEL_TILE_W + tx] = T_SKY;   // and you can change it
-```
+### Live or baked
 
-That is the trade in one line: meta-tiles save you **ROM**, and expanding costs
-you **RAM**. A 64×12 level is 768 bytes of RAM either way — but only 192 bytes
-of ROM instead of 768, and you can still compress those 192.
+Every placement is one of two things, and the difference is where the tiles are.
 
-If you want collision without expanding, resolve the cell yourself:
+**Live** is the default. The grid under the meta holds tile 0, and the game
+draws the meta from the placement table every time it draws the screen. It costs
+a few writes per screen, it updates when you edit the meta, and it is the only
+kind that can animate.
+
+**Baked** — tick *Bake into the layer* — writes frame 0's tiles into the grid.
+The ordinary layer write then draws it, so it costs **nothing** at runtime. It
+cannot animate, and painting a tile inside it drops its record: the grid no
+longer holds what the record claims, and a receipt that lies is worse than no
+receipt.
+
+Rule of thumb: bake the scenery, leave the things that move alone.
+
+## Using it from C
+
+A meta-tile exports one table, its frames end to end:
 
 ```c
-u8 meta = g_Level_Terrain[(ty / G_LEVEL_META_H) * G_LEVEL_W + (tx / G_LEVEL_META_W)];
-u8 tile = g_LevelMetas[meta * G_LEVEL_META_CELLS
-                       + (ty % G_LEVEL_META_H) * G_LEVEL_META_W
-                       + (tx % G_LEVEL_META_W)];
+#define G_TREE_META_W 2
+#define G_TREE_META_H 3
+#define G_TREE_CELLS  6      // tiles per frame — the table's stride
+#define G_TREE_FRAMES 4
+#define G_TREE_FLAGS  0x01   // your bits, your meaning
+extern const u8 g_Tree[];
+
+g_Tree_Draw(10, 5, 0);       // frame 0 at tile column 10, row 5
 ```
 
-Both `%` and `/` are by a compile-time constant, so a power-of-two meta size
-compiles to a shift and a mask rather than SDCC's division routine. Prefer 2×2
-and 4×4 over 3×3 for exactly that reason.
+`_Draw` writes each row as runs of non-transparent cells rather than one
+rectangle, because a cell holding tile 0 has to be skipped. For a solid meta
+that is still one `VDP_WriteLayout_GM2` per row.
 
-### Stamping one meta at runtime
-
-The *set* exports its own helper, for the door that opens or the block that
-breaks:
+A map that places meta-tiles exports the placement table beside its layers:
 
 ```c
-g_LevelMetas_DrawMeta(10, 5, G_LEVELMETAS_DOOR_OPEN);
+#define G_LEVEL_METAS        2
+#define G_LEVEL_PLACEMENTS   12
+#define G_LEVEL_META_G_TREE  0      // a name per meta
+#define G_LEVEL_FLAGS_G_TREE 0x01   // mirrored, so you need no other header
+extern const u8 g_Level_Placements[];   // slot | baked<<7, x, y
+
+u8 frames[G_LEVEL_METAS] = { 0 };
+g_Level_DrawLayer(g_Level_Background, 0, 0);   // the grid, one call
+g_Level_DrawPlacements(frames);                // the live metas over it
 ```
 
-Remember to change the map too if the game will redraw that area later —
-drawing the right thing and recording it are two steps, exactly as they are for
-a plain tile map.
-
-## Compression
-
-Meta layers pack with RLEp like any other layer; tick **Compress (RLEp)** on the
-map and the side panel shows the measured trade. The one difference from a plain
-map: the meta helpers all read an **unpacked** layer, so unpack once at startup
-rather than per call.
+To animate, advance `frames[slot]` and call `_DrawPlacements` again. Pace it
+yourself — hold each pose for several frames from a counter in the VBlank loop,
+rather than rewriting VRAM at 50/60 Hz:
 
 ```c
-u8 g_Level[G_LEVEL_TERRAIN_UNPACKED_SIZE];
-
-RLEp_UnpackToRAM(g_Level_Terrain, g_Level);      // once, at startup
-g_Level_DrawView(g_Level, g_LevelMetas, rowbuf, camX, 0, 0, 4, 32, 20);
+if(++tick >= 8)
+{
+	tick = 0;
+	frames[G_LEVEL_META_G_COIN] = (frames[G_LEVEL_META_G_COIN] + 1) % G_COIN_FRAMES;
+	g_Level_DrawPlacements(frames);
+}
 ```
 
-Note the define is `G_LEVEL_TERRAIN_UNPACKED_SIZE`, not `G_LEVEL_UNPACKED_SIZE`
-— it is emitted per table, so it carries the layer's name.
+Baked placements are skipped by `_DrawPlacements`, so a level full of baked
+scenery and three animated coins pays for three.
 
-Keeping the unpacked layer around is not a cost you are paying reluctantly: it
-is small (192 bytes for a screen of 2×2 metas), and having it in RAM is what
-lets the game change the level as it runs.
+### Collision
 
-`RLEp_UnpackToRAM` needs `"compress"` in **LibModules** and
-`COMPRESS_USE_RLEP` / `COMPRESS_USE_RLEP_DEFAULT` TRUE in `msxgl_config.h`,
-which is the default.
+Two independent sets of flags, and neither overrides the other:
 
-## Bitmap modes
+- The **tileset's** `_Flags`, indexed by tile, for anything in the grid. This is
+  what a walking character tests. Baked meta-tiles are in the grid, so their
+  tiles answer here like any others.
+- A **meta's** `_FLAGS`, for asking what the *object* is — is this one a door,
+  is it a hazard — while walking the placement table. Mirrored into the map's
+  own header so you do not need to include every meta's.
 
-A `.meta-btiles.json` groups a bitmap tileset, and a bitmap map drawn with it
-keeps the shape it had in [Bitmap graphics](07-bitmap-graphics.md) — one extra
-argument:
+## What is not here yet
 
-```c
-g_Stage_DrawRow(g_Stage_Terrain, g_CanyonMetas, row, ATLAS_Y, destY);
-```
+Pixel editing for bitmap and multicolour modes. A `.meta-btiles.json` records
+its size, frames and flags and exports a `_Draw` that blits out of the atlas,
+but you cannot paint one and a bitmap map cannot place one. SCREEN 1, 2 and 4
+only, for now.
 
-`row` is still a *cell* row, and the loop still issues one `HMMM` per cell
-across the map. That is on purpose: a scroller written against a plain bitmap
-map ports by adding the argument, and its per-frame blit budget does not move.
-`_DrawRowOver` (the transparent-cell twin) gains the same argument and nothing
-else.
+---
 
-The saving in a bitmap mode is the same ROM saving on the map, but it is worth
-weighing against the alternative: you could equally cut the atlas at 32×32
-instead of 16×16 and have no metas at all. Meta-tiles win when the *same* small
-cells recur in different combinations — which is the usual case for terrain, and
-not the case for one-off scenery.
-
-## Gotchas
-
-- **No `_DrawLayer`, and no `Scroll_Initialize`.** MSXgl's `scroll` module blits
-  raw name-table rows straight out of the array you hand it. A meta layer is not
-  that. Use `_DrawView`, or expand to RAM first and scroll that.
-- **`_W`/`_H` count metas.** `_TILE_W`/`_TILE_H` are what you compare a pixel
-  position against. Mixing them up gives you a camera that stops a quarter of
-  the way across the level.
-- **`_ExpandRow` and `_DrawView` clip nothing.** Keep the window inside the map;
-  they read whatever is past the end otherwise.
-- **The set is not the tileset.** The map's **Tileset** dropdown names the *set*;
-  the set's own dropdown names the tileset. You still have to load the tileset's
-  patterns and colors into VRAM as usual — meta-tiles change the level data, not
-  the art.
-- **Tile blocks are not offered on a meta map.** A block's cells are tile
-  indices and this map's cells are not, so stamping one would paint whichever
-  metas share those numbers. The meta set *is* the grouping a meta map paints
-  with.
-- **Deleting or moving a meta renumbers every map drawn with the set**, exactly
-  as deleting a tile renumbers every map drawn with a tileset. MSXDEVStudio
-  replays that for you — open maps immediately, closed ones when you next open
-  them — but a meta you delete leaves those cells pointing at meta 0.
-
-## When not to bother
-
-- The map is one screen. 768 bytes against 192 plus a 96-byte table plus the
-  expansion code is not a win worth the indirection.
-- The art barely repeats — a hand-drawn title picture, a boss room where every
-  cell is unique. Meta-tiles save nothing if there are as many metas as there
-  were tiles.
-- You are already at the RAM limit and cannot afford to expand, and the drawing
-  path is hot enough that the per-cell arithmetic matters. Measure before
-  assuming this one; `_DrawView` is a shift and a compare per cell.
-
-RLEp compression on a plain tile map is the simpler answer for a lot of levels,
-and the two are not exclusive — try compression first, and reach for meta-tiles
-when the map is big enough that a quarter of the bytes is real money.
+Next: [SCREEN 3, chunky graphics](10-screen3-chunky.md) · Back: [Tiles and maps](03-tiles-and-maps.md)

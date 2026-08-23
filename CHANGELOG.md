@@ -35,8 +35,13 @@ editor; bitmap and multicolour modes follow in stage 2.
   which is what makes meta-tile transparency possible. Off for every existing
   tileset, so no project changes behaviour without being migrated deliberately.
 - **Exported C for both** — a meta's frame table with `_META_W` / `_META_H` /
-  `_FRAMES` / `_FLAGS` and an opt-in `_Draw(x, y, frame)`; a map's placement
-  table with an opt-in `_DrawPlacements(frames)`.
+  `_CELLS` / `_FRAMES` / `_FLAGS` and an opt-in `_Draw(x, y, frame)`; a map's
+  placement table with `_METAS`, `_PLACEMENTS`, a `#define` per meta and its
+  mirrored flags, and an opt-in `_DrawPlacements(frames)`. Both write each row
+  as runs of non-transparent cells through MSXgl's own `VDP_WriteLayout_GM2`,
+  because a transparent cell is a *skipped* write.
+- **`fillPoints` takes a width and height**, so the meta canvas can flood a
+  picture rather than a single 8×8 cell. Defaults to today's behaviour.
 
 #### Changed
 

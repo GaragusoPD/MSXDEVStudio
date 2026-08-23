@@ -171,49 +171,74 @@ g_Scenery_DrawBlock(10, 4, G_SCENERY_HOUSE_BASE, G_SCENERY_HOUSE_W, G_SCENERY_HO
 g_MyMap_DrawLayer(g_MyMap_Background, 0, 0);
 \`\`\`
 
-### Meta-tiles — optional, and only worth it for big maps
+### Meta-tiles — designs bigger than one cell, placed on a map
 
-A map costs one byte per cell, and most MSX art repeats in clumps: a brick wall,
-a pine tree, a platform end. A **meta-tile set** (\`res/*.meta-tiles.json\`, or
-\`*.meta-btiles.json\` over a bitmap tileset) names those clumps once, and a map
-pointed at the set indexes *them* instead of tiles. A 32×24 screen of 2×2 metas
-is 192 bytes rather than 768, before RLEp.
+The hardware's unit is an 8×8 cell, and almost nothing in a game is 8×8. A
+**meta-tile** (\`res/*.meta-tiles.json\`, one per file) is a design that is
+several cells across — a tree, a door, a spinning coin — with its own size, its
+own animation frames, and its own eight gameplay flag bits.
 
-This is opt-in and nothing else changes: a map that names an ordinary
-\`.tiles.json\` exports exactly what it always did. Use it when a map is large
-enough for the ROM to notice, and skip it when it is not — the indirection costs
-a few cycles per cell drawn and one extra table.
+It owns no pixels. Like a tileset's blocks, a meta holds *tile indices*; the
+IDE's editor presents it as a picture and resolves each stroke to tiles in the
+referenced \`.tiles.json\`, creating them as needed. So the tileset is still the
+only place art lives, and a meta is a way of naming part of it.
 
-The set exports its metas as one table at a fixed stride, plus
-\`_META_W\`/\`_META_H\`/\`_COUNT\` and a \`#define\` per *named* meta. The map exports
-its own \`_META_W\`/\`_META_H\`, \`_META_CELLS\` (the stride) and \`_TILE_W\`/\`_TILE_H\`
-(its size in tiles — \`_W\`/\`_H\` count metas now). With helpers on the map gains:
+**Tile 0 is the transparent one**, in a tileset that opts in with
+\`reserveTile0\`. A meta cell holding 0 is *not written* when the meta is drawn,
+so whatever is on screen shows through — the only kind of transparency a name
+table has. A tileset without the flag keeps tile 0 as ordinary art and cannot
+host a transparent meta.
+
+A meta exports one table, its frames end to end:
 
 \`\`\`c
-// The map's cells are meta indices, so pass the set's table in alongside them.
-u8 rowbuf[G_MYMAP_TILE_W];
-g_MyMap_DrawView(g_MyMap_Background, g_MyMetas, rowbuf, camX, camY, 0, 0, 32, 24);
+#define G_TREE_META_W 2
+#define G_TREE_META_H 3
+#define G_TREE_CELLS  6      // tiles per frame — the table's stride
+#define G_TREE_FRAMES 4
+#define G_TREE_FLAGS  0x01   // what it *means*, your bits to define
+extern const u8 g_Tree[];
 
-// Or expand it to plain tiles in RAM, when the game *reads and writes* the map
-// — collision, or turning a collected coin into sky. VRAM cannot do that.
-u8 world[G_MYMAP_TILE_W * G_MYMAP_TILE_H];
-g_MyMap_ExpandToRAM(g_MyMap_Background, g_MyMetas, world);
+// With helpers on. Skips cells holding tile 0.
+g_Tree_Draw(10, 5, 0);       // frame 0 at tile column 10, row 5
 \`\`\`
 
-Two rules worth knowing before you use it:
+### Placing meta-tiles on a map
 
-- There is **no \`_DrawLayer\` on a meta map**. Writing meta indices into the name
-  table would draw whichever tiles happen to share those numbers. \`_DrawView\`
-  covering the whole map is the equivalent, and it needs a \`_TILE_W\`-byte row
-  buffer instead of the whole map in RAM.
-- Compressed meta layers are **unpacked by you**, once, with
-  \`RLEp_UnpackToRAM\` — the helpers read an unpacked layer. That is affordable
-  precisely because a meta layer is small, and it is what lets the game keep the
-  map in RAM and change it.
+A map's grid is still one byte per cell of plain tile indices — that has not
+changed and every existing map exports exactly what it always did. Meta-tiles
+sit **beside** the grid as *placements*: a list of \`{slot, x, y}\`, over a table
+of the metas the map uses.
 
-Collision still reads the tileset's \`_Flags\`, indexed by *tile*: either expand
-the map first, or resolve a cell yourself with
-\`g_MyMetas[meta * G_MYMAP_META_CELLS + sy * G_MYMAP_META_W + sx]\`.
+\`\`\`c
+#define G_LEVEL_METAS      2
+#define G_LEVEL_PLACEMENTS 12
+#define G_LEVEL_META_G_TREE 0    // a name per meta, so code says the name
+#define G_LEVEL_FLAGS_G_TREE 0x01
+extern const u8 g_Level_Placements[];   // slot | baked<<7, x, y — 3 bytes each
+
+// With helpers on:
+u8 frames[G_LEVEL_METAS] = { 0 };
+g_Level_DrawLayer(g_Level_Background, 0, 0);   // the grid, one call
+g_Level_DrawPlacements(frames);                // the metas over it
+\`\`\`
+
+\`frames[slot]\` is the frame each meta is currently showing, so animating a
+placed meta is advancing that array and calling \`_DrawPlacements\` again. Pace
+it yourself — hold a pose for several frames rather than stepping at 50/60 Hz.
+
+Two kinds of placement, and the difference is where the tiles are:
+
+- **Live** (the default) — the grid under it holds tile 0 and
+  \`_DrawPlacements\` draws it every time. This is the one that can animate.
+- **Baked** — frame 0's tiles were written into the grid by the editor, so
+  \`_DrawLayer\` already drew it and \`_DrawPlacements\` skips it (bit 7 of the
+  slot byte). Costs nothing at runtime; cannot animate. For static scenery.
+
+Collision still reads the tileset's \`_Flags\`, indexed by tile, for anything in
+the grid. A placement's own \`_FLAGS_\` define is for asking what the *object*
+is — is this one solid, is it a hazard — without going through the tiles under
+it.
 
 ### Animated tiles
 
@@ -543,11 +568,10 @@ There is no default — cell 0 is an ordinary picture, so a map that names no
 transparent cell has none, and the Problems panel says so once it has more than
 one layer.
 
-A bitmap map drawn with a **meta-tile set** (\`*.meta-btiles.json\`) keeps that
-shape exactly, plus the set's table: \`_DrawRow(layer, metas, row, atlasY,
-destY)\`. \`row\` is still a *cell* row and the loop still issues one \`HMMM\` per
-cell across the map, so a scroller written against a plain bitmap map ports by
-adding one argument and its blit budget does not move.
+Meta-tiles in a bitmap mode (\`*.meta-btiles.json\`) record their size, frames
+and flags and export a \`_Draw\` that blits one frame out of the atlas, one
+\`HMMM\` per cell. Painting one in pixels, and placing one on a bitmap map, are
+not in this release — pattern modes (SCREEN 1/2/4) only for now.
 
 **Bitmap sprites (software sprites)** are how you get a moving object bigger or
 more colourful than the hardware allows in a bitmap mode. MSXgl ships no module
