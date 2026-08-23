@@ -14,9 +14,9 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMetaTileDoc, frameTileAt } from '../../../../shared/msx/meta-tile'
 import { serializeResource } from '../../../../shared/msx/resource'
-import { normalizeTiles } from '../../../../shared/msx/tile'
+import { colorByteAt, normalizeTiles, splitColorByte } from '../../../../shared/msx/tile'
 import { useTilesetStore } from '../../stores/tilesetStore'
-import { doc, metaSession, paint, pruneMetaSessions, tiles } from './session'
+import { doc, metaSession, paint, pruneMetaSessions, setColor, tiles } from './session'
 
 const META = 'res/tree.meta-tiles.json'
 const TILES = 'res/main.tiles.json'
@@ -105,5 +105,49 @@ describe('a stroke reaches the paint engine', () => {
     paint(session, [{ x: 0, y: 0 }])
     // The second stroke derives the same tile, so dedup finds it.
     expect(useTilesetStore().patternDoc(TILES)!.count).toBe(after)
+  })
+})
+
+describe('changing colour mid-drawing', () => {
+  /** The reported failure: draw, pick another colour, draw again, nothing happens. */
+  it('keeps painting after the colour changes', async () => {
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    setColor(session, 15)
+    paint(session, [{ x: 0, y: 0 }])
+    const first = frameTileAt(doc(session), 0, 0, 0)
+    expect(first).not.toBe(0)
+
+    // Same 8×1 row, a different colour. sc2 holds two colours per row and the
+    // blank tile pinned background to 0, so without a role this row is full and
+    // the stroke was dropped — which looked like an editor that had died.
+    setColor(session, 4)
+    paint(session, [{ x: 1, y: 0 }])
+    expect(session.status).not.toMatch(/dropped/)
+    expect(frameTileAt(doc(session), 0, 0, 0)).not.toBe(first)
+
+    const tileset = useTilesetStore().patternDoc(TILES)!
+    const painted = frameTileAt(doc(session), 0, 0, 0)
+    // The row's foreground is the new colour, and both pixels wear it: that is
+    // what two-per-row means, not a refusal.
+    expect(splitColorByte(colorByteAt(tileset, painted, 0)).fg).toBe(4)
+  })
+
+  it('the right button paints the row background, so a pair can be set deliberately', async () => {
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    setColor(session, 15)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    setColor(session, 6)
+    paint(session, [{ x: 1, y: 0 }], 'bg')
+
+    const tileset = useTilesetStore().patternDoc(TILES)!
+    const { fg, bg } = splitColorByte(colorByteAt(tileset, frameTileAt(doc(session), 0, 0, 0), 0))
+    expect(fg).toBe(15)
+    expect(bg).toBe(6)
   })
 })

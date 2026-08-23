@@ -26,6 +26,10 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const preview = ref<Point[]>([])
 let origin: Point | null = null
 let painting = false
+// Which half of the row's colour pair the stroke owns, fixed by whichever
+// button started it — the tile editor's convention. Without it, sc2/sc4's
+// two-colours-per-row rule silently swallows every colour after the first.
+let role: 'fg' | 'bg' = 'fg'
 
 const meta = computed(() => doc(props.session))
 /** 8×8 in a pattern mode; whatever the bitmap tileset says otherwise. */
@@ -92,12 +96,13 @@ function pointsFor(from: Point, to: Point): Point[] {
 function onDown(event: PointerEvent): void {
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
   const point = pointAt(event)
+  role = event.button === 2 ? 'bg' : 'fg'
   origin = point
   painting = true
   // Fill and spray commit as they go; line and rect show a preview and commit
   // on release, which is what makes them draggable.
   if (props.session.tool === 'fill' || props.session.tool === 'spray' || props.session.tool === 'pencil') {
-    paint(props.session, pointsFor(point, point))
+    paint(props.session, pointsFor(point, point), role)
     return
   }
   preview.value = pointsFor(point, point)
@@ -107,7 +112,7 @@ function onMove(event: PointerEvent): void {
   if (!painting || !origin) return
   const point = pointAt(event)
   if (props.session.tool === 'pencil' || props.session.tool === 'spray') {
-    paint(props.session, pointsFor(origin, point))
+    paint(props.session, pointsFor(origin, point), role)
     origin = point
     return
   }
@@ -120,7 +125,7 @@ function onUp(event: PointerEvent): void {
   painting = false
   const point = pointAt(event)
   if (origin && (props.session.tool === 'line' || props.session.tool === 'rect')) {
-    paint(props.session, pointsFor(origin, point))
+    paint(props.session, pointsFor(origin, point), role)
   }
   preview.value = []
   origin = null
@@ -196,6 +201,7 @@ watchEffect(() => {
   <div class="meta-canvas">
     <canvas
       ref="canvas"
+      @contextmenu.prevent
       @pointerdown="onDown"
       @pointermove="onMove"
       @pointerup="onUp"

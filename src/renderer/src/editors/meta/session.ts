@@ -460,7 +460,8 @@ export function cellSize(session: MetaSession): { width: number; height: number 
  * whether the tileset is patterns or pixels — the shapes are the same, the
  * constraints are not.
  */
-export function paint(session: MetaSession, points: Point[]): void {
+export function paint(session: MetaSession, points: Point[], role: 'fg' | 'bg' = 'fg'): void {
+  // A bitmap mode has no colour pair, so the role is meaningless there.
   if (session.kind === 'metabtiles') return paintBitmap(session, points)
   const store = useTilesetStore()
   const tileset = store.patternDoc(session.tilesetPath)
@@ -484,7 +485,7 @@ export function paint(session: MetaSession, points: Point[]): void {
     }
   }
 
-  const result = paintMeta(doc(session), tileset, session.frame, points, session.color)
+  const result = paintMeta(doc(session), tileset, session.frame, points, session.color, role)
   if (result.refused) {
     session.status = result.refused
     return

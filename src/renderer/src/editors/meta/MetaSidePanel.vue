@@ -197,6 +197,15 @@ function setupExport(): void {
           @click="setColor(session, index)"
         />
       </div>
+      <p
+        v-if="!bitmap"
+        class="hint"
+      >
+        <strong>Left</strong> button paints the ink of the row you click,
+        <strong>right</strong> its paper — {{ sc1 ? 'for the whole group of 8 tiles' : 'for that 8-pixel row' }}.
+        That is the mode's two-colours rule, so a third colour replaces one of them rather than
+        being refused.
+      </p>
       <template v-if="groupPair">
         <p class="hint">
           SCREEN 1 shares one colour pair across every group of 8 tiles. The cell at

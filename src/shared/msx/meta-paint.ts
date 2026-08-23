@@ -147,13 +147,21 @@ function scratch(doc: TilesDoc, tile: number): TilesDoc {
  * Points are in the meta's own pixel space — `(0,0)` is the meta's top-left
  * dot, not the tile's. Points outside it are ignored, so a drag that leaves the
  * canvas needs no clamping by the caller.
+ *
+ * `role` is which half of the row's colour pair the stroke owns — the mouse
+ * button, as in the tile editor. It matters because sc2/sc4 hold two colours
+ * per 8×1 row and sc1 two per group of eight tiles: without a role, the second
+ * colour a row is asked for has nowhere to go and is dropped, which reads as an
+ * editor that stopped working. With one, the row's foreground (or background)
+ * is *recoloured*, which is how MSX art is actually drawn.
  */
 export function paintMeta(
   meta: MetaTileDoc,
   tiles: TilesDoc,
   frame: number,
   points: readonly Point[],
-  color: number
+  color: number,
+  role?: 'fg' | 'bg'
 ): PaintMetaResult {
   if (!meta.frames[frame]) return { meta, tiles, added: [], dropped: 0 }
 
@@ -181,9 +189,10 @@ export function paintMeta(
 
     let work = scratch(nextTiles, nextMeta.frames[frame].tiles[key] ?? 0)
     for (const point of cellPoints) {
-      const result = paintPixel(work, 0, point.x % TILE_SIZE, point.y % TILE_SIZE, color)
-      // The row (or sc1 group) already spends both its colours on something
-      // else. Dropping the point is the whole-editor rule: no modal mid-drag.
+      const result = paintPixel(work, 0, point.x % TILE_SIZE, point.y % TILE_SIZE, color, role)
+      // Only reachable without a role. With one, `paintPixel` recolours that
+      // role for the row and can never refuse — which is what makes "change
+      // colour and keep drawing" work at all under a two-colours-per-row rule.
       if (!result.ok) {
         dropped++
         continue

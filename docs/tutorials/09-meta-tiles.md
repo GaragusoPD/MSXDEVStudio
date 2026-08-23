@@ -75,17 +75,24 @@ straight line, erase with a spray of holes.
 
 Fill crosses tile seams. You drew one shape, not four.
 
-### What the hardware refuses
+### Two colours per row, and which button picks which
 
-SCREEN 2 and 4 allow two colours per 8×1 pixel row. SCREEN 1 allows two per
-*group of eight tiles*. A stroke that asks for a third colour cannot be shown,
-so those pixels are **dropped**, and the status bar says how many. No dialog
-interrupts the drag — you keep drawing, and you can see what landed.
+SCREEN 2 and 4 hold two colours per 8×1 pixel row — an ink and a paper. SCREEN 1
+holds two per *group of eight tiles*. That is the whole constraint, and the
+mouse button is how you say which one you are setting:
 
-In SCREEN 1 the palette only offers the two colours that tile's group already
-spends, because offering the other fourteen would just produce dropped pixels.
-To change them you change the group's pair, which recolours all eight tiles in
-it — the editor says so before it does it.
+- **Left button** paints with the current colour as that row's **ink**.
+- **Right button** paints it as the row's **paper**.
+
+Either one *recolours the row* — every pixel of that row already wearing that
+role changes with it. That is not the editor being destructive; it is what a
+two-colour row means. Pick a third colour and it replaces the ink (or the
+paper), rather than being refused.
+
+In SCREEN 1 the palette only offers the two colours the clicked cell's group
+already spends, since a group of eight tiles shares one pair. To use a third,
+change the pair explicitly in the side panel — it recolours all eight tiles, and
+the editor says so before it does it.
 
 ### Frames
 
