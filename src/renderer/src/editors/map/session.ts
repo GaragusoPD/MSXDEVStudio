@@ -114,6 +114,8 @@ export interface MapSession {
   brushMeta: string | null
   /** Index into the active layer's `placements` of the selected one, or null. */
   selectedPlacement: number | null
+  /** Cells touched by the drag in progress, for the baked-record check on release. */
+  paintedPoints: Point[]
   clipboard: Stamp | null
 
   pickerActive: number
@@ -161,6 +163,7 @@ export function mapSession(path: string): MapSession {
     brushBlock: null,
     brushMeta: null,
     selectedPlacement: null,
+    paintedPoints: [],
     clipboard: null,
     pickerActive: 0,
     pickerSelection: [0],
@@ -515,6 +518,9 @@ export function pickBlock(session: MapSession, index: number): void {
 export function paintDrag(session: MapSession, points: Point[]): void {
   const current = session.preview ?? session.history.present
   const layerIndex = session.activeLayer
+  // Collected across the whole drag so the baked-record check runs once, on
+  // release, rather than per pointer move.
+  session.paintedPoints.push(...points)
   let next: MapDoc
   if (session.tool === 'stamp') {
     next = applyStamp(current, layerIndex, session.brush, points)
@@ -529,8 +535,18 @@ export function paintDrag(session: MapSession, points: Point[]): void {
 /** Ends the drag started by `paintDrag`: folds the preview into one undo step (no-op if nothing changed). */
 export function finishDrag(session: MapSession): void {
   const preview = session.preview
+  const painted = session.paintedPoints
   session.preview = null
-  if (preview && preview !== session.history.present) commit(session, preview)
+  session.paintedPoints = []
+  if (!preview || preview === session.history.present) return
+  // One commit, not two: dropping the stale records and the paint that made
+  // them stale are the same edit as far as undo is concerned.
+  const { doc: next, dropped } = withoutBakedAt(preview, session.activeLayer, painted)
+  commit(session, next)
+  if (dropped) {
+    session.selectedPlacement = null
+    session.status = `Painted over ${dropped} baked meta-tile${dropped === 1 ? '' : 's'} — their placement records were dropped.`
+  }
 }
 
 export function fillAt(session: MapSession, start: Point): void {
@@ -755,24 +771,24 @@ export function setBaked(session: MapSession, baked: boolean): void {
  *
  * Painting a tile inside a baked meta makes its receipt a lie: the grid no
  * longer holds what the meta says it does. Better to stop claiming it than to
- * silently re-stamp over the user's edit later.
+ * silently re-stamp over the user's edit later. A *live* placement is not
+ * touched — painting under it is painting the hole it shows through.
  */
-export function breakBakedAt(session: MapSession, points: readonly Point[]): void {
-  const current = doc(session)
-  const layer = current.layers[session.activeLayer]
-  if (!layer?.placements.some((placement) => placement.baked)) return
+function withoutBakedAt(
+  current: MapDoc,
+  layerIndex: number,
+  points: readonly Point[]
+): { doc: MapDoc; dropped: number } {
+  const layer = current.layers[layerIndex]
+  if (!layer?.placements.some((placement) => placement.baked)) return { doc: current, dropped: 0 }
   const hit = new Set<number>()
   for (const point of points) {
-    const index = placementAt(current, session.activeLayer, point.x, point.y)
+    const index = placementAt(current, layerIndex, point.x, point.y)
     if (index !== null && layer.placements[index].baked) hit.add(index)
   }
-  if (!hit.size) return
+  if (!hit.size) return { doc: current, dropped: 0 }
   let next = current
-  // Highest first so the earlier indices stay valid as they are removed.
-  for (const index of [...hit].sort((a, b) => b - a)) {
-    next = removePlacement(next, session.activeLayer, index)
-  }
-  commit(session, next)
-  session.selectedPlacement = null
-  session.status = `Painted over ${hit.size} baked meta-tile${hit.size === 1 ? '' : 's'} — their placement records were dropped.`
+  // Highest first, so the lower indices stay valid as they are removed.
+  for (const index of [...hit].sort((a, b) => b - a)) next = removePlacement(next, layerIndex, index)
+  return { doc: next, dropped: hit.size }
 }

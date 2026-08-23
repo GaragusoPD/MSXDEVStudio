@@ -15,16 +15,21 @@ import { SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
 import { type Point } from '../../../../shared/map-editor'
 import { rectPoints } from '../../../../shared/tile-editor'
+import { metaThumbnail } from './sheet'
 import {
   clearSelection,
   copySelection,
   deleteSelection,
+  deleteSelectedPlacement,
   dragPoints,
   doc,
   fillAt,
   finishDrag,
+  movePlacementTo,
   paintDrag,
   pasteClipboard,
+  placeMetaAt,
+  selectPlacementAt,
   setSelection,
   sheet,
   type MapSession
@@ -33,6 +38,9 @@ import {
 const props = defineProps<{ session: MapSession }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+/** Set while a placed meta-tile is being dragged, with the grab offset inside it. */
+let draggingPlacement = false
+let grab: Point | null = null
 const rectPreview = ref<Point[]>([])
 
 let origin: Point | null = null
@@ -78,6 +86,20 @@ function onDown(event: PointerEvent): void {
     setSelection(props.session, cell, cell)
     return
   }
+  // A meta brush places; otherwise a click on a placed meta selects it and
+  // starts a drag, and only a click on bare grid falls through to the tools.
+  if (props.session.brushMeta) {
+    placeMetaAt(props.session, cell.x, cell.y)
+    return
+  }
+  if (selectPlacementAt(props.session, cell.x, cell.y) !== null) {
+    draggingPlacement = true
+    // Remember the grab point so the meta keeps its offset under the pointer
+    // rather than snapping its corner there.
+    const placement = doc(props.session).layers[props.session.activeLayer].placements[props.session.selectedPlacement!]
+    grab = { x: cell.x - placement.x, y: cell.y - placement.y }
+    return
+  }
   if (props.session.tool === 'fill') {
     fillAt(props.session, cell)
     return
@@ -97,6 +119,10 @@ function onMove(event: PointerEvent): void {
     setSelection(props.session, selectAnchor, cell)
     return
   }
+  if (draggingPlacement && grab) {
+    movePlacementTo(props.session, cell.x - grab.x, cell.y - grab.y)
+    return
+  }
   if (!origin || !last) return
   if (props.session.tool === 'rect') {
     rectPreview.value = rectPoints(origin, cell, props.session.filledRect)
@@ -107,6 +133,11 @@ function onMove(event: PointerEvent): void {
 }
 
 function onUp(): void {
+  if (draggingPlacement) {
+    draggingPlacement = false
+    grab = null
+    return
+  }
   if (selecting) {
     selecting = false
     selectAnchor = null
@@ -124,7 +155,9 @@ function onUp(): void {
 
 function onKeydown(event: KeyboardEvent): void {
   if (!event.ctrlKey) {
-    if (event.key === 'Delete' || event.key === 'Backspace') deleteSelection(props.session)
+    if ((event.key === 'Delete' || event.key === 'Backspace') && props.session.selectedPlacement !== null) {
+      deleteSelectedPlacement(props.session)
+    } else if (event.key === 'Delete' || event.key === 'Backspace') deleteSelection(props.session)
     else if (event.key === 'Escape') clearSelection(props.session)
     return
   }
@@ -172,6 +205,31 @@ watchEffect(() => {
         }
       }
     }
+  }
+
+  // Placed meta-tiles, over the layer that holds them. A baked one is already
+  // in the grid the loop above drew, so drawing it again is a no-op visually —
+  // it is drawn anyway so the outline and the hit test agree with what is seen.
+  if (cells) {
+    current.layers.forEach((layer, layerIndex) => {
+      if (!layer.visible) return
+      for (const [index, placement] of layer.placements.entries()) {
+        const ref = current.metas[placement.slot]
+        const meta = ref && props.session.metaDocs.get(ref.path)
+        if (!meta) continue
+        ctx.drawImage(
+          metaThumbnail(cells, meta),
+          placement.x * zoom,
+          placement.y * zoom,
+          ref.width * zoom,
+          ref.height * zoom
+        )
+        if (layerIndex !== props.session.activeLayer || index !== props.session.selectedPlacement) continue
+        ctx.strokeStyle = '#ffd24e'
+        ctx.lineWidth = 2
+        ctx.strokeRect(placement.x * zoom + 1, placement.y * zoom + 1, ref.width * zoom - 2, ref.height * zoom - 2)
+      }
+    })
   }
 
   if (rectPreview.value.length) {

@@ -13,6 +13,7 @@ import type { MapTool } from '../../../../shared/map-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import MapCanvas from './MapCanvas.vue'
+import MapMetaPicker from './MapMetaPicker.vue'
 import MapPicker from './MapPicker.vue'
 import MapSidePanel from './MapSidePanel.vue'
 import Icon from '../../components/Icon.vue'
@@ -220,7 +221,11 @@ onMounted(() => void resourcesStore.refresh())
       </div>
 
       <div class="panes">
-        <MapPicker :session="session" />
+        <!-- Tiles above, meta-tiles below: one column, two things to paint with. -->
+        <div class="left-rail">
+          <MapPicker :session="session" />
+          <MapMetaPicker :session="session" />
+        </div>
         <MapCanvas :session="session" />
         <MapSidePanel :session="session" />
       </div>
@@ -301,6 +306,24 @@ onMounted(() => void resourcesStore.refresh())
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+/* Tiles take the space they need; meta-tiles get the rest, up to half. */
+.left-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.left-rail > :first-child {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.left-rail > :last-child {
+  flex: 0 1 auto;
+  max-height: 50%;
+  min-height: 0;
 }
 
 .status,

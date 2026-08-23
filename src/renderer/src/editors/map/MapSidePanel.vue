@@ -9,7 +9,7 @@ import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
-import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 
@@ -49,6 +49,15 @@ async function chooseTileset(path: string): Promise<void> {
   }
   await setTileset(props.session, path)
 }
+
+/** The placement the canvas has selected, with the meta it names. */
+const selectedPlacement = computed(() => {
+  const index = props.session.selectedPlacement
+  if (index === null) return null
+  const placement = mapDoc.value.layers[props.session.activeLayer]?.placements[index]
+  const ref = placement && mapDoc.value.metas[placement.slot]
+  return placement && ref ? { placement, ref } : null
+})
 
 const cell = computed(() => mapDoc.value.cell)
 const sc3 = computed(() => cell.value?.sc3 === true)
@@ -174,6 +183,33 @@ const packing = computed(() => {
       >
         Places {{ mapDoc.metas.length }} meta-tile{{ mapDoc.metas.length === 1 ? '' : 's' }}:
         {{ mapDoc.metas.map((entry) => entry.name).join(', ') }}.
+      </p>
+    </section>
+
+    <section v-if="selectedPlacement">
+      <h3>Placement</h3>
+      <p class="hint">
+        <strong>{{ selectedPlacement.ref.name }}</strong> at
+        {{ selectedPlacement.placement.x }},{{ selectedPlacement.placement.y }} —
+        {{ selectedPlacement.ref.width }}×{{ selectedPlacement.ref.height }} tiles,
+        {{ selectedPlacement.ref.frames }} frame{{ selectedPlacement.ref.frames === 1 ? '' : 's' }}.
+      </p>
+      <label class="inline">
+        <input
+          type="checkbox"
+          :checked="selectedPlacement.placement.baked === true"
+          @change="setBaked(session, ($event.target as HTMLInputElement).checked)"
+        >
+        <span title="Writes frame 0 into the tile grid, so the layer write already draws it and it costs nothing at runtime. An animated meta-tile should stay unbaked.">
+          Bake into the layer
+        </span>
+      </label>
+      <p class="hint">
+        {{
+          selectedPlacement.placement.baked
+            ? 'Its tiles are in the grid. It is skipped at runtime, and painting over it drops this record.'
+            : 'Drawn at runtime from the placement table, so it can animate.'
+        }}
       </p>
     </section>
 
