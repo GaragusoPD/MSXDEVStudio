@@ -25,12 +25,12 @@ import { defineName, emitBin, emitC, type EmitTable, type HelperC } from './emit
 import { normalizeMap, mapExport, mapHelperC, mapTileSize, validateMap, type MapDoc } from './map'
 import {
   metaBytes,
+  metaCells,
   metaConstants,
   metaHelperC,
-  metaStride,
-  normalizeMetaTiles,
-  validateMetaTiles,
-  type MetaTilesDoc
+  normalizeMetaTile,
+  validateMetaTile,
+  type MetaTileDoc
 } from './meta-tile'
 import { MODES } from './modes'
 import { sc3Constants, sc3LinearBytes } from './sc3'
@@ -166,8 +166,8 @@ export function isMetaKind(kind: ResourceKind | null): boolean {
 export type ResourceDoc =
   | { kind: 'tiles'; doc: TilesDoc }
   | { kind: 'btiles'; doc: BitmapTilesDoc }
-  | { kind: 'metatiles'; doc: MetaTilesDoc }
-  | { kind: 'metabtiles'; doc: MetaTilesDoc }
+  | { kind: 'metatiles'; doc: MetaTileDoc }
+  | { kind: 'metabtiles'; doc: MetaTileDoc }
   | { kind: 'sprites'; doc: SpritesDoc }
   | { kind: 'swsprites'; doc: SwSpritesDoc }
   | { kind: 'map'; doc: MapDoc }
@@ -225,7 +225,7 @@ export function parseResource(path: string, text: string): ResourceDoc {
       return { kind, doc: normalizeBitmapTiles(raw) }
     case 'metatiles':
     case 'metabtiles':
-      return { kind, doc: normalizeMetaTiles(raw) }
+      return { kind, doc: normalizeMetaTile(raw) }
     case 'sprites':
       return { kind, doc: normalizeSprites(raw) }
     case 'swsprites':
@@ -252,7 +252,7 @@ export function validateResource(resource: ResourceDoc): string[] {
       return validateBitmapTiles(resource.doc)
     case 'metatiles':
     case 'metabtiles':
-      return validateMetaTiles(resource.doc)
+      return validateMetaTile(resource.doc)
     case 'sprites':
       return validateSprites(resource.doc)
     case 'swsprites':
@@ -368,16 +368,16 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
     case 'metatiles':
     case 'metabtiles': {
       const { doc } = resource
-      // One table, no suffix: a meta-tile set is nothing but its metas, so
-      // `g_Canyon_Metatiles[]` reads better than `g_Canyon_Metatiles_Metas[]`.
+      // One table, no suffix: a meta-tile is nothing but its frames, so
+      // `g_Tree[]` reads better than `g_Tree_Frames[]`.
       return [
         {
           suffix: '',
           bytes: metaBytes(doc),
-          perLine: Math.min(16, metaStride(doc)),
+          perLine: Math.min(16, metaCells(doc)),
           comment:
-            `${doc.metas.length} meta-tiles of ${doc.width}×${doc.height} tiles — tile indices row-major, ` +
-            `${metaStride(doc)} bytes each: ${doc.metas.map((meta, index) => `${index}=${meta.name}`).join(', ')}`
+            `${doc.width}×${doc.height} tiles, ${doc.frames.length} frame${doc.frames.length === 1 ? '' : 's'} — ` +
+            `tile indices row-major, ${metaCells(doc)} bytes per frame`
         }
       ]
     }
@@ -615,9 +615,10 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
     case 'metabtiles':
       notes.push(
         `Tileset: ${resource.doc.tileset}`,
-        `Meta size: ${resource.doc.width}×${resource.doc.height} tiles (${metaStride(resource.doc)} bytes each)`,
-        `Meta-tiles: ${resource.doc.metas.length}`
+        `Size: ${resource.doc.width}×${resource.doc.height} tiles (${metaCells(resource.doc)} bytes per frame)`,
+        `Frames: ${resource.doc.frames.length}`
       )
+      if (resource.doc.flags) notes.push(`Flags: 0x${resource.doc.flags.toString(16).padStart(2, '0')}`)
       if (resource.doc.cell) {
         notes.push(
           `Cell: ${resource.doc.cell.width}×${resource.doc.cell.height} dots, ` +
@@ -798,7 +799,7 @@ function resourceConstants(
       })
     ]
   }
-  if (isMetaKind(resource.kind)) return metaConstants(resource.doc as MetaTilesDoc, name)
+  if (isMetaKind(resource.kind)) return metaConstants(resource.doc as MetaTileDoc, name)
   if (resource.kind === 'tiles') {
     return blockPlacements(resource.doc).flatMap((placement) => {
       const id = `${prefix}_${defineName(placement.name)}`
@@ -859,10 +860,9 @@ function resourceCode(
   if (resource.kind === 'swsprites') {
     return resource.doc.sprites.length ? swSpriteHelperC(resource.doc, name) : NO_CODE
   }
-  if (isMetaKind(resource.kind)) {
-    const doc = resource.doc as MetaTilesDoc
-    return doc.metas.length ? metaHelperC(doc, name) : NO_CODE
-  }
+  // No emptiness guard, unlike a tileset's blocks: a meta always has a frame,
+  // so there is always something to draw.
+  if (isMetaKind(resource.kind)) return metaHelperC(resource.doc as MetaTileDoc, name)
   if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : NO_CODE
   // Unlike pattern tiles, this is worth emitting with no blocks at all: the
   // upload and the single-tile blit are the whole reason a bitmap tileset can

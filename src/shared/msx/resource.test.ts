@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { unpackRlep } from './compress'
 import { defineName, emitBin, emitC } from './emitC'
 import { createMapDoc, normalizeMap } from './map'
-import { normalizeMetaTiles } from './meta-tile'
+import { normalizeMetaTile } from './meta-tile'
 import { packGrb } from './palette'
 import {
   RESOURCE_SUFFIXES,
@@ -513,60 +513,77 @@ describe('map resource', () => {
 })
 
 describe('meta-tile resource', () => {
-  const metaSet = (): ResourceDoc => ({
+  const tree = (): ResourceDoc => ({
     kind: 'metatiles',
-    doc: normalizeMetaTiles({
+    doc: normalizeMetaTile({
       tileset: 'res/tiles.tiles.json',
       width: 2,
       height: 2,
-      metas: [
-        { name: 'ground', tiles: [1, 2, 3, 4] },
-        { name: 'wall', tiles: [5, 6, 7, 8] },
-        { tiles: [0, 0, 0, 0] }
-      ]
+      flags: 0x05,
+      // Frame 1 holds a transparent cell, which is what the run-splitting in
+      // the emitted _Draw exists for.
+      frames: [{ tiles: [1, 2, 3, 4] }, { tiles: [1, 0, 3, 4] }]
     })
   })
 
-  it('emits one table at a fixed stride, with a define per named meta', () => {
-    const header = rendered(metaSet(), 'res/canyon.meta-tiles.json', {
-      name: 'g_CanyonMetas',
+  it('emits one table at a per-frame stride, and states the geometry and flags', () => {
+    const header = rendered(tree(), 'res/tree.meta-tiles.json', {
+      name: 'g_Tree',
       format: 'c',
-      out: 'content/canyon_metas.h',
+      out: 'content/tree.h',
       helpers: true
     })
-    expect(header).toContain('#define G_CANYONMETAS_META_W 2')
-    expect(header).toContain('#define G_CANYONMETAS_META_H 2')
-    expect(header).toContain('#define G_CANYONMETAS_COUNT 3')
-    expect(header).toContain('#define G_CANYONMETAS_GROUND 0')
-    expect(header).toContain('#define G_CANYONMETAS_WALL 1')
-    // An auto-named meta says nothing its index doesn't, so it gets no define.
-    expect(header).not.toContain('META_2')
-    expect(header).toContain('#define G_CANYONMETAS_SIZE 12')
-    expect([...resourceTables(metaSet())[0].bytes]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0])
+    expect(header).toContain('#define G_TREE_META_W 2')
+    expect(header).toContain('#define G_TREE_META_H 2')
+    expect(header).toContain('#define G_TREE_CELLS 4')
+    expect(header).toContain('#define G_TREE_FRAMES 2')
+    expect(header).toContain('#define G_TREE_FLAGS 0x05')
+    expect(header).toContain('#define G_TREE_SIZE 8')
+    expect([...resourceTables(tree())[0].bytes]).toEqual([1, 2, 3, 4, 1, 0, 3, 4])
+  })
 
-    // The runtime stamp: a meta's size is known at compile time, so unlike
-    // _DrawBlock the caller does not pass it.
-    expect(header).toContain('void g_CanyonMetas_DrawMeta(u8 x, u8 y, u8 meta)')
-    expect(header).toContain('VDP_WriteLayout_GM2(g_CanyonMetas + ((u16)meta * 4), x, y')
+  it('draws a frame as runs, skipping the transparent tile', () => {
+    const header = rendered(tree(), 'res/tree.meta-tiles.json', {
+      name: 'g_Tree',
+      format: 'c',
+      out: 'content/tree.h',
+      helpers: true
+    })
+    expect(header).toContain('void g_Tree_Draw(u8 x, u8 y, u8 frame)')
+    expect(header).toContain('const u8* src = g_Tree + ((u16)frame * G_TREE_CELLS);')
+    // A name table has no holes, so transparency is a *skipped write* — which
+    // means a row is one call per opaque run, not one covering the rectangle.
+    expect(header).toContain('if(src[col] == 0) { ++col; continue; }')
+    expect(header).toContain('VDP_WriteLayout_GM2(src + col, x + col, y + row, run - col, 1);')
+  })
+
+  it('omits the helper when the export block does not ask for it', () => {
+    const header = rendered(tree(), 'res/tree.meta-tiles.json', {
+      name: 'g_Tree',
+      format: 'c',
+      out: 'content/tree.h'
+    })
+    expect(header).toContain('#define G_TREE_FRAMES 2')
+    expect(header).not.toContain('g_Tree_Draw')
   })
 
   it('stamps a bitmap meta out of the atlas instead, one HMMM per cell', () => {
-    const doc = normalizeMetaTiles({
+    const doc = normalizeMetaTile({
       tileset: 'res/canyon.btiles.json',
       width: 2,
       height: 2,
       cell: { width: 16, height: 16, cols: 16 },
-      metas: [{ name: 'rock', tiles: [1, 2, 3, 4] }]
+      frames: [{ tiles: [1, 2, 3, 4] }]
     })
-    const header = rendered({ kind: 'metabtiles', doc }, 'res/canyon.meta-btiles.json', {
-      name: 'g_CanyonMetas',
+    const header = rendered({ kind: 'metabtiles', doc }, 'res/rock.meta-btiles.json', {
+      name: 'g_Rock',
       format: 'c',
-      out: 'content/canyon_metas.h',
+      out: 'content/rock.h',
       helpers: true
     })
-    expect(header).toContain('#define G_CANYONMETAS_CELL_W 16')
-    expect(header).toContain('void g_CanyonMetas_DrawMeta(UX x, UY y, u8 meta, UY atlasY)')
-    expect(header).toContain('VDP_CommandHMMM((u16)(cell % G_CANYONMETAS_ATLAS_COLS) * G_CANYONMETAS_CELL_W')
+    expect(header).toContain('#define G_ROCK_CELL_W 16')
+    expect(header).toContain('void g_Rock_Draw(UX x, UY y, u8 frame, UY atlasY)')
+    expect(header).toContain('VDP_CommandHMMM((u16)(cell % G_ROCK_ATLAS_COLS) * G_ROCK_CELL_W')
     // There is no name table in a bitmap mode.
     expect(header).not.toContain('VDP_WriteLayout_GM2')
   })
@@ -919,8 +936,10 @@ describe('sfx resource', () => {
       // Blank maps/screens legitimately warn until their editor picks a tileset / imports a source.
       const blankStateWarnings: Record<string, string[]> = {
         map: ['No tileset referenced'],
-        metatiles: ['No tileset referenced', 'No meta-tiles defined'],
-        metabtiles: ['No tileset referenced', 'No meta-tiles defined'],
+        // A blank meta has a frame from the moment it exists, so the only
+        // thing it can be missing is the tileset its indices mean anything in.
+        metatiles: ['No tileset referenced'],
+        metabtiles: ['No tileset referenced'],
         screen: ['No source image, and nothing drawn yet']
       }
       expect(validateResource(resource)).toEqual(blankStateWarnings[kind] ?? [])

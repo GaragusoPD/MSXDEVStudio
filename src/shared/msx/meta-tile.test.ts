@@ -1,131 +1,149 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addMeta,
-  createMetaTilesDoc,
+  addFrame,
+  createMetaTileDoc,
+  frameTileAt,
   metaBytes,
-  metaStride,
-  metaTileAt,
-  normalizeMetaTiles,
+  metaCells,
+  normalizeMetaTile,
   remapMetaTiles,
-  removeMeta,
-  renameMeta,
-  reorderMetas,
-  resizeMetas,
-  setMetaTile,
-  validateMetaTiles
+  removeFrame,
+  reorderFrames,
+  resizeMeta,
+  setFrameTile,
+  validateMetaTile
 } from './meta-tile'
-import { removeTile, reorderTiles, normalizeTiles } from './tile'
 
-/** Two 2×2 metas over a tileset, tiles chosen so every position is distinguishable. */
-function fixture(): ReturnType<typeof normalizeMetaTiles> {
-  return normalizeMetaTiles({
-    tileset: 'res/main.tiles.json',
-    width: 2,
-    height: 2,
-    metas: [
-      { name: 'ground', tiles: [1, 2, 3, 4] },
-      { name: 'wall', tiles: [5, 6, 7, 8] }
-    ]
+describe('normalizeMetaTile', () => {
+  it('creates one frame of the right size', () => {
+    const doc = createMetaTileDoc('res/tiles.tiles.json', 2, 3)
+    expect(doc.version).toBe(2)
+    expect(doc.frames).toHaveLength(1)
+    expect(doc.frames[0].tiles).toHaveLength(6)
+    expect(metaCells(doc)).toBe(6)
+    expect(doc.flags).toBe(0)
   })
-}
 
-describe('meta-tile set', () => {
-  it('forces every meta to the set geometry, so the exported table has one stride', () => {
-    // A hand-edited file with a short meta and an over-long one: the table is read
-    // at a fixed stride, so one odd entry would shift every meta after it.
-    const doc = normalizeMetaTiles({
-      tileset: 'res/main.tiles.json',
+  it('resizes every frame to the document geometry, so the stride never varies', () => {
+    const doc = normalizeMetaTile({
+      tileset: 't.tiles.json',
       width: 2,
       height: 2,
-      metas: [{ name: 'short', tiles: [9] }, { name: 'long', tiles: [1, 2, 3, 4, 5, 6] }]
+      frames: [{ tiles: [1, 2, 3, 4] }, { tiles: [9] }]
     })
-    expect(doc.metas.map((meta) => meta.tiles)).toEqual([
-      [9, 0, 0, 0],
-      [1, 2, 3, 4]
-    ])
-    expect(metaStride(doc)).toBe(4)
-    expect([...metaBytes(doc)]).toEqual([9, 0, 0, 0, 1, 2, 3, 4])
-    expect(validateMetaTiles(doc)).toEqual([])
+    expect(doc.frames[1].tiles).toEqual([9, 0, 0, 0])
   })
 
-  it('names an unnamed meta after its index and keeps a given name', () => {
-    const doc = normalizeMetaTiles({ tileset: 'a.tiles.json', metas: [{}, { name: 'sky' }] })
-    expect(doc.metas.map((meta) => meta.name)).toEqual(['meta_0', 'sky'])
+  it('migrates a version-1 set to its first meta and drops the rest', () => {
+    const doc = normalizeMetaTile({
+      version: 1,
+      tileset: 't.tiles.json',
+      width: 2,
+      height: 2,
+      metas: [
+        { name: 'tree', width: 2, height: 2, tiles: [5, 6, 7, 8] },
+        { name: 'rock', width: 2, height: 2, tiles: [1, 1, 1, 1] }
+      ]
+    })
+    expect(doc.version).toBe(2)
+    expect(doc.frames).toHaveLength(1)
+    expect(doc.frames[0].tiles).toEqual([5, 6, 7, 8])
   })
 
-  it('reads and writes one cell of a meta', () => {
-    const doc = fixture()
-    expect(metaTileAt(doc, 0, 1, 1)).toBe(4)
-    const painted = setMetaTile(doc, 0, 1, 1, 42)
-    expect(metaTileAt(painted, 0, 1, 1)).toBe(42)
-    // Untouched metas are the same objects, so a repaint is one cheap history entry.
-    expect(painted.metas[1]).toBe(doc.metas[1])
-    // Painting the value already there changes nothing at all.
-    expect(setMetaTile(painted, 0, 1, 1, 42)).toBe(painted)
-    expect(setMetaTile(doc, 0, 2, 0, 1)).toBe(doc)
+  it('never produces a frameless document', () => {
+    expect(normalizeMetaTile({ frames: [] }).frames).toHaveLength(1)
   })
 
-  it('resizes every meta at once, keeping what still fits', () => {
-    const grown = resizeMetas(fixture(), 3, 2)
-    expect(grown.width).toBe(3)
-    expect(grown.metas[0].tiles).toEqual([1, 2, 0, 3, 4, 0])
-    const shrunk = resizeMetas(grown, 1, 1)
-    expect(shrunk.metas.map((meta) => meta.tiles)).toEqual([[1], [5]])
+  it('clamps flags to one byte', () => {
+    expect(normalizeMetaTile({ flags: 0x1ff }).flags).toBe(0xff)
   })
 
-  it('adds a blank meta of the set geometry', () => {
-    const doc = addMeta(resizeMetas(fixture(), 3, 3))
-    expect(doc.metas).toHaveLength(3)
-    expect(doc.metas[2]).toEqual({ name: 'meta_2', width: 3, height: 3, tiles: new Array(9).fill(0) })
-    expect(renameMeta(doc, 2, 'sky').metas[2].name).toBe('sky')
+  it('clamps the size to MAX_META_SIZE', () => {
+    const doc = normalizeMetaTile({ tileset: 't', width: 99, height: 0 })
+    expect(doc.width).toBe(16)
+    expect(doc.height).toBe(2)
   })
 })
 
-describe('meta-tile remap seams', () => {
-  it('replays a tileset reorder into the meta definitions', () => {
-    // Tile 1 moves to slot 3: everything that pointed at it has to follow.
-    const tiles = normalizeTiles({ mode: 'sc2', count: 10 })
-    const { mapping } = reorderTiles(tiles, 1, 3)
-    const doc = remapMetaTiles(fixture(), mapping)
-    expect(doc.metas[0].tiles).toEqual([mapping[1], mapping[2], mapping[3], mapping[4]])
-    expect(doc.metas[0].tiles[0]).toBe(3)
+describe('frames', () => {
+  const base = createMetaTileDoc('t.tiles.json', 2, 1)
+
+  it('addFrame copies the frame it is given, so animation starts from a pose', () => {
+    const doc = addFrame(setFrameTile(base, 0, 0, 0, 7), 0)
+    expect(doc.frames).toHaveLength(2)
+    expect(doc.frames[1].tiles).toEqual([7, 0])
   })
 
-  it('points a meta at tile 0 when the tile it used was deleted', () => {
-    const tiles = normalizeTiles({ mode: 'sc2', count: 10 })
-    const { mapping } = removeTile(tiles, 3)
-    const doc = remapMetaTiles(fixture(), mapping)
-    // Tile 3 is gone → 0; tile 4 slides down into its slot.
-    expect(doc.metas[0].tiles).toEqual([1, 2, 0, 3])
+  it('addFrame with no source appends a blank frame', () => {
+    expect(addFrame(setFrameTile(base, 0, 0, 0, 7)).frames[1].tiles).toEqual([0, 0])
   })
 
-  it('returns the mapping a map replays when a meta is deleted or moved', () => {
-    const doc = fixture()
-    const removed = removeMeta(addMeta(doc), 0)
-    expect(removed.doc.metas.map((meta) => meta.name)).toEqual(['wall', 'meta_2'])
-    // Cells that pointed at the deleted meta fall back to 0, the rest slide down.
-    expect(removed.mapping).toEqual([0, 0, 1])
+  it('removeFrame refuses to remove the last one — a meta with no pose is not drawable', () => {
+    expect(removeFrame(base, 0)).toBe(base)
+  })
 
-    const moved = reorderMetas(doc, 0, 1)
-    expect(moved.doc.metas.map((meta) => meta.name)).toEqual(['wall', 'ground'])
-    expect(moved.mapping).toEqual([1, 0])
-    expect(reorderMetas(doc, 0, 0).doc).toBe(doc)
+  it('reorderFrames moves a frame', () => {
+    const doc = reorderFrames(addFrame(setFrameTile(base, 0, 0, 0, 7), 0), 1, 0)
+    expect(doc.frames[0].tiles).toEqual([7, 0])
+  })
+
+  it('setFrameTile is a no-op outside the meta', () => {
+    expect(setFrameTile(base, 0, 5, 5, 3)).toBe(base)
+  })
+
+  it('setFrameTile is a no-op when nothing changes, so it pushes no undo step', () => {
+    expect(setFrameTile(base, 0, 0, 0, 0)).toBe(base)
+  })
+
+  it('frameTileAt reads back what was set', () => {
+    expect(frameTileAt(setFrameTile(base, 0, 1, 0, 42), 0, 1, 0)).toBe(42)
+  })
+
+  it('metaBytes concatenates every frame in order', () => {
+    const doc = addFrame(setFrameTile(base, 0, 0, 0, 7), 0)
+    expect([...metaBytes(doc)]).toEqual([7, 0, 7, 0])
   })
 })
 
-describe('meta-tile validation', () => {
-  it('accepts a normal set and reports a blank one', () => {
-    expect(validateMetaTiles(fixture())).toEqual([])
-    expect(validateMetaTiles(createMetaTilesDoc(''))).toEqual(['No tileset referenced', 'No meta-tiles defined'])
+describe('resizeMeta', () => {
+  it('keeps the tiles that still fit, anchored top-left, across every frame', () => {
+    let doc = normalizeMetaTile({
+      tileset: 't',
+      width: 2,
+      height: 2,
+      frames: [{ tiles: [1, 2, 3, 4] }, { tiles: [5, 6, 7, 8] }]
+    })
+    doc = resizeMeta(doc, 1, 2)
+    expect(doc.frames[0].tiles).toEqual([1, 3])
+    expect(doc.frames[1].tiles).toEqual([5, 7])
   })
 
-  it('refuses more metas than a map cell can index', () => {
-    const doc = normalizeMetaTiles({
-      tileset: 'a.tiles.json',
-      metas: Array.from({ length: 300 }, (_, i) => ({ name: `m${i}`, tiles: [0, 0, 0, 0] }))
-    })
-    // Normalization already caps it, which is the fix rather than the complaint.
-    expect(doc.metas).toHaveLength(256)
-    expect(validateMetaTiles(doc)).toEqual([])
+  it('grows with tile 0, which is the transparent one', () => {
+    const doc = resizeMeta(normalizeMetaTile({ tileset: 't', width: 1, height: 1, frames: [{ tiles: [9] }] }), 2, 1)
+    expect(doc.frames[0].tiles).toEqual([9, 0])
+  })
+})
+
+describe('remapMetaTiles', () => {
+  it('replays a tileset reorder across every frame', () => {
+    const doc = normalizeMetaTile({ tileset: 't', width: 2, height: 1, frames: [{ tiles: [0, 1] }, { tiles: [1, 0] }] })
+    const next = remapMetaTiles(doc, [5, 6])
+    expect(next.frames[0].tiles).toEqual([5, 6])
+    expect(next.frames[1].tiles).toEqual([6, 5])
+  })
+
+  it('sends a tile the mapping does not cover to 0, not to undefined', () => {
+    const doc = normalizeMetaTile({ tileset: 't', width: 1, height: 1, frames: [{ tiles: [9] }] })
+    expect(remapMetaTiles(doc, [0]).frames[0].tiles).toEqual([0])
+  })
+})
+
+describe('validateMetaTile', () => {
+  it('accepts a well-formed meta', () => {
+    expect(validateMetaTile(createMetaTileDoc('res/t.tiles.json', 2, 2))).toEqual([])
+  })
+
+  it('reports a missing tileset', () => {
+    expect(validateMetaTile(createMetaTileDoc('', 2, 2))).toContain('No tileset referenced')
   })
 })

@@ -1,23 +1,21 @@
 /**
- * `*.meta-tiles.json` / `*.meta-btiles.json`: a **meta-tile set** — same-sized
- * groups of tiles that a map may index *instead of* indexing tiles.
+ * `*.meta-tiles.json` / `*.meta-btiles.json`: **one meta-tile** — a design
+ * bigger than the hardware's 8×8 cell, authored as a picture and stored as
+ * references into a tileset.
  *
- * MSX art is built from repeating clumps: a brick wall, a pine tree, a platform
- * end. The tile editor has always been able to name one (`TileBlock`) and stamp
- * it into a map, but a stamp is expanded where it is painted, so the clump lives
- * in the editor and nowhere in the ROM. A 32×24 screen costs 768 bytes either
- * way.
+ * This is the third instance of the pattern CLAUDE.md calls "a named group that
+ * owns no pixels": like `TileBlock` and `SpriteCharacter`, a meta holds indices,
+ * not art. What is new is that the *editor* presents it as a canvas — painting
+ * a pixel resolves, through `meta-paint.ts`, to a tile index the same stroke
+ * created or found in the bank. So the invariant survives a pixel-level editor:
+ * the meta still owns nothing, and there is still no second copy to keep in
+ * sync.
  *
- * A meta-tile set is the same idea kept as data. Every meta is exactly
- * `width × height` tiles, so a map cell can be a meta *index*: the same screen
- * built from 2×2 metas is 192 bytes, before RLEp, which still applies on top.
- * The map's own export emits the C that expands one back into tiles.
- *
- * **This is a resource you choose to create, not a change to an existing one.**
- * `.tiles.json` and `.btiles.json` are untouched — a meta set *references* one,
- * the way a map does. Blocks keep doing what they always did. Two suffixes share
- * this one document; the kind only says whether the referenced tileset is a
- * pattern or a bitmap one, which changes the emitted helper and nothing else.
+ * One file is one meta because a meta is now an object a level *places* — a
+ * tree, a door, a coin — not a row in a compression table. Its size is its own,
+ * its frames are its own, and its eight gameplay bits are its own, exactly as a
+ * tile's are. What a map records is a placement; see `MetaPlacement` in
+ * `map.ts`.
  *
  * Why a hyphen in the suffix: `resourceKindOf` matches by `endsWith` over
  * `RESOURCE_SUFFIXES`, so `foo.meta.tiles.json` would resolve to `tiles` and
@@ -26,47 +24,58 @@
 
 import { defineName, type HelperC } from './emitC'
 import type { MapCell } from './map'
-import { MAX_TILES, type TileBlock } from './tile'
 import type { ExportBlock } from './resource'
 
-/** A map cell is a byte, so a set past this could not be indexed. */
-export const MAX_METAS = MAX_TILES
 /**
  * Tiles per axis in a meta. Nothing in the hardware says so — the cap keeps a
- * hand-edited file from asking for a 255×255 meta, which is 65,025 tiles for one
- * cell. A 16×16 meta is already 128×128 dots.
+ * hand-edited file from asking for a 255×255 meta, which is 65,025 tiles for
+ * one design. A 16×16 meta is already 128×128 dots.
  */
 export const MAX_META_SIZE = 16
+/** Gameplay bits per meta — eight, so one byte, exactly `TILE_FLAG_COUNT`. */
+export const META_FLAG_COUNT = 8
+/** Frames per meta. The emitted C indexes them with a byte. */
+export const MAX_FRAMES = 255
 
-export interface MetaTilesDoc {
-  version: 1
+/** One animation pose: the whole meta's tile indices, row-major. */
+export interface MetaFrame {
+  tiles: number[]
+}
+
+export interface MetaTileDoc {
+  version: 2
   /**
-   * Project-relative path of the tileset these group: `.tiles.json` for
-   * `.meta-tiles.json`, `.btiles.json` for `.meta-btiles.json`.
+   * Project-relative path of the tileset whose tiles this meta references:
+   * `.tiles.json` for `.meta-tiles.json`, `.btiles.json` for `.meta-btiles.json`.
    */
   tileset: string
-  /** Meta size in tiles. Every meta in the set is exactly this. */
+  /** This meta's size in tiles. Every frame is exactly this. */
   width: number
   height: number
   /**
    * Pixel geometry of one *tile*, for a bitmap set; null in a pattern mode,
    * where a tile is the name table's 8×8 cell.
    *
-   * Mirrored from the referenced `.btiles.json` for the same reason `MapDoc`
-   * mirrors it: the exporter renders one resource at a time and never reads
-   * another file, so anything the emitted C needs has to be here.
+   * Mirrored from the referenced `.btiles.json` for the reason `MapDoc` mirrors
+   * it: the exporter renders one resource at a time and never reads another
+   * file, so anything the emitted C needs has to be here.
    */
   cell: MapCell | null
+  /** `frames[0]` is the resting pose, as in `SpritesDoc`. Never empty. */
+  frames: MetaFrame[]
   /**
-   * The metas, in index order — `TileBlock` verbatim, so a meta is also a
-   * `Stamp` and `blockPixels` renders its thumbnail with no new code.
+   * Eight gameplay bits for the meta as a whole — what it *means* to the game,
+   * in the manner of `TilesDoc.flags`. Independent of the flags on the tiles
+   * underneath it: a game walking the tile grid reads tile flags, a game
+   * walking a map's placement table reads these, and neither overrides the
+   * other.
    */
-  metas: TileBlock[]
+  flags: number
   export: ExportBlock | null
 }
 
-export function createMetaTilesDoc(tileset: string, width = 2, height = 2, cell: MapCell | null = null): MetaTilesDoc {
-  return normalizeMetaTiles({ tileset, width, height, cell })
+export function createMetaTileDoc(tileset: string, width = 2, height = 2, cell: MapCell | null = null): MetaTileDoc {
+  return normalizeMetaTile({ tileset, width, height, cell })
 }
 
 function extent(value: unknown, fallback: number): number {
@@ -75,31 +84,37 @@ function extent(value: unknown, fallback: number): number {
 }
 
 /** Fills in everything a hand-edited or older file is missing; never throws. */
-export function normalizeMetaTiles(raw: unknown): MetaTilesDoc {
-  const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<MetaTilesDoc>
+export function normalizeMetaTile(raw: unknown): MetaTileDoc {
+  const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
   const width = extent(input.width, 2)
   const height = extent(input.height, 2)
   const cells = width * height
-  const rawMetas = Array.isArray(input.metas) ? input.metas : []
+
+  // Version 1 held a *set*; its first meta is the only one that can survive as
+  // this file's meta, and there is nowhere to put the others. No project has
+  // one — the set model lived for a single commit — so this exists to keep an
+  // in-flight working copy openable, not to preserve anyone's data.
+  const legacy = Array.isArray(input.metas) ? (input.metas[0] as { tiles?: unknown } | undefined) : undefined
+  const rawFrames =
+    Array.isArray(input.frames) && input.frames.length
+      ? (input.frames as { tiles?: unknown }[])
+      : [{ tiles: legacy?.tiles }]
+
+  const frames: MetaFrame[] = rawFrames.slice(0, MAX_FRAMES).map((frame) => ({
+    // Resized to the document's own geometry rather than kept as authored:
+    // the exported table is read at a fixed stride, so one odd frame would
+    // shift every frame after it.
+    tiles: Array.from({ length: cells }, (_, i) => (Number((frame?.tiles as number[] | undefined)?.[i]) || 0) & 0xff)
+  }))
 
   return {
-    version: 1,
+    version: 2,
     tileset: String(input.tileset ?? ''),
     width,
     height,
     cell: normalizeCell(input.cell),
-    // Resized to the set's own geometry rather than kept as authored: every meta
-    // is the same size by definition, and the export reads the table at a fixed
-    // stride, so one odd entry would shift every meta after it.
-    metas: rawMetas.slice(0, MAX_METAS).map((entry, index) => {
-      const meta = (typeof entry === 'object' && entry !== null ? entry : {}) as Partial<TileBlock>
-      return {
-        name: String(meta.name ?? `meta_${index}`),
-        width,
-        height,
-        tiles: Array.from({ length: cells }, (_, i) => (Number(meta.tiles?.[i]) || 0) & 0xff)
-      }
-    }),
+    frames: frames.length ? frames : [{ tiles: new Array<number>(cells).fill(0) }],
+    flags: (Number(input.flags) || 0) & 0xff,
     export: (input.export as ExportBlock | undefined) ?? null
   }
 }
@@ -112,139 +127,107 @@ function normalizeCell(raw: unknown): MapCell | null {
   return { width: at(cell.width, 16), height: at(cell.height, 16), cols: at(cell.cols, 16) }
 }
 
-/** Tiles per meta — the stride of the exported table, and what the helpers index by. */
-export function metaStride(doc: MetaTilesDoc): number {
+/** Tiles per frame — the stride of the exported table. */
+export function metaCells(doc: MetaTileDoc): number {
   return doc.width * doc.height
 }
 
-/** The tile at `(tx, ty)` inside meta `index`. */
-export function metaTileAt(doc: MetaTilesDoc, index: number, tx: number, ty: number): number {
-  return doc.metas[index]?.tiles[ty * doc.width + tx] ?? 0
+/** The tile at `(tx, ty)` in one frame. */
+export function frameTileAt(doc: MetaTileDoc, frame: number, tx: number, ty: number): number {
+  return doc.frames[frame]?.tiles[ty * doc.width + tx] ?? 0
 }
 
-/** Every meta's tile indices, row-major, concatenated in index order. */
-export function metaBytes(doc: MetaTilesDoc): Uint8Array {
-  return Uint8Array.from(doc.metas.flatMap((meta) => meta.tiles.map((tile) => tile & 0xff)))
+/** Every frame's tile indices, row-major, concatenated in frame order. */
+export function metaBytes(doc: MetaTileDoc): Uint8Array {
+  return Uint8Array.from(doc.frames.flatMap((frame) => frame.tiles.map((tile) => tile & 0xff)))
 }
 
-/** Replaces one meta's cells — the editor's paint step. */
-export function setMetaTile(doc: MetaTilesDoc, index: number, tx: number, ty: number, tile: number): MetaTilesDoc {
-  const meta = doc.metas[index]
-  if (!meta || tx < 0 || ty < 0 || tx >= doc.width || ty >= doc.height) return doc
+/** Repoints one cell of one frame — what `meta-paint` calls once it has a tile. */
+export function setFrameTile(doc: MetaTileDoc, frame: number, tx: number, ty: number, tile: number): MetaTileDoc {
+  const current = doc.frames[frame]
+  if (!current || tx < 0 || ty < 0 || tx >= doc.width || ty >= doc.height) return doc
   const at = ty * doc.width + tx
-  if (meta.tiles[at] === tile) return doc
-  const tiles = meta.tiles.slice()
+  if (current.tiles[at] === tile) return doc
+  const tiles = current.tiles.slice()
   tiles[at] = tile & 0xff
-  const metas = doc.metas.slice()
-  metas[index] = { ...meta, tiles }
-  return { ...doc, metas }
+  const frames = doc.frames.slice()
+  frames[frame] = { tiles }
+  return { ...doc, frames }
 }
 
-export function addMeta(doc: MetaTilesDoc, name?: string): MetaTilesDoc {
-  if (doc.metas.length >= MAX_METAS) return doc
-  const meta: TileBlock = {
-    name: name ?? `meta_${doc.metas.length}`,
-    width: doc.width,
-    height: doc.height,
-    tiles: new Array<number>(metaStride(doc)).fill(0)
-  }
-  return { ...doc, metas: [...doc.metas, meta] }
+/** Appends a frame, copying `copyOf` when given — animation starts from a pose. */
+export function addFrame(doc: MetaTileDoc, copyOf?: number): MetaTileDoc {
+  if (doc.frames.length >= MAX_FRAMES) return doc
+  const source = copyOf === undefined ? undefined : doc.frames[copyOf]
+  const tiles = source ? source.tiles.slice() : new Array<number>(metaCells(doc)).fill(0)
+  return { ...doc, frames: [...doc.frames, { tiles }] }
 }
 
-export function renameMeta(doc: MetaTilesDoc, index: number, name: string): MetaTilesDoc {
-  if (!doc.metas[index]) return doc
-  const metas = doc.metas.slice()
-  metas[index] = { ...metas[index], name }
-  return { ...doc, metas }
+/** Removes a frame. The last one cannot go: a meta with no pose is not drawable. */
+export function removeFrame(doc: MetaTileDoc, index: number): MetaTileDoc {
+  if (doc.frames.length <= 1 || !doc.frames[index]) return doc
+  return { ...doc, frames: doc.frames.filter((_, i) => i !== index) }
+}
+
+export function reorderFrames(doc: MetaTileDoc, from: number, to: number): MetaTileDoc {
+  if (from === to || !doc.frames[from] || !doc.frames[to]) return doc
+  const frames = doc.frames.slice()
+  frames.splice(to, 0, ...frames.splice(from, 1))
+  return { ...doc, frames }
 }
 
 /**
- * Resizes every meta, keeping the tiles that still fit (top-left anchored).
- * Growing fills with tile 0.
+ * Resizes the meta, keeping the tiles that still fit (top-left anchored).
+ * Grown cells get tile 0 — the transparent one — so a meta that gets bigger
+ * does not sprout opaque artwork along its new edge.
  */
-export function resizeMetas(doc: MetaTilesDoc, width: number, height: number): MetaTilesDoc {
+export function resizeMeta(doc: MetaTileDoc, width: number, height: number): MetaTileDoc {
   const w = Math.min(MAX_META_SIZE, Math.max(1, width | 0))
   const h = Math.min(MAX_META_SIZE, Math.max(1, height | 0))
   if (w === doc.width && h === doc.height) return doc
-  const metas = doc.metas.map((meta) => {
+  const frames = doc.frames.map((frame) => {
     const tiles = new Array<number>(w * h).fill(0)
     for (let y = 0; y < Math.min(h, doc.height); y++) {
-      for (let x = 0; x < Math.min(w, doc.width); x++) tiles[y * w + x] = meta.tiles[y * doc.width + x] ?? 0
+      for (let x = 0; x < Math.min(w, doc.width); x++) tiles[y * w + x] = frame.tiles[y * doc.width + x] ?? 0
     }
-    return { ...meta, width: w, height: h, tiles }
+    return { tiles }
   })
-  return { ...doc, width: w, height: h, metas }
+  return { ...doc, width: w, height: h, frames }
 }
 
 /**
- * Deletes a meta and renumbers the ones above it, returning
- * `mapping[oldIndex] = newIndex` for the same remap seam a tileset reorder uses
- * — a map drawn with this set replays it so its cells still point at the same
- * art. Cells that referenced the deleted meta fall back to meta 0, since there
- * is nothing else honest to point them at.
+ * Applies a *tileset* reorder to every frame's references — what a meta replays
+ * after a drag-reorder or a compaction in the tile editor, exactly as a map
+ * does over its own cells.
  */
-export function removeMeta(doc: MetaTilesDoc, index: number): { doc: MetaTilesDoc; mapping: number[] } {
-  const identity = doc.metas.map((_, i) => i)
-  if (!doc.metas[index]) return { doc, mapping: identity }
-  return {
-    doc: { ...doc, metas: doc.metas.filter((_, i) => i !== index) },
-    mapping: identity.map((i) => (i === index ? 0 : i > index ? i - 1 : i))
-  }
+export function remapMetaTiles(doc: MetaTileDoc, mapping: readonly number[]): MetaTileDoc {
+  return { ...doc, frames: doc.frames.map((frame) => ({ tiles: frame.tiles.map((tile) => mapping[tile] ?? 0) })) }
 }
 
-/** Moves meta `from` to position `to`, with the mapping maps replay. */
-export function reorderMetas(doc: MetaTilesDoc, from: number, to: number): { doc: MetaTilesDoc; mapping: number[] } {
-  const identity = doc.metas.map((_, i) => i)
-  if (from === to || !doc.metas[from] || !doc.metas[to]) return { doc, mapping: identity }
-  const metas = doc.metas.slice()
-  metas.splice(to, 0, ...metas.splice(from, 1))
-  const mapping = identity.map((index) => {
-    if (index === from) return to
-    if (from < to) return index > from && index <= to ? index - 1 : index
-    return index >= to && index < from ? index + 1 : index
-  })
-  return { doc: { ...doc, metas }, mapping }
-}
-
-/**
- * Applies a *tileset* reorder to every meta's references — what a meta set
- * replays after a drag-reorder in the tile editor, exactly as a map does.
- *
- * The two directions cannot be confused, because a document only ever replays
- * the log of the file it references: a meta set reads its tileset's, a map drawn
- * with a meta set reads the meta set's.
- */
-export function remapMetaTiles(doc: MetaTilesDoc, mapping: readonly number[]): MetaTilesDoc {
-  if (!doc.metas.length) return doc
-  return { ...doc, metas: doc.metas.map((meta) => ({ ...meta, tiles: meta.tiles.map((tile) => mapping[tile] ?? 0) })) }
-}
-
-export function validateMetaTiles(doc: MetaTilesDoc): string[] {
+export function validateMetaTile(doc: MetaTileDoc): string[] {
   const problems: string[] = []
-  if (doc.version !== 1) problems.push(`Unsupported version ${doc.version}`)
+  if (doc.version !== 2) problems.push(`Unsupported version ${doc.version}`)
   if (!doc.tileset) problems.push('No tileset referenced')
   if (doc.width < 1 || doc.width > MAX_META_SIZE || doc.height < 1 || doc.height > MAX_META_SIZE) {
     problems.push(`Meta size ${doc.width}×${doc.height} outside 1..${MAX_META_SIZE}`)
   }
-  // A map cell is one byte, so a 257th meta could be defined but never painted.
-  if (doc.metas.length > MAX_METAS) problems.push(`${doc.metas.length} metas, but a map cell can only index ${MAX_METAS}`)
-  if (!doc.metas.length) problems.push('No meta-tiles defined')
-  const stride = metaStride(doc)
-  doc.metas.forEach((meta, index) => {
-    if (meta.tiles.length !== stride) {
-      problems.push(`Meta ${index} "${meta.name}": ${meta.tiles.length} tiles, expected ${stride}`)
-    }
+  if (!doc.frames.length) problems.push('No frames')
+  const cells = metaCells(doc)
+  doc.frames.forEach((frame, index) => {
+    if (frame.tiles.length !== cells) problems.push(`Frame ${index}: ${frame.tiles.length} tiles, expected ${cells}`)
   })
   return problems
 }
 
-/** `#define`s locating each *named* meta, so game code says the name, not the number. */
-export function metaConstants(doc: MetaTilesDoc, name: string): string[] {
+/** `#define`s locating this meta in its exported table. */
+export function metaConstants(doc: MetaTileDoc, name: string): string[] {
   const prefix = defineName(name)
   const out = [
     `#define ${prefix}_META_W ${doc.width}`,
     `#define ${prefix}_META_H ${doc.height}`,
-    `#define ${prefix}_COUNT ${doc.metas.length}`
+    `#define ${prefix}_CELLS ${metaCells(doc)}`,
+    `#define ${prefix}_FRAMES ${doc.frames.length}`,
+    `#define ${prefix}_FLAGS 0x${doc.flags.toString(16).padStart(2, '0')}`
   ]
   if (doc.cell) {
     out.push(
@@ -253,48 +236,64 @@ export function metaConstants(doc: MetaTilesDoc, name: string): string[] {
       `#define ${prefix}_ATLAS_COLS ${doc.cell.cols}`
     )
   }
-  // Auto-named metas would emit `_META_0 0`, which says nothing the index doesn't.
-  doc.metas.forEach((meta, index) => {
-    if (!/^meta_\d+$/.test(meta.name)) out.push(`#define ${prefix}_${defineName(meta.name)} ${index}`)
-  })
   return out
 }
 
 /**
- * The opt-in ready-made C: stamp one meta where a block would go. This is the
- * runtime counterpart of the map's expansion helpers — a door that opens, a
- * block that breaks — and it is the same shape as the tileset's own
- * `_DrawBlock`, except that a meta's size is known at compile time so the caller
- * does not pass it.
+ * The opt-in ready-made C: stamp one frame of this meta into the name table.
  *
- * Expanding a whole *map* is not here: that needs the map's dimensions, so it
- * lives on the map resource (`metaMapHelperC` in `map.ts`).
+ * Written as runs rather than one `VDP_WriteLayout_GM2` over the whole
+ * rectangle, because a meta is *transparent* where it holds tile 0 and a name
+ * table has no holes — the only way to see through a cell is not to write it.
+ * Each row becomes one call per opaque run, which for the usual case (a solid
+ * meta) is still one call per row.
+ *
+ * A poke per cell would be the obvious alternative and is wrong twice:
+ * `VDP_Poke_16K` takes `(value, dest)`, and it is 16K addressing only, so it
+ * cannot write a SCREEN 4 name table at all.
  */
-export function metaHelperC(doc: MetaTilesDoc, name: string): HelperC {
+export function metaHelperC(doc: MetaTileDoc, name: string): HelperC {
   const prefix = defineName(name)
-  const stride = metaStride(doc)
-  const first = doc.metas.find((meta) => !/^meta_\d+$/.test(meta.name))
-  const example = first ? `${prefix}_${defineName(first.name)}` : '0'
-  if (doc.cell) return bitmapMetaHelperC(doc, name, prefix, example)
+  if (doc.cell) return bitmapMetaHelperC(doc, name, prefix)
 
-  const signature = `void ${name}_DrawMeta(u8 x, u8 y, u8 meta)`
+  const signature = `void ${name}_Draw(u8 x, u8 y, u8 frame)`
   return {
     header: [
       '',
-      `// Stamps one meta-tile of ${name} into the name table at tile column/row (x, y).`,
-      `// A meta is ${doc.width}×${doc.height} tiles, so it covers that much of the screen.`,
+      `// ── ${name}: a meta-tile ──────────────────────────────────────────────`,
+      '//',
+      `// Stamps frame \`frame\` at tile column/row (x, y). The meta is`,
+      `// ${doc.width}×${doc.height} tiles${doc.frames.length > 1 ? `, with ${doc.frames.length} frames` : ''}.`,
+      '//',
+      '// Cells holding tile 0 are skipped, so whatever is already on screen',
+      '// shows through them. That is what makes a meta-tile transparent, and it',
+      '// needs the tileset to reserve tile 0.',
+      '//',
       '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
       '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.',
       '//',
       '// Example:',
-      `//   ${name}_DrawMeta(10, 5, ${example});`,
+      `//   ${name}_Draw(10, 5, 0);`,
       `${signature};`
     ],
     source: [
       '',
       signature,
       '{',
-      `\tVDP_WriteLayout_GM2(${name} + ((u16)meta * ${stride}), x, y, ${prefix}_META_W, ${prefix}_META_H);`,
+      `\tconst u8* src = ${name} + ((u16)frame * ${prefix}_CELLS);`,
+      `\tfor(u8 row = 0; row < ${prefix}_META_H; ++row)`,
+      '\t{',
+      '\t\tu8 col = 0;',
+      `\t\twhile(col < ${prefix}_META_W)`,
+      '\t\t{',
+      '\t\t\tif(src[col] == 0) { ++col; continue; }',
+      '\t\t\tu8 run = col;',
+      `\t\t\twhile(run < ${prefix}_META_W && src[run] != 0) ++run;`,
+      '\t\t\tVDP_WriteLayout_GM2(src + col, x + col, y + row, run - col, 1);',
+      '\t\t\tcol = run;',
+      '\t\t}',
+      `\t\tsrc += ${prefix}_META_W;`,
+      '\t}',
       '}'
     ]
   }
@@ -303,17 +302,19 @@ export function metaHelperC(doc: MetaTilesDoc, name: string): HelperC {
 /**
  * The bitmap counterpart: there is no name table, so a meta is stamped as
  * `width × height` copies out of the atlas, one `HMMM` each — the same blit the
- * map's `_DrawRow` uses, and the same one `stage.h` has always emitted.
+ * map's `_DrawRow` uses.
+ *
+ * Transparency is the command engine's business here rather than a skipped
+ * write, so unlike the pattern path this copies every cell.
  */
-function bitmapMetaHelperC(doc: MetaTilesDoc, name: string, prefix: string, example: string): HelperC {
-  const stride = metaStride(doc)
-  const signature = `void ${name}_DrawMeta(UX x, UY y, u8 meta, UY atlasY)`
+function bitmapMetaHelperC(doc: MetaTileDoc, name: string, prefix: string): HelperC {
+  const signature = `void ${name}_Draw(UX x, UY y, u8 frame, UY atlasY)`
   return {
     header: [
       '',
-      `// ── ${name}: meta-tiles in a bitmap mode ──────────────────────────────`,
+      `// ── ${name}: a meta-tile in a bitmap mode ─────────────────────────────`,
       '//',
-      `// Stamps one meta-tile — ${doc.width}×${doc.height} cells of ${doc.cell!.width}×${doc.cell!.height} dots — at dot`,
+      `// Stamps frame \`frame\` — ${doc.width}×${doc.height} cells of ${doc.cell!.width}×${doc.cell!.height} dots — at dot`,
       '// position (x, y). Cells come from an atlas image parked at (0, `atlasY`)',
       `// in VRAM, ${doc.cell!.cols} to a row, the same atlas the map draws from.`,
       '//',
@@ -321,14 +322,14 @@ function bitmapMetaHelperC(doc: MetaTilesDoc, name: string, prefix: string, exam
       '// and "msxgl.h" included before this header.',
       '//',
       '// Example:',
-      `//   ${name}_DrawMeta(64, 32, ${example}, ATLAS_Y);`,
+      `//   ${name}_Draw(64, 32, 0, ATLAS_Y);`,
       `${signature};`
     ],
     source: [
       '',
       signature,
       '{',
-      `\tconst u8* src = ${name} + ((u16)meta * ${stride});`,
+      `\tconst u8* src = ${name} + ((u16)frame * ${prefix}_CELLS);`,
       `\tfor(u8 row = 0; row < ${prefix}_META_H; ++row)`,
       '\t{',
       `\t\tfor(u8 col = 0; col < ${prefix}_META_W; ++col)`,
