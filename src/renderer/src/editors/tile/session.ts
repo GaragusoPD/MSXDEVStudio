@@ -464,15 +464,44 @@ export function addTile(session: TileSession): void {
  * tile 0.
  */
 export function deleteTile(session: TileSession, index: number): void {
-  const { doc, mapping } = removeTile(session.doc, index)
-  if (doc === session.doc) {
+  deleteTiles(session, [index])
+}
+
+/**
+ * Deletes a whole selection: one renumbering, one undo step, one confirmation.
+ *
+ * Removing tiles one at a time is not the same operation repeated — each
+ * removal renumbers everything above it, so the second index in the caller's
+ * list no longer means what it meant when the user picked it. Highest first
+ * keeps the lower ones valid, and the per-step mappings compose into the single
+ * mapping that maps and blocks replay.
+ */
+export function deleteTiles(session: TileSession, indices: readonly number[]): void {
+  const doomed = [...new Set(indices)]
+    .filter((index) => index >= 0 && index < session.doc.count)
+    .sort((a, b) => b - a)
+  if (!doomed.length) return
+  if (doomed.length >= session.doc.count) {
     session.status = 'A tileset needs at least one tile.'
     return
   }
+
+  let next = session.doc
+  let mapping = session.doc.tiles.map((_, i) => i)
+  for (const index of doomed) {
+    const step = removeTile(next, index)
+    if (step.doc === next) break
+    next = step.doc
+    mapping = mapping.map((value) => step.mapping[value] ?? 0)
+  }
+  if (next === session.doc) return
+
   publishRemap(session, mapping)
-  commit(session, doc, `delete tile ${index}`, mapping)
+  const label = doomed.length === 1 ? `delete tile ${doomed[0]}` : `delete ${doomed.length} tiles`
+  commit(session, next, label, mapping)
   selectBlock(session, null)
-  select(session, Math.min(index, doc.count - 1))
+  // Land on the lowest index that was removed — where the gap now is.
+  select(session, Math.min(doomed[doomed.length - 1], next.count - 1))
 }
 
 /**

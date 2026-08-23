@@ -68,6 +68,17 @@ editor; bitmap and multicolour modes follow in stage 2.
   and an MSX1 has no command engine, so placements on those maps are reported in
   the Problems panel instead of exported as V9938 calls that link and do nothing.
 
+### Tile editor
+
+#### Fixed
+
+- **Deleting a multi-tile selection** removes every tile in it, behind a single
+  confirmation and as one undo step. It deleted only the active tile before, one
+  prompt at a time. Removal is ordered highest-first and the per-step mappings
+  compose into one, because each removal renumbers the tiles above it — so the
+  maps and blocks drawn with the tileset replay a single renumbering rather than
+  one per tile.
+
 ## Stage 1
 
 #### Changed

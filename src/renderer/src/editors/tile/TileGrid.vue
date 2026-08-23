@@ -15,7 +15,7 @@ import { fitColumns, marqueeIndices } from '../../../../shared/tile-editor'
 import {
   addTile,
   copySelection,
-  deleteTile,
+  deleteTiles,
   pasteClipboard,
   reorder,
   setGridZoom,
@@ -29,12 +29,17 @@ const props = defineProps<{ session: TileSession }>()
 
 /**
  * Deleting renumbers every tile above it, which rewrites open maps through the
- * Spec 10 remap seam — worth one confirmation.
+ * Spec 10 remap seam — worth one confirmation. One for the whole selection,
+ * not one per tile: a marquee of twenty is a single decision.
  */
 function confirmDelete(): void {
-  const index = props.session.active
-  if (window.confirm(`Delete tile ${index}? Maps and blocks using it fall back to tile 0, and every tile above it is renumbered.`)) {
-    deleteTile(props.session, index)
+  const doomed = props.session.selection.length ? props.session.selection : [props.session.active]
+  const what =
+    doomed.length === 1
+      ? `Delete tile ${doomed[0]}?`
+      : `Delete ${doomed.length} tiles (${Math.min(...doomed)}–${Math.max(...doomed)})?`
+  if (window.confirm(`${what} Maps and blocks using them fall back to tile 0, and every tile above is renumbered.`)) {
+    deleteTiles(props.session, doomed)
   }
 }
 
@@ -277,7 +282,11 @@ watchEffect(() => {
       </button>
       <button
         type="button"
-        title="Delete the selected tile — maps and blocks using it fall back to tile 0"
+        :title="
+          session.selection.length > 1
+            ? `Delete the ${session.selection.length} selected tiles — maps and blocks using them fall back to tile 0`
+            : 'Delete the selected tile — maps and blocks using it fall back to tile 0'
+        "
         :disabled="session.doc.count <= 1"
         @click="confirmDelete"
       >
