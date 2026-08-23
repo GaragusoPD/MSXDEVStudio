@@ -19,6 +19,12 @@
 - **Emitted C calls MSXgl's own API**, never a reimplementation. Helper C is gated on `ExportBlock.helpers`; a data-only header must never reference the engine.
 - **Every task ends green:** `npm run check` (lint + typecheck) and `npm run test` both pass before the commit step.
 - Tests live next to their module, named `<module>.test.ts`.
+- **Tasks 2 through 5 are one typecheck unit.** Task 2 deletes the set-shaped API
+  that `resource.ts` still imports, and Task 5 is what rebuilds it. `npm run test`
+  must stay green at every commit in between; `npm run check` will not be green
+  again until Task 5, and each of those commits says so in its message. Do not
+  paper over the gap with casts or stubs — the red typecheck is the list of call
+  sites still to convert.
 - Renderer components get no unit tests — per `CLAUDE.md`, renderer correctness rides on the shared modules it delegates to. Renderer tasks verify by running the app.
 
 ---
@@ -53,6 +59,8 @@
 | `src/renderer/src/editors/map/session.ts` | Placement state and actions. |
 | `src/renderer/src/editors/map/MapCanvas.vue` | Draw, hit-test, drag placements. |
 | `src/renderer/src/editors/map/MapSidePanel.vue` | Split picker; drop the meta-set branches. |
+| `src/renderer/src/editors/map/sheet.ts` | Delete `metaSheet` (and its three cache globals); add `metaThumbnail`. |
+| `src/renderer/src/editors/meta/MetaTileEditorTab.vue` | Rewritten — 865 lines of set-model UI, not adaptable. |
 | `src/main/services/agent-guide.ts` | Meta-tile section rewritten. |
 | `docs/tutorials/09-meta-tiles.md` | Rewritten. |
 | `specs/10-map-screen-editors.md` | Placements and the store. |
@@ -1057,6 +1065,17 @@ describe('meta-tile placements', () => {
     expect([...placementBytes(doc)]).toEqual([0x80, 3, 4])
   })
 
+  it('refuses a 129th meta, because the slot byte only has seven bits', () => {
+    let doc = normalizeMap({ tileset: 't.tiles.json', width: 4, height: 4 })
+    for (let i = 0; i < 130; i++) doc = addMetaRef(doc, { ...ref, path: `m${i}.meta-tiles.json`, name: `m${i}` })
+    expect(doc.metas).toHaveLength(128)
+  })
+
+  it('validateMap reports a placement that hangs off the grid', () => {
+    const doc = { ...placeMeta(base(), 0, 0, 7, 7), width: 8, height: 8 }
+    expect(validateMap(doc).join(' ')).toMatch(/extends past/)
+  })
+
   it('placementBytes walks every layer in order', () => {
     let doc = addLayer(base(), 'over')
     doc = placeMeta(doc, 0, 0, 1, 1)
@@ -1066,7 +1085,7 @@ describe('meta-tile placements', () => {
 })
 ```
 
-Extend the file's imports with `addMetaRef`, `addLayer`, `normalizeMap`, `placeMeta`, `placementAt`, `placementBytes`, `removeMetaRef`, `setPlacementBaked`.
+Extend the file's imports: `addMetaRef`, `normalizeMap`, `placeMeta`, `placementAt`, `placementBytes`, `removeMetaRef`, `setPlacementBaked` come from `./map`; **`addLayer` comes from `../map-editor`** — layer operations live in the editor module, not the model one.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1074,6 +1093,27 @@ Run: `npx vitest run src/shared/msx/map.test.ts -t placements`
 Expected: FAIL — the exports do not exist.
 
 - [ ] **Step 3: Delete the set model from `map.ts`**
+
+Add placement validation to `validateMap`, replacing what the meta branches
+checked. A placement's *origin* is inside the grid — `placeMeta` and
+`normalizePlacements` both enforce that — but its far edge need not be, and a
+meta hanging off the right of the map writes into the next row of the name
+table at runtime:
+
+```ts
+  for (const layer of doc.layers) {
+    for (const p of layer.placements) {
+      const ref = doc.metas[p.slot]
+      if (!ref) continue
+      if (p.x + ref.width > doc.width || p.y + ref.height > doc.height) {
+        problems.push(`"${ref.name}" at ${p.x},${p.y} on layer "${layer.name}" extends past the map`)
+      }
+    }
+  }
+```
+
+This is a warning, not something to clamp: cropping a placement silently is
+worse than telling the user their tree is half off the level.
 
 Remove: the `meta` field from `MapDoc` and its docblock; `normalizeMeta`; the `import { MAX_META_SIZE } from './meta-tile'`; `mapTileSize`'s meta branch (it becomes `return { width: doc.width, height: doc.height }` — keep the function, callers use it); the `metaTileset` validation branch and the sc3-meta branch in `validateMap`; `metaMapHelperC`; `patternMetaHelperC`; `bitmapMetaHelperC`; and the `if (doc.meta) return metaMapHelperC(...)` line in `mapHelperC`.
 
@@ -1160,7 +1200,16 @@ function normalizePlacements(raw: unknown, doc: { width: number; height: number 
 Then the operations:
 
 ```ts
+/**
+ * The most metas one map may place. `placementBytes` spends bit 7 of the slot
+ * byte on `baked`, so a slot is seven bits; a 128th meta would silently alias
+ * onto slot 0 with `baked` set. The 256-tile bank underneath could not feed
+ * anything near this many anyway.
+ */
+export const MAX_MAP_METAS = 128
+
 export function addMetaRef(doc: MapDoc, ref: MetaRef): MapDoc {
+  if (doc.metas.length >= MAX_MAP_METAS) return doc
   const existing = doc.metas.findIndex((m) => m.path === ref.path)
   // Re-adding refreshes the mirror — the meta may have been resized or gained
   // a frame since this map last saw it.
@@ -1290,7 +1339,9 @@ git commit -m "feat(map): record placed meta-tiles; delete the meta-set map mode
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `src/shared/msx/meta-tile.test.ts`:
+Append to `src/shared/msx/meta-tile.test.ts`, extending its import list with
+`metaConstants` and `metaHelperC` — Task 2 rewrote that file and imported
+neither:
 
 ```ts
 describe('metaConstants', () => {
@@ -1309,8 +1360,10 @@ describe('metaHelperC', () => {
     const c = metaHelperC(createMetaTileDoc('t.tiles.json', 2, 2), 'tree')
     expect(c.header.join('\n')).toContain('void tree_Draw(u8 x, u8 y, u8 frame);')
     // A name table has no holes, so transparency can only be a skipped write.
-    expect(c.source.join('\n')).toContain('if(tile == 0) continue;')
-    expect(c.source.join('\n')).toContain('VDP_Poke_16K')
+    // Transparency is a *skipped* write, and the engine's own rectangle writer
+    // is what does the writing — so a row becomes one call per opaque run.
+    expect(c.source.join('\n')).toContain('while(run < TREE_META_W && src[run] != 0) ++run;')
+    expect(c.source.join('\n')).toContain('VDP_WriteLayout_GM2(src + col, x + col, y + row, run - col, 1);')
   })
 
   it('offsets into the table by frame', () => {
@@ -1320,7 +1373,8 @@ describe('metaHelperC', () => {
 })
 ```
 
-Append to `src/shared/msx/map.test.ts`:
+Append to `src/shared/msx/map.test.ts`, adding `placementHelperC` to the
+imports Task 4 established:
 
 ```ts
 describe('placementHelperC', () => {
@@ -1349,9 +1403,6 @@ describe('placementHelperC', () => {
     expect(c.source).toEqual([])
   })
 
-  it('mapConstants counts the placements', () => {
-    expect(mapConstants(withMeta(), 'level')).toContain('#define LEVEL_PLACEMENTS 1')
-  })
 })
 ```
 
@@ -1423,13 +1474,16 @@ export function metaHelperC(doc: MetaTileDoc, name: string): HelperC {
       `\tconst u8* src = ${name} + ((u16)frame * ${prefix}_CELLS);`,
       `\tfor(u8 row = 0; row < ${prefix}_META_H; ++row)`,
       '\t{',
-      `\t\tu16 dst = g_ScreenLayoutLow + ((u16)(y + row) << 5) + x;`,
-      `\t\tfor(u8 col = 0; col < ${prefix}_META_W; ++col)`,
+      '\t\tu8 col = 0;',
+      `\t\twhile(col < ${prefix}_META_W)`,
       '\t\t{',
-      '\t\t\tu8 tile = *src++;',
-      '\t\t\tif(tile == 0) continue;',
-      '\t\t\tVDP_Poke_16K(dst + col, tile);',
+      '\t\t\tif(src[col] == 0) { ++col; continue; }',
+      '\t\t\tu8 run = col;',
+      `\t\t\twhile(run < ${prefix}_META_W && src[run] != 0) ++run;`,
+      '\t\t\tVDP_WriteLayout_GM2(src + col, x + col, y + row, run - col, 1);',
+      '\t\t\tcol = run;',
       '\t\t}',
+      `\t\tsrc += ${prefix}_META_W;`,
       '\t}',
       '}'
     ]
@@ -1439,7 +1493,15 @@ export function metaHelperC(doc: MetaTileDoc, name: string): HelperC {
 
 Keep the existing `bitmapMetaHelperC` but change its signature to `(doc: MetaTileDoc, name: string, prefix: string)`, drop the `example` parameter, and replace `((u16)meta * ${stride})` with `((u16)frame * ${prefix}_CELLS)` and the `u8 meta` parameter with `u8 frame`.
 
-> **Verify `g_ScreenLayoutLow` and `VDP_Poke_16K` against `specs/msxgl-notes.md` and the real MSXgl checkout before committing.** If MSXgl names them differently, use its names — the rule is that emitted C calls MSXgl's own API, never a reimplementation. Task 6 will catch it if you get this wrong, but catching it here is cheaper.
+> **Why runs of `VDP_WriteLayout_GM2` rather than a poke per cell.** A poke per
+> cell is the obvious shape, and it is wrong twice. `VDP_Poke_16K` takes
+> `(value, dest)` — the reverse of what reads naturally — and it is 16K
+> addressing only, so it cannot write a SCREEN 4 name table, which is a mode
+> this feature targets. `VDP_WriteLayout_GM2` is the engine's own rectangle
+> writer, it is what every other helper in this codebase emits, and splitting a
+> row into opaque runs costs one call per run instead of one per cell. Its only
+> requirement is `VDP_USE_MODE_G2` or `VDP_USE_MODE_G3`, which the header
+> comment already states.
 
 - [ ] **Step 4: Implement the map's placement helper**
 
@@ -1498,16 +1560,20 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
       '\t\tu8 px = *p++;',
       '\t\tu8 py = *p++;',
       '\t\tif(slot & 0x80) continue;',
+      `\t\tconst u8 w = ${name}_Metas[slot].w;`,
       `\t\tconst u8* src = ${name}_Metas[slot].tiles + ((u16)frames[slot] * ${name}_Metas[slot].cells);`,
       `\t\tfor(u8 row = 0; row < ${name}_Metas[slot].h; ++row)`,
       '\t\t{',
-      '\t\t\tu16 dst = g_ScreenLayoutLow + ((u16)(py + row) << 5) + px;',
-      `\t\t\tfor(u8 col = 0; col < ${name}_Metas[slot].w; ++col)`,
+      '\t\t\tu8 col = 0;',
+      '\t\t\twhile(col < w)',
       '\t\t\t{',
-      '\t\t\t\tu8 tile = *src++;',
-      '\t\t\t\tif(tile == 0) continue;',
-      '\t\t\t\tVDP_Poke_16K(dst + col, tile);',
+      '\t\t\t\tif(src[col] == 0) { ++col; continue; }',
+      '\t\t\t\tu8 run = col;',
+      '\t\t\t\twhile(run < w && src[run] != 0) ++run;',
+      '\t\t\t\tVDP_WriteLayout_GM2(src + col, px + col, py + row, run - col, 1);',
+      '\t\t\t\tcol = run;',
       '\t\t\t}',
+      '\t\t\tsrc += w;',
       '\t\t}',
       '\t}',
       '}'
@@ -1516,7 +1582,10 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
 }
 ```
 
-In `mapConstants`, drop the `meta` destructuring and the meta `_TILE_W`/`_TILE_H` branch, and add:
+There is no `mapConstants` function — a map's `#define`s are built inline in
+`resourceConstants`, a **private** function in `resource.ts` (around line 662).
+Edit it there: drop the `meta` destructuring and the meta `_TILE_W`/`_TILE_H`
+branch, and add:
 
 ```ts
   if (doc.metas.length) {
@@ -1531,6 +1600,19 @@ In `mapConstants`, drop the `meta` destructuring and the meta `_TILE_W`/`_TILE_H
 ```
 
 In `mapHelperC`, append `placementHelperC`'s lines to whatever the tile path returns.
+
+Because `resourceConstants` is private, its behaviour is tested through
+`resource.test.ts`'s existing `rendered()` helper rather than directly. Add
+there:
+
+```ts
+it('counts the placements and names each placed meta', () => {
+  const header = rendered(metaMap(), 'res/level.map.json', { ...defaultExport('g_Level'), helpers: true })
+  expect(header).toContain('#define G_LEVEL_METAS 1')
+  expect(header).toContain('#define G_LEVEL_PLACEMENTS 1')
+  expect(header).toContain('#define G_LEVEL_META_TREE 0')
+})
+```
 
 - [ ] **Step 5: Rewire `resource.ts`**
 
@@ -1591,6 +1673,19 @@ Add to the `map` notes: `if (doc.metas.length) notes.push(\`Meta-tiles: ${doc.me
 ```
 
 Update every `MetaTilesDoc` type reference to `MetaTileDoc` and every `normalizeMetaTiles` call to `normalizeMetaTile` (the `parseResource` and `serializeResource` switches).
+
+`src/shared/msx/resource.test.ts` still tests the set model and will not
+compile. Three places:
+
+- its `import { normalizeMetaTiles } from './meta-tile'` (line 5) → `normalizeMetaTile`;
+- `describe('meta-tile resource')` (around line 515) — rewrite `metaSet()` as a
+  one-meta fixture with `frames`, and replace the "one table at a fixed stride,
+  with a define per named meta" test with one asserting the frame stride and
+  `_FRAMES`/`_FLAGS`;
+- the plain-map regression test (around line 469) asserts `expect(doc.meta).toBeNull()`
+  — delete that line. Keep the rest of that test: it is the guard that a
+  meta-tile change has not leaked into the path every existing project uses, and
+  it matters more now than it did before.
 
 - [ ] **Step 6: Run the whole suite**
 
@@ -1655,12 +1750,15 @@ The `main.c` the test writes:
 
 void main(void)
 {
-	u8 frames[LEVEL_METAS];
+	u8 frames[G_LEVEL_METAS];
 	frames[0] = 0;
-	VDP_SetMode(VDP_MODE_SCREEN2);
-	VDP_LoadPattern_GM2(g_Tiles, 8, 0);
-	tree_Draw(10, 5, 0);
-	level_DrawPlacements(frames);
+	// GRAPHIC2, not "SCREEN2" — VDP_MODE_GRAPHIC2 is the name MSXgl uses, and it
+	// is what demo_msx1/main.c:81 calls.
+	VDP_SetMode(VDP_MODE_GRAPHIC2);
+	VDP_LoadPattern_GM2(g_Tiles_Patterns, G_TILES_PATTERNS_SIZE / 8, 0);
+	VDP_LoadColor_GM2(g_Tiles_Colors, G_TILES_COLORS_SIZE / 8, 0);
+	g_Tree_Draw(10, 5, 0);
+	g_Level_DrawPlacements(frames);
 	while(1) { Halt(); }
 }
 ```
@@ -1675,9 +1773,23 @@ expect(result.output).not.toMatch(/\?ASlink-Warning-Undefined Global/)
 expect(existsSync(join(project, 'out', 'meta_test.rom'))).toBe(true)
 ```
 
-Check the exact `VDP_LoadPattern_GM2` / `VDP_SetMode` names against
-`specs/msxgl-notes.md` and the real checkout before running — the point of this
-test is that memory is not evidence.
+The symbol names come from each resource's `ExportBlock.name`, so the fixture
+must set them to `g_Tiles`, `g_Tree` and `g_Level` for this `main.c` to link.
+The table suffixes (`_Patterns`, `_Colors`) and the `_SIZE` defines follow the
+convention `demo_msx1/main.c:88` and `demo_msx1/screens.c:64` use — these names
+are grounded in working code, not memory. Ground any replacement the same way.
+
+**There may be no MSXgl checkout on this machine**, in which case this test
+skips and proves nothing. Check first:
+
+```bash
+node -e "console.log(require('fs').existsSync(require('os').homedir()+'/MSXgl/projects/template/template.c'))"
+```
+
+If it prints `false`, say so in the commit message rather than implying the
+emitted C was verified. The helpers call only `VDP_WriteLayout_GM2`, which every
+other emitted helper already uses and which `resource.test.ts` already asserts
+on, so the residual risk is low — but low is not checked.
 
 - [ ] **Step 3: Run it**
 
@@ -1747,6 +1859,13 @@ Create `src/renderer/src/stores/tilesetStore.ts`:
  * doc as its new present and drops its redo. That is safe precisely because
  * painting only ever *appends* tiles: two editors can disagree about which
  * tiles exist, never about what an existing tile looks like.
+ *
+ * Written in Pinia's **setup style**, unlike the option-style stores beside it.
+ * The deviation is deliberate and confined to this file: the state here is a
+ * keyed map plus a per-key listener registry, and the listeners are closures
+ * that must not become reactive state — an option-style `state()` would either
+ * expose them or need a module-level side table anyway. Follow the option style
+ * for any store that does not have this shape.
  */
 
 import { defineStore } from 'pinia'
@@ -1762,6 +1881,8 @@ export const useTilesetStore = defineStore('tileset', () => {
   const dirty = ref(new Set<string>())
   const loading = new Map<string, Promise<TilesDoc>>()
   const listeners = new Map<string, Listener[]>()
+  /** Per path, the reorder log that travels beside the document on disk. */
+  const logs = new Map<string, TilesReorderEvent[]>()
 
   function doc(path: string): TilesDoc | null {
     return docs.value.get(path) ?? null
@@ -1774,7 +1895,9 @@ export const useTilesetStore = defineStore('tileset', () => {
     if (inflight) return inflight
     const promise = (async () => {
       const text = await window.api.invoke('fs:read', { path })
-      const parsed = normalizeTiles(text.trim() ? JSON.parse(text) : {})
+      const raw = (text.trim() ? JSON.parse(text) : {}) as { reorderLog?: TilesReorderEvent[] }
+      const parsed = normalizeTiles(raw)
+      logs.set(path, Array.isArray(raw.reorderLog) ? raw.reorderLog : [])
       docs.value.set(path, parsed)
       docs.value = new Map(docs.value)
       return parsed
@@ -1799,9 +1922,16 @@ export const useTilesetStore = defineStore('tileset', () => {
   async function save(path: string): Promise<void> {
     const current = docs.value.get(path)
     if (!current) return
+    // `reorderLog` is a *sibling key* of the document, not part of it — every
+    // map and meta that draws with this tileset replays it on open to renumber
+    // itself after a tile reorder. Serializing the doc alone silently deletes
+    // it, and the damage only shows up the next time some other file opens.
+    const saved: TilesDoc & { reorderLog?: TilesReorderEvent[] } = { ...current }
+    const log = logs.get(path)
+    if (log?.length) saved.reorderLog = log
     await window.api.invoke('fs:write', {
       path,
-      content: serializeResource({ kind: 'tiles', doc: current })
+      content: serializeResource({ kind: 'tiles', doc: saved })
     })
     dirty.value.delete(path)
     dirty.value = new Set(dirty.value)
@@ -1818,6 +1948,16 @@ export const useTilesetStore = defineStore('tileset', () => {
     docs.value.delete(path)
     docs.value = new Map(docs.value)
     listeners.delete(path)
+    logs.delete(path)
+  }
+
+  /** Records a tile renumbering so it survives the save. Emitting it is the caller's job. */
+  function appendReorder(path: string, event: TilesReorderEvent): void {
+    logs.set(path, [...(logs.get(path) ?? []), event])
+  }
+
+  function reorderLog(path: string): TilesReorderEvent[] {
+    return logs.get(path) ?? []
   }
 
   function onExternalChange(path: string, source: string, fn: (doc: TilesDoc) => void): () => void {
@@ -1827,7 +1967,7 @@ export const useTilesetStore = defineStore('tileset', () => {
     return () => listeners.set(path, (listeners.get(path) ?? []).filter((l) => l !== entry))
   }
 
-  return { doc, load, set, save, isDirty, release, onExternalChange }
+  return { doc, load, set, save, isDirty, release, onExternalChange, appendReorder, reorderLog }
 })
 ```
 
@@ -1835,10 +1975,38 @@ export const useTilesetStore = defineStore('tileset', () => {
 
 In `src/renderer/src/editors/tile/session.ts`:
 
-- `load()` calls `useTilesetStore().load(path)` instead of reading and parsing itself, then `session.history = initHistory(doc)`.
-- `commit()` calls `useTilesetStore().set(session.path, doc, session.path)` after pushing history.
-- `saveSession()` calls `useTilesetStore().save(session.path)`.
-- `undo()`/`redo()` push the restored doc through `set()` as well, so the store follows.
+The session currently holds the document twice — `session.doc` and
+`session.history` — and `session.doc` is read throughout the tile editor's
+components. Do not try to delete it; turn it into a view onto the store, so
+every existing call site keeps working:
+
+```ts
+// `doc` is no longer stored here. The store holds one per path, and this
+// session is one of possibly several readers.
+Object.defineProperty(session, 'doc', {
+  get: () => useTilesetStore().doc(path) ?? createTilesDoc('sc2', 1)
+})
+```
+
+Then:
+
+- `load()` calls `useTilesetStore().load(path)` instead of reading and parsing
+  itself, then `session.history = initHistory(doc)`. Its `session.reorderLog`
+  read moves to the store — delete the local field and route the two call sites
+  through `store.reorderLog(path)` / `store.appendReorder(path, event)`.
+- `commit()` calls `useTilesetStore().set(session.path, doc, session.path)` after
+  pushing history, and drops `session.doc = doc`.
+- `saveSession()` calls `useTilesetStore().save(session.path)` and keeps only the
+  `session.status = 'Saved'` line. The store handles the dirty flags and the
+  `reorderLog` sibling key.
+- `undo()`/`redo()` push the restored doc through `set()` as well, so the store
+  follows. Note the tile editor imports `pushHistory` from
+  `shared/tile-editor.ts` — a **different function** from the one in
+  `shared/history.ts` of the same name, taking `(history, doc, label, remap?)`.
+  Use the four-argument one here.
+- `beginStroke`'s `session.strokeBase = session.doc` still works through the
+  getter, and is still correct: a stroke's base is the doc as it was when the
+  stroke began.
 - In `tileSession()`, register the rebase:
 
 ```ts
@@ -1871,7 +2039,16 @@ git commit -m "refactor(tiles): one shared TilesDoc per path in a Pinia store"
 - Modify: `src/renderer/src/editors/meta/session.ts` (rewrite)
 
 **Interfaces:**
-- Produces: `MetaSession` with `{ path, history, doc, tilesetPath, frame, tool, color, brushRadius, density, onionSkin, playing, zoom, gridVisible, status, dropped }`; `paint(session, points)`; `setFrame`, `addFrame`, `removeFrame`, `reorderFrames`, `resize`, `setFlag`, `setTileset`, `compact(session)`, `saveSession`, `undo`, `redo`.
+- Produces: `MetaSession` with `{ path, kind, history, doc, tilesetPath, frame, tool, color, brushRadius, density, onionSkin, playing, zoom, gridVisible, status, dropped }` — `kind` is `'metatiles' | 'metabtiles'`, from `resourceKindOf(path)`, and is what gates pixel painting to stage 1's modes; `paint(session, points)`; `setFrame`, `addFrame`, `removeFrame`, `reorderFrames`, `resize`, `setFlag`, `setTileset`, `compact(session)`, `saveSession`, `undo`, `redo`.
+
+**Everything in the current session that goes:** `metaStride` (re-exported at
+line 367), `addMetaFromTiles`, `renameMeta`, `removeMeta`, `reorderMetas`,
+`resizeMetas`, `selectMeta`, `pickTile`, `paintCell`, `session.active`,
+`session.brush`, `publishRemap`, and the `sheet()` accessor. `session.tileset` /
+`bitmapTileset` / `atlas` go too — the store holds the doc now, and the session
+holds only `tilesetPath`. Keep `onTilesReordered`, `replayPersistedReorders`,
+`reorderLog` and `tilesetReorderSeen`: incoming tileset reorders still have to
+be replayed, and that is unchanged.
 
 - [ ] **Step 1: Rewrite the session**
 
@@ -1883,6 +2060,10 @@ Key points, following the existing file's structure:
 
 ```ts
 export function paint(session: MetaSession, points: Point[]): void {
+  // Stage 1 paints pattern modes only. A `.meta-btiles.json` references a
+  // bitmap tileset, which is not a TilesDoc and is not in this store at all —
+  // its editor keeps stamping cells until stage 2.
+  if (session.kind !== 'metatiles') return
   const store = useTilesetStore()
   const tiles = store.doc(session.tilesetPath)
   if (!tiles) return
@@ -1905,7 +2086,24 @@ export function paint(session: MetaSession, points: Point[]): void {
 ```
 
 - `saveSession` writes the meta **and** calls `store.save(session.tilesetPath)` if it is dirty. Saving one without the other leaves dangling indices.
-- `compact(session)`: gather `usedTiles` across this meta, every open meta session, and every open map/tile session; build a mapping that removes the rest; apply it with `remapMetaTiles`, publish a `TilesReorderEvent`, and `store.set` the compacted bank. Guard it behind a confirm that names the count, because it is the one operation in the feature that renumbers.
+- `compact(session)` is the one operation in this feature that **renumbers**, so
+  it is the one that has to go through the full reorder seam — emitting the
+  event is not enough, because a map that is not open hears nothing and would
+  keep pointing at the old indices forever:
+
+  ```ts
+  const event: TilesReorderEvent = { path: session.tilesetPath, mapping, at: Date.now() }
+  store.set(session.tilesetPath, compacted, session.path)
+  store.appendReorder(session.tilesetPath, event)   // persisted: closed files replay on open
+  emitTilesReordered(event)                          // live: open files renumber now
+  ```
+
+  Reachability is computed from what is *open*: this meta, every other open meta
+  session, every open map session, and the tileset's own blocks. Guard it behind
+  a confirm that names the count and says plainly that tiles used only by files
+  which are not open will be removed. That is a real hazard and the user has to
+  see it — the alternative, scanning the whole project, means reading every
+  resource file on a button press, which is Task 13's follow-up, not this.
 - `setTileset` reads the target, and if `reserveTile0` is false, offers the migration described in the spec: shift every index up by one, prepend `blankTileEntry`, set the flag, and publish the mapping on `emitTilesReordered` so open maps and metas renumber through the seam they already use.
 - Keep the existing `onTilesReordered` subscription and `replayPersistedReorders`, changing `remapMetaTiles`'s doc type.
 
@@ -1939,7 +2137,25 @@ Differences:
 - It renders `meta.width * 8 × meta.height * 8` pixels, composed by looking each cell's tile up in the store's `TilesDoc` via `tilePixels`.
 - A cell holding tile 0 draws the checkerboard, not tile 0's pixels.
 - Tools: pencil, line, rect, fill, spray, picker. Pencil/line/rect/fill go through `toolPoints` from `tile-editor.ts`; spray calls `sprayPoints(point, session.brushRadius, session.density)` on every pointer move and paints the union.
-- Fill flood-fills over the *composed* meta pixels, not one tile's — `fillPoints` takes an `ArrayLike<number>`, so pass the composed buffer and its width.
+- Fill flood-fills over the *composed* meta pixels, not one tile's. **`fillPoints` cannot do this as it stands**: it is hardcoded to one 8x8 tile — its `inTile(start)` guard and its `start.y * TILE_SIZE + start.x` indexing both assume `TILE_SIZE`. Generalise it first, in `src/shared/tile-editor.ts`, defaulting to today's behaviour so the tile editor's call sites are untouched:
+
+```ts
+export function fillPoints(
+  pixels: ArrayLike<number>,
+  start: Point,
+  width = TILE_SIZE,
+  height = TILE_SIZE
+): Point[] {
+```
+
+Replace `inTile(start)` with an inline bounds test against `width`/`height`, and every `* TILE_SIZE` index with `* width`. Add a test to `tile-editor.test.ts`:
+
+```ts
+it('fills across a buffer wider than one tile', () => {
+  const pixels = new Uint8Array(16 * 8)
+  expect(fillPoints(pixels, { x: 0, y: 0 }, 16, 8)).toHaveLength(128)
+})
+```
 - **Onion skin**: when `session.onionSkin` and `frame > 0`, draw frame `frame - 1` first at 30% alpha, then the current frame.
 
 - [ ] **Step 2: Verify by hand**
@@ -2004,11 +2220,62 @@ git commit -m "feat(meta): frame bar with onion skin, and the side panel"
 
 - [ ] **Step 1: Drop the meta-set branches**
 
-In `MapSidePanel.vue`: remove `metatiles`/`metabtiles` from `TILESET_KINDS`, remove the `meta` computed, and delete `chooseTileset`'s "switching to meta-tiles clears the map" confirm — a map is always a tile map now.
+In `MapSidePanel.vue`: remove `metatiles`/`metabtiles` from `TILESET_KINDS`
+(line 34), remove the `meta` computed (line 57) and every template branch that
+reads it, and delete `chooseTileset`'s "switching to meta-tiles clears the map"
+confirm (lines 45-53) — a map is always a tile map now.
+
+In `map/session.ts`: delete `metaSet: MetaTilesDoc | null` (line 82), the
+`meta` parameter threaded through `loadFromPath` (line 226) and its two
+`parsed.doc as MetaTilesDoc` casts (lines 231, 437), `metaSizeOf`, and the
+`spaceChanged` branch in `setTileset` (lines 388-396). A tileset change no
+longer changes what a cell *means*, so it no longer clears the grid.
+
+In `MapCanvas.vue`: delete `const meta = current.meta ?? { width: 1, height: 1 }`
+(line 64) and the cell-size arithmetic that multiplies by it. A cell is one tile
+again.
 
 - [ ] **Step 2: The meta picker**
 
-`MapMetaPicker.vue` lists every `.meta-tiles.json` in `useResourcesStore().entries` whose `tileset` matches this map's, with a frame-0 thumbnail and its name. Metas over another tileset are not offered: their indices would mean nothing here.
+`MapMetaPicker.vue` lists every `.meta-tiles.json` whose `tileset` matches this
+map's, with a frame-0 thumbnail and its name. Metas over another tileset are not
+offered: their tile indices would mean nothing here.
+
+**`ResourceEntry` is `{ path, kind, out }` and carries no `tileset`**
+(`shared/ipc.ts:212`), so the store cannot answer this — each candidate file has
+to be read. Do it once per map session, not per render:
+
+```ts
+/** Path -> its parsed doc, for every `.meta-tiles.json` over this map's tileset. */
+async function loadCandidates(session: MapSession): Promise<Map<string, MetaTileDoc>> {
+  const out = new Map<string, MetaTileDoc>()
+  for (const entry of useResourcesStore().entries) {
+    if (entry.kind !== 'metatiles') continue
+    try {
+      const parsed = normalizeMetaTile(JSON.parse(await window.api.invoke('fs:read', { path: entry.path })))
+      // A meta over another tileset would paint indices into a bank that does
+      // not have them; silently skipping is better than offering a trap.
+      if (samePath(parsed.tileset, doc(session).tileset)) out.set(entry.path, parsed)
+    } catch {
+      // A malformed or half-written resource is not a reason to break the picker.
+    }
+  }
+  return out
+}
+```
+
+Refresh it when the resources store's `entries` changes and when the map's
+tileset changes. `metabtiles` is deliberately excluded in stage 1 — a bitmap map
+is stage 2.
+
+Thumbnails need a renderer. `sheet.ts`'s `metaSheet` composed a *set* into one
+sheet and is now dead — delete it along with `metaCacheBase`, `metaCacheSource`
+and `metaCached`, and add:
+
+```ts
+/** One meta's frame 0, drawn from the tileset's own sheet. */
+export function metaThumbnail(base: Sheet, meta: MetaTileDoc): HTMLCanvasElement
+```
 
 Selecting one sets `session.brush = { kind: 'meta', path }`. The session's brush becomes a union:
 
@@ -2072,6 +2339,8 @@ git commit -m "feat(map): place, move, bake and delete meta-tiles on the canvas"
 **Files:**
 - Modify: `src/main/services/agent-guide.ts`
 - Modify: `docs/tutorials/09-meta-tiles.md`
+- Modify: `docs/index.md`, `docs/tutorials/README.md`, `docs/tutorials/03-tiles-and-maps.md`, `docs/resources.md`
+- Modify: `src/renderer/src/components/ResourcesPanel.vue` (lines 44-45, 59-60)
 - Modify: `specs/10-map-screen-editors.md`
 - Modify: `CHANGELOG.md`
 - Modify: `CLAUDE.md`
@@ -2080,25 +2349,61 @@ Per `CLAUDE.md`, `agent-guide.ts` is a deliverable, not a comment: it is the onl
 
 - [ ] **Step 1: `agent-guide.ts`**
 
-Rewrite the meta-tile section: one meta per file; `_META_W`, `_META_H`, `_CELLS`, `_FRAMES`, `_FLAGS`; `<name>_Draw(x, y, frame)` and that it skips tile 0; the map's `_Placements` table, `_METAS`, `_PLACEMENTS` and `<name>_DrawPlacements(frames)`; and that tile 0 is transparent when the tileset reserves it.
+Three places currently describe the set model, all of which are now wrong:
+
+- **line 110** — the resource-kind list. `.meta-tiles.json` needs its one-line
+  description changed from a set to a single meta.
+- **lines 177-178** — "A **meta-tile set** … names those clumps once, and a map
+  indexes them". This is the main section; rewrite it around the object model:
+  one meta per file, its own size, `_FRAMES` frames, `_FLAGS`, and that a map
+  *places* metas over an ordinary tile grid rather than indexing them instead
+  of tiles.
+- **line 546** — "A bitmap map drawn with a meta-tile set (`*.meta-btiles.json`)
+  keeps that…". Stage 1 does not deliver bitmap meta placement, so this
+  paragraph must say what is true today, not what the set model did.
+
+The new material an agent needs: `_META_W`, `_META_H`, `_CELLS`, `_FRAMES`,
+`_FLAGS`; `<name>_Draw(x, y, frame)` and that it skips tile 0; the map's
+`_Placements` table, `_METAS`, `_PLACEMENTS` and `<name>_DrawPlacements(frames)`;
+and that tile 0 is transparent when the tileset reserves it. Also check line
+151's `VDP_Poke_16K(value, dest)` note is still accurate — it is, and it is the
+reason the helpers do not use it.
 
 - [ ] **Step 2: `docs/tutorials/09-meta-tiles.md`**
 
 Rewrite for the object model, walking one meta from creation to placement: create the tileset with tile 0 reserved, create the meta, paint it, add a frame, place it on a map, bake the static one, export, and the C to draw and animate.
 
-- [ ] **Step 3: `specs/10-map-screen-editors.md`**
+- [ ] **Step 3: the other four docs and the Resources panel**
+
+`grep -rln "meta-tile" docs/ specs/` finds six files, not one. `docs/index.md`,
+`docs/tutorials/README.md`, `docs/tutorials/03-tiles-and-maps.md` and
+`docs/resources.md` all describe meta-tiles as a set; each needs its one or two
+sentences rewritten for the object model.
+
+`ResourcesPanel.vue` describes the kind in the UI itself:
+
+```ts
+metatiles: 'Groups of tiles a map indexes instead of tiles, so a big world costs less ROM.',
+metabtiles: 'The same, over a bitmap tileset.',
+```
+
+Both are now wrong — a map does not index metas any more. Replace with something
+that says what a meta is: one design bigger than a tile, with frames and flags,
+that a map places.
+
+- [ ] **Step 4: `specs/10-map-screen-editors.md`**
 
 Replace the meta-set section with placements, and record the tileset store.
 
-- [ ] **Step 4: `CLAUDE.md`**
+- [ ] **Step 5: `CLAUDE.md`**
 
 Update the "Groups: the one idea in three editors" section — the meta-tile is now a fourth instance with a pixel-level editor, and the copy-on-write bridge is the thing that keeps "a group owns no pixels" true. Add one line about the tileset store under Architecture.
 
-- [ ] **Step 5: `CHANGELOG.md`**
+- [ ] **Step 6: `CHANGELOG.md`**
 
 Confirm the `[Unreleased]` entries match what shipped. Correct anything that changed during implementation.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 7: Verify and commit**
 
 Run: `npm run check && npm run test`
 
