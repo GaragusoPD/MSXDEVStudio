@@ -32,6 +32,7 @@ import {
   reloadTileset,
   saveSession,
   setBrush,
+  setColor,
   setFilledRect,
   setTool,
   setZoom,
@@ -123,6 +124,16 @@ watch(
           @click="setTool(session, tool.id)"
         >
           <Icon :name="tool.icon" />
+        </button>
+        <button
+          type="button"
+          class="erase"
+          :class="{ active: session.color === 0 }"
+          :disabled="!paintable"
+          title="Erase — paints the transparent index, so it works with every tool above"
+          @click="setColor(session, 0)"
+        >
+          <Icon name="ink_eraser" />
         </button>
         <label
           v-if="session.tool === 'rect'"
@@ -223,8 +234,9 @@ watch(
       v-if="!paintable"
       class="banner"
     >
-      Pixel editing for bitmap-mode meta-tiles is not here yet. This file still records its size,
-      frames and flags, and a map can place it.
+      Pixel editing for bitmap-mode meta-tiles is not here yet, and a bitmap map cannot place one.
+      This file records its size, frames and flags, and exports a <code>_Draw</code> that blits a
+      frame out of the atlas.
     </p>
 
     <div class="body">
@@ -271,6 +283,11 @@ watch(
 
 .toolbar button.active {
   outline: 2px solid #ffd24e;
+}
+
+/* Separated from the tools: it sets the colour, it is not a fifth tool. */
+.erase {
+  margin-left: 8px;
 }
 
 .inline {

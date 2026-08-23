@@ -18,6 +18,7 @@ import {
   reserveTile0,
   resize,
   setColor,
+  setGroupPair,
   setTileset,
   tileUsage,
   tiles,
@@ -42,23 +43,41 @@ const tilesetOptions = computed(() =>
 
 const rgb = computed(() => paletteToRgb(tileset.value?.palette ?? null))
 
+const sc1 = computed(() => tileset.value?.mode === 'sc1')
+
+/** In SCREEN 1, the pair in force for the cell the last stroke touched. */
+const groupPair = computed(() => {
+  const doc0 = tileset.value
+  if (!doc0 || !sc1.value) return null
+  const tile = frameTileAt(meta.value, props.session.frame, props.session.activeCell.x, props.session.activeCell.y)
+  return { group: tile >> 3, ...splitColorByte(colorByteAt(doc0, tile, 0)) }
+})
+
 /**
  * The colours the palette offers.
  *
- * In SCREEN 1 that is only the two the current cell's group already spends —
- * every pixel of all eight tiles in the group shares one pair, so offering the
+ * In SCREEN 1 that is only the two the *active cell's* group already spends —
+ * every pixel of all eight tiles in a group shares one pair, so offering the
  * other fourteen would just produce dropped pixels. Elsewhere it is all
  * sixteen, and the row's own two-colour rule is enforced per stroke.
  */
 const palette = computed<number[]>(() => {
   const doc0 = tileset.value
   if (!doc0) return []
-  if (doc0.mode !== 'sc1') return Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
-  const tile = frameTileAt(meta.value, props.session.frame, 0, 0)
-  const { fg, bg } = splitColorByte(colorByteAt(doc0, tile, 0))
+  if (!sc1.value) return Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
+  const pair = groupPair.value
   // 0 is always offered: it is how a cell is erased back to transparent.
-  return [...new Set([0, bg, fg])]
+  return pair ? [...new Set([0, pair.bg, pair.fg])] : [0]
 })
+
+const ALL_COLORS = Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
+
+function changePair(fg: number, bg: number): void {
+  const pair = groupPair.value
+  if (!pair) return
+  if (!window.confirm(`Recolour group ${pair.group}? All 8 tiles in it change, wherever else they are used.`)) return
+  setGroupPair(props.session, fg, bg)
+}
 
 function patchExport(patch: Partial<ExportBlock>): void {
   const current = meta.value.export
@@ -153,13 +172,45 @@ function setupExport(): void {
           @click="setColor(session, index)"
         />
       </div>
-      <p
-        v-if="tileset?.mode === 'sc1'"
-        class="hint"
-      >
-        SCREEN 1 shares one colour pair across every group of 8 tiles, so only that pair is on
-        offer here.
-      </p>
+      <template v-if="groupPair">
+        <p class="hint">
+          SCREEN 1 shares one colour pair across every group of 8 tiles. The cell at
+          {{ session.activeCell.x }},{{ session.activeCell.y }} is in group
+          <strong>{{ groupPair.group }}</strong>, so only its pair is on offer.
+        </p>
+        <div class="pair">
+          <label>
+            <span>Ink</span>
+            <select
+              :value="groupPair.fg"
+              @change="changePair(Number(($event.target as HTMLSelectElement).value), groupPair.bg)"
+            >
+              <option
+                v-for="index in ALL_COLORS"
+                :key="index"
+                :value="index"
+              >
+                {{ index }}
+              </option>
+            </select>
+          </label>
+          <label>
+            <span>Paper</span>
+            <select
+              :value="groupPair.bg"
+              @change="changePair(groupPair.fg, Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option
+                v-for="index in ALL_COLORS"
+                :key="index"
+                :value="index"
+              >
+                {{ index }}
+              </option>
+            </select>
+          </label>
+        </div>
+      </template>
     </section>
 
     <section>
@@ -310,6 +361,22 @@ input[type='text'] {
 
 .size-row input {
   width: 56px;
+}
+
+.pair {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pair label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pair select {
+  width: 60px;
 }
 
 .swatches {

@@ -43,6 +43,15 @@ export const useTilesetStore = defineStore('tileset', () => {
   const listeners = new Map<string, Listener[]>()
   /** Per path, the reorder log that travels beside the document on disk. */
   const logs = new Map<string, TilesReorderEvent[]>()
+  /**
+   * How many editor sessions currently hold each path.
+   *
+   * The whole point of this store is that a `.tiles.json` open in several tabs
+   * is one document. Dropping it when *any* one of them closes would undo that:
+   * the survivors would keep stale copies, the reorder log would be gone by the
+   * next save, and the last save would win again.
+   */
+  const holders = new Map<string, number>()
 
   function doc(path: string): TilesDoc | null {
     return docs.value.get(path) ?? null
@@ -50,6 +59,7 @@ export const useTilesetStore = defineStore('tileset', () => {
 
   /** Reads the file once, however many editors ask for it at the same moment. */
   async function load(path: string): Promise<TilesDoc> {
+    holders.set(path, (holders.get(path) ?? 0) + 1)
     const held = docs.value.get(path)
     if (held) return held
     const pending = inflight.get(path)
@@ -119,15 +129,24 @@ export const useTilesetStore = defineStore('tileset', () => {
   }
 
   /**
-   * Drops a tileset no tab holds any more. Unsaved work is never discarded —
-   * a dirty document stays until it is saved, because the tab that closed may
-   * not have been the one that dirtied it.
+   * Gives up one session's hold. The document is dropped only when the last one
+   * lets go, and never while it is dirty — the tab that closed may not be the
+   * one that dirtied it.
+   *
+   * Listeners are deliberately not touched here: each session unregisters its
+   * own through the handle `onExternalChange` returned, so a session that is
+   * still open keeps hearing about changes even as another one lets go.
    */
   function release(path: string): void {
+    const remaining = (holders.get(path) ?? 0) - 1
+    if (remaining > 0) {
+      holders.set(path, remaining)
+      return
+    }
+    holders.delete(path)
     if (dirty.value.has(path)) return
     docs.value.delete(path)
     docs.value = new Map(docs.value)
-    listeners.delete(path)
     logs.delete(path)
   }
 

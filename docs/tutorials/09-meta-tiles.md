@@ -64,10 +64,14 @@ Create a `meta-tiles` resource from the Resources panel, point it at a tileset,
 and set its size — 2×3 for a tree, say.
 
 The tools are the tile editor's, plus one: **pencil**, **line**, **rectangle**,
-**fill**, **erase**, and **spray**. Spray is an ordered dither rather than
-random scatter, keyed to the canvas coordinates, so overlapping passes agree
-about the pixels they share and a slow drag builds one clean texture instead of
-mottle. Its density slider is the threshold.
+**fill** and **spray**. Spray is an ordered dither rather than random scatter,
+keyed to the canvas coordinates, so overlapping passes agree about the pixels
+they share and a slow drag builds one clean texture instead of mottle. Its
+density slider is the threshold.
+
+**Erase** is the button beside them, and it is a *colour*, not a sixth tool — it
+selects the transparent index. So it composes: erase with the pencil, erase a
+straight line, erase with a spray of holes.
 
 Fill crosses tile seams. You drew one shape, not four.
 

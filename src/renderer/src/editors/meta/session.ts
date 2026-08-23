@@ -36,7 +36,7 @@ import {
 } from '../../../../shared/msx/meta-tile'
 import { paintMeta, usedTiles } from '../../../../shared/msx/meta-paint'
 import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
-import { removeTile, type TilesDoc } from '../../../../shared/msx/tile'
+import { mergeColorByte, removeTile, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
 import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import { sheetCols } from '../../../../shared/msx/bitmap-tile'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
@@ -83,6 +83,15 @@ export interface MetaSession {
 
   /** Which frame the canvas is editing. */
   frame: number
+  /**
+   * The cell the last stroke touched, in the meta's own tile coordinates.
+   *
+   * Only SCREEN 1 needs it, and needs it badly: colour there belongs to a group
+   * of eight tiles, so "which colours may I use" has a different answer per
+   * cell. Keying the palette to cell (0,0) would silently drop every pixel
+   * painted into a cell whose tile lives in another group.
+   */
+  activeCell: { x: number; y: number }
   tool: TileTool
   /** Rect tool draws an outline unless this is set. */
   filledRect: boolean
@@ -124,6 +133,7 @@ export function metaSession(path: string): MetaSession {
     tilesetError: null,
     tilesetReorderSeen: null,
     frame: 0,
+    activeCell: { x: 0, y: 0 },
     tool: 'pencil',
     filledRect: false,
     color: 15,
@@ -184,6 +194,11 @@ async function load(session: MetaSession): Promise<void> {
 
 async function loadTileset(session: MetaSession): Promise<void> {
   const tilesetPath = doc(session).tileset
+  // Pointing the meta somewhere else gives up the hold on where it used to
+  // point, or the old document is pinned in the store for the session's life.
+  if (session.tilesetPath && session.tilesetPath !== tilesetPath) {
+    useTilesetStore().release(session.tilesetPath)
+  }
   session.tilesetPath = tilesetPath
   session.bitmapTileset = null
   session.atlas = null
@@ -373,6 +388,14 @@ export function paint(session: MetaSession, points: Point[]): void {
     return
   }
 
+  const first = points[0]
+  if (first) {
+    session.activeCell = {
+      x: Math.min(doc(session).width - 1, Math.max(0, Math.floor(first.x / TILE_SIZE))),
+      y: Math.min(doc(session).height - 1, Math.max(0, Math.floor(first.y / TILE_SIZE)))
+    }
+  }
+
   const result = paintMeta(doc(session), tileset, session.frame, points, session.color)
   if (result.refused) {
     session.status = result.refused
@@ -416,6 +439,33 @@ export function reorderFrames(session: MetaSession, from: number, to: number): v
 
 export function resize(session: MetaSession, width: number, height: number): void {
   commit(session, resizeMetaPure(doc(session), width, height))
+}
+
+/** The tile under `activeCell`, and the sc1 colour group it belongs to. */
+export function activeGroup(session: MetaSession): number {
+  const tile = frameTileAt(doc(session), session.frame, session.activeCell.x, session.activeCell.y)
+  return tile >> 3
+}
+
+/**
+ * Rewrites the colour pair of the group the active cell's tile belongs to.
+ *
+ * SCREEN 1 only, and it is the one way to use a colour a group does not already
+ * spend — the palette offers nothing else, because anything else would just be
+ * dropped. It recolours all eight tiles in the group, which is the hardware, so
+ * the caller confirms first.
+ */
+export function setGroupPair(session: MetaSession, fg: number, bg: number): void {
+  const store = useTilesetStore()
+  const tileset = store.doc(session.tilesetPath)
+  if (!tileset || tileset.mode !== 'sc1') return
+  const group = activeGroup(session)
+  const groupColors = tileset.groupColors.slice()
+  const next = mergeColorByte(fg, bg)
+  if (groupColors[group] === next) return
+  groupColors[group] = next
+  store.set(session.tilesetPath, { ...tileset, groupColors }, session.path)
+  session.status = `Group ${group} recoloured — all 8 tiles in it changed.`
 }
 
 export function toggleFlag(session: MetaSession, bit: number): void {

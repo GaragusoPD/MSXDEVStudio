@@ -1,7 +1,8 @@
 # Meta-tiles as authored objects — design
 
 **Date:** 2026-08-24
-**Status:** approved, pending implementation plan
+**Status:** implemented on `dev02`. Two deviations from this document are
+recorded at the end, under *Deviations during implementation*.
 **Scope:** stage 1 — pattern-mode tiled screens (SCREEN 1 / 2 / 4) and the map editor.
 Bitmap and multicolour modes are stage 2 and are named here only where the data
 model has to leave room for them.
@@ -380,6 +381,23 @@ Stated so a review catches them if any is wrong.
 5. Meta size is capped at `MAX_META_SIZE` (16) per axis, as today.
 6. Placements are stored per layer, so a meta belongs to a layer and hides or
    shows with it.
+
+## Deviations during implementation
+
+Both are defensible and neither was a silent choice, but this document said
+otherwise and the record should agree with the code.
+
+1. **`.meta-btiles.json` lost its cell-stamping editor.** §1 said it would keep
+   today's interaction until stage 2. The rewrite replaced the editor wholesale,
+   so a bitmap meta is now view-only: it records its size, frames and flags and
+   exports a `_Draw`, but cannot be authored and cannot be placed on a map. No
+   project holds such a file, so nothing regressed — but it is less than was
+   promised here.
+
+2. **Erase is a colour, not a tool.** §4 listed it among the tools. It ships as a
+   toolbar button that selects the transparent index, which composes with every
+   tool rather than being a sixth one — erase with the pencil, with a line, with
+   a spray of holes.
 
 ## Out of scope for stage 1
 
