@@ -13,6 +13,7 @@ import type { TileMode } from '../../../../shared/msx/modes'
 import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import {
   blockPixels,
+  blankTileEntry,
   createTilesDoc,
   MAX_BLOCK,
   MAX_TILES,
@@ -152,9 +153,19 @@ async function load(session: TileSession): Promise<void> {
     const text = await window.api.invoke('fs:read', { path: session.path })
     const parsed = parseResource(session.path, text) as { kind: 'tiles'; doc: TilesDoc }
     const raw = JSON.parse(text) as SavedTiles
-    session.doc = parsed.doc
+    // An empty file is a tileset being created right now, and this is the only
+    // moment reserving tile 0 is free: there is no art in it to shift and no
+    // map drawing it yet. Every tileset that already has content keeps whatever
+    // it saved, because turning the flag on later is a migration.
+    session.doc = text.trim()
+      ? parsed.doc
+      : {
+          ...parsed.doc,
+          reserveTile0: true,
+          tiles: parsed.doc.tiles.map((tile, i) => (i === 0 ? blankTileEntry(parsed.doc.mode) : tile))
+        }
     session.reorderLog = Array.isArray(raw.reorderLog) ? raw.reorderLog : []
-    session.history = initHistory(parsed.doc)
+    session.history = initHistory(session.doc)
     session.error = null
   } catch (error) {
     session.error = `Couldn't open ${session.path}: ${String(error)}`

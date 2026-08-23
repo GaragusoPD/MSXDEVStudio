@@ -31,6 +31,19 @@ export interface TileEntry {
 export interface TilesDoc {
   version: 1
   mode: TileMode
+  /**
+   * Reserves tile 0 as "nothing": locked all-blank, drawn as a checkerboard,
+   * and skipped when a meta-tile is stamped over it. That last part is the
+   * point — a name table has no holes, so the only way to see through a cell
+   * is not to write it, and a meta-tile needs exactly that to be transparent.
+   *
+   * False in every file written before meta-tiles became objects, because tile
+   * 0 is real art in real projects: `demo_msx1`'s tileset holds a solid block
+   * there and its background map draws it 274 times. True for newly created
+   * tilesets. Turning it on for an existing one is a migration — every index
+   * shifts by one — not a toggle.
+   */
+  reserveTile0: boolean
   /** MSX1 modes: null (fixed TMS9918A palette). sc4: 16 packed GRB333 entries. */
   palette: number[] | null
   count: number
@@ -87,8 +100,25 @@ export const MAX_BLOCK = 255
 
 const zeros = (n: number): number[] => new Array<number>(n).fill(0)
 
-export function createTilesDoc(mode: TileMode = 'sc2', count = 256): TilesDoc {
-  return normalizeTiles({ mode, count })
+/**
+ * What tile 0 holds under `reserveTile0` — pattern and colour both zero, not
+ * the `0xf1` white-on-black every other blank tile gets. Colour 0 is the MSX's
+ * transparent palette entry, so this renders through the checkerboard path
+ * `TileCanvas.vue` already has for index 0, with no new drawing code.
+ */
+export function blankTileEntry(mode: TileMode): TileEntry {
+  return { pattern: zeros(TILE_SIZE), color: mode === 'sc1' ? [] : zeros(TILE_SIZE) }
+}
+
+/**
+ * `reserveTile0` defaults to **false** here, matching `normalizeTiles`, so the
+ * factory and the normalizer never disagree about a document neither was told
+ * anything about. Reserving is a decision the *new-tileset command* makes and
+ * passes in — not something a low-level factory does to every caller, most of
+ * which are tests building a bank to assert on.
+ */
+export function createTilesDoc(mode: TileMode = 'sc2', count = 256, reserveTile0 = false): TilesDoc {
+  return normalizeTiles({ mode, count, reserveTile0 })
 }
 
 function byte(value: unknown): number {
@@ -117,6 +147,11 @@ export function normalizeTiles(raw: unknown): TilesDoc {
     tiles.push({ pattern, color })
   }
 
+  // Enforced here rather than at the call sites, so a hand-edited file cannot
+  // present artwork in tile 0 while also claiming the flag.
+  const reserveTile0 = input.reserveTile0 === true
+  if (reserveTile0 && tiles[0]) tiles[0] = blankTileEntry(mode)
+
   const groupCount = Math.ceil(count / SC1_GROUP)
   const groupColors = mode === 'sc1' ? zeros(groupCount) : []
   if (mode === 'sc1') {
@@ -136,6 +171,7 @@ export function normalizeTiles(raw: unknown): TilesDoc {
   return {
     version: 1,
     mode,
+    reserveTile0,
     palette: mode === 'sc4' ? palette : null,
     count,
     tiles,

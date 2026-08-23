@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blankTileEntry,
   colorByteAt,
   createTilesDoc,
   mergeColorByte,
@@ -287,5 +288,57 @@ describe('export bytes', () => {
     const doc = createTilesDoc('sc1', 16)
     expect(tilePatternBytes(doc)).toHaveLength(128)
     expect(tileColorBytes(doc)).toHaveLength(2)
+  })
+})
+
+describe('reserveTile0', () => {
+  it('defaults to false so existing tilesets are untouched', () => {
+    const doc = normalizeTiles({ mode: 'sc2', count: 4 })
+    expect(doc.reserveTile0).toBe(false)
+    // The 0xf1 white-on-black default still applies to tile 0.
+    expect(doc.tiles[0].color[0]).toBe(0xf1)
+  })
+
+  it('forces tile 0 blank when set, discarding whatever art was there', () => {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      reserveTile0: true,
+      tiles: [{ pattern: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], color: new Array(8).fill(0x54) }]
+    })
+    expect(doc.tiles[0].pattern).toEqual([0, 0, 0, 0, 0, 0, 0, 0])
+    expect(doc.tiles[0].color).toEqual([0, 0, 0, 0, 0, 0, 0, 0])
+  })
+
+  it('leaves every other tile alone', () => {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 2,
+      reserveTile0: true,
+      tiles: [
+        { pattern: new Array(8).fill(1), color: [] },
+        { pattern: new Array(8).fill(2), color: [] }
+      ]
+    })
+    expect(doc.tiles[1].pattern[0]).toBe(2)
+  })
+
+  it('blanks tile 0 in sc1 without touching the group pair, which serves 7 other tiles', () => {
+    const doc = normalizeTiles({ mode: 'sc1', count: 8, reserveTile0: true, groupColors: [0x54] })
+    expect(doc.tiles[0].pattern).toEqual([0, 0, 0, 0, 0, 0, 0, 0])
+    expect(doc.groupColors[0]).toBe(0x54)
+  })
+
+  it('blankTileEntry is what tile 0 holds', () => {
+    const doc = normalizeTiles({ mode: 'sc2', count: 1, reserveTile0: true })
+    expect(doc.tiles[0]).toEqual(blankTileEntry('sc2'))
+  })
+
+  it('createTilesDoc leaves it off by default, so it agrees with normalizeTiles', () => {
+    expect(createTilesDoc('sc2', 16).reserveTile0).toBe(false)
+  })
+
+  it('createTilesDoc reserves it on request — what the new-tileset command passes', () => {
+    expect(createTilesDoc('sc2', 16, true).reserveTile0).toBe(true)
   })
 })
