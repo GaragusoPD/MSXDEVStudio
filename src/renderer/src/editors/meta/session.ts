@@ -41,6 +41,7 @@ import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import {
   MAX_BITMAP_TILES,
   normalizeBitmapTiles,
+  removeBitmapTile,
   sheetCols,
   tilePixels as bitmapTilePixels
 } from '../../../../shared/msx/bitmap-tile'
@@ -119,6 +120,21 @@ export interface MetaSession {
    * session opened may be referenced by a file nobody has open.
    */
   appended: number[]
+  /**
+   * The stroke in progress, if any.
+   *
+   * A drag samples the pointer dozens of times, and resolving each sample
+   * against the bank would mint a tile per sample — the intermediate states of
+   * one line, none of which the user asked to keep. So a stroke accumulates its
+   * points and is resolved *once*, on release, always against the document as
+   * it was when the drag began. `preview*` is what the canvas draws meanwhile:
+   * real pixels, not yet in the bank.
+   */
+  strokePoints: Point[]
+  strokeRole: 'fg' | 'bg'
+  strokeActive: boolean
+  previewMeta: MetaTileDoc | null
+  previewTiles: TilesDoc | BitmapTilesDoc | null
   stopWatching: (() => void) | null
 }
 
@@ -152,6 +168,11 @@ export function metaSession(path: string): MetaSession {
     gridVisible: true,
     status: '',
     appended: [],
+    strokePoints: [],
+    strokeRole: 'fg',
+    strokeActive: false,
+    previewMeta: null,
+    previewTiles: null,
     stopWatching: null
   })
   sessions.set(path, session)
@@ -170,12 +191,18 @@ export function pruneMetaSessions(openPaths: Set<string>): void {
 }
 
 export function doc(session: MetaSession): MetaTileDoc {
+  return session.previewMeta ?? session.history.present
+}
+
+/** The committed document, ignoring any stroke in progress — the stroke's base. */
+function committed(session: MetaSession): MetaTileDoc {
   return session.history.present
 }
 
 /** The tileset as one `TilesDoc`, or null in a bitmap mode / before it loads. */
 export function tiles(session: MetaSession): TilesDoc | null {
-  return session.kind === 'metatiles' ? useTilesetStore().patternDoc(session.tilesetPath) : null
+  if (session.kind !== 'metatiles') return null
+  return (session.previewTiles as TilesDoc | null) ?? useTilesetStore().patternDoc(session.tilesetPath)
 }
 
 /**
@@ -187,7 +214,8 @@ export function tiles(session: MetaSession): TilesDoc | null {
  * other's work.
  */
 export function bitmapTiles(session: MetaSession): BitmapTilesDoc | null {
-  return session.kind === 'metabtiles' ? useTilesetStore().bitmapDoc(session.tilesetPath) : null
+  if (session.kind !== 'metabtiles') return null
+  return (session.previewTiles as BitmapTilesDoc | null) ?? useTilesetStore().bitmapDoc(session.tilesetPath)
 }
 
 async function load(session: MetaSession): Promise<void> {
@@ -281,7 +309,9 @@ onTilesReordered((event) => {
 })
 
 export async function saveSession(session: MetaSession): Promise<void> {
-  const content: SavedMetaTile = { ...doc(session) }
+  // Dead tiles this session minted while experimenting must not reach the file.
+  const reclaimed = reclaimOrphans(session)
+  const content: SavedMetaTile = { ...committed(session) }
   if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
   await window.api.invoke('fs:write', {
     path: session.path,
@@ -293,7 +323,7 @@ export async function saveSession(session: MetaSession): Promise<void> {
   if (session.tilesetPath && store.isDirty(session.tilesetPath)) await store.save(session.tilesetPath)
   session.dirty = false
   useTabsStore().setDirty(session.path, false)
-  session.status = 'Saved'
+  session.status = reclaimed ? `Saved — reclaimed ${reclaimed} unused tile${reclaimed === 1 ? '' : 's'}.` : 'Saved'
 }
 
 function markDirty(session: MetaSession): void {
@@ -460,78 +490,118 @@ export function cellSize(session: MetaSession): { width: number; height: number 
  * whether the tileset is patterns or pixels — the shapes are the same, the
  * constraints are not.
  */
+export function beginStroke(session: MetaSession, role: 'fg' | 'bg' = 'fg'): void {
+  session.strokeRole = role
+  session.strokePoints = []
+  session.previewMeta = null
+  session.previewTiles = null
+  session.strokeActive = true
+}
+
+/**
+ * Adds points to the stroke in progress and re-renders the preview.
+ *
+ * Always resolved against the *committed* document, never against the previous
+ * preview: a drag is one edit, and deriving it from its own intermediate states
+ * is what produced a tile per pointer sample. Nothing here touches the bank —
+ * `endStroke` does that, once.
+ *
+ * Called with no stroke open (a programmatic paint, or a one-shot tool) it
+ * opens and closes one itself, so a caller that does not care still gets a
+ * single undo step and a single append.
+ */
 export function paint(session: MetaSession, points: Point[], role: 'fg' | 'bg' = 'fg'): void {
-  // A bitmap mode has no colour pair, so the role is meaningless there.
-  if (session.kind === 'metabtiles') return paintBitmap(session, points)
-  const store = useTilesetStore()
-  const tileset = store.patternDoc(session.tilesetPath)
-  if (!tileset) {
-    // Silent refusal reads as a broken editor. Say which of the two it is.
-    session.status = session.tilesetPath
-      ? `Still loading ${session.tilesetPath} — or it failed to open; see the side panel.`
-      : 'Pick a tileset in the side panel before drawing.'
+  if (!session.strokeActive) {
+    beginStroke(session, role)
+    extendStroke(session, points)
+    endStroke(session)
     return
   }
-  // Deliberately *not* gated on `reserveTile0`. Reserving tile 0 buys
-  // transparency, not the ability to draw: without it a meta is simply opaque,
-  // and refusing the stroke would make an ordinary tileset look broken. The
-  // side panel carries the standing note about what is missing.
+  extendStroke(session, points)
+}
 
-  const first = points[0]
+function extendStroke(session: MetaSession, points: Point[]): void {
+  if (!points.length) return
+  session.strokePoints = [...session.strokePoints, ...points]
+  const all = session.strokePoints
+
+  const first = all[0]
+  const { width: cw, height: ch } = cellSize(session)
   if (first) {
     session.activeCell = {
-      x: Math.min(doc(session).width - 1, Math.max(0, Math.floor(first.x / TILE_SIZE))),
-      y: Math.min(doc(session).height - 1, Math.max(0, Math.floor(first.y / TILE_SIZE)))
+      x: Math.min(committed(session).width - 1, Math.max(0, Math.floor(first.x / cw))),
+      y: Math.min(committed(session).height - 1, Math.max(0, Math.floor(first.y / ch)))
     }
   }
 
-  const result = paintMeta(doc(session), tileset, session.frame, points, session.color, role)
+  const store = useTilesetStore()
+  if (session.kind === 'metabtiles') {
+    const base = store.bitmapDoc(session.tilesetPath)
+    if (!base) return void noTileset(session)
+    const result = paintBitmapMeta(committed(session), base, session.frame, all, session.color)
+    if (result.refused) {
+      session.status = result.refused
+      return
+    }
+    session.previewMeta = result.meta
+    session.previewTiles = result.tiles
+    session.status = ''
+    return
+  }
+
+  const base = store.patternDoc(session.tilesetPath)
+  if (!base) return void noTileset(session)
+  // Deliberately not gated on `reserveTile0`: that buys transparency, not the
+  // right to draw.
+  const result = paintMeta(committed(session), base, session.frame, all, session.color, session.strokeRole)
   if (result.refused) {
     session.status = result.refused
     return
   }
-  if (result.tiles !== tileset) store.set(session.tilesetPath, result.tiles, session.path)
-  if (result.added.length) session.appended = [...session.appended, ...result.added]
-  commit(session, result.meta)
+  session.previewMeta = result.meta
+  session.previewTiles = result.tiles
   session.status = result.dropped
     ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`
     : ''
 }
 
+function noTileset(session: MetaSession): void {
+  // Silent refusal reads as a broken editor. Say which of the two it is.
+  session.status = session.tilesetPath
+    ? `Still loading ${session.tilesetPath} — or it failed to open; see the side panel.`
+    : 'Pick a tileset in the side panel before drawing.'
+}
+
 /**
- * The bitmap half. The tileset is not in the store — it is a `BitmapTilesDoc`,
- * not a `TilesDoc` — so this session owns it and saves it, which is safe
- * because no other editor writes into a `.btiles.json` while it is open here.
+ * Resolves the stroke: one set of tiles into the bank, one undo step.
+ *
+ * This is the only place the tileset grows while drawing. A drag that visited
+ * forty intermediate shapes contributes only the tiles its final shape needs.
  */
-function paintBitmap(session: MetaSession, points: Point[]): void {
+export function endStroke(session: MetaSession): void {
+  if (!session.strokeActive) return
+  session.strokeActive = false
+  const meta = session.previewMeta
+  const tileset = session.previewTiles
+  session.previewMeta = null
+  session.previewTiles = null
+  session.strokePoints = []
+  if (!meta || !tileset) return
+
   const store = useTilesetStore()
-  const tileset = store.bitmapDoc(session.tilesetPath)
-  if (!tileset) {
-    session.status = session.tilesetPath
-      ? `Still loading ${session.tilesetPath} — or it failed to open; see the side panel.`
-      : 'Pick a tileset in the side panel before drawing.'
-    return
-  }
-  // As in the pattern path: tile 0 buys transparency, not the right to draw.
-  const { width: cw, height: ch } = cellSize(session)
-  const first = points[0]
-  if (first) {
-    session.activeCell = {
-      x: Math.min(doc(session).width - 1, Math.max(0, Math.floor(first.x / cw))),
-      y: Math.min(doc(session).height - 1, Math.max(0, Math.floor(first.y / ch)))
+  const before =
+    session.kind === 'metabtiles' ? store.bitmapDoc(session.tilesetPath) : store.patternDoc(session.tilesetPath)
+  if (before && tileset !== before) {
+    store.set(session.tilesetPath, tileset, session.path)
+    const grew = countOf(tileset) - countOf(before)
+    if (grew > 0) {
+      session.appended = [...session.appended, ...Array.from({ length: grew }, (_, i) => countOf(before) + i)]
     }
   }
-
-  const result = paintBitmapMeta(doc(session), tileset, session.frame, points, session.color)
-  if (result.refused) {
-    session.status = result.refused
-    return
-  }
-  if (result.tiles !== tileset) store.set(session.tilesetPath, result.tiles, session.path)
-  if (result.added.length) session.appended = [...session.appended, ...result.added]
-  commit(session, result.meta)
-  session.status = ''
+  commit(session, meta)
 }
+
+const countOf = (doc: TilesDoc | BitmapTilesDoc): number => doc.count
 
 export function setFrame(session: MetaSession, index: number): void {
   if (doc(session).frames[index]) session.frame = index
@@ -626,35 +696,72 @@ function orphansOf(session: MetaSession): number[] {
  * for files that are open, persisted for files that are not.
  */
 export function compact(session: MetaSession): void {
-  const store = useTilesetStore()
-  const tileset = store.patternDoc(session.tilesetPath)
-  const orphans = orphansOf(session)
-  if (!tileset || !orphans.length) {
-    session.status = 'Nothing to compact.'
-    return
-  }
-  if (!window.confirm(`Remove ${orphans.length} tile${orphans.length === 1 ? '' : 's'} this session created and no longer uses?`)) {
-    return
-  }
+  const reclaimed = reclaimOrphans(session)
+  session.status = reclaimed ? `Reclaimed ${reclaimed} tile${reclaimed === 1 ? '' : 's'}.` : 'Nothing to compact.'
+}
 
+/**
+ * Removes the tiles this session created and no longer uses; returns how many.
+ *
+ * Run automatically on save, which is what keeps a session's experiments out of
+ * the file: a stroke redrawn ten times leaves nine dead tiles behind and none
+ * of them should reach disk. Safe without asking precisely because the set is
+ * limited to what *this session* appended — nothing that existed when the file
+ * was opened can be touched, so no closed map can be stranded.
+ *
+ * Removal renumbers, so the mapping goes out on the reorder seam: live for
+ * files that are open, persisted for files that are not.
+ */
+export function reclaimOrphans(session: MetaSession): number {
+  const store = useTilesetStore()
+  const orphans = orphansOf(session)
+  if (!orphans.length) return 0
   // Highest first, so each removal leaves the lower indices alone and the
   // mappings compose in one pass.
+  const descending = [...orphans].sort((a, b) => b - a)
+
+  if (session.kind === 'metabtiles') {
+    const tileset = store.bitmapDoc(session.tilesetPath)
+    if (!tileset) return 0
+    let next = tileset
+    let mapping = Array.from({ length: tileset.count }, (_, i) => i)
+    for (const tile of descending) {
+      const step = removeBitmapTile(next, tile)
+      if (step.doc === next) continue
+      next = step.doc
+      mapping = mapping.map((index) => step.remap[index] ?? 0)
+    }
+    if (next === tileset) return 0
+    publishReclaim(session, next, mapping)
+    return orphans.length
+  }
+
+  const tileset = store.patternDoc(session.tilesetPath)
+  if (!tileset) return 0
   let next = tileset
   let mapping = tileset.tiles.map((_, i) => i)
-  for (const tile of [...orphans].sort((a, b) => b - a)) {
+  for (const tile of descending) {
     const step = removeTile(next, tile)
     if (step.doc === next) continue
     next = step.doc
     mapping = mapping.map((index) => step.mapping[index] ?? 0)
   }
-  if (next === tileset) return
+  if (next === tileset) return 0
+  publishReclaim(session, next, mapping)
+  return orphans.length
+}
 
+function publishReclaim(session: MetaSession, next: TilesDoc | BitmapTilesDoc, mapping: number[]): void {
+  const store = useTilesetStore()
   store.set(session.tilesetPath, next, session.path)
   const event: TilesReorderEvent = { path: session.tilesetPath, mapping, at: Date.now() }
   store.appendReorder(session.tilesetPath, event)
+  // This session's own document is renumbered by the listener below, along with
+  // every other meta over the same tileset — *not* here as well. Doing both
+  // applied the mapping twice, which sent the surviving tile to 0. The emit is
+  // synchronous, so the document is correct by the time this returns.
   emitTilesReordered(event)
   session.appended = []
-  session.status = `Reclaimed ${orphans.length} tile${orphans.length === 1 ? '' : 's'}.`
 }
 
 export { canRedo, canUndo, frameTileAt, metaCells }

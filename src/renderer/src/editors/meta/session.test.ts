@@ -16,7 +16,18 @@ import { createMetaTileDoc, frameTileAt } from '../../../../shared/msx/meta-tile
 import { serializeResource } from '../../../../shared/msx/resource'
 import { colorByteAt, normalizeTiles, splitColorByte } from '../../../../shared/msx/tile'
 import { useTilesetStore } from '../../stores/tilesetStore'
-import { doc, metaSession, paint, pruneMetaSessions, setColor, tiles } from './session'
+import {
+  beginStroke,
+  doc,
+  endStroke,
+  metaSession,
+  paint,
+  pruneMetaSessions,
+  saveSession,
+  setColor,
+  tiles,
+  undo
+} from './session'
 
 const META = 'res/tree.meta-tiles.json'
 const TILES = 'res/main.tiles.json'
@@ -149,5 +160,63 @@ describe('changing colour mid-drawing', () => {
     const { fg, bg } = splitColorByte(colorByteAt(tileset, frameTileAt(doc(session), 0, 0, 0), 0))
     expect(fg).toBe(15)
     expect(bg).toBe(6)
+  })
+})
+
+describe('a drag is one edit, not one per sample', () => {
+  /** The reported failure: intermediate tiles piling up while drawing. */
+  it('mints tiles for the final shape only, however many samples the drag has', async () => {
+    const session = metaSession(META)
+    await settled()
+    await settled()
+    const before = useTilesetStore().patternDoc(TILES)!.count
+
+    // Forty samples across one row, as a real pointer drag produces.
+    beginStroke(session, 'fg')
+    for (let x = 0; x < 8; x++) {
+      for (let sample = 0; sample < 5; sample++) paint(session, [{ x, y: 0 }], 'fg')
+    }
+    // Nothing has reached the bank yet — the canvas is drawing a preview.
+    expect(useTilesetStore().patternDoc(TILES)!.count).toBe(before)
+    endStroke(session)
+
+    // One cell changed, so one tile. Not forty.
+    expect(useTilesetStore().patternDoc(TILES)!.count).toBe(before + 1)
+  })
+
+  it('is one undo step, so undo takes back the whole drag', async () => {
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    beginStroke(session, 'fg')
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    paint(session, [{ x: 1, y: 0 }], 'fg')
+    endStroke(session)
+    expect(frameTileAt(doc(session), 0, 0, 0)).not.toBe(0)
+
+    undo(session)
+    expect(frameTileAt(doc(session), 0, 0, 0)).toBe(0)
+  })
+
+  it('saving reclaims the tiles the session created and stopped using', async () => {
+    const session = metaSession(META)
+    await settled()
+    await settled()
+    const before = useTilesetStore().patternDoc(TILES)!.count
+
+    // Draw, redraw, redraw — each stroke supersedes the last, so two of the
+    // three tiles end up referenced by nothing.
+    for (const colour of [15, 4, 6]) {
+      setColor(session, colour)
+      paint(session, [{ x: 0, y: 0 }], 'fg')
+    }
+    expect(useTilesetStore().patternDoc(TILES)!.count).toBe(before + 3)
+
+    await saveSession(session)
+    expect(useTilesetStore().patternDoc(TILES)!.count).toBe(before + 1)
+    expect(session.status).toMatch(/reclaimed 2 unused tiles/i)
+    // The surviving tile is still the one the meta points at.
+    expect(frameTileAt(doc(session), 0, 0, 0)).not.toBe(0)
   })
 })

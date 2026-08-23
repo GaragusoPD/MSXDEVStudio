@@ -104,16 +104,22 @@ so the next one can be lined up against it.
 There is no per-frame duration. Timing is the game's decision, exactly as it is
 for hardware sprites.
 
-### Reclaiming tiles
+### What reaches the tileset, and when
 
-Undo repoints a cell but leaves the tile it created in the bank. Draw and undo
-for an hour and the bank fills with experiments. **Compact unused tiles** clears
-them out.
+A stroke is resolved **once, when you let go of the button** — not per pointer
+sample. A drag that passed through forty intermediate shapes contributes only
+the tiles its final shape needs, and counts as one undo step.
 
-It only removes tiles *this editing session* created and no longer uses. That
-looks over-cautious until you consider the alternative: a tile used solely by a
-map you do not happen to have open is indistinguishable, from here, from an
-orphan. Removing it would silently change a level you were not even looking at.
+Redrawing still leaves tiles behind: paint a cell three different ways and the
+first two versions are in the bank, referenced by nothing. **Saving reclaims
+them automatically**, and the status bar says how many went. There is a
+**Compact unused tiles** button in the side panel for doing it sooner.
+
+Either way, only tiles *this editing session* created and no longer uses are
+removed. That looks over-cautious until you consider the alternative: a tile
+used solely by a map you do not happen to have open is indistinguishable, from
+here, from an orphan, and removing it would silently change a level you were not
+even looking at.
 
 ## Placing one on a map
 

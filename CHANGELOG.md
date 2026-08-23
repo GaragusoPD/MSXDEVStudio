@@ -72,6 +72,11 @@ editor; bitmap and multicolour modes follow in stage 2.
 
 #### Changed
 
+- A stroke resolves against the tileset **once, on release**, rather than per
+  pointer sample — a drag no longer mints a tile for every intermediate shape it
+  passed through — and counts as one undo step.
+- **Saving reclaims** the tiles the session created and stopped using, so
+  experiments do not reach the file. The Compact button does it on demand.
 - Painting a meta-tile now writes tiles into the referenced `*.tiles.json`
   **copy-on-write**: the edited pattern is deduplicated against the bank and
   appended only if new. Existing tiles are never modified in place and existing

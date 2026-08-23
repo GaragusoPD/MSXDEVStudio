@@ -18,7 +18,7 @@ import { tileImage } from '../../../../shared/msx/bitmap-tile'
 import { frameTileAt } from '../../../../shared/msx/meta-tile'
 import { sprayPoints } from '../../../../shared/msx/meta-paint'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { bitmapTiles, cellSize, doc, paint, tiles, type MetaSession } from './session'
+import { beginStroke, bitmapTiles, cellSize, doc, endStroke, paint, tiles, type MetaSession } from './session'
 
 const props = defineProps<{ session: MetaSession }>()
 
@@ -99,8 +99,9 @@ function onDown(event: PointerEvent): void {
   role = event.button === 2 ? 'bg' : 'fg'
   origin = point
   painting = true
-  // Fill and spray commit as they go; line and rect show a preview and commit
-  // on release, which is what makes them draggable.
+  // One stroke, one resolution against the bank. Without this a drag mints a
+  // tile per pointer sample — every intermediate shape of one line.
+  beginStroke(props.session, role)
   if (props.session.tool === 'fill' || props.session.tool === 'spray' || props.session.tool === 'pencil') {
     paint(props.session, pointsFor(point, point), role)
     return
@@ -127,6 +128,9 @@ function onUp(event: PointerEvent): void {
   if (origin && (props.session.tool === 'line' || props.session.tool === 'rect')) {
     paint(props.session, pointsFor(origin, point), role)
   }
+  // Resolves the whole drag into the tiles its final shape actually needs, and
+  // into one undo step.
+  endStroke(props.session)
   preview.value = []
   origin = null
 }
