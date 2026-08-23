@@ -129,12 +129,9 @@ function setupExport(): void {
       </p>
       <template v-if="needsReserve">
         <p class="hint warn">
-          This tileset does not reserve tile 0, so a meta-tile cannot skip a cell.
-          {{
-            bitmap
-              ? 'Reserving it erases tile 0; nothing else moves.'
-              : 'Reserving it shifts every tile up by one and renumbers the maps drawn with it.'
-          }}
+          You can draw, but this meta-tile will be <strong>opaque</strong>: the tileset has not
+          reserved tile 0, so there is no index that means "skip this cell". Reserving it shifts
+          every tile up by one and renumbers the maps drawn with this tileset.
         </p>
         <button
           type="button"

@@ -38,7 +38,13 @@ import { paintBitmapMeta, paintMeta, usedTiles } from '../../../../shared/msx/me
 import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
 import { mergeColorByte, removeTile, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
 import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
-import { normalizeBitmapTiles, sheetCols, tilePixels as bitmapTilePixels } from '../../../../shared/msx/bitmap-tile'
+import {
+  MAX_BITMAP_TILES,
+  normalizeBitmapTiles,
+  sheetCols,
+  tilePixels as bitmapTilePixels
+} from '../../../../shared/msx/bitmap-tile'
+import { encodeIndices } from '../../../../shared/msx/screen'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
 import { screenPixels } from '../../../../shared/msx/screen'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from '../map/sheet'
@@ -345,27 +351,54 @@ export async function setTileset(session: MetaSession, tilesetPath: string): Pro
  * Reserves tile 0 on the referenced tileset, shifting every existing index up
  * by one and publishing the mapping so everything drawn with it follows.
  */
-/** Reserves tile 0 on a *bitmap* tileset — blank its pixels, shift nothing. */
+/**
+ * Reserves tile 0 on a *bitmap* tileset.
+ *
+ * Shifts rather than blanks, exactly as the pattern path does: the art in tile
+ * 0 moves to tile 1 and everything after it follows, so nothing is destroyed.
+ * The mapping goes out on the same reorder seam a drag reorder uses, so maps
+ * and metas drawn with this tileset renumber — live if they are open, on their
+ * next open if they are not.
+ */
 export function reserveBitmapTile0(session: MetaSession): void {
   const store = useTilesetStore()
   const tileset = store.bitmapDoc(session.tilesetPath)
   if (!tileset || tileset.reserveTile0) return
-  const per = tileset.width * tileset.height
-  const used = bitmapTilePixels(tileset).subarray(0, per).some((pixel) => pixel !== 0)
+  if (tileset.count >= MAX_BITMAP_TILES) {
+    session.status = `The tileset is full, so tile 0 cannot be shifted out of the way. Free a tile first.`
+    return
+  }
   if (
-    used &&
     !window.confirm(
-      `"${session.tilesetPath}" has artwork in tile 0. Reserving it for transparency erases that ` +
-        'tile. Anything drawn with it becomes a hole. Continue?'
+      `Reserve tile 0 in "${session.tilesetPath}" for transparency? Every tile shifts up by one, ` +
+        'and the maps and meta-tiles drawn with it are renumbered to match.'
     )
   ) {
     return
   }
-  // Unlike the pattern path this does not renumber: a bitmap cell index is
-  // still just an index, and blanking tile 0 leaves every other one where it
-  // was. Whatever used tile 0 as art now shows through, which is the trade the
-  // confirm above names.
-  store.set(session.tilesetPath, normalizeBitmapTiles({ ...tileset, reserveTile0: true }), session.path)
+
+  const per = tileset.width * tileset.height
+  const old = bitmapTilePixels(tileset)
+  const pixels = new Uint8Array((tileset.count + 1) * per)
+  // A blank first tile, then the whole old bank one slot along.
+  pixels.set(old, per)
+  const shifted = normalizeBitmapTiles({
+    ...tileset,
+    reserveTile0: true,
+    count: tileset.count + 1,
+    pixels: encodeIndices(pixels),
+    flags: [0, ...tileset.flags],
+    blocks: tileset.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => tile + 1) }))
+  })
+
+  store.set(session.tilesetPath, shifted, session.path)
+  const event: TilesReorderEvent = {
+    path: session.tilesetPath,
+    mapping: Array.from({ length: tileset.count }, (_, i) => i + 1),
+    at: Date.now()
+  }
+  store.appendReorder(session.tilesetPath, event)
+  emitTilesReordered(event)
   session.status = 'Tile 0 reserved.'
 }
 
@@ -431,11 +464,17 @@ export function paint(session: MetaSession, points: Point[]): void {
   if (session.kind === 'metabtiles') return paintBitmap(session, points)
   const store = useTilesetStore()
   const tileset = store.patternDoc(session.tilesetPath)
-  if (!tileset) return
-  if (!tileset.reserveTile0) {
-    session.status = 'This tileset does not reserve tile 0, so a meta cannot be transparent. Reserve it in the side panel.'
+  if (!tileset) {
+    // Silent refusal reads as a broken editor. Say which of the two it is.
+    session.status = session.tilesetPath
+      ? `Still loading ${session.tilesetPath} — or it failed to open; see the side panel.`
+      : 'Pick a tileset in the side panel before drawing.'
     return
   }
+  // Deliberately *not* gated on `reserveTile0`. Reserving tile 0 buys
+  // transparency, not the ability to draw: without it a meta is simply opaque,
+  // and refusing the stroke would make an ordinary tileset look broken. The
+  // side panel carries the standing note about what is missing.
 
   const first = points[0]
   if (first) {
@@ -466,12 +505,13 @@ export function paint(session: MetaSession, points: Point[]): void {
 function paintBitmap(session: MetaSession, points: Point[]): void {
   const store = useTilesetStore()
   const tileset = store.bitmapDoc(session.tilesetPath)
-  if (!tileset) return
-  if (!tileset.reserveTile0) {
-    session.status =
-      'This tileset does not reserve tile 0, so a meta-tile cannot skip a cell. Reserve it in the side panel.'
+  if (!tileset) {
+    session.status = session.tilesetPath
+      ? `Still loading ${session.tilesetPath} — or it failed to open; see the side panel.`
+      : 'Pick a tileset in the side panel before drawing.'
     return
   }
+  // As in the pattern path: tile 0 buys transparency, not the right to draw.
   const { width: cw, height: ch } = cellSize(session)
   const first = points[0]
   if (first) {

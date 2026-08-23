@@ -3,12 +3,18 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     /**
-     * Renderer components have no tests — their correctness rides on the shared
-     * modules they delegate to. `src/renderer/src/stores` is the exception:
-     * a store holds *lifecycle* state that no shared module can reach, so
-     * nothing else can cover it.
+     * Renderer *components* have no tests — their correctness rides on the
+     * shared modules they delegate to. Stores and editor **sessions** are the
+     * exception: they hold state and wiring no shared module can reach, and
+     * that is exactly where a silent no-op hides (a stroke that reaches a guard
+     * and returns looks identical to a broken canvas).
      */
-    include: ['src/shared/**/*.test.ts', 'src/main/**/*.test.ts', 'src/renderer/src/stores/**/*.test.ts'],
+    include: [
+      'src/shared/**/*.test.ts',
+      'src/main/**/*.test.ts',
+      'src/renderer/src/stores/**/*.test.ts',
+      'src/renderer/src/editors/**/*.test.ts'
+    ],
     /**
      * One test file at a time. Several suites (`build-service`, `examples`,
      * `game-kit-build`, `project`) drive **one** MSXgl checkout, whose compile
