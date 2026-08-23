@@ -23,23 +23,34 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { normalizeTiles, type TilesDoc } from '../../../shared/msx/tile'
-import { serializeResource } from '../../../shared/msx/resource'
+import { normalizeBitmapTiles, type BitmapTilesDoc } from '../../../shared/msx/bitmap-tile'
+import { resourceKindOf, serializeResource } from '../../../shared/msx/resource'
 import type { TilesReorderEvent } from '../../../shared/tile-editor'
 import { useTabsStore } from './tabsStore'
+
+/**
+ * Either kind of tileset. They are shared for the same reason and by the same
+ * editors — a meta-tile writes into whichever one it references — so one store
+ * holds both rather than two stores holding one each.
+ */
+export type AnyTilesDoc = TilesDoc | BitmapTilesDoc
+
+/** Which normalizer and which serializer, decided by the suffix alone. */
+const isBitmapPath = (path: string): boolean => resourceKindOf(path) === 'btiles'
 
 interface Listener {
   /** The editor that registered it, so it never hears its own writes back. */
   source: string
-  fn: (doc: TilesDoc) => void
+  fn: (doc: AnyTilesDoc) => void
 }
 
-/** `.tiles.json` carries the reorder log as an extra key `normalizeTiles` ignores. */
-type SavedTiles = TilesDoc & { reorderLog?: TilesReorderEvent[] }
+/** Both kinds carry the reorder log as an extra key the normalizers ignore. */
+type SavedTiles = AnyTilesDoc & { reorderLog?: TilesReorderEvent[] }
 
 export const useTilesetStore = defineStore('tileset', () => {
-  const docs = ref(new Map<string, TilesDoc>())
+  const docs = ref(new Map<string, AnyTilesDoc>())
   const dirty = ref(new Set<string>())
-  const inflight = new Map<string, Promise<TilesDoc>>()
+  const inflight = new Map<string, Promise<AnyTilesDoc>>()
   const listeners = new Map<string, Listener[]>()
   /** Per path, the reorder log that travels beside the document on disk. */
   const logs = new Map<string, TilesReorderEvent[]>()
@@ -53,12 +64,27 @@ export const useTilesetStore = defineStore('tileset', () => {
    */
   const holders = new Map<string, number>()
 
-  function doc(path: string): TilesDoc | null {
+  function doc(path: string): AnyTilesDoc | null {
     return docs.value.get(path) ?? null
   }
 
+  /**
+   * The two typed accessors. Callers know which kind they want — a pattern
+   * meta-tile can only reference a `.tiles.json` — and this is where that
+   * knowledge is asserted once instead of at every call site.
+   */
+  function patternDoc(path: string): TilesDoc | null {
+    const held = docs.value.get(path)
+    return held && !isBitmapPath(path) ? (held as TilesDoc) : null
+  }
+
+  function bitmapDoc(path: string): BitmapTilesDoc | null {
+    const held = docs.value.get(path)
+    return held && isBitmapPath(path) ? (held as BitmapTilesDoc) : null
+  }
+
   /** Reads the file once, however many editors ask for it at the same moment. */
-  async function load(path: string): Promise<TilesDoc> {
+  async function load(path: string): Promise<AnyTilesDoc> {
     holders.set(path, (holders.get(path) ?? 0) + 1)
     const held = docs.value.get(path)
     if (held) return held
@@ -70,7 +96,10 @@ export const useTilesetStore = defineStore('tileset', () => {
       // An empty file is a tileset being created right now, and this is the
       // only moment reserving tile 0 is free: no art to shift, nothing drawing
       // it yet. See `TilesDoc.reserveTile0`.
-      const parsed = normalizeTiles(text.trim() ? raw : { ...raw, reserveTile0: true })
+      // A brand-new file of either kind reserves tile 0: it is only free at
+      // this moment, before anything is drawn or points at it.
+      const source = text.trim() ? raw : { ...raw, reserveTile0: true }
+      const parsed = isBitmapPath(path) ? normalizeBitmapTiles(source) : normalizeTiles(source)
       logs.set(path, Array.isArray(raw.reorderLog) ? raw.reorderLog : [])
       docs.value.set(path, parsed)
       docs.value = new Map(docs.value)
@@ -81,7 +110,7 @@ export const useTilesetStore = defineStore('tileset', () => {
   }
 
   /** Publishes a new document. Every listener except `source`'s hears about it. */
-  function set(path: string, next: TilesDoc, source: string): void {
+  function set(path: string, next: AnyTilesDoc, source: string): void {
     if (docs.value.get(path) === next) return
     docs.value.set(path, next)
     docs.value = new Map(docs.value)
@@ -100,10 +129,13 @@ export const useTilesetStore = defineStore('tileset', () => {
     // map and meta drawn with this tileset replays it on open to renumber
     // itself after a reorder. Serializing the doc alone silently deletes it,
     // and the damage only shows up the next time some other file is opened.
-    const saved: SavedTiles = { ...current }
+    const saved = { ...current } as SavedTiles
     const log = logs.get(path)
     if (log?.length) saved.reorderLog = log
-    await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'tiles', doc: saved }) })
+    const resource = isBitmapPath(path)
+      ? ({ kind: 'btiles', doc: saved as unknown as BitmapTilesDoc } as const)
+      : ({ kind: 'tiles', doc: saved as TilesDoc } as const)
+    await window.api.invoke('fs:write', { path, content: serializeResource(resource) })
     dirty.value.delete(path)
     dirty.value = new Set(dirty.value)
     useTabsStore().setDirty(path, false)
@@ -122,7 +154,7 @@ export const useTilesetStore = defineStore('tileset', () => {
     return logs.get(path) ?? []
   }
 
-  function onExternalChange(path: string, source: string, fn: (doc: TilesDoc) => void): () => void {
+  function onExternalChange(path: string, source: string, fn: (doc: AnyTilesDoc) => void): () => void {
     const entry: Listener = { source, fn }
     listeners.set(path, [...(listeners.get(path) ?? []), entry])
     return () => listeners.set(path, (listeners.get(path) ?? []).filter((other) => other !== entry))
@@ -150,5 +182,17 @@ export const useTilesetStore = defineStore('tileset', () => {
     logs.delete(path)
   }
 
-  return { doc, load, set, save, isDirty, release, onExternalChange, appendReorder, reorderLog }
+  return {
+    doc,
+    patternDoc,
+    bitmapDoc,
+    load,
+    set,
+    save,
+    isDirty,
+    release,
+    onExternalChange,
+    appendReorder,
+    reorderLog
+  }
 })

@@ -1113,3 +1113,18 @@ describe('screens bigger than the display', () => {
     return `${files.header ?? ''}\n${files.source ?? ''}`
   }
 })
+
+describe('resourceKindOf', () => {
+  it('answers null for a missing path rather than throwing', () => {
+    // An editor session handed no path must degrade to an error banner, not a
+    // blank pane: this throwing inside a render unmounts the whole editor.
+    expect(resourceKindOf(undefined as unknown as string)).toBeNull()
+    expect(resourceKindOf('')).toBeNull()
+  })
+
+  it('still matches the hyphenated meta suffixes before the plain ones', () => {
+    expect(resourceKindOf('res/tree.meta-tiles.json')).toBe('metatiles')
+    expect(resourceKindOf('res/rock.meta-btiles.json')).toBe('metabtiles')
+    expect(resourceKindOf('res/main.tiles.json')).toBe('tiles')
+  })
+})

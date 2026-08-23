@@ -52,9 +52,10 @@ import {
   undo as undoHistory,
   type History
 } from '../../../../shared/history'
-import { defaultExport, serializeResource, type ExportBlock } from '../../../../shared/msx/resource'
+import { defaultExport, type ExportBlock } from '../../../../shared/msx/resource'
 import type { ImportResult } from '../../composables/useImageImport'
 import { useTabsStore } from '../../stores/tabsStore'
+import { useTilesetStore } from '../../stores/tilesetStore'
 
 export interface BitmapTileSession {
   path: string
@@ -72,6 +73,8 @@ export interface BitmapTileSession {
   zoom: number
   filled: boolean
   status: string
+  /** Drops this session's subscription to the shared tileset. */
+  stopWatching: (() => void) | null
 
   /**
    * A rectangle of the bank grid, in tiles — what "block from selection" names.
@@ -103,17 +106,35 @@ export function bitmapTileSession(path: string): BitmapTileSession {
     zoom: 20,
     filled: false,
     status: '',
+    stopWatching: null,
     selection: null,
     preview: null,
     dragFrom: null
   })
   sessions.set(path, session)
+  // A meta-tile editor can append tiles to this same document. Adopt them as a
+  // new present: painting only appends, so the two can never disagree about a
+  // tile that already exists.
+  session.stopWatching = useTilesetStore().onExternalChange(path, path, (next) => {
+    session.preview = null
+    session.history = pushHistory(session.history, next as BitmapTilesDoc)
+  })
   void load(session)
   return session
 }
 
+/** Pushes the restored document to the store, so other editors follow undo/redo. */
+function publish(session: BitmapTileSession): void {
+  useTilesetStore().set(session.path, session.history.present, session.path)
+}
+
 export function pruneBitmapTileSessions(openPaths: Set<string>): void {
-  for (const path of [...sessions.keys()]) if (!openPaths.has(path)) sessions.delete(path)
+  for (const path of [...sessions.keys()]) {
+    if (openPaths.has(path)) continue
+    sessions.get(path)?.stopWatching?.()
+    sessions.delete(path)
+    useTilesetStore().release(path)
+  }
 }
 
 export function doc(session: BitmapTileSession): BitmapTilesDoc {
@@ -122,15 +143,12 @@ export function doc(session: BitmapTileSession): BitmapTilesDoc {
 
 async function load(session: BitmapTileSession): Promise<void> {
   try {
-    const text = await window.api.invoke('fs:read', { path: session.path })
-    // A file the Explorer just created is empty — that is a new tileset, not an error.
-    let raw: unknown = {}
-    try {
-      raw = text.trim() ? JSON.parse(text) : {}
-    } catch {
-      raw = {}
-    }
-    session.history = createHistory(normalizeBitmapTiles(raw))
+    // The store owns the document and reads the file — a meta-tile editor may
+    // be painting into this same `.btiles.json`, and two copies would mean
+    // whichever saved last discarded the other's work.
+    await useTilesetStore().load(session.path)
+    const held = useTilesetStore().bitmapDoc(session.path)
+    if (held) session.history = createHistory(held)
     session.error = null
   } catch (error) {
     session.error = `Couldn't open ${session.path}: ${String(error)}`
@@ -140,12 +158,8 @@ async function load(session: BitmapTileSession): Promise<void> {
 }
 
 export async function saveSession(session: BitmapTileSession): Promise<void> {
-  await window.api.invoke('fs:write', {
-    path: session.path,
-    content: serializeResource({ kind: 'btiles', doc: doc(session) })
-  })
+  await useTilesetStore().save(session.path)
   session.dirty = false
-  useTabsStore().setDirty(session.path, false)
   session.status = 'Saved'
 }
 
@@ -159,6 +173,7 @@ export function commit(session: BitmapTileSession, next: BitmapTilesDoc): void {
   const history = pushHistory(session.history, next)
   if (history === session.history) return
   session.history = history
+  useTilesetStore().set(session.path, next, session.path)
   markDirty(session)
 }
 
@@ -166,6 +181,7 @@ export function undo(session: BitmapTileSession): void {
   session.preview = null
   session.history = undoHistory(session.history)
   clampSelection(session)
+  publish(session)
   markDirty(session)
 }
 
@@ -173,6 +189,7 @@ export function redo(session: BitmapTileSession): void {
   session.preview = null
   session.history = redoHistory(session.history)
   clampSelection(session)
+  publish(session)
   markDirty(session)
 }
 

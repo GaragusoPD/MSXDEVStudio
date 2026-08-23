@@ -74,8 +74,10 @@ export interface MetaSession {
 
   /** Project-relative path of the tileset. Its document lives in the store. */
   tilesetPath: string
-  /** The bitmap forms, which the store does not hold. Null in a pattern mode. */
-  bitmapTileset: BitmapTilesDoc | null
+  /**
+   * The screen-as-atlas form, which no editor writes and so is not shared.
+   * Both real tilesets live in `useTilesetStore` — see `bitmapTiles`.
+   */
   atlas: ScreenDoc | null
   tilesetError: string | null
   /** Last tileset `reorderLog` entry (by `at`) folded in; null = never replayed. */
@@ -111,8 +113,6 @@ export interface MetaSession {
    * session opened may be referenced by a file nobody has open.
    */
   appended: number[]
-  /** Set when `bitmapTileset` has unsaved pixels this session created. */
-  bitmapDirty: boolean
   stopWatching: (() => void) | null
 }
 
@@ -130,7 +130,6 @@ export function metaSession(path: string): MetaSession {
     error: null,
     dirty: false,
     tilesetPath: '',
-    bitmapTileset: null,
     atlas: null,
     tilesetError: null,
     tilesetReorderSeen: null,
@@ -147,7 +146,6 @@ export function metaSession(path: string): MetaSession {
     gridVisible: true,
     status: '',
     appended: [],
-    bitmapDirty: false,
     stopWatching: null
   })
   sessions.set(path, session)
@@ -171,7 +169,19 @@ export function doc(session: MetaSession): MetaTileDoc {
 
 /** The tileset as one `TilesDoc`, or null in a bitmap mode / before it loads. */
 export function tiles(session: MetaSession): TilesDoc | null {
-  return session.kind === 'metatiles' ? useTilesetStore().doc(session.tilesetPath) : null
+  return session.kind === 'metatiles' ? useTilesetStore().patternDoc(session.tilesetPath) : null
+}
+
+/**
+ * The bitmap tileset, from the same store.
+ *
+ * It goes through the store for exactly the reason the pattern one does: the
+ * bitmap tileset editor has its own tab and its own undo stack over the same
+ * file, so a copy here would mean whichever saved last silently discarded the
+ * other's work.
+ */
+export function bitmapTiles(session: MetaSession): BitmapTilesDoc | null {
+  return session.kind === 'metabtiles' ? useTilesetStore().bitmapDoc(session.tilesetPath) : null
 }
 
 async function load(session: MetaSession): Promise<void> {
@@ -203,7 +213,6 @@ async function loadTileset(session: MetaSession): Promise<void> {
     useTilesetStore().release(session.tilesetPath)
   }
   session.tilesetPath = tilesetPath
-  session.bitmapTileset = null
   session.atlas = null
   if (!tilesetPath) {
     session.tilesetError = 'No tileset set — pick one in the side panel.'
@@ -216,13 +225,13 @@ async function loadTileset(session: MetaSession): Promise<void> {
       await replayPersistedReorders(session)
       return
     }
-    const text = await window.api.invoke('fs:read', { path: tilesetPath })
-    const parsed = parseResource(tilesetPath, text)
-    if (parsed.kind === 'btiles') {
-      session.bitmapTileset = parsed.doc
+    if (resourceKindOf(tilesetPath) === 'btiles') {
+      await useTilesetStore().load(tilesetPath)
       session.tilesetError = null
       return
     }
+    const text = await window.api.invoke('fs:read', { path: tilesetPath })
+    const parsed = parseResource(tilesetPath, text)
     if (parsed.kind === 'screen') {
       session.atlas = parsed.doc
       session.tilesetError = parsed.doc.converted
@@ -276,16 +285,6 @@ export async function saveSession(session: MetaSession): Promise<void> {
   // tileset has not written yet is a dangling index the next open cannot fix.
   const store = useTilesetStore()
   if (session.tilesetPath && store.isDirty(session.tilesetPath)) await store.save(session.tilesetPath)
-  // The bitmap tileset is this session's own copy, so it saves here too — and
-  // for the same reason: a meta pointing at a tile its tileset has not written
-  // is a dangling index the next open cannot fix.
-  if (session.bitmapDirty && session.bitmapTileset) {
-    await window.api.invoke('fs:write', {
-      path: session.tilesetPath,
-      content: serializeResource({ kind: 'btiles', doc: session.bitmapTileset })
-    })
-    session.bitmapDirty = false
-  }
   session.dirty = false
   useTabsStore().setDirty(session.path, false)
   session.status = 'Saved'
@@ -326,7 +325,7 @@ export async function setTileset(session: MetaSession, tilesetPath: string): Pro
     return
   }
 
-  const bitmap = session.bitmapTileset
+  const bitmap = bitmapTiles(session)
   if (bitmap) {
     commit(session, {
       ...doc(session),
@@ -348,7 +347,8 @@ export async function setTileset(session: MetaSession, tilesetPath: string): Pro
  */
 /** Reserves tile 0 on a *bitmap* tileset — blank its pixels, shift nothing. */
 export function reserveBitmapTile0(session: MetaSession): void {
-  const tileset = session.bitmapTileset
+  const store = useTilesetStore()
+  const tileset = store.bitmapDoc(session.tilesetPath)
   if (!tileset || tileset.reserveTile0) return
   const per = tileset.width * tileset.height
   const used = bitmapTilePixels(tileset).subarray(0, per).some((pixel) => pixel !== 0)
@@ -365,14 +365,13 @@ export function reserveBitmapTile0(session: MetaSession): void {
   // still just an index, and blanking tile 0 leaves every other one where it
   // was. Whatever used tile 0 as art now shows through, which is the trade the
   // confirm above names.
-  session.bitmapTileset = normalizeBitmapTiles({ ...tileset, reserveTile0: true })
-  session.bitmapDirty = true
+  store.set(session.tilesetPath, normalizeBitmapTiles({ ...tileset, reserveTile0: true }), session.path)
   session.status = 'Tile 0 reserved.'
 }
 
 export function reserveTile0(session: MetaSession): void {
   const store = useTilesetStore()
-  const tileset = store.doc(session.tilesetPath)
+  const tileset = store.patternDoc(session.tilesetPath)
   if (!tileset || tileset.reserveTile0) return
   const used = tileset.tiles.some((tile) => tile.pattern.some((byte) => byte !== 0))
   if (
@@ -403,7 +402,8 @@ export function reserveTile0(session: MetaSession): void {
 
 /** The tileset's own sheet — what the frame strip and the canvas draw a tile from. */
 export function sheet(session: MetaSession): Sheet | null {
-  if (session.bitmapTileset) return bitmapTilesetSheet(session.bitmapTileset)
+  const bitmap = bitmapTiles(session)
+  if (bitmap) return bitmapTilesetSheet(bitmap)
   const cell = doc(session).cell
   if (session.atlas && cell) return atlasSheet(session.atlas, cell)
   const tileset = tiles(session)
@@ -414,7 +414,7 @@ export function sheet(session: MetaSession): Sheet | null {
 
 /** The pixel size of one cell — 8×8 in a pattern mode, the tileset's own otherwise. */
 export function cellSize(session: MetaSession): { width: number; height: number } {
-  const bitmap = session.bitmapTileset
+  const bitmap = bitmapTiles(session)
   if (bitmap) return { width: bitmap.width, height: bitmap.height }
   return { width: TILE_SIZE, height: TILE_SIZE }
 }
@@ -430,7 +430,7 @@ export function cellSize(session: MetaSession): { width: number; height: number 
 export function paint(session: MetaSession, points: Point[]): void {
   if (session.kind === 'metabtiles') return paintBitmap(session, points)
   const store = useTilesetStore()
-  const tileset = store.doc(session.tilesetPath)
+  const tileset = store.patternDoc(session.tilesetPath)
   if (!tileset) return
   if (!tileset.reserveTile0) {
     session.status = 'This tileset does not reserve tile 0, so a meta cannot be transparent. Reserve it in the side panel.'
@@ -464,7 +464,8 @@ export function paint(session: MetaSession, points: Point[]): void {
  * because no other editor writes into a `.btiles.json` while it is open here.
  */
 function paintBitmap(session: MetaSession, points: Point[]): void {
-  const tileset = session.bitmapTileset
+  const store = useTilesetStore()
+  const tileset = store.bitmapDoc(session.tilesetPath)
   if (!tileset) return
   if (!tileset.reserveTile0) {
     session.status =
@@ -485,10 +486,7 @@ function paintBitmap(session: MetaSession, points: Point[]): void {
     session.status = result.refused
     return
   }
-  if (result.tiles !== tileset) {
-    session.bitmapTileset = result.tiles
-    session.bitmapDirty = true
-  }
+  if (result.tiles !== tileset) store.set(session.tilesetPath, result.tiles, session.path)
   if (result.added.length) session.appended = [...session.appended, ...result.added]
   commit(session, result.meta)
   session.status = ''
@@ -542,7 +540,7 @@ export function activeGroup(session: MetaSession): number {
  */
 export function setGroupPair(session: MetaSession, fg: number, bg: number): void {
   const store = useTilesetStore()
-  const tileset = store.doc(session.tilesetPath)
+  const tileset = store.patternDoc(session.tilesetPath)
   if (!tileset || tileset.mode !== 'sc1') return
   const group = activeGroup(session)
   const groupColors = tileset.groupColors.slice()
@@ -588,7 +586,7 @@ function orphansOf(session: MetaSession): number[] {
  */
 export function compact(session: MetaSession): void {
   const store = useTilesetStore()
-  const tileset = store.doc(session.tilesetPath)
+  const tileset = store.patternDoc(session.tilesetPath)
   const orphans = orphansOf(session)
   if (!tileset || !orphans.length) {
     session.status = 'Nothing to compact.'

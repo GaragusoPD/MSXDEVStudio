@@ -140,8 +140,11 @@ export function tileSession(path: string): TileSession {
   // otherwise replay onto a bank that has moved on. Safe because painting only
   // ever appends, so the two can never disagree about an existing tile.
   session.stopWatching = useTilesetStore().onExternalChange(path, path, (doc) => {
-    session.doc = doc
-    session.history = pushHistory(session.history, doc, 'tiles added elsewhere')
+    // The store speaks both kinds; a `.tiles.json` session only ever hears
+    // about its own, so the narrowing here is a fact of the path, not a guess.
+    const pattern = doc as TilesDoc
+    session.doc = pattern
+    session.history = pushHistory(session.history, pattern, 'tiles added elsewhere')
   })
   void load(session)
   return session
@@ -164,7 +167,10 @@ async function load(session: TileSession): Promise<void> {
     // The store owns the document, reads the file, and decides whether a brand
     // new tileset reserves tile 0. This session is one of possibly several
     // readers of it.
-    session.doc = await useTilesetStore().load(session.path)
+    // patternDoc after load, not the load result: this session only ever
+    // holds a `.tiles.json`, and the store speaks both kinds.
+    await useTilesetStore().load(session.path)
+    session.doc = useTilesetStore().patternDoc(session.path) ?? session.doc
     session.history = initHistory(session.doc)
     session.error = null
   } catch (error) {

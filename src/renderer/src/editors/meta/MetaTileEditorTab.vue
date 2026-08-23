@@ -23,6 +23,7 @@ import MetaSidePanel from './MetaSidePanel.vue'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import {
+  bitmapTiles,
   canRedo,
   canUndo,
   doc,
@@ -40,12 +41,14 @@ import {
   type MetaSession
 } from './session'
 
-const props = defineProps<{ path: string }>()
-
+// `EditorArea` mounts `<component :is>` with no props — every editor reads the
+// active tab for itself. Taking a `path` prop instead leaves it undefined and
+// blanks the pane.
 const tabsStore = useTabsStore()
 const resourcesStore = useResourcesStore()
 
-const session = computed<MetaSession>(() => metaSession(props.path))
+const path = computed(() => tabsStore.activeTab?.filePath ?? '')
+const session = computed<MetaSession>(() => metaSession(path.value))
 const meta = computed(() => doc(session.value))
 
 /**
@@ -65,7 +68,7 @@ const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
 const paintable = computed(() =>
   session.value.kind === 'metatiles'
     ? Boolean(session.value.tilesetPath) && !session.value.tilesetError
-    : Boolean(session.value.bitmapTileset)
+    : Boolean(bitmapTiles(session.value))
 )
 
 async function save(): Promise<void> {

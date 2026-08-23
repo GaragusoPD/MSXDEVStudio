@@ -185,7 +185,10 @@ export type ResourceDoc =
 
 /** Which editor owns this path, by suffix. Null for anything else. */
 export function resourceKindOf(path: string): ResourceKind | null {
-  const lower = path.toLowerCase()
+  // Coerced rather than trusted: this is called from editor sessions, and a
+  // session handed a missing path used to throw here — synchronously, inside a
+  // render — which blanks the editor pane instead of showing an error.
+  const lower = String(path ?? '').toLowerCase()
   for (const [kind, suffix] of Object.entries(RESOURCE_SUFFIXES)) {
     if (lower.endsWith(suffix)) return kind as ResourceKind
   }

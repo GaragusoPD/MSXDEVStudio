@@ -11,6 +11,7 @@ import { MAX_TILES, colorByteAt, splitColorByte } from '../../../../shared/msx/t
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import {
+  bitmapTiles,
   commit,
   compact,
   doc,
@@ -42,7 +43,7 @@ const tilesetOptions = computed(() =>
   resourcesStore.entries.filter((entry) => TILESET_KINDS.value.includes(entry.kind)).map((entry) => entry.path)
 )
 
-const bitmap = computed(() => props.session.bitmapTileset)
+const bitmap = computed(() => bitmapTiles(props.session))
 const rgb = computed(() => paletteToRgb(bitmap.value?.palette ?? tileset.value?.palette ?? null))
 
 /** Whichever tileset this meta references needs tile 0 reserved before it can be see-through. */

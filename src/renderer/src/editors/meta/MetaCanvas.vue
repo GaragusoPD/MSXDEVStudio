@@ -18,7 +18,7 @@ import { tileImage } from '../../../../shared/msx/bitmap-tile'
 import { frameTileAt } from '../../../../shared/msx/meta-tile'
 import { sprayPoints } from '../../../../shared/msx/meta-paint'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { cellSize, doc, paint, tiles, type MetaSession } from './session'
+import { bitmapTiles, cellSize, doc, paint, tiles, type MetaSession } from './session'
 
 const props = defineProps<{ session: MetaSession }>()
 
@@ -36,7 +36,7 @@ const step = computed(() => Math.max(2, props.session.zoom))
 const width = computed(() => cols.value * step.value)
 const height = computed(() => rows.value * step.value)
 const rgb = computed(() =>
-  paletteToRgb(props.session.bitmapTileset?.palette ?? tiles(props.session)?.palette ?? null)
+  paletteToRgb(bitmapTiles(props.session)?.palette ?? tiles(props.session)?.palette ?? null)
 )
 
 /**
@@ -49,7 +49,7 @@ const rgb = computed(() =>
 function framePixels(frame: number): Uint8Array {
   const out = new Uint8Array(cols.value * rows.value)
   const pattern = tiles(props.session)
-  const bitmap = props.session.bitmapTileset
+  const bitmap = bitmapTiles(props.session)
   if (!pattern && !bitmap) return out
   const { width: cw, height: ch } = cellPx.value
   for (let cy = 0; cy < meta.value.height; cy++) {
