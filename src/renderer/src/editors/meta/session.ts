@@ -34,11 +34,11 @@ import {
   META_FLAG_COUNT,
   type MetaTileDoc
 } from '../../../../shared/msx/meta-tile'
-import { paintMeta, usedTiles } from '../../../../shared/msx/meta-paint'
+import { paintBitmapMeta, paintMeta, usedTiles } from '../../../../shared/msx/meta-paint'
 import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
 import { mergeColorByte, removeTile, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
 import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
-import { sheetCols } from '../../../../shared/msx/bitmap-tile'
+import { normalizeBitmapTiles, sheetCols, tilePixels as bitmapTilePixels } from '../../../../shared/msx/bitmap-tile'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
 import { screenPixels } from '../../../../shared/msx/screen'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from '../map/sheet'
@@ -111,6 +111,8 @@ export interface MetaSession {
    * session opened may be referenced by a file nobody has open.
    */
   appended: number[]
+  /** Set when `bitmapTileset` has unsaved pixels this session created. */
+  bitmapDirty: boolean
   stopWatching: (() => void) | null
 }
 
@@ -145,6 +147,7 @@ export function metaSession(path: string): MetaSession {
     gridVisible: true,
     status: '',
     appended: [],
+    bitmapDirty: false,
     stopWatching: null
   })
   sessions.set(path, session)
@@ -273,6 +276,16 @@ export async function saveSession(session: MetaSession): Promise<void> {
   // tileset has not written yet is a dangling index the next open cannot fix.
   const store = useTilesetStore()
   if (session.tilesetPath && store.isDirty(session.tilesetPath)) await store.save(session.tilesetPath)
+  // The bitmap tileset is this session's own copy, so it saves here too — and
+  // for the same reason: a meta pointing at a tile its tileset has not written
+  // is a dangling index the next open cannot fix.
+  if (session.bitmapDirty && session.bitmapTileset) {
+    await window.api.invoke('fs:write', {
+      path: session.tilesetPath,
+      content: serializeResource({ kind: 'btiles', doc: session.bitmapTileset })
+    })
+    session.bitmapDirty = false
+  }
   session.dirty = false
   useTabsStore().setDirty(session.path, false)
   session.status = 'Saved'
@@ -315,7 +328,11 @@ export async function setTileset(session: MetaSession, tilesetPath: string): Pro
 
   const bitmap = session.bitmapTileset
   if (bitmap) {
-    commit(session, { ...doc(session), cell: { width: bitmap.width, height: bitmap.height, cols: sheetCols(bitmap) } })
+    commit(session, {
+      ...doc(session),
+      cell: { width: bitmap.width, height: bitmap.height, cols: sheetCols(bitmap) },
+      transparent: bitmap.transparent
+    })
     return
   }
   const pixels = session.atlas && screenPixels(session.atlas)
@@ -329,6 +346,30 @@ export async function setTileset(session: MetaSession, tilesetPath: string): Pro
  * Reserves tile 0 on the referenced tileset, shifting every existing index up
  * by one and publishing the mapping so everything drawn with it follows.
  */
+/** Reserves tile 0 on a *bitmap* tileset — blank its pixels, shift nothing. */
+export function reserveBitmapTile0(session: MetaSession): void {
+  const tileset = session.bitmapTileset
+  if (!tileset || tileset.reserveTile0) return
+  const per = tileset.width * tileset.height
+  const used = bitmapTilePixels(tileset).subarray(0, per).some((pixel) => pixel !== 0)
+  if (
+    used &&
+    !window.confirm(
+      `"${session.tilesetPath}" has artwork in tile 0. Reserving it for transparency erases that ` +
+        'tile. Anything drawn with it becomes a hole. Continue?'
+    )
+  ) {
+    return
+  }
+  // Unlike the pattern path this does not renumber: a bitmap cell index is
+  // still just an index, and blanking tile 0 leaves every other one where it
+  // was. Whatever used tile 0 as art now shows through, which is the trade the
+  // confirm above names.
+  session.bitmapTileset = normalizeBitmapTiles({ ...tileset, reserveTile0: true })
+  session.bitmapDirty = true
+  session.status = 'Tile 0 reserved.'
+}
+
 export function reserveTile0(session: MetaSession): void {
   const store = useTilesetStore()
   const tileset = store.doc(session.tilesetPath)
@@ -371,15 +412,23 @@ export function sheet(session: MetaSession): Sheet | null {
 
 // ── editing ───────────────────────────────────────────────────────────────
 
+/** The pixel size of one cell — 8×8 in a pattern mode, the tileset's own otherwise. */
+export function cellSize(session: MetaSession): { width: number; height: number } {
+  const bitmap = session.bitmapTileset
+  if (bitmap) return { width: bitmap.width, height: bitmap.height }
+  return { width: TILE_SIZE, height: TILE_SIZE }
+}
+
 /**
  * Applies a stroke to the current frame, in the meta's own pixel space.
  *
  * Both documents move: the meta gets a repointed cell, the tileset gets any
- * tile the stroke had to create.
+ * tile the stroke had to create. Which of the two engines runs depends on
+ * whether the tileset is patterns or pixels — the shapes are the same, the
+ * constraints are not.
  */
 export function paint(session: MetaSession, points: Point[]): void {
-  // Stage 1 paints pattern modes only. A bitmap meta still stamps cells.
-  if (session.kind !== 'metatiles') return
+  if (session.kind === 'metabtiles') return paintBitmap(session, points)
   const store = useTilesetStore()
   const tileset = store.doc(session.tilesetPath)
   if (!tileset) return
@@ -407,6 +456,42 @@ export function paint(session: MetaSession, points: Point[]): void {
   session.status = result.dropped
     ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`
     : ''
+}
+
+/**
+ * The bitmap half. The tileset is not in the store — it is a `BitmapTilesDoc`,
+ * not a `TilesDoc` — so this session owns it and saves it, which is safe
+ * because no other editor writes into a `.btiles.json` while it is open here.
+ */
+function paintBitmap(session: MetaSession, points: Point[]): void {
+  const tileset = session.bitmapTileset
+  if (!tileset) return
+  if (!tileset.reserveTile0) {
+    session.status =
+      'This tileset does not reserve tile 0, so a meta-tile cannot skip a cell. Reserve it in the side panel.'
+    return
+  }
+  const { width: cw, height: ch } = cellSize(session)
+  const first = points[0]
+  if (first) {
+    session.activeCell = {
+      x: Math.min(doc(session).width - 1, Math.max(0, Math.floor(first.x / cw))),
+      y: Math.min(doc(session).height - 1, Math.max(0, Math.floor(first.y / ch)))
+    }
+  }
+
+  const result = paintBitmapMeta(doc(session), tileset, session.frame, points, session.color)
+  if (result.refused) {
+    session.status = result.refused
+    return
+  }
+  if (result.tiles !== tileset) {
+    session.bitmapTileset = result.tiles
+    session.bitmapDirty = true
+  }
+  if (result.added.length) session.appended = [...session.appended, ...result.added]
+  commit(session, result.meta)
+  session.status = ''
 }
 
 export function setFrame(session: MetaSession, index: number): void {

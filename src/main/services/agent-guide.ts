@@ -568,10 +568,21 @@ There is no default — cell 0 is an ordinary picture, so a map that names no
 transparent cell has none, and the Problems panel says so once it has more than
 one layer.
 
-Meta-tiles in a bitmap mode (\`*.meta-btiles.json\`) record their size, frames
-and flags and export a \`_Draw\` that blits one frame out of the atlas, one
-\`HMMM\` per cell. Painting one in pixels, and placing one on a bitmap map, are
-not in this release — pattern modes (SCREEN 1/2/4) only for now.
+Meta-tiles work in bitmap modes too (\`*.meta-btiles.json\` over a
+\`*.btiles.json\`), painted and placed the same way. The blit differs: there is
+no name table, so \`_Draw(x, y, frame, atlasY)\` and
+\`_DrawPlacements(frames, atlasY)\` copy cells out of the atlas.
+
+Two kinds of transparency, and they compose. A cell holding tile 0 is not
+blitted at all. If the tileset nominates **colour 0** as transparent, the copy
+is \`LMMM\` with \`VDP_OP_TIMP\` instead of \`HMMM\`, so colour-0 pixels *inside* a
+cell show through as well. Only colour 0 — the V9938 hardwires TIMP to it — and
+a tileset naming any other index gets an opaque copy plus a comment saying why.
+
+SCREEN 3 has no command engine. Its **2×2** form is a name-table map, so
+meta-tiles place there normally; any other sc3 tile size blits, and placements
+on those maps are refused at export rather than emitting V9938 calls an MSX1
+cannot run.
 
 **Bitmap sprites (software sprites)** are how you get a moving object bigger or
 more colourful than the hardware allows in a bitmap mode. MSXgl ships no module

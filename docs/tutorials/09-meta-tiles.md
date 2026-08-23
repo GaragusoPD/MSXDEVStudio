@@ -195,12 +195,41 @@ Two independent sets of flags, and neither overrides the other:
   is it a hazard — while walking the placement table. Mirrored into the map's
   own header so you do not need to include every meta's.
 
-## What is not here yet
+## Bitmap and multicolour modes
 
-Pixel editing for bitmap and multicolour modes. A `.meta-btiles.json` records
-its size, frames and flags and exports a `_Draw` that blits out of the atlas,
-but you cannot paint one and a bitmap map cannot place one. SCREEN 1, 2 and 4
-only, for now.
+Everything above applies to a `.meta-btiles.json` over a `.btiles.json` — same
+editor, same frames, same placement — with three differences the hardware
+forces.
+
+**Nothing gets dropped.** Every pixel in a bitmap mode carries its own colour,
+so there is no two-per-row rule and no status-bar count. Draw what you like.
+
+**A cell is whatever the tileset says.** A bitmap tile is 16×16, or 8×8, or
+32×16. The canvas grid and the seams follow it rather than a fixed 8.
+
+**Two kinds of see-through, and they compose.** A cell holding tile 0 is not
+blitted at all, exactly as in pattern modes. On top of that, if the tileset
+nominates **colour 0** as its transparent index, the emitted blit uses the
+VDP's own transparency (`LMMM` with `VDP_OP_TIMP`) and the colour-0 pixels
+inside a cell show the background too — so a tree can have a real outline
+instead of a square one.
+
+Only colour 0. `VDP_OP_TIMP` is hardwired to it on the V9938; a tileset that
+nominates any other index gets an opaque `HMMM` and a header comment saying
+why. The side panel tells you which you are getting.
+
+### SCREEN 3
+
+Multicolour splits, because an MSX1 has no command engine.
+
+- A **2×2** SCREEN 3 tileset makes its map a name-table map — the VDP draws it,
+  exactly as in SCREEN 1/2 — so meta-tiles place there and work unchanged.
+- **Any other SCREEN 3 tile size** blits into a shadow buffer, and there is no
+  blitter. Placing meta-tiles on such a map is refused in the Problems panel
+  rather than exported as `VDP_CommandHMMM` that links and does nothing.
+
+Whole-cell transparency still works on SCREEN 3; per-pixel does not, for the
+same reason.
 
 ---
 

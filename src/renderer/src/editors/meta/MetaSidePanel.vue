@@ -15,6 +15,7 @@ import {
   compact,
   doc,
   frameTileAt,
+  reserveBitmapTile0,
   reserveTile0,
   resize,
   setColor,
@@ -41,7 +42,14 @@ const tilesetOptions = computed(() =>
   resourcesStore.entries.filter((entry) => TILESET_KINDS.value.includes(entry.kind)).map((entry) => entry.path)
 )
 
-const rgb = computed(() => paletteToRgb(tileset.value?.palette ?? null))
+const bitmap = computed(() => props.session.bitmapTileset)
+const rgb = computed(() => paletteToRgb(bitmap.value?.palette ?? tileset.value?.palette ?? null))
+
+/** Whichever tileset this meta references needs tile 0 reserved before it can be see-through. */
+const needsReserve = computed(() => {
+  if (bitmap.value) return !bitmap.value.reserveTile0
+  return tileset.value ? !tileset.value.reserveTile0 : false
+})
 
 const sc1 = computed(() => tileset.value?.mode === 'sc1')
 
@@ -62,6 +70,9 @@ const groupPair = computed(() => {
  * sixteen, and the row's own two-colour rule is enforced per stroke.
  */
 const palette = computed<number[]>(() => {
+  // Every pixel carries its own colour in a bitmap mode, so all sixteen are on
+  // offer and nothing can be refused.
+  if (bitmap.value) return Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
   const doc0 = tileset.value
   if (!doc0) return []
   if (!sc1.value) return Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
@@ -115,19 +126,35 @@ function setupExport(): void {
       >
         {{ session.tilesetError }}
       </p>
-      <template v-if="tileset && !tileset.reserveTile0">
+      <template v-if="needsReserve">
         <p class="hint warn">
-          This tileset does not reserve tile 0, so a meta-tile cannot be transparent. Reserving it
-          shifts every tile up by one and renumbers the maps drawn with it.
+          This tileset does not reserve tile 0, so a meta-tile cannot skip a cell.
+          {{
+            bitmap
+              ? 'Reserving it erases tile 0; nothing else moves.'
+              : 'Reserving it shifts every tile up by one and renumbers the maps drawn with it.'
+          }}
         </p>
         <button
           type="button"
           class="wide"
-          @click="reserveTile0(session)"
+          @click="bitmap ? reserveBitmapTile0(session) : reserveTile0(session)"
         >
           Reserve tile 0
         </button>
       </template>
+      <p
+        v-else-if="bitmap"
+        class="hint"
+      >
+        {{
+          bitmap.transparent === 0
+            ? 'Colour 0 is see-through inside a cell too — the VDP skips it, so silhouettes can be any shape.'
+            : bitmap.transparent === null
+              ? 'Cells holding tile 0 are skipped. This tileset nominates no transparent colour, so the cells that are drawn are solid rectangles.'
+              : `Cells holding tile 0 are skipped. Per-pixel transparency is off: the VDP only ever skips colour 0, and this tileset nominates ${bitmap.transparent}.`
+        }}
+      </p>
     </section>
 
     <section>

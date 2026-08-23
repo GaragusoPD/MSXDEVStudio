@@ -43,6 +43,33 @@ editor; bitmap and multicolour modes follow in stage 2.
 - **`fillPoints` takes a width and height**, so the meta canvas can flood a
   picture rather than a single 8×8 cell. Defaults to today's behaviour.
 
+### Meta-tiles in bitmap and multicolour modes (stage 2)
+
+#### Added
+
+- **Bitmap meta-tiles are painted and placed like pattern ones.** A
+  `*.meta-btiles.json` over a `*.btiles.json` gets the same canvas, frames,
+  onion skin and map placement. No pixel is ever dropped — a bitmap mode has no
+  per-row colour limit — and the cell grid follows the tileset's own tile size
+  rather than a fixed 8×8.
+- **Two kinds of transparency, which compose.** A cell holding tile 0 is not
+  blitted (`reserveTile0` now exists on `*.btiles.json` too); and where the
+  tileset nominates **colour 0** as transparent, cells blit through `LMMM` with
+  `VDP_OP_TIMP` so colour-0 pixels inside a cell show through as well. Only
+  colour 0 — the V9938 hardwires TIMP to it — and any other index gets an opaque
+  `HMMM` with a header comment explaining why.
+- **`MetaRef.masked`**, mirrored onto the map so its placement runtime can pick
+  the blit per meta; one map may place both kinds.
+
+#### Changed
+
+- SCREEN 3 splits by tile size. Its 2×2 form is a name-table map, so meta-tiles
+  place there through the pattern path unchanged. Any other sc3 tile size blits
+  and an MSX1 has no command engine, so placements on those maps are reported in
+  the Problems panel instead of exported as V9938 calls that link and do nothing.
+
+## Stage 1
+
 #### Changed
 
 - Painting a meta-tile now writes tiles into the referenced `*.tiles.json`

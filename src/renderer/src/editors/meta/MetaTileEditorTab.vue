@@ -61,12 +61,12 @@ const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'spray', icon: 'blur_on', title: 'Spray (ordered dither)' }
 ]
 
-/**
- * Stage 1 paints pattern modes. A `.meta-btiles.json` references a bitmap
- * tileset, which is not a `TilesDoc` at all, so its pixel editor waits for
- * stage 2 rather than being half-wired now.
- */
-const paintable = computed(() => session.value.kind === 'metatiles')
+/** Both kinds paint now; a meta with no tileset yet has nothing to paint into. */
+const paintable = computed(() =>
+  session.value.kind === 'metatiles'
+    ? Boolean(session.value.tilesetPath) && !session.value.tilesetError
+    : Boolean(session.value.bitmapTileset)
+)
 
 async function save(): Promise<void> {
   await saveSession(session.value)
@@ -234,9 +234,7 @@ watch(
       v-if="!paintable"
       class="banner"
     >
-      Pixel editing for bitmap-mode meta-tiles is not here yet, and a bitmap map cannot place one.
-      This file records its size, frames and flags, and exports a <code>_Draw</code> that blits a
-      frame out of the atlas.
+      {{ session.tilesetError ?? 'Pick a tileset in the side panel before drawing.' }}
     </p>
 
     <div class="body">

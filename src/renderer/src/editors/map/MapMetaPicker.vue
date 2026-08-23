@@ -48,7 +48,8 @@ function label(path: string): string {
       class="hint"
     >
       No meta-tiles over <code>{{ doc(session).tileset }}</code> yet. Create a
-      <code>.meta-tiles.json</code> and point it at this tileset.
+      <code>{{ doc(session).cell ? '.meta-btiles.json' : '.meta-tiles.json' }}</code> and point it
+      at this tileset.
     </p>
 
     <div

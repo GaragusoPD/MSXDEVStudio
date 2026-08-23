@@ -13,11 +13,12 @@
  */
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
-import { TILE_SIZE, tilePixels } from '../../../../shared/msx/tile'
+import { tilePixels } from '../../../../shared/msx/tile'
+import { tileImage } from '../../../../shared/msx/bitmap-tile'
 import { frameTileAt } from '../../../../shared/msx/meta-tile'
 import { sprayPoints } from '../../../../shared/msx/meta-paint'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { doc, paint, tiles, type MetaSession } from './session'
+import { cellSize, doc, paint, tiles, type MetaSession } from './session'
 
 const props = defineProps<{ session: MetaSession }>()
 
@@ -27,12 +28,16 @@ let origin: Point | null = null
 let painting = false
 
 const meta = computed(() => doc(props.session))
-const cols = computed(() => meta.value.width * TILE_SIZE)
-const rows = computed(() => meta.value.height * TILE_SIZE)
+/** 8×8 in a pattern mode; whatever the bitmap tileset says otherwise. */
+const cellPx = computed(() => cellSize(props.session))
+const cols = computed(() => meta.value.width * cellPx.value.width)
+const rows = computed(() => meta.value.height * cellPx.value.height)
 const step = computed(() => Math.max(2, props.session.zoom))
 const width = computed(() => cols.value * step.value)
 const height = computed(() => rows.value * step.value)
-const rgb = computed(() => paletteToRgb(tiles(props.session)?.palette ?? null))
+const rgb = computed(() =>
+  paletteToRgb(props.session.bitmapTileset?.palette ?? tiles(props.session)?.palette ?? null)
+)
 
 /**
  * One frame composed into palette indices, with transparent cells left at 0.
@@ -43,18 +48,18 @@ const rgb = computed(() => paletteToRgb(tiles(props.session)?.palette ?? null))
  */
 function framePixels(frame: number): Uint8Array {
   const out = new Uint8Array(cols.value * rows.value)
-  const tileset = tiles(props.session)
-  if (!tileset) return out
+  const pattern = tiles(props.session)
+  const bitmap = props.session.bitmapTileset
+  if (!pattern && !bitmap) return out
+  const { width: cw, height: ch } = cellPx.value
   for (let cy = 0; cy < meta.value.height; cy++) {
     for (let cx = 0; cx < meta.value.width; cx++) {
       const tile = frameTileAt(meta.value, frame, cx, cy)
+      // Tile 0 is the hole: left at index 0 so the checkerboard shows through.
       if (tile === 0) continue
-      const pixels = tilePixels(tileset, tile)
-      for (let y = 0; y < TILE_SIZE; y++) {
-        out.set(
-          pixels.subarray(y * TILE_SIZE, y * TILE_SIZE + TILE_SIZE),
-          (cy * TILE_SIZE + y) * cols.value + cx * TILE_SIZE
-        )
+      const pixels = bitmap ? tileImage(bitmap, tile) : tilePixels(pattern!, tile)
+      for (let y = 0; y < ch; y++) {
+        out.set(pixels.subarray(y * cw, y * cw + cw), (cy * ch + y) * cols.value + cx * cw)
       }
     }
   }
@@ -171,14 +176,14 @@ watchEffect(() => {
   for (let x = 1; x < cols.value; x++) {
     // Tile seams stand out: each is where one name-table entry ends and the
     // next begins, which is where the mode's colour rules reset.
-    context.strokeStyle = x % TILE_SIZE === 0 ? 'rgba(120, 170, 255, 0.7)' : 'rgba(255, 255, 255, 0.14)'
+    context.strokeStyle = x % cellPx.value.width === 0 ? 'rgba(120, 170, 255, 0.7)' : 'rgba(255, 255, 255, 0.14)'
     context.beginPath()
     context.moveTo(x * px + 0.5, 0)
     context.lineTo(x * px + 0.5, height.value)
     context.stroke()
   }
   for (let y = 1; y < rows.value; y++) {
-    context.strokeStyle = y % TILE_SIZE === 0 ? 'rgba(120, 170, 255, 0.7)' : 'rgba(255, 255, 255, 0.14)'
+    context.strokeStyle = y % cellPx.value.height === 0 ? 'rgba(120, 170, 255, 0.7)' : 'rgba(255, 255, 255, 0.14)'
     context.beginPath()
     context.moveTo(0, y * px + 0.5)
     context.lineTo(width.value, y * px + 0.5)

@@ -13,7 +13,8 @@
 import { describe, expect, it } from 'vitest'
 import { addMetaRef, normalizeMap, placeMeta, setPlacementBaked } from './map'
 import { createMetaTileDoc } from './meta-tile'
-import { paintMeta } from './meta-paint'
+import { paintBitmapMeta, paintMeta } from './meta-paint'
+import { normalizeBitmapTiles, sheetCols } from './bitmap-tile'
 import { defaultExport, renderResourceFiles } from './resource'
 import { blankTileEntry, normalizeTiles } from './tile'
 
@@ -92,5 +93,84 @@ describe('paint a meta-tile, place it, export the pair', () => {
     const table = /g_Level_Placements\[\]\s*=\s*\{[^}]*\}/s.exec(mapText)?.[0] ?? ''
     expect(table).toMatch(/0x00,\s*0x04,\s*0x04/)
     expect(table).toMatch(/0x80,\s*0x0A,\s*0x08/)
+  })
+})
+
+describe('the bitmap path: paint, place, export', () => {
+  it('emits a transparent blit only when the tileset nominates colour 0', () => {
+    let tiles = normalizeBitmapTiles({
+      mode: 'sc5',
+      width: 16,
+      height: 16,
+      count: 1,
+      reserveTile0: true,
+      transparent: 0
+    })
+    let meta = { ...createMetaTileDoc('res/canyon.btiles.json', 2, 2), transparent: 0 }
+
+    // Two opaque cells on a diagonal; the other two stay transparent.
+    for (const [ox, oy] of [[0, 0], [16, 16]]) {
+      const points = Array.from({ length: 16 }, (_, y) =>
+        Array.from({ length: 16 }, (_, x) => ({ x: ox + x, y: oy + y }))
+      ).flat()
+      const result = paintBitmapMeta(meta, tiles, 0, points, 7)
+      meta = { ...result.meta, transparent: 0 }
+      tiles = result.tiles
+    }
+    expect(meta.frames[0].tiles[0]).toBe(meta.frames[0].tiles[3])
+    expect(meta.frames[0].tiles[1]).toBe(0)
+    expect(tiles.count).toBe(2)
+
+    const withCell = {
+      ...meta,
+      cell: { width: 16, height: 16, cols: sheetCols(tiles) },
+      export: { ...defaultExport('res/rock.meta-btiles.json'), name: 'g_Rock', helpers: true }
+    }
+    const render = (resource: Parameters<typeof renderResourceFiles>[0], path: string, block: typeof withCell.export): string => {
+      const files = renderResourceFiles(resource, path, block!)
+      return `${files.header ?? ''}\n${files.source ?? ''}`
+    }
+
+    const text = render({ kind: 'metabtiles', doc: withCell }, 'res/rock.meta-btiles.json', withCell.export)
+    expect(text).toContain('#define G_ROCK_TRANSPARENT 0')
+    // Both kinds of see-through: the skipped cell and the skipped colour.
+    expect(text).toContain('if(cell == 0) continue;')
+    expect(text).toContain('VDP_CommandLMMM')
+
+    // Nominating any other index cannot use the VDP's transparency at all.
+    const opaque = { ...withCell, transparent: 3 }
+    const opaqueText = render({ kind: 'metabtiles', doc: opaque }, 'res/rock.meta-btiles.json', opaque.export)
+    // The *call*, not the string: the header comment names VDP_OP_TIMP
+    // precisely to explain why it is not being used.
+    expect(opaqueText).not.toContain('VDP_CommandLMMM')
+    expect(opaqueText).toContain('VDP_CommandHMMM')
+    expect(opaqueText).toContain('only ever skips colour 0')
+  })
+
+  it('a bitmap map blits its placements instead of writing a name table', () => {
+    let map = normalizeMap({
+      tileset: 'res/canyon.btiles.json',
+      width: 16,
+      height: 12,
+      cell: { width: 16, height: 16, cols: 16 }
+    })
+    map = addMetaRef(map, {
+      path: 'res/rock.meta-btiles.json',
+      name: 'g_Rock',
+      width: 2,
+      height: 2,
+      frames: 1,
+      flags: 0,
+      masked: true
+    })
+    map = placeMeta(map, 0, 0, 3, 3)
+    const block = { ...defaultExport('res/stage.map.json'), name: 'g_Stage', helpers: true }
+    const files = renderResourceFiles({ kind: 'map', doc: { ...map, export: block } }, 'res/stage.map.json', block)
+    const text = `${files.header ?? ''}\n${files.source ?? ''}`
+
+    expect(text).toContain('void g_Stage_DrawPlacements(const u8* frames, UY atlasY)')
+    expect(text).toContain('extern const u8 g_Rock[];')
+    expect(text).toContain('VDP_CommandLMMM(sx, sy, dx, dy, 16, 16, VDP_OP_TIMP);')
+    expect(text).not.toContain('VDP_WriteLayout_GM2(src + col')
   })
 })

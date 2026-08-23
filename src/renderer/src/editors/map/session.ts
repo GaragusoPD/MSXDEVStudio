@@ -256,9 +256,12 @@ function clearTileset(session: MapSession): void {
 async function loadMetaDocs(session: MapSession): Promise<void> {
   const tilesetPath = doc(session).tileset
   const found = new Map<string, MetaTileDoc>()
+  // A pattern map takes pattern metas, a bitmap map takes bitmap ones. The
+  // suffix already says which, so no file has to be opened to find out.
+  const wanted = doc(session).cell ? 'metabtiles' : 'metatiles'
   if (tilesetPath) {
     for (const entry of useResourcesStore().entries) {
-      if (entry.kind !== 'metatiles') continue
+      if (entry.kind !== wanted) continue
       try {
         const text = await window.api.invoke('fs:read', { path: entry.path })
         const parsed = normalizeMetaTile(JSON.parse(text))
@@ -673,7 +676,10 @@ export function pickMeta(session: MapSession, path: string): void {
     width: meta.width,
     height: meta.height,
     frames: meta.frames.length,
-    flags: meta.flags
+    flags: meta.flags,
+    // Only colour 0 can be blitted transparently — the V9938 hardwires
+    // VDP_OP_TIMP to it — so this is a yes/no, not the index itself.
+    ...(meta.transparent === 0 ? { masked: true } : {})
   })
   if (next === doc(session) && metaSlotOf(doc(session), path) < 0) {
     session.status = `A map can place ${MAX_MAP_METAS} different meta-tiles.`
