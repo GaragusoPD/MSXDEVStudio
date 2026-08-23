@@ -61,6 +61,15 @@ export interface MetaTileDoc {
    * file, so anything the emitted C needs has to be here.
    */
   cell: MapCell | null
+  /**
+   * The colour index the VDP's transparent blit skips, for a bitmap meta whose
+   * tileset asks for one; null for an opaque one and in every pattern mode.
+   *
+   * Mirrored from the tileset for the reason `cell` is. Only 0 is honoured:
+   * `VDP_OP_TIMP` is hardwired to colour 0 on the V9938, so a tileset that
+   * nominates any other index gets an opaque blit and a note saying why.
+   */
+  transparent: number | null
   /** `frames[0]` is the resting pose, as in `SpritesDoc`. Never empty. */
   frames: MetaFrame[]
   /**
@@ -113,6 +122,10 @@ export function normalizeMetaTile(raw: unknown): MetaTileDoc {
     width,
     height,
     cell: normalizeCell(input.cell),
+    transparent:
+      typeof input.transparent === 'number' && Number.isFinite(input.transparent)
+        ? Math.max(0, Math.min(15, input.transparent as number))
+        : null,
     frames: frames.length ? frames : [{ tiles: new Array<number>(cells).fill(0) }],
     flags: (Number(input.flags) || 0) & 0xff,
     export: (input.export as ExportBlock | undefined) ?? null
@@ -236,7 +249,19 @@ export function metaConstants(doc: MetaTileDoc, name: string): string[] {
       `#define ${prefix}_ATLAS_COLS ${doc.cell.cols}`
     )
   }
+  if (doc.transparent !== null) out.push(`#define ${prefix}_TRANSPARENT ${doc.transparent}`)
   return out
+}
+
+/**
+ * Whether the emitted blit can use the VDP's per-pixel transparency.
+ *
+ * `VDP_OP_TIMP` skips source colour **0** and nothing else — that is the chip,
+ * not a convention — so a tileset that nominates any other index cannot have a
+ * ragged silhouette and gets an opaque copy instead.
+ */
+export function usesTransparentBlit(doc: MetaTileDoc): boolean {
+  return doc.transparent === 0
 }
 
 /**
@@ -308,6 +333,37 @@ export function metaHelperC(doc: MetaTileDoc, name: string): HelperC {
  * write, so unlike the pattern path this copies every cell.
  */
 function bitmapMetaHelperC(doc: MetaTileDoc, name: string, prefix: string): HelperC {
+  const transparent = usesTransparentBlit(doc)
+  // LMMM carries a logical operation and HMMM does not, so per-pixel
+  // transparency costs the slower of the two copies. Opaque art keeps HMMM.
+  const blit = transparent
+    ? [
+        `\t\t\tVDP_CommandLMMM((u16)(cell % ${prefix}_ATLAS_COLS) * ${prefix}_CELL_W,`,
+        `\t\t\t                atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${prefix}_CELL_H),`,
+        `\t\t\t                x + (col * ${prefix}_CELL_W), y + (row * ${prefix}_CELL_H),`,
+        `\t\t\t                ${prefix}_CELL_W, ${prefix}_CELL_H, VDP_OP_TIMP);`
+      ]
+    : [
+        `\t\t\tVDP_CommandHMMM((u16)(cell % ${prefix}_ATLAS_COLS) * ${prefix}_CELL_W,`,
+        `\t\t\t                atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${prefix}_CELL_H),`,
+        `\t\t\t                x + (col * ${prefix}_CELL_W), y + (row * ${prefix}_CELL_H),`,
+        `\t\t\t                ${prefix}_CELL_W, ${prefix}_CELL_H);`
+      ]
+
+  const transparencyNote = transparent
+    ? [
+        '// Two kinds of see-through, and they compose: a cell holding tile 0 is',
+        '// not blitted at all, and inside the cells that are, colour 0 is skipped',
+        '// by VDP_OP_TIMP — so the silhouette can be any shape.'
+      ]
+    : [
+        '// A cell holding tile 0 is not blitted, so the background shows through',
+        '// whole cells. Per-pixel transparency is *not* used here:',
+        doc.transparent === null
+          ? '// this tileset nominates no transparent colour.'
+          : `// VDP_OP_TIMP only ever skips colour 0, and this tileset nominates ${doc.transparent}.`
+      ]
+
   const signature = `void ${name}_Draw(UX x, UY y, u8 frame, UY atlasY)`
   return {
     header: [
@@ -317,6 +373,8 @@ function bitmapMetaHelperC(doc: MetaTileDoc, name: string, prefix: string): Help
       `// Stamps frame \`frame\` — ${doc.width}×${doc.height} cells of ${doc.cell!.width}×${doc.cell!.height} dots — at dot`,
       '// position (x, y). Cells come from an atlas image parked at (0, `atlasY`)',
       `// in VRAM, ${doc.cell!.cols} to a row, the same atlas the map draws from.`,
+      '//',
+      ...transparencyNote,
       '//',
       '// Needs MSXgl\'s VDP command engine: MSX2 or later with VDP_USE_COMMAND,',
       '// and "msxgl.h" included before this header.',
@@ -335,10 +393,8 @@ function bitmapMetaHelperC(doc: MetaTileDoc, name: string, prefix: string): Help
       `\t\tfor(u8 col = 0; col < ${prefix}_META_W; ++col)`,
       '\t\t{',
       '\t\t\tu8 cell = *src++;',
-      `\t\t\tVDP_CommandHMMM((u16)(cell % ${prefix}_ATLAS_COLS) * ${prefix}_CELL_W,`,
-      `\t\t\t                atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${prefix}_CELL_H),`,
-      `\t\t\t                x + (col * ${prefix}_CELL_W), y + (row * ${prefix}_CELL_H),`,
-      `\t\t\t                ${prefix}_CELL_W, ${prefix}_CELL_H);`,
+      '\t\t\tif(cell == 0) continue;',
+      ...blit,
       '\t\t}',
       '\t}',
       '}'

@@ -23,6 +23,14 @@
  * bank.
  */
 
+import {
+  addBitmapTile,
+  MAX_BITMAP_TILES,
+  setTileImage,
+  tileImage,
+  tilePixels as bitmapTilePixels,
+  type BitmapTilesDoc
+} from './bitmap-tile'
 import { metaCells, setFrameTile, type MetaTileDoc } from './meta-tile'
 import { BAYER4 } from './quantize'
 import type { Point } from '../tile-editor'
@@ -241,3 +249,98 @@ export function usedTiles(doc: MetaTileDoc): Set<number> {
 }
 
 export { metaCells }
+
+// ── the bitmap counterpart ──────────────────────────────────────────────────
+
+/**
+ * The same copy-on-write bridge, over a **bitmap** tileset.
+ *
+ * Simpler than the pattern path in one way and harder in another. Simpler:
+ * every pixel carries its own colour, so nothing can be refused — `dropped` is
+ * always 0 and there is no scratch document, because there is no constraint to
+ * ask about. Harder: a bitmap tile is any size, so the cell grid is the
+ * tileset's `width × height` rather than a fixed 8, and a tile is compared by
+ * its whole pixel block rather than by sixteen bytes.
+ */
+export function paintBitmapMeta(
+  meta: MetaTileDoc,
+  tiles: BitmapTilesDoc,
+  frame: number,
+  points: readonly Point[],
+  color: number
+): {
+  meta: MetaTileDoc
+  tiles: BitmapTilesDoc
+  added: number[]
+  dropped: number
+  refused?: string
+} {
+  if (!meta.frames[frame]) return { meta, tiles, added: [], dropped: 0 }
+  const { width: cw, height: ch } = tiles
+
+  const byCell = new Map<number, Point[]>()
+  for (const point of points) {
+    const cx = Math.floor(point.x / cw)
+    const cy = Math.floor(point.y / ch)
+    if (point.x < 0 || point.y < 0 || cx >= meta.width || cy >= meta.height) continue
+    const key = cy * meta.width + cx
+    const list = byCell.get(key)
+    if (list) list.push(point)
+    else byCell.set(key, [point])
+  }
+  if (!byCell.size) return { meta, tiles, added: [], dropped: 0 }
+
+  let nextMeta = meta
+  let nextTiles = tiles
+  const added: number[] = []
+
+  for (const [key, cellPoints] of byCell) {
+    const cx = key % meta.width
+    const cy = Math.floor(key / meta.width)
+    const image = Uint8Array.from(tileImage(nextTiles, nextMeta.frames[frame].tiles[key] ?? 0))
+    for (const point of cellPoints) image[(point.y % ch) * cw + (point.x % cw)] = color & 0xff
+
+    const found = findOrCreateBitmapTile(nextTiles, image)
+    if (!found) {
+      return {
+        meta,
+        tiles,
+        added: [],
+        dropped: 0,
+        refused:
+          `The tileset is full — ${MAX_BITMAP_TILES} tiles is the ceiling, because a cell index ` +
+          'is one byte. Run "Compact unused tiles", or free a tile in the tileset editor.'
+      }
+    }
+    if (found.index >= nextTiles.count) added.push(found.index)
+    nextTiles = found.doc
+    nextMeta = setFrameTile(nextMeta, frame, cx, cy, found.index)
+  }
+
+  return { meta: nextMeta, tiles: nextTiles, added, dropped: 0 }
+}
+
+/**
+ * The bitmap `findOrCreateTile`: an exact pixel-block match, or a new tile.
+ *
+ * Null when the bank is full. As in the pattern path this only ever appends, so
+ * no existing index shifts and painting a meta cannot disturb a map.
+ */
+export function findOrCreateBitmapTile(
+  doc: BitmapTilesDoc,
+  image: Uint8Array
+): { doc: BitmapTilesDoc; index: number } | null {
+  const per = doc.width * doc.height
+  const bank = bitmapTilePixels(doc)
+  for (let i = 0; i < doc.count; i++) {
+    let same = true
+    for (let p = 0; p < per && same; p++) same = bank[i * per + p] === image[p]
+    if (same) return { doc, index: i }
+  }
+  if (doc.count >= MAX_BITMAP_TILES) return null
+  const grown = addBitmapTile(doc)
+  return { doc: setTileImage(grown, grown.count - 1, image), index: grown.count - 1 }
+}
+
+/** Every tile index a bitmap meta references — `usedTiles`, which is mode-agnostic. */
+export { usedTiles as usedBitmapTiles }

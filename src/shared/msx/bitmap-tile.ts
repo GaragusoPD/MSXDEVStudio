@@ -64,6 +64,17 @@ export interface BitmapTilesDoc {
    * diff anyway. Same reason `ScreenDoc` stores its conversion this way.
    */
   pixels: string
+  /**
+   * Reserves tile 0 as "nothing", exactly as `TilesDoc.reserveTile0` does: a
+   * meta-tile cell holding 0 is not blitted at all, so whatever is on screen
+   * shows through the whole cell.
+   *
+   * Distinct from `transparent` below, and they compose. `transparent` is a
+   * *colour* the VDP skips inside a blit — a ragged silhouette. This is a
+   * *cell* that is never blitted, which costs nothing and is the only
+   * transparency SCREEN 3 has, since it has no command engine.
+   */
+  reserveTile0: boolean
   /** Eight gameplay bits per tile, one byte each. Exactly `TilesDoc.flags`. */
   flags: number[]
   /** Named multi-tile designs, exactly `TilesDoc.blocks` — the same type. */
@@ -129,6 +140,7 @@ export function normalizeBitmapTiles(raw: unknown): BitmapTilesDoc {
 
   const rawFlags = Array.isArray(input.flags) ? input.flags : []
   const rawBlocks = Array.isArray(input.blocks) ? input.blocks : []
+  const reserveTile0 = input.reserveTile0 === true
 
   return {
     version: 1,
@@ -137,7 +149,10 @@ export function normalizeBitmapTiles(raw: unknown): BitmapTilesDoc {
     width,
     height,
     count,
-    pixels: encodeIndices(pixels),
+    // Enforced here rather than at the call sites, so a hand-edited file cannot
+    // present art in tile 0 while also claiming the flag.
+    reserveTile0,
+    pixels: encodeIndices(reserveTile0 ? blankFirstTile(pixels, per) : pixels),
     flags: Array.from({ length: count }, (_, i) => (Number(rawFlags[i]) || 0) & 0xff),
     blocks: rawBlocks.map(normalizeBlock).filter((block): block is TileBlock => block !== null),
     transparent:
@@ -191,6 +206,12 @@ function normalizeBlock(raw: unknown): TileBlock | null {
 export function tilePixels(doc: BitmapTilesDoc): Uint8Array {
   const pixels = new Uint8Array(doc.count * doc.width * doc.height)
   pixels.set(decodeIndices(doc.pixels).subarray(0, pixels.length))
+  return pixels
+}
+
+/** Clears tile 0 in place — what `reserveTile0` means for a bank of pixels. */
+function blankFirstTile(pixels: Uint8Array, per: number): Uint8Array {
+  pixels.fill(0, 0, per)
   return pixels
 }
 

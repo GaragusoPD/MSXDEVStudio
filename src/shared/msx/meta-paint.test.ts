@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createMetaTileDoc, frameTileAt } from './meta-tile'
-import { findOrCreateTile, paintMeta, sprayPoints, usedTiles } from './meta-paint'
+import { findOrCreateTile, paintBitmapMeta, paintMeta, sprayPoints, usedTiles } from './meta-paint'
+import { normalizeBitmapTiles, tileImage, type BitmapTilesDoc } from './bitmap-tile'
 import { blankTileEntry, normalizeTiles, tilePixels, type TilesDoc } from './tile'
 
 const bank = (over: Record<string, unknown> = {}): TilesDoc =>
@@ -176,5 +177,62 @@ describe('usedTiles', () => {
   it('collects every index across every frame', () => {
     const doc = { ...createMetaTileDoc('t', 2, 1), frames: [{ tiles: [1, 2] }, { tiles: [2, 3] }] }
     expect([...usedTiles(doc)].sort((a, b) => a - b)).toEqual([1, 2, 3])
+  })
+})
+
+describe('paintBitmapMeta', () => {
+  const bank = (over: Record<string, unknown> = {}): BitmapTilesDoc =>
+    normalizeBitmapTiles({ mode: 'sc5', width: 8, height: 8, count: 1, reserveTile0: true, ...over })
+
+  const meta = createMetaTileDoc('t.btiles.json', 2, 1)
+
+  it('paints a pixel by creating a tile and repointing the cell', () => {
+    const tiles = bank()
+    const result = paintBitmapMeta(meta, tiles, 0, [{ x: 0, y: 0 }], 5)
+    expect(result.added).toHaveLength(1)
+    expect(frameTileAt(result.meta, 0, 0, 0)).toBe(result.added[0])
+    // Tile 0 is the reserved blank and is left alone.
+    expect([...tileImage(result.tiles, 0)].every((p) => p === 0)).toBe(true)
+  })
+
+  it('never drops a pixel — a bitmap mode has no per-row colour limit', () => {
+    const points = Array.from({ length: 8 }, (_, i) => ({ x: i, y: 0 }))
+    let result = paintBitmapMeta(meta, bank(), 0, points, 3)
+    result = paintBitmapMeta(result.meta, result.tiles, 0, [{ x: 0, y: 0 }], 11)
+    expect(result.dropped).toBe(0)
+    expect(tileImage(result.tiles, frameTileAt(result.meta, 0, 0, 0))[0]).toBe(11)
+  })
+
+  it('two cells painted identically share one tile', () => {
+    const result = paintBitmapMeta(meta, bank(), 0, [{ x: 0, y: 0 }, { x: 8, y: 0 }], 5)
+    expect(frameTileAt(result.meta, 0, 0, 0)).toBe(frameTileAt(result.meta, 0, 1, 0))
+    expect(result.added).toHaveLength(1)
+  })
+
+  it('uses the tileset geometry for the cell grid, not 8x8', () => {
+    // A 16-wide tile means x=8 is still cell 0, where an 8x8 grid would say 1.
+    const wide = bank({ width: 16, height: 16 })
+    const result = paintBitmapMeta(meta, wide, 0, [{ x: 8, y: 0 }], 5)
+    expect(frameTileAt(result.meta, 0, 1, 0)).toBe(0)
+    expect(frameTileAt(result.meta, 0, 0, 0)).not.toBe(0)
+  })
+
+  it('erasing a cell back to all-zero resolves to the reserved blank', () => {
+    const painted = paintBitmapMeta(meta, bank(), 0, [{ x: 0, y: 0 }], 5)
+    const whole = Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => ({ x, y }))).flat()
+    const erased = paintBitmapMeta(painted.meta, painted.tiles, 0, whole, 0)
+    expect(frameTileAt(erased.meta, 0, 0, 0)).toBe(0)
+  })
+
+  it('refuses the whole stroke when the bank is full, changing nothing', () => {
+    const full = bank({ count: 256 })
+    const result = paintBitmapMeta(meta, full, 0, [{ x: 0, y: 0 }], 5)
+    expect(result.refused).toMatch(/256/)
+    expect(result.meta).toBe(meta)
+    expect(result.tiles).toBe(full)
+  })
+
+  it('ignores points outside the meta', () => {
+    expect(paintBitmapMeta(meta, bank(), 0, [{ x: 99, y: 99 }], 5).meta).toBe(meta)
   })
 })

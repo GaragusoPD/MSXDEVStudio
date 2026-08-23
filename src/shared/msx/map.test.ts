@@ -9,6 +9,7 @@ import {
   placementAt,
   placementBytes,
   placementCount,
+  placementHelperC,
   removeMetaRef,
   removePlacement,
   resizeMap,
@@ -140,5 +141,52 @@ describe('validateMap', () => {
 
   it('reports a placement whose far edge hangs off the grid', () => {
     expect(validateMap(placeMeta(withTree(), 0, 0, 7, 7)).join(' ')).toContain('extends past the map')
+  })
+})
+
+describe('placements in a bitmap mode', () => {
+  const bitmapMap = (over: Record<string, unknown> = {}): ReturnType<typeof normalizeMap> => {
+    let doc = normalizeMap({
+      tileset: 'res/canyon.btiles.json',
+      width: 16,
+      height: 12,
+      cell: { width: 16, height: 16, cols: 16 },
+      ...over
+    })
+    doc = addMetaRef(doc, { ...tree, width: 2, height: 2, masked: true })
+    return placeMeta(doc, 0, 0, 2, 2)
+  }
+
+  it('blits out of the atlas rather than writing a name table', () => {
+    const c = placementHelperC(bitmapMap(), 'g_Stage')
+    const source = c.source.join('\n')
+    expect(source).toContain('void g_Stage_DrawPlacements(const u8* frames, UY atlasY)')
+    expect(source).not.toContain('VDP_WriteLayout_GM2')
+  })
+
+  it('skips a cell holding tile 0, whatever the meta', () => {
+    expect(placementHelperC(bitmapMap(), 'g_Stage').source.join('\n')).toContain('if(cell == 0) continue;')
+  })
+
+  it('offers both blits, chosen per meta by its mirrored `masked` flag', () => {
+    const source = placementHelperC(bitmapMap(), 'g_Stage').source.join('\n')
+    expect(source).toContain('VDP_OP_TIMP')
+    expect(source).toContain('VDP_CommandHMMM(sx, sy, dx, dy, 16, 16);')
+    expect(source).toContain('{ tree, 2, 2, 4, 1 },')
+  })
+
+  it('still skips baked placements', () => {
+    expect(placementHelperC(bitmapMap(), 'g_Stage').source.join('\n')).toContain('if(slot & 0x80) continue;')
+  })
+
+  it('refuses placements on a SCREEN 3 map that blits, since MSX1 has no command engine', () => {
+    const doc = bitmapMap({ cell: { width: 4, height: 4, cols: 16, sc3: true } })
+    expect(validateMap(doc).join(' ')).toContain('no command engine')
+  })
+
+  it('allows them on a 2x2 SCREEN 3 map, which draws through the name table', () => {
+    const doc = bitmapMap({ cell: { width: 2, height: 2, cols: 16, sc3: true } })
+    expect(validateMap(doc).join(' ')).not.toContain('command engine')
+    expect(placementHelperC(doc, 'g_Stage').source.join('\n')).toContain('VDP_WriteLayout_GM2')
   })
 })

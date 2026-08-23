@@ -36,6 +36,12 @@ export interface MetaRef {
   height: number
   frames: number
   flags: number
+  /**
+   * True when this meta's tileset nominates colour 0 as transparent, so its
+   * cells can be blitted with `VDP_OP_TIMP` and keep a ragged silhouette.
+   * Bitmap maps only, and mirrored for the reason everything else here is.
+   */
+  masked?: boolean
 }
 
 /**
@@ -317,6 +323,18 @@ export function validateMap(doc: MapDoc): string[] {
       `${doc.layers.length} layers but no transparent cell — a layer drawn over another needs one, or its empty cells blit cell 0`
     )
   }
+  // SCREEN 3 has no command engine, so a bitmap-shaped sc3 map has no way to
+  // blit a placement. Its 2×2 form does — that map draws through the name
+  // table like any SCREEN 1/2 map — so only the other tile sizes are refused.
+  // Blocking the export is the honest failure: the alternative is a header full
+  // of VDP_CommandHMMM that compiles, links, and does nothing on an MSX1.
+  if (doc.cell?.sc3 && !isSc3NameTable(doc) && placementCount(doc)) {
+    problems.push(
+      'Meta-tiles cannot be placed on this SCREEN 3 map — it blits its cells, and an MSX1 has no ' +
+        'command engine. Use a 2×2 tileset so the map draws through the name table instead.'
+    )
+  }
+
   // A placement's *origin* is inside the grid — `placeMeta` and
   // `normalizePlacements` both enforce that — but its far edge need not be, and
   // a meta hanging off the right of the map writes into the next row of the
@@ -783,6 +801,10 @@ export function placementBytes(doc: MapDoc): Uint8Array {
  */
 export function placementHelperC(doc: MapDoc, name: string): HelperC {
   if (!placementCount(doc) || !doc.metas.length) return { header: [], source: [] }
+  // A bitmap map has no name table: a cell is a rectangle the game copies, so
+  // the placement runtime is the command engine rather than a layout write.
+  // A SCREEN 3 map that is *not* 2×2 has neither, and is refused in validateMap.
+  if (doc.cell && !isSc3NameTable(doc)) return bitmapPlacementHelperC(doc, name)
 
   const prefix = defineName(name)
   const signature = `void ${name}_DrawPlacements(const u8* frames)`
@@ -836,6 +858,90 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
       '\t\t\t\tcol = run;',
       '\t\t\t}',
       '\t\t\tsrc += w;',
+      '\t\t}',
+      '\t}',
+      '}'
+    ]
+  }
+}
+
+/**
+ * Placed meta-tiles in a bitmap mode.
+ *
+ * Same table, same skipped-baked rule, different blit: there is no name table,
+ * so each cell is copied out of the atlas. Cells holding tile 0 are skipped
+ * entirely; the rest go through `LMMM` with `VDP_OP_TIMP` when the meta's
+ * tileset nominates colour 0 as transparent, and the faster `HMMM` when it does
+ * not. Both kinds can appear in one map, so the choice is per meta.
+ */
+function bitmapPlacementHelperC(doc: MapDoc, name: string): HelperC {
+  const prefix = defineName(name)
+  const cell = doc.cell!
+  const anyMasked = doc.metas.some((meta) => meta.masked)
+  const signature = `void ${name}_DrawPlacements(const u8* frames, UY atlasY)`
+
+  return {
+    header: [
+      '',
+      `// ── ${name}: placed meta-tiles (bitmap mode) ──────────────────────────`,
+      '//',
+      `// Draws the ${placementCount(doc)} meta-tile${placementCount(doc) === 1 ? '' : 's'} this map places, out of the atlas`,
+      '// parked at (0, `atlasY`). `frames` is one byte per meta — frames[slot] is',
+      '// the frame that meta is currently showing.',
+      '//',
+      '// Baked placements are skipped: their cells are already in the layer.',
+      anyMasked
+        ? '// Metas whose tileset nominates colour 0 as transparent are blitted with'
+        : '// No meta here uses per-pixel transparency, so every blit is an opaque',
+      anyMasked ? '// VDP_OP_TIMP, so their silhouettes can be any shape.' : '// HMMM. A cell holding tile 0 is skipped whatever the meta.',
+      '//',
+      '// Needs MSXgl\'s VDP command engine: MSX2 or later with VDP_USE_COMMAND.',
+      '//',
+      '// Example:',
+      `//   u8 frames[${prefix}_METAS] = { 0 };`,
+      `//   ${name}_DrawPlacements(frames, ATLAS_Y);`,
+      `${signature};`
+    ],
+    source: [
+      '',
+      ...doc.metas.map((meta) => `extern const u8 ${meta.name}[];`),
+      '',
+      "// Mirrored from each meta-tile's own file, so this compiles without",
+      '// including their headers. `masked` is whether its cells blit with',
+      '// transparency.',
+      `static const struct { const u8* tiles; u8 w; u8 h; u8 cells; u8 masked; } ${name}_Metas[${prefix}_METAS] = {`,
+      ...doc.metas.map(
+        (meta) =>
+          `\t{ ${meta.name}, ${meta.width}, ${meta.height}, ${meta.width * meta.height}, ${meta.masked ? 1 : 0} },`
+      ),
+      '};',
+      '',
+      signature,
+      '{',
+      `\tconst u8* p = ${name}_Placements;`,
+      `\tfor(u8 i = 0; i < ${prefix}_PLACEMENTS; ++i)`,
+      '\t{',
+      '\t\tu8 slot = *p++;',
+      '\t\tu8 px = *p++;',
+      '\t\tu8 py = *p++;',
+      '\t\tif(slot & 0x80) continue;',
+      `\t\tconst u8 w = ${name}_Metas[slot].w;`,
+      `\t\tconst u8* src = ${name}_Metas[slot].tiles + ((u16)frames[slot] * ${name}_Metas[slot].cells);`,
+      `\t\tfor(u8 row = 0; row < ${name}_Metas[slot].h; ++row)`,
+      '\t\t{',
+      '\t\t\tfor(u8 col = 0; col < w; ++col)',
+      '\t\t\t{',
+      '\t\t\t\tu8 cell = *src++;',
+      '\t\t\t\tif(cell == 0) continue;',
+      `\t\t\t\tconst UX sx = (u16)(cell % ${prefix}_ATLAS_COLS) * ${cell.width};`,
+      `\t\t\t\tconst UY sy = atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${cell.height});`,
+      `\t\t\t\tconst UX dx = ((UX)px + col) * ${cell.width};`,
+      `\t\t\t\tconst UY dy = ((UY)py + row) * ${cell.height};`,
+      `\t\t\t\tif(${name}_Metas[slot].masked)`,
+      `\t\t\t\t\tVDP_CommandLMMM(sx, sy, dx, dy, ${cell.width}, ${cell.height}, VDP_OP_TIMP);`,
+      '\t\t\t\telse',
+      `\t\t\t\t\tVDP_CommandHMMM(sx, sy, dx, dy, ${cell.width}, ${cell.height});`,
+      '\t\t\t}',
       '\t\t}',
       '\t}',
       '}'
