@@ -200,13 +200,17 @@ watchEffect(() => {
 </template>
 
 <style scoped>
+/*
+ * Width and the right-hand edge belong to the rail in `MapEditorTab`, which
+ * stacks this over the meta-tile picker: two panes each declaring their own
+ * width made the rail as wide as the widest and drew a border down its middle.
+ */
 .picker-pane {
   display: flex;
-  flex: none;
+  flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-  width: 260px;
-  border-right: 1px solid var(--color-border);
+  width: 100%;
 }
 
 header {

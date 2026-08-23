@@ -91,33 +91,44 @@ function label(path: string): string {
 <style scoped>
 .meta-picker {
   display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
   min-height: 0;
-  padding: 8px;
-  border-top: 1px solid var(--border, #333);
+  width: 100%;
+  border-top: 1px solid var(--color-border);
 }
 
+/* Deliberately identical to MapPicker's header: they are two halves of one rail. */
 header {
+  flex: none;
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 6px;
-  font-size: 12px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 11px;
 }
 
 .title {
-  text-transform: uppercase;
-  opacity: 0.7;
+  color: var(--color-text-muted);
 }
 
 .readout {
-  opacity: 0.6;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
 }
 
 .grid {
   display: flex;
   flex-wrap: wrap;
+  align-content: flex-start;
   gap: 6px;
+  min-height: 0;
+  padding: 8px;
+  overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .entry {
@@ -127,14 +138,20 @@ header {
   gap: 2px;
   min-width: 56px;
   padding: 4px;
-  background: #2a2a2a;
-  border: 1px solid var(--border, #444);
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   border-radius: 3px;
+  font-size: 11px;
   cursor: pointer;
 }
 
+.entry:hover {
+  background: var(--color-bg-hover);
+}
+
 .entry.active {
-  border-color: #ffd24e;
+  border-color: var(--color-accent);
 }
 
 .entry img {
@@ -146,22 +163,28 @@ header {
 .entry .name {
   max-width: 56px;
   overflow: hidden;
+  color: var(--color-text-muted);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Frame count, in the corner: it is metadata, not part of the picture. */
 .entry .frames {
   position: absolute;
   top: 2px;
   right: 3px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
   font-size: 9px;
-  opacity: 0.7;
 }
 
+/* Fixed, so shrinking the pane scrolls the grid rather than crushing the text. */
 .hint {
-  margin: 6px 0 0;
+  flex: none;
+  margin: 0;
+  padding: 6px 8px;
   font-size: 11px;
-  opacity: 0.75;
+  color: var(--color-text-muted);
 }
 </style>

@@ -308,22 +308,22 @@ onMounted(() => void resourcesStore.refresh())
   display: flex;
 }
 
-/* Tiles take the space they need; meta-tiles get the rest, up to half. */
+/*
+ * One rail, one width, one edge. The tile picker takes the space; the meta-tile
+ * picker sizes to its content and stops at 40% so it can never squeeze the
+ * tiles out.
+ */
 .left-rail {
   display: flex;
+  flex: none;
   flex-direction: column;
   min-height: 0;
-}
-
-.left-rail > :first-child {
-  flex: 1 1 auto;
-  min-height: 0;
+  width: 260px;
+  border-right: 1px solid var(--color-border);
 }
 
 .left-rail > :last-child {
-  flex: 0 1 auto;
-  max-height: 50%;
-  min-height: 0;
+  max-height: 40%;
 }
 
 .status,
