@@ -10,10 +10,8 @@
 
 import { shallowReactive, shallowRef } from 'vue'
 import type { TileMode } from '../../../../shared/msx/modes'
-import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import {
   blockPixels,
-  blankTileEntry,
   createTilesDoc,
   MAX_BLOCK,
   MAX_TILES,
@@ -62,6 +60,7 @@ import {
   type TilesReorderEvent
 } from '../../../../shared/tile-editor'
 import { useTabsStore } from '../../stores/tabsStore'
+import { useTilesetStore } from '../../stores/tilesetStore'
 
 /** A conflict waiting on the popover's answer, plus what still has to be painted after it. */
 export interface PendingConflict {
@@ -99,18 +98,15 @@ export interface TileSession {
   zoom: number
   gridZoom: number
   conflict: PendingConflict | null
-  /** Reorders applied in this file, persisted on save — see `shared/tile-editor.ts` for the Spec 10 seam. */
-  reorderLog: TilesReorderEvent[]
   status: string
+  /** Drops this session's subscription to the shared tileset. */
+  stopWatching: (() => void) | null
   /** Doc as it was before the stroke in progress, so one drag = one undo step. */
   strokeBase: TilesDoc | null
   strokeActive: boolean
 }
 
 const sessions = new Map<string, TileSession>()
-
-/** `.tiles.json` carries the reorder log as an extra key `normalizeTiles` ignores. */
-type SavedTiles = TilesDoc & { reorderLog?: TilesReorderEvent[] }
 
 export function tileSession(path: string): TileSession {
   const existing = sessions.get(path)
@@ -133,38 +129,42 @@ export function tileSession(path: string): TileSession {
     zoom: 32,
     gridZoom: 24,
     conflict: null,
-    reorderLog: [],
     status: '',
+    stopWatching: null,
     strokeBase: null,
     strokeActive: false
   })
   sessions.set(path, session)
+  // Another editor — a meta-tile being painted — can append tiles to this same
+  // document. Adopt them as a new present rather than merging: redo would
+  // otherwise replay onto a bank that has moved on. Safe because painting only
+  // ever appends, so the two can never disagree about an existing tile.
+  session.stopWatching = useTilesetStore().onExternalChange(path, path, (doc) => {
+    session.doc = doc
+    session.history = pushHistory(session.history, doc, 'tiles added elsewhere')
+  })
   void load(session)
   return session
 }
 
 /** Drops sessions for tabs that were closed. Called by the tab component when the tab set changes. */
 export function pruneTileSessions(openPaths: Set<string>): void {
-  for (const path of [...sessions.keys()]) if (!openPaths.has(path)) sessions.delete(path)
+  for (const path of [...sessions.keys()]) {
+    if (openPaths.has(path)) continue
+    sessions.get(path)?.stopWatching?.()
+    sessions.delete(path)
+    // The store keeps a dirty document alive: the tab that closed may not be
+    // the one that dirtied it.
+    useTilesetStore().release(path)
+  }
 }
 
 async function load(session: TileSession): Promise<void> {
   try {
-    const text = await window.api.invoke('fs:read', { path: session.path })
-    const parsed = parseResource(session.path, text) as { kind: 'tiles'; doc: TilesDoc }
-    const raw = JSON.parse(text) as SavedTiles
-    // An empty file is a tileset being created right now, and this is the only
-    // moment reserving tile 0 is free: there is no art in it to shift and no
-    // map drawing it yet. Every tileset that already has content keeps whatever
-    // it saved, because turning the flag on later is a migration.
-    session.doc = text.trim()
-      ? parsed.doc
-      : {
-          ...parsed.doc,
-          reserveTile0: true,
-          tiles: parsed.doc.tiles.map((tile, i) => (i === 0 ? blankTileEntry(parsed.doc.mode) : tile))
-        }
-    session.reorderLog = Array.isArray(raw.reorderLog) ? raw.reorderLog : []
+    // The store owns the document, reads the file, and decides whether a brand
+    // new tileset reserves tile 0. This session is one of possibly several
+    // readers of it.
+    session.doc = await useTilesetStore().load(session.path)
     session.history = initHistory(session.doc)
     session.error = null
   } catch (error) {
@@ -175,11 +175,8 @@ async function load(session: TileSession): Promise<void> {
 }
 
 export async function saveSession(session: TileSession): Promise<void> {
-  const doc: SavedTiles = { ...session.doc }
-  if (session.reorderLog.length) doc.reorderLog = session.reorderLog
-  await window.api.invoke('fs:write', { path: session.path, content: serializeResource({ kind: 'tiles', doc }) })
+  await useTilesetStore().save(session.path)
   session.dirty = false
-  useTabsStore().setDirty(session.path, false)
   session.status = 'Saved'
 }
 
@@ -192,6 +189,7 @@ function markDirty(session: TileSession): void {
 export function commit(session: TileSession, doc: TilesDoc, label: string, remap?: number[]): void {
   session.doc = doc
   session.history = pushHistory(session.history, doc, label, remap)
+  useTilesetStore().set(session.path, doc, session.path)
   markDirty(session)
 }
 
@@ -542,7 +540,9 @@ export function reorder(session: TileSession, from: number, to: number): void {
 
 function publishRemap(session: TileSession, mapping: number[]): void {
   const event: TilesReorderEvent = { path: session.path, mapping, at: Date.now() }
-  session.reorderLog = [...session.reorderLog, event]
+  // Persisted in the store so it survives the save, and emitted so files that
+  // are open renumber now. A file that is closed replays the log on open.
+  useTilesetStore().appendReorder(session.path, event)
   emitTilesReordered(event)
 }
 
@@ -567,6 +567,7 @@ export function redo(session: TileSession): void {
 
 function applyHistory(session: TileSession): void {
   session.doc = historyDoc(session.history)
+  useTilesetStore().set(session.path, session.doc, session.path)
   session.conflict = null
   session.strokeBase = null
   if (session.active >= session.doc.count) select(session, session.doc.count - 1)
