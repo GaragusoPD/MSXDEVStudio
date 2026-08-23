@@ -756,3 +756,22 @@ describe('delete and mode conversion', () => {
     expect(convertTileMode(sc4, 'sc2').palette).toBeNull()
   })
 })
+
+describe('fillPoints beyond one tile', () => {
+  it('floods a buffer wider than a tile, crossing the seams', () => {
+    // The meta canvas floods a picture, not a cell: a shape drawn across two
+    // tiles is one shape to the user.
+    const pixels = new Uint8Array(16 * 8)
+    expect(fillPoints(pixels, { x: 0, y: 0 }, 16, 8)).toHaveLength(128)
+  })
+
+  it('still defaults to one 8x8 tile, so the tile editor is unchanged', () => {
+    expect(fillPoints(new Uint8Array(64), { x: 0, y: 0 })).toHaveLength(64)
+  })
+
+  it('stops at a colour boundary', () => {
+    const pixels = new Uint8Array(16 * 8)
+    for (let y = 0; y < 8; y++) pixels[y * 16 + 8] = 1
+    expect(fillPoints(pixels, { x: 0, y: 0 }, 16, 8)).toHaveLength(64)
+  })
+})

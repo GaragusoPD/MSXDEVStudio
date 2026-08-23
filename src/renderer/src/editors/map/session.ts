@@ -17,15 +17,28 @@
  */
 
 import { shallowReactive } from 'vue'
-import { normalizeMap, resizeMap, type MapCell, type MapDoc } from '../../../../shared/msx/map'
+import {
+  addMetaRef,
+  MAX_MAP_METAS,
+  metaSlotOf,
+  movePlacement,
+  normalizeMap,
+  placeMeta,
+  placementAt,
+  removePlacement,
+  resizeMap,
+  setPlacementBaked,
+  type MapCell,
+  type MapDoc
+} from '../../../../shared/msx/map'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
 import type { TilesDoc } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
-import type { MetaTilesDoc } from '../../../../shared/msx/meta-tile'
-import { isMetaKind, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { screenPixels } from '../../../../shared/msx/screen'
-import { atlasSheet, bitmapTilesetSheet, metaSheet, tilesetSheet, type Sheet } from './sheet'
+import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
 import {
   addLayer as addLayerPure,
   applyStamp,
@@ -56,6 +69,7 @@ import {
   type Stamp
 } from '../../../../shared/map-editor'
 import { onTilesReordered, type TilesReorderEvent } from '../../../../shared/tile-editor'
+import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 
 /** `.map.json` carries the reorder-seen marker as an extra key `normalizeMap` ignores (see module header). */
@@ -74,12 +88,13 @@ export interface MapSession {
   /** Set instead of `tileset` when the map draws in a bitmap mode — see `MapCell`. */
   atlas: ScreenDoc | null
   /**
-   * Set when the map draws from a `*.meta-tiles.json` / `*.meta-btiles.json`.
-   * The tileset it groups is loaded into `tileset`/`bitmapTileset` as usual, so
-   * everything that renders art keeps working; this is only what turns those
-   * tiles into the cells the map indexes.
+   * The `.meta-tiles.json` files over this map's tileset, by path — what the
+   * sidebar's lower half offers and what the canvas draws a placement from.
+   *
+   * Read from disk rather than taken from the resources store, which knows only
+   * `{ path, kind, out }` and cannot say which tileset a meta references.
    */
-  metaSet: MetaTilesDoc | null
+  metaDocs: Map<string, MetaTileDoc>
   tilesetError: string | null
   /** Last tileset `reorderLog` entry (by `at`) this map has folded in; null = never replayed. */
   tilesetReorderSeen: number | null
@@ -91,6 +106,14 @@ export interface MapSession {
   brush: Stamp
   /** Index into the tileset's `blocks` when the brush came from a named block; null when it came from the picker. */
   brushBlock: number | null
+  /**
+   * Path of the meta-tile the next click will place, or null when the brush is
+   * ordinary tiles. Picking a meta and picking a tile are the two halves of the
+   * sidebar, and choosing one clears the other.
+   */
+  brushMeta: string | null
+  /** Index into the active layer's `placements` of the selected one, or null. */
+  selectedPlacement: number | null
   clipboard: Stamp | null
 
   pickerActive: number
@@ -128,7 +151,7 @@ export function mapSession(path: string): MapSession {
     tileset: null,
     bitmapTileset: null,
     atlas: null,
-    metaSet: null,
+    metaDocs: new Map(),
     tilesetError: null,
     tilesetReorderSeen: null,
     activeLayer: 0,
@@ -136,6 +159,8 @@ export function mapSession(path: string): MapSession {
     filledRect: false,
     brush: singleStamp(0),
     brushBlock: null,
+    brushMeta: null,
+    selectedPlacement: null,
     clipboard: null,
     pickerActive: 0,
     pickerSelection: [0],
@@ -208,41 +233,47 @@ async function loadTileset(session: MapSession): Promise<void> {
     clearTileset(session)
     session.tilesetError = `Couldn't load tileset ${tilesetPath}: ${String(error)}`
   }
+  await loadMetaDocs(session)
 }
 
 function clearTileset(session: MapSession): void {
   session.tileset = null
   session.bitmapTileset = null
   session.atlas = null
-  session.metaSet = null
 }
 
 /**
- * `meta` is set on the second pass: a meta set names the tileset it groups, and
- * this walks that one link to load the art. It is one level only — a meta set
- * may not reference another meta set, which `validateMetaTiles` has no way to
- * check, so the guard is here.
+ * Every `.meta-tiles.json` in the project drawn over *this map's* tileset.
+ *
+ * Metas over another tileset are not offered: their indices name tiles that do
+ * not exist here, so placing one would paint garbage. A file that is malformed
+ * or half-written is skipped rather than allowed to break the picker.
  */
-async function loadFromPath(session: MapSession, path: string, meta: MetaTilesDoc | null = null): Promise<void> {
+async function loadMetaDocs(session: MapSession): Promise<void> {
+  const tilesetPath = doc(session).tileset
+  const found = new Map<string, MetaTileDoc>()
+  if (tilesetPath) {
+    for (const entry of useResourcesStore().entries) {
+      if (entry.kind !== 'metatiles') continue
+      try {
+        const text = await window.api.invoke('fs:read', { path: entry.path })
+        const parsed = normalizeMetaTile(JSON.parse(text))
+        if (samePath(parsed.tileset, tilesetPath)) found.set(entry.path, parsed)
+      } catch {
+        // Not a reason to break the picker.
+      }
+    }
+  }
+  session.metaDocs = found
+}
+
+export async function reloadMetaDocs(session: MapSession): Promise<void> {
+  await loadMetaDocs(session)
+}
+
+async function loadFromPath(session: MapSession, path: string): Promise<void> {
   const text = await window.api.invoke('fs:read', { path })
   const parsed = parseResource(path, text)
-  if (isMetaKind(parsed.kind)) {
-    if (meta) throw new Error(`${path} is a meta-tile set of a meta-tile set, which is not a thing`)
-    const set = parsed.doc as MetaTilesDoc
-    if (!set.tileset) {
-      clearTileset(session)
-      session.metaSet = set
-      session.tilesetError = `${path} does not name a tileset yet — open it and pick one.`
-      return
-    }
-    await loadFromPath(session, set.tileset, set)
-    // The map replays the *meta set's* log, because its cells are meta indices.
-    // The set replays its own tileset's log, in the meta editor. Two files, two
-    // logs, and neither can reach the other's cells.
-    if (!session.tilesetError) await replayPersistedReorders(session, text)
-    return
-  }
-  session.metaSet = meta
   if (parsed.kind === 'screen') {
     session.tileset = null
     session.bitmapTileset = null
@@ -265,9 +296,7 @@ async function loadFromPath(session: MapSession, path: string, meta: MetaTilesDo
   session.bitmapTileset = null
   session.atlas = null
   session.tilesetError = null
-  // A meta map's cells are metas, so a *tile* reorder must not touch them — the
-  // set absorbs it instead, and the map replayed the set's own log above.
-  if (!meta) await replayPersistedReorders(session, text)
+  await replayPersistedReorders(session, text)
 }
 
 /**
@@ -378,25 +407,17 @@ export function commit(session: MapSession, next: MapDoc): void {
  */
 export async function setTileset(session: MapSession, tilesetPath: string): Promise<void> {
   const kind = resourceKindOf(tilesetPath)
-  const bitmap = kind === 'screen' || kind === 'btiles' || kind === 'metabtiles'
+  const bitmap = kind === 'screen' || kind === 'btiles'
   const current = doc(session)
-  // Switching between two tilesets renumbers what the cells point at, which the
-  // user can see and fix. Switching *between tiles and metas* changes what a cell
-  // means, and every existing value is then meaningless rather than wrong — so
-  // that is the one case the grid is cleared (behind `MapSidePanel`'s confirm).
-  const nowMeta = isMetaKind(kind)
-  const spaceChanged = nowMeta !== (current.meta !== null)
+  // Placements name metas by slot into this map's own list, and those metas are
+  // drawn over the *old* tileset's tiles. Pointing the map somewhere else makes
+  // every one of them meaningless rather than merely wrong.
   commit(session, {
     ...current,
     tileset: tilesetPath,
     cell: bitmap ? (current.cell ?? { width: 16, height: 16, cols: 16 }) : null,
-    // Read ahead rather than committing a guess and correcting it afterwards:
-    // the meta size is the set's own, and two commits would make one action take
-    // two undo steps, with the map cleared in the step between.
-    meta: nowMeta ? await metaSizeOf(tilesetPath, current.meta) : null,
-    layers: spaceChanged
-      ? current.layers.map((layer) => ({ ...layer, data: new Array<number>(layer.data.length).fill(0) }))
-      : current.layers
+    metas: [],
+    layers: current.layers.map((layer) => ({ ...layer, placements: [] }))
   })
   session.tilesetReorderSeen = null
   await loadTileset(session)
@@ -421,24 +442,6 @@ export async function setTileset(session: MapSession, tilesetPath: string): Prom
   const pixels = session.atlas && screenPixels(session.atlas)
   const cell = doc(session).cell
   if (pixels && cell) setCell(session, { ...cell, cols: Math.max(1, Math.floor(pixels.width / cell.width)) })
-}
-
-/**
- * A meta-tile set's size in tiles, read straight from the file. `loadTileset`
- * reads it again a moment later — that is two reads of a few hundred bytes, and
- * cheaper than the alternative, which is committing a placeholder and correcting
- * it. Falls back to what the map had (or 2×2) if the file cannot be read;
- * `loadTileset` is what reports that to the user.
- */
-async function metaSizeOf(path: string, fallback: MapDoc['meta']): Promise<MapDoc['meta']> {
-  try {
-    const parsed = parseResource(path, await window.api.invoke('fs:read', { path }))
-    if (!isMetaKind(parsed.kind)) return fallback ?? { width: 2, height: 2 }
-    const set = parsed.doc as MetaTilesDoc
-    return { width: set.width, height: set.height }
-  } catch {
-    return fallback ?? { width: 2, height: 2 }
-  }
 }
 
 /** Cell geometry for a bitmap map. `cols` follows the width unless the caller sets it too. */
@@ -466,8 +469,7 @@ export function sheet(session: MapSession): Sheet | null {
       : session.tileset
         ? tilesetSheet(session.tileset)
         : null
-  if (!base) return null
-  return session.metaSet ? metaSheet(base, session.metaSet) : base
+  return base
 }
 
 // ── tool state ───────────────────────────────────────────────────────────
@@ -481,17 +483,11 @@ export function pickTile(session: MapSession, index: number, indices: number[], 
   session.pickerSelection = indices
   session.brush = stamp
   session.brushBlock = null
+  session.brushMeta = null
 }
 
-/**
- * The blocks of whichever tileset is loaded. Both kinds carry the same type.
- *
- * None on a meta map: a block's cells are *tile* indices, and this map's cells
- * are meta indices, so stamping one would paint whichever metas happen to share
- * those numbers. The meta set is the grouping a meta map paints with.
- */
+/** The blocks of whichever tileset is loaded. Both kinds carry the same type. */
 export function tilesetBlocks(session: MapSession): TileBlock[] {
-  if (session.metaSet) return []
   return (session.tileset ?? session.bitmapTileset)?.blocks ?? []
 }
 
@@ -640,3 +636,143 @@ export function redo(session: MapSession): void {
 }
 
 export { canRedo, canUndo }
+
+// ── placed meta-tiles ───────────────────────────────────────────────────────
+
+/**
+ * Arms the brush with a meta-tile. The next click on the canvas places it.
+ *
+ * The meta joins the map's own `metas` table here rather than at place time, so
+ * the mirror is refreshed — size, frames, flags — every time the user reaches
+ * for it, which is the moment they are most likely to have just edited it.
+ */
+export function pickMeta(session: MapSession, path: string): void {
+  const meta = session.metaDocs.get(path)
+  if (!meta) return
+  const name = defineNameFor(path)
+  const next = addMetaRef(doc(session), {
+    path,
+    name,
+    width: meta.width,
+    height: meta.height,
+    frames: meta.frames.length,
+    flags: meta.flags
+  })
+  if (next === doc(session) && metaSlotOf(doc(session), path) < 0) {
+    session.status = `A map can place ${MAX_MAP_METAS} different meta-tiles.`
+    return
+  }
+  commit(session, next)
+  session.brushMeta = path
+  session.selectedPlacement = null
+}
+
+/**
+ * The C symbol a placed meta exports under.
+ *
+ * Taken from the file name rather than read out of the meta's own export block,
+ * because a meta that has never been exported has no name yet and the map still
+ * has to emit something that links. `MapMetaPicker` shows it, so a mismatch is
+ * visible before the build rather than after it.
+ */
+function defineNameFor(path: string): string {
+  const base = path.split(/[\\/]/).pop() ?? path
+  return `g_${base.replace(/\.meta-b?tiles\.json$/i, '').replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).map((word) => word[0].toUpperCase() + word.slice(1)).join('')}`
+}
+
+export function placeMetaAt(session: MapSession, x: number, y: number): void {
+  const path = session.brushMeta
+  if (!path) return
+  const slot = metaSlotOf(doc(session), path)
+  if (slot < 0) return
+  const next = placeMeta(doc(session), session.activeLayer, slot, x, y)
+  if (next === doc(session)) return
+  commit(session, next)
+  session.selectedPlacement = next.layers[session.activeLayer].placements.length - 1
+}
+
+/** Selects the topmost placement under a cell, or clears the selection. */
+export function selectPlacementAt(session: MapSession, x: number, y: number): number | null {
+  session.selectedPlacement = placementAt(doc(session), session.activeLayer, x, y)
+  return session.selectedPlacement
+}
+
+export function movePlacementTo(session: MapSession, x: number, y: number): void {
+  if (session.selectedPlacement === null) return
+  commit(session, movePlacement(doc(session), session.activeLayer, session.selectedPlacement, x, y))
+}
+
+export function deleteSelectedPlacement(session: MapSession): void {
+  if (session.selectedPlacement === null) return
+  const index = session.selectedPlacement
+  const placement = doc(session).layers[session.activeLayer]?.placements[index]
+  // Unbake first, so a baked meta's tiles leave the grid with it rather than
+  // being left behind as anonymous artwork nobody can select.
+  if (placement?.baked) setBaked(session, false)
+  commit(session, removePlacement(doc(session), session.activeLayer, index))
+  session.selectedPlacement = null
+}
+
+/**
+ * Bakes or unbakes the selected placement.
+ *
+ * Baking writes frame 0's tiles into the grid, so the layer write already draws
+ * it and it costs nothing at runtime; unbaking clears those cells back to tile
+ * 0. Transparent cells are skipped either way — a meta's holes are not its
+ * business to paint.
+ */
+export function setBaked(session: MapSession, baked: boolean): void {
+  const index = session.selectedPlacement
+  if (index === null) return
+  const current = doc(session)
+  const placement = current.layers[session.activeLayer]?.placements[index]
+  const ref = placement && current.metas[placement.slot]
+  const meta = ref && session.metaDocs.get(ref.path)
+  if (!placement || !ref || !meta) return
+
+  const tiles = meta.frames[0]?.tiles ?? []
+  const points: Point[] = []
+  const values: number[] = []
+  for (let ty = 0; ty < ref.height; ty++) {
+    for (let tx = 0; tx < ref.width; tx++) {
+      const tile = tiles[ty * ref.width + tx] ?? 0
+      if (tile === 0) continue
+      points.push({ x: placement.x + tx, y: placement.y + ty })
+      values.push(baked ? tile : 0)
+    }
+  }
+
+  let next = setPlacementBaked(current, session.activeLayer, index, baked)
+  points.forEach((point, i) => {
+    next = paintValue(next, session.activeLayer, [point], values[i])
+  })
+  commit(session, next)
+  session.status = baked ? 'Baked into the layer.' : 'Unbaked.'
+}
+
+/**
+ * Drops the record of any baked placement the given cells fall inside.
+ *
+ * Painting a tile inside a baked meta makes its receipt a lie: the grid no
+ * longer holds what the meta says it does. Better to stop claiming it than to
+ * silently re-stamp over the user's edit later.
+ */
+export function breakBakedAt(session: MapSession, points: readonly Point[]): void {
+  const current = doc(session)
+  const layer = current.layers[session.activeLayer]
+  if (!layer?.placements.some((placement) => placement.baked)) return
+  const hit = new Set<number>()
+  for (const point of points) {
+    const index = placementAt(current, session.activeLayer, point.x, point.y)
+    if (index !== null && layer.placements[index].baked) hit.add(index)
+  }
+  if (!hit.size) return
+  let next = current
+  // Highest first so the earlier indices stay valid as they are removed.
+  for (const index of [...hit].sort((a, b) => b - a)) {
+    next = removePlacement(next, session.activeLayer, index)
+  }
+  commit(session, next)
+  session.selectedPlacement = null
+  session.status = `Painted over ${hit.size} baked meta-tile${hit.size === 1 ? '' : 's'} — their placement records were dropped.`
+}

@@ -8,7 +8,7 @@
 import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
-import { defaultExport, isMetaKind, resourceKindOf, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
+import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
 import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
@@ -30,31 +30,25 @@ const heightInput = computed({ get: () => mapDoc.value.height, set: (v) => resiz
  * screen read as a grid — the older bitmap path, kept for maps that still point
  * at one.
  */
-const TILESET_KINDS: ResourceKind[] = ['tiles', 'btiles', 'screen', 'metatiles', 'metabtiles']
+const TILESET_KINDS: ResourceKind[] = ['tiles', 'btiles', 'screen']
 const tilesetOptions = computed(() =>
   resourcesStore.entries.filter((entry) => TILESET_KINDS.includes(entry.kind)).map((entry) => entry.path)
 )
 
 /**
- * Points the map at a tileset — or at a meta-tile set, which changes what every
- * cell in the map *means*. Existing cells cannot be salvaged across that
- * boundary (a 3 that meant "brick" now means "meta 3"), so the grid is cleared,
- * and it is the one tileset change worth stopping to ask about.
+ * Points the map at a tileset.
+ *
+ * Placed meta-tiles do not survive it: a placement names a meta by slot, and
+ * those metas draw with the *old* tileset's tiles, so pointing the map
+ * elsewhere makes every one of them meaningless rather than merely wrong.
  */
 async function chooseTileset(path: string): Promise<void> {
-  const wasMeta = mapDoc.value.meta !== null
-  const nowMeta = isMetaKind(resourceKindOf(path))
-  const painted = mapDoc.value.layers.some((layer) => layer.data.some((cell) => cell !== 0))
-  if (wasMeta !== nowMeta && painted) {
-    const to = nowMeta ? 'meta-tiles' : 'plain tiles'
-    if (!window.confirm(`Switching to ${to} changes what every cell means, so this map will be cleared. Continue?`)) {
-      return
-    }
+  const placed = mapDoc.value.layers.some((layer) => layer.placements.length)
+  if (placed && !window.confirm('Changing the tileset removes every placed meta-tile from this map. Continue?')) {
+    return
   }
   await setTileset(props.session, path)
 }
-
-const meta = computed(() => mapDoc.value.meta)
 
 const cell = computed(() => mapDoc.value.cell)
 const sc3 = computed(() => cell.value?.sc3 === true)
@@ -175,15 +169,11 @@ const packing = computed(() => {
         Tileset reloaded.
       </p>
       <p
-        v-if="meta"
+        v-if="mapDoc.metas.length"
         class="hint"
       >
-        Cells are <strong>meta-tiles</strong> of {{ meta.width }}×{{ meta.height }} tiles, so this
-        {{ mapDoc.width }}×{{ mapDoc.height }} grid covers
-        {{ mapDoc.width * meta.width }}×{{ mapDoc.height * meta.height }} tiles in
-        {{ mapDoc.width * mapDoc.height }} bytes per layer instead of
-        {{ mapDoc.width * meta.width * mapDoc.height * meta.height }}. The size comes from the meta-tile
-        set — edit it there.
+        Places {{ mapDoc.metas.length }} meta-tile{{ mapDoc.metas.length === 1 ? '' : 's' }}:
+        {{ mapDoc.metas.map((entry) => entry.name).join(', ') }}.
       </p>
     </section>
 

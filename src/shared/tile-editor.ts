@@ -80,17 +80,30 @@ export function rectPoints(a: Point, b: Point, filled = false): Point[] {
   return points
 }
 
-/** 4-way flood over `pixels` (64 palette indices, from `tilePixels`) matching the start pixel's color. */
-export function fillPoints(pixels: ArrayLike<number>, start: Point): Point[] {
-  if (!inTile(start)) return []
-  const target = pixels[start.y * TILE_SIZE + start.x]
+/**
+ * 4-way flood over `pixels` matching the start pixel's colour.
+ *
+ * Defaults to one 8×8 tile, which is what the tile editor floods. The meta-tile
+ * canvas passes its own `width`/`height`: a meta is a picture several tiles
+ * across and a fill has to cross those seams, since the user drew one shape and
+ * not four.
+ */
+export function fillPoints(
+  pixels: ArrayLike<number>,
+  start: Point,
+  width = TILE_SIZE,
+  height = TILE_SIZE
+): Point[] {
+  const inside = (p: Point): boolean => p.x >= 0 && p.y >= 0 && p.x < width && p.y < height
+  if (!inside(start)) return []
+  const target = pixels[start.y * width + start.x]
   const seen = new Set<number>()
   const out: Point[] = []
   const stack = [start]
   while (stack.length) {
     const p = stack.pop() as Point
-    const key = p.y * TILE_SIZE + p.x
-    if (!inTile(p) || seen.has(key) || pixels[key] !== target) continue
+    const key = p.y * width + p.x
+    if (!inside(p) || seen.has(key) || pixels[key] !== target) continue
     seen.add(key)
     out.push(p)
     stack.push({ x: p.x + 1, y: p.y }, { x: p.x - 1, y: p.y }, { x: p.x, y: p.y + 1 }, { x: p.x, y: p.y - 1 })
