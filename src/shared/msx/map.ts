@@ -10,9 +10,6 @@
 
 import { packRlep } from './compress'
 import { defineName, type HelperC } from './emitC'
-// Value import, and the only one between these two: `meta-tile.ts` takes `MapCell`
-// from here as a *type*, which erases, so there is no runtime cycle.
-import { MAX_META_SIZE } from './meta-tile'
 import type { ExportBlock } from './resource'
 
 
@@ -23,7 +20,53 @@ export interface MapLayer {
   /** `width * height` values, row-major. Tile indices, or a flag bitmask per cell. */
   data: number[]
   visible: boolean
+  /** Meta-tiles dropped on this layer. Z-order is list order. */
+  placements: MetaPlacement[]
 }
+
+/**
+ * A meta-tile this map places, mirrored from its own file. See `MapDoc.metas`.
+ */
+export interface MetaRef {
+  /** Project-relative path of the `.meta-tiles.json`. */
+  path: string
+  /** Its export symbol — what the emitted helper `extern`s. */
+  name: string
+  width: number
+  height: number
+  frames: number
+  flags: number
+}
+
+/**
+ * One meta-tile dropped on a layer.
+ *
+ * A placement is a **live reference**: the tiles stay in the meta's file, the
+ * grid underneath holds tile 0, and the emitted C draws it at runtime — which
+ * is what lets an animated meta animate where it stands, and what makes editing
+ * the meta update every map that placed it.
+ *
+ * `baked` is the opposite bargain, for static scenery. Frame 0's tiles are
+ * written into the grid as well, so the layer write already draws it and it
+ * costs nothing per frame. The record is kept so the editor can re-stamp it
+ * when the meta changes, and so the game can still find it.
+ */
+export interface MetaPlacement {
+  /** Index into `MapDoc.metas`. */
+  slot: number
+  /** Top-left corner, in tiles, on the map's own grid. */
+  x: number
+  y: number
+  baked?: boolean
+}
+
+/**
+ * The most metas one map may place. `placementBytes` spends bit 7 of the slot
+ * byte on `baked`, so a slot is seven bits and a 128th meta would silently
+ * alias onto slot 0 with `baked` set. The 256-tile bank underneath could not
+ * feed anything near this many anyway.
+ */
+export const MAX_MAP_METAS = 128
 
 /**
  * What a cell is when the map is drawn over a **screen** read as a grid.
@@ -76,22 +119,17 @@ export interface MapDoc {
   /** Pixel geometry for a bitmap-mode map; null means the 8×8 name-table cell of SCREEN 1/2/4. */
   cell: MapCell | null
   /**
-   * Set when `tileset` names a **meta-tile set** (`*.meta-tiles.json` /
-   * `*.meta-btiles.json`): the meta size in tiles, and the signal that this
-   * map's cells are meta indices rather than tile indices.
+   * The meta-tiles this map places, mirrored from their own files.
    *
-   * Null is the ordinary tile map, which is every map written before meta-tiles
-   * existed and every map that does not opt in — those export exactly what they
-   * always did.
+   * Mirrored for the reason `MapCell` is: the exporter renders one resource at
+   * a time and never opens another file, so everything the emitted C needs —
+   * the symbol to `extern`, the size to advance by, the frame count, the flags
+   * a game tests — has to be in the document in front of it.
    *
-   * Mirrored here rather than read from the meta set, for the same reason `cell`
-   * is: the exporter renders one resource at a time and never opens another
-   * file, so `_META_W`/`_META_H` have to come from the document in front of it.
-   * `width`/`height` stay the map's own grid, which is now counted in metas —
-   * that is what keeps every editor primitive (`applyStamp`, `floodPoints`,
-   * `copyRect`, `resizeMap`, `remapTiles`) working unchanged on opaque indices.
+   * Empty in every map that places none, which is every map written before
+   * meta-tiles became objects. Those export exactly what they always did.
    */
-  meta: { width: number; height: number } | null
+  metas: MetaRef[]
   /**
    * The cell index that means "draw nothing", for maps that stack layers.
    *
@@ -129,6 +167,7 @@ export function normalizeMap(raw: unknown): MapDoc {
   const height = Math.max(1, Number(input.height) || SCREEN_ROWS)
   const cells = width * height
 
+  const metas = normalizeMetaRefs(input.metas)
   const rawLayers = Array.isArray(input.layers) && input.layers.length ? input.layers : [{ name: 'background' }]
   const layers: MapLayer[] = rawLayers.map((entry, index) => {
     const layer = (typeof entry === 'object' && entry !== null ? entry : {}) as Partial<MapLayer>
@@ -138,7 +177,8 @@ export function normalizeMap(raw: unknown): MapDoc {
       name: String(layer.name ?? `layer_${index}`),
       kind: 'tiles',
       data,
-      visible: layer.visible !== false
+      visible: layer.visible !== false,
+      placements: normalizePlacements(layer.placements, width, height, metas.length)
     }
   })
 
@@ -151,25 +191,48 @@ export function normalizeMap(raw: unknown): MapDoc {
     height,
     cell,
     transparent: normalizeTransparent(input.transparent, cell),
-    meta: normalizeMeta(input.meta),
+      metas,
     layers,
     export: input.export ?? null
   }
 }
 
-/** Absent in every map that does not use a meta-tile set, which is the default. */
-function normalizeMeta(raw: unknown): MapDoc['meta'] {
-  if (typeof raw !== 'object' || raw === null) return null
-  const meta = raw as Partial<{ width: number; height: number }>
-  const at = (value: unknown): number =>
-    typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.min(MAX_META_SIZE, value | 0) : 1
-  return { width: at(meta.width), height: at(meta.height) }
+/** The map's size in tiles. Its own grid — a cell is one tile again. */
+export function mapTileSize(doc: MapDoc): { width: number; height: number } {
+  return { width: doc.width, height: doc.height }
 }
 
-/** The map's size in tiles — its own grid times the meta size, or the grid itself. */
-export function mapTileSize(doc: MapDoc): { width: number; height: number } {
-  if (!doc.meta) return { width: doc.width, height: doc.height }
-  return { width: doc.width * doc.meta.width, height: doc.height * doc.meta.height }
+/** Empty in every map that places no meta-tiles, which is the default. */
+function normalizeMetaRefs(raw: unknown): MetaRef[] {
+  if (!Array.isArray(raw)) return []
+  const at = (value: unknown, fallback: number): number =>
+    Number.isFinite(Number(value)) && Number(value) >= 1 ? Number(value) | 0 : fallback
+  return raw.slice(0, MAX_MAP_METAS).map((entry) => {
+    const ref = (typeof entry === 'object' && entry !== null ? entry : {}) as Partial<MetaRef>
+    return {
+      path: String(ref.path ?? ''),
+      name: String(ref.name ?? 'meta'),
+      width: at(ref.width, 1),
+      height: at(ref.height, 1),
+      frames: at(ref.frames, 1),
+      flags: (Number(ref.flags) || 0) & 0xff
+    }
+  })
+}
+
+function normalizePlacements(raw: unknown, width: number, height: number, slots: number): MetaPlacement[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((entry) => {
+      const p = (typeof entry === 'object' && entry !== null ? entry : {}) as Partial<MetaPlacement>
+      return { slot: Number(p.slot) | 0, x: Number(p.x) | 0, y: Number(p.y) | 0, baked: p.baked === true }
+    })
+    // A placement whose slot or origin is gone would draw at an arbitrary spot
+    // from a table that no longer has that entry.
+    .filter((p) => p.slot >= 0 && p.slot < slots && p.x >= 0 && p.y >= 0 && p.x < width && p.y < height)
+    // `baked` is written only when true, so a plain placement round-trips as
+    // the three keys it actually has.
+    .map((p) => (p.baked ? p : { slot: p.slot, x: p.x, y: p.y }))
 }
 
 /** A cell index, or null — including for every pattern-mode map, which has no use for one. */
@@ -214,7 +277,10 @@ export function resizeMap(doc: MapDoc, width: number, height: number): MapDoc {
     for (let y = 0; y < Math.min(height, doc.height); y++) {
       for (let x = 0; x < Math.min(width, doc.width); x++) data[y * width + x] = layer.data[y * doc.width + x] ?? 0
     }
-    return { ...layer, data }
+    // A placement whose origin fell off the new grid has nowhere to be, and
+    // `normalizePlacements` would drop it on the next load anyway — better to
+    // agree with that now than to save a file that changes when reopened.
+    return { ...layer, data, placements: layer.placements.filter((p) => p.x < width && p.y < height) }
   })
   return { ...doc, width, height, layers }
 }
@@ -251,28 +317,21 @@ export function validateMap(doc: MapDoc): string[] {
       `${doc.layers.length} layers but no transparent cell — a layer drawn over another needs one, or its empty cells blit cell 0`
     )
   }
-  // A pure string check, no file reads: the suffix says what the cells mean, and
-  // `meta` is what the export emits from. Disagreeing means the map draws meta
-  // indices as tiles, or tile indices as metas — both look like garbage on
-  // screen with nothing else to point at the cause.
-  const metaTileset = /\.meta-b?tiles\.json$/i.test(doc.tileset)
-  if (metaTileset && !doc.meta) {
-    problems.push(`Tileset "${doc.tileset}" is a meta-tile set, but this map's cells are still plain tiles`)
-  }
-  if (!metaTileset && doc.meta && doc.tileset) {
-    problems.push(`This map's cells are meta indices, but "${doc.tileset}" is not a meta-tile set`)
-  }
-
-  // Meta-tile sets over a SCREEN 3 tileset are not supported yet: `mapHelperC`
-  // answers `meta` before `cell`, and the meta helper's bitmap path is built on
-  // the V9938 command engine, which an MSX1 has not got. Blocking the export is
-  // the honest failure — the alternative is a header full of `VDP_CommandHMMM`
-  // that compiles, links, and draws nothing.
-  if (doc.meta && doc.cell?.sc3) {
-    problems.push(
-      'Meta-tile sets over a SCREEN 3 tileset are not supported yet — point this map at the ' +
-        'tileset directly, or use a 2×2 tileset so the map draws through the name table'
-    )
+  // A placement's *origin* is inside the grid — `placeMeta` and
+  // `normalizePlacements` both enforce that — but its far edge need not be, and
+  // a meta hanging off the right of the map writes into the next row of the
+  // name table at runtime. Warned rather than clamped: cropping someone's tree
+  // silently is worse than telling them half of it is off the level.
+  for (const layer of doc.layers) {
+    for (const placement of layer.placements) {
+      const ref = doc.metas[placement.slot]
+      if (!ref) continue
+      if (placement.x + ref.width > doc.width || placement.y + ref.height > doc.height) {
+        problems.push(
+          `"${ref.name}" at ${placement.x},${placement.y} on layer "${layer.name}" extends past the map`
+        )
+      }
+    }
   }
 
   const cells = doc.width * doc.height
@@ -326,7 +385,6 @@ export function mapExport(
  * own, from the `compress` module.
  */
 export function mapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
-  if (doc.meta) return metaMapHelperC(doc, name, compressed, table)
   // A SCREEN 3 map over 2×2 tiles is a name-table map: one tile is one name
   // entry, and `VDP_WriteLayout_GM2` is address arithmetic over the layout base,
   // which `VDP_SetModeMultiColor` sets correctly. So it takes the path below,
@@ -548,210 +606,8 @@ function sc3MapHelperC(doc: MapDoc, name: string, compressed: boolean, table: st
 }
 
 /**
- * The meta-tile counterpart, for a map whose cells index a `*.meta-tiles.json`
- * (or `*.meta-btiles.json`) instead of naming tiles directly.
- *
- * Everything here is built on one primitive, `_ExpandRow`: given a world *tile*
- * row, walk the meta row under it and write out the tiles. Decoding a meta is
- * internal and the callers speak tile coordinates, which is what lets the bitmap
- * `_DrawRow` keep the signature (and the exact `HMMM` count) it had before this
- * existed — a scroller written against a plain tilemap ports by adding one
- * argument.
- *
- * `_DrawLayer` is deliberately *not* emitted here: this layer holds meta
- * indices, and writing them into the name table would draw whatever tiles happen
- * to share those numbers.
- */
-function metaMapHelperC(doc: MapDoc, name: string, compressed: boolean, table: string): HelperC {
-  const prefix = defineName(name)
-  const meta = doc.meta!
-  const { width: tileW, height: tileH } = mapTileSize(doc)
-  // A map is not capped at 255 cells per axis, and once metas multiply it out an
-  // 8-bit counter silently wraps. Pick the width the numbers actually need.
-  const ux = tileW > 0xff ? 'u16' : 'u8'
-  const uy = tileH > 0xff ? 'u16' : 'u8'
-
-  const expandRow = `void ${name}_ExpandRow(const u8* layer, const u8* metas, u8* dst, ${ux} tx, ${uy} ty, ${ux} w)`
-  const expandAll = `void ${name}_ExpandToRAM(const u8* layer, const u8* metas, u8* buffer)`
-
-  const head = [
-    '',
-    `// ── ${name}: a meta-tile map ──────────────────────────────────────────`,
-    '//',
-    `// Each cell of this map is one meta-tile of ${doc.tileset || 'the meta-tile set'}:`,
-    `// ${meta.width}×${meta.height} tiles, so the ${doc.width}×${doc.height} grid covers ${tileW}×${tileH} tiles.`,
-    '//',
-    '// Every call below takes `metas` — the table that meta-tile set exports.',
-    '// It is passed in rather than named here, the same way the layer is.',
-    ...(compressed
-      ? [
-          '//',
-          '// The layers are RLEp-packed, so `layer` must be a RAM buffer you filled',
-          '// with RLEp_UnpackToRAM first. These read cells in any order and cannot',
-          '// unpack per call — and a meta layer is small enough to keep unpacked',
-          '// anyway, which is rather the point of it.'
-        ]
-      : []),
-    '',
-    '// Expands world tile row `ty`, columns `tx`..`tx+w-1`, into `dst`.',
-    '// Nothing is clipped: keep the window inside the map.',
-    `${expandRow};`,
-    '',
-    `// The whole map as plain tiles — ${tileW}*${tileH} = ${tileW * tileH} bytes of \`buffer\`. This is`,
-    '// what a game wants when it *reads and writes* its map: collision, or',
-    '// turning a collected coin into sky. VRAM cannot do that for you.',
-    '//',
-    '// To only put the map on screen, use _DrawView below instead — same result,',
-    `// ${tileW} bytes of RAM rather than ${tileW * tileH}.`,
-    `${expandAll};`
-  ]
-
-  const body = [
-    '',
-    expandRow,
-    '{',
-    `\tconst u8* row = layer + ((u16)(ty / ${prefix}_META_H) * ${prefix}_W);`,
-    `\tconst u8* src = metas + ((ty % ${prefix}_META_H) * ${prefix}_META_W);`,
-    `\t${ux} mx = tx / ${prefix}_META_W;`,
-    `\tu8 sx = (u8)(tx % ${prefix}_META_W);`,
-    '\twhile(w--)',
-    '\t{',
-    `\t\t*dst++ = src[((u16)row[mx] * ${prefix}_META_CELLS) + sx];`,
-    `\t\tif(++sx == ${prefix}_META_W) { sx = 0; ++mx; }`,
-    '\t}',
-    '}',
-    '',
-    expandAll,
-    '{',
-    `\tfor(${uy} ty = 0; ty < ${prefix}_TILE_H; ++ty)`,
-    '\t{',
-    `\t\t${name}_ExpandRow(layer, metas, buffer, 0, ty, ${prefix}_TILE_W);`,
-    `\t\tbuffer += ${prefix}_TILE_W;`,
-    '\t}',
-    '}'
-  ]
-
-  const draw = doc.cell
-    ? bitmapMetaHelperC(doc, name, prefix, ux, uy)
-    : patternMetaHelperC(name, prefix, table, ux, uy)
-  return { header: [...head, ...draw.header], source: [...body, ...draw.source] }
-}
-
-/** Name-table modes: the visible window, one `VDP_WriteLayout_GM2` per row. */
-function patternMetaHelperC(name: string, prefix: string, table: string, ux: string, uy: string): HelperC {
-  const signature =
-    `void ${name}_DrawView(const u8* layer, const u8* metas, u8* rowbuf,` +
-    ` ${ux} camX, ${uy} camY, u8 dx, u8 dy, u8 w, u8 h)`
-  return {
-    header: [
-      '',
-      '// Paints a window of the map into the name table: `w`×`h` tiles starting at',
-      '// world tile (camX, camY), landing at name-table column/row (dx, dy).',
-      '// `rowbuf` holds `w` bytes — one row is expanded and written at a time, so',
-      '// this never needs the whole map in RAM.',
-      '//',
-      '// This is also how you put the *entire* map on screen, which is the cheaper',
-      `// half of the pair — ${prefix}_TILE_W bytes of RAM rather than`,
-      `// ${prefix}_TILE_W * ${prefix}_TILE_H, against one VDP address setup per row:`,
-      '//',
-      `//   ${name}_DrawView(layer, metas, rowbuf, 0, 0, 0, 0, ${prefix}_TILE_W, ${prefix}_TILE_H);`,
-      '//',
-      '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
-      '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.',
-      '//',
-      '// A name-table mode has no hardware horizontal scroll, so a one-column',
-      '// camera step rewrites the table anyway — that is this call, not a',
-      '// separate _DrawColumn.',
-      '//',
-      '// Example — a 32×20 window at name-table row 4, scrolled by camX:',
-      `//   u8 rowbuf[${prefix}_TILE_W];`,
-      `//   ${name}_DrawView(${table}, metas, rowbuf, camX, 0, 0, 4, 32, 20);`,
-      `${signature};`
-    ],
-    source: [
-      '',
-      signature,
-      '{',
-      '\tfor(u8 row = 0; row < h; ++row)',
-      '\t{',
-      `\t\t${name}_ExpandRow(layer, metas, rowbuf, camX, camY + row, w);`,
-      '\t\tVDP_WriteLayout_GM2(rowbuf, dx, dy + row, w, 1);',
-      '\t}',
-      '}'
-    ]
-  }
-}
-
-/**
- * Bitmap modes: today's `_DrawRow`, plus `metas`. `row` is still a *cell* row and
- * the loop still issues one `HMMM` per cell across the map, so the per-frame blit
- * budget a scroller was written against does not move.
- */
-function bitmapMetaHelperC(doc: MapDoc, name: string, prefix: string, ux: string, uy: string): HelperC {
-  const cell = doc.cell!
-  const row = (signature: string, over: boolean): string[] => [
-    '',
-    signature,
-    '{',
-    `\tconst u8* mrow = layer + ((u16)(row / ${prefix}_META_H) * ${prefix}_W);`,
-    `\tconst u8* src = metas + ((row % ${prefix}_META_H) * ${prefix}_META_W);`,
-    '\tu16 dx = 0;',
-    '\tu8 sx = 0;',
-    `\t${ux} mx = 0;`,
-    `\t${ux} col = ${prefix}_TILE_W;`,
-    '\twhile(col--)',
-    '\t{',
-    `\t\tu8 cell = src[((u16)mrow[mx] * ${prefix}_META_CELLS) + sx];`,
-    ...(over ? [`\t\tif(cell != ${prefix}_TRANSPARENT)`] : []),
-    `\t${over ? '\t' : ''}\tVDP_CommandHMMM((u16)(cell % ${prefix}_ATLAS_COLS) * ${prefix}_CELL_W,`,
-    `\t${over ? '\t' : ''}\t                atlasY + ((cell / ${prefix}_ATLAS_COLS) * ${prefix}_CELL_H),`,
-    `\t${over ? '\t' : ''}\t                dx, destY, ${prefix}_CELL_W, ${prefix}_CELL_H);`,
-    `\t\tdx += ${prefix}_CELL_W;`,
-    `\t\tif(++sx == ${prefix}_META_W) { sx = 0; ++mx; }`,
-    '\t}',
-    '}'
-  ]
-  const signature = `void ${name}_DrawRow(const u8* layer, const u8* metas, ${uy} row, UY atlasY, UY destY)`
-  const overSignature = `void ${name}_DrawRowOver(const u8* layer, const u8* metas, ${uy} row, UY atlasY, UY destY)`
-  const overlay = doc.transparent === null ? { header: [], source: [] } : { header: [], source: row(overSignature, true) }
-  return {
-    header: [
-      '',
-      `// Draws one *cell* row of the map — ${prefix}_TILE_W cells of ${cell.width}×${cell.height} dots,`,
-      '// starting at dot column 0 of VRAM row `destY`. Cells come from an atlas',
-      '// image parked at (0, `atlasY`) in VRAM; upload it once with a single HMMC.',
-      '//',
-      '// `row` counts cell rows, not meta rows, and the loop issues one HMMM per',
-      '// cell exactly as a plain tilemap does — meta decoding is free at the VDP.',
-      '//',
-      '// A vertical scroller calls this for the one row about to scroll into the',
-      '// hidden lines below the display. Mask `destY` yourself to wrap inside a',
-      '// page: the VDP addresses all of VRAM as one tall column, so 256 is the',
-      '// next page, not row 0 again.',
-      '//',
-      '// Needs MSXgl\'s VDP command engine: MSX2 or later with VDP_USE_COMMAND,',
-      '// and "msxgl.h" included before this header.',
-      '//',
-      '// Example:',
-      `//   ${name}_DrawRow(layer, metas, row, ATLAS_Y, (u8)(row * ${cell.height}));`,
-      `${signature};`,
-      ...(doc.transparent === null
-        ? []
-        : [
-            '',
-            '// Same, for a layer drawn *over* one already on screen: cell',
-            `// ${prefix}_TRANSPARENT (${doc.transparent}) is skipped instead of blitted, so`,
-            '// whatever is underneath shows through. Draw the background row first.',
-            `${overSignature};`
-          ])
-    ],
-    source: [...row(signature, false), ...overlay.source]
-  }
-}
-
-/**
- * The overlay twin of `_DrawRow`, emitted only when the map names a transparent
- * cell — a foreground layer wants the cells it did not paint left alone, and the
+ * The overlay counterpart of `_DrawRow`: same walk, but a cell equal to
+ * `transparent` is skipped so whatever is underneath shows through. The
  * background layer wants every cell drawn, including that index.
  *
  * Two functions rather than one with a flag: the background row is the one that
@@ -787,6 +643,202 @@ function bitmapOverlayC(doc: MapDoc, name: string, prefix: string): HelperC {
     `\t\tdx += ${prefix}_CELL_W;`,
     '\t}',
     '}'
+    ]
+  }
+}
+
+// ── placed meta-tiles ───────────────────────────────────────────────────────
+
+/**
+ * Adds a meta to the map's table, or refreshes the mirror if it is already
+ * there — the meta may have been resized or gained a frame since this map last
+ * saw it.
+ */
+export function addMetaRef(doc: MapDoc, ref: MetaRef): MapDoc {
+  const existing = doc.metas.findIndex((meta) => meta.path === ref.path)
+  if (existing >= 0) {
+    const metas = doc.metas.slice()
+    metas[existing] = ref
+    return { ...doc, metas }
+  }
+  if (doc.metas.length >= MAX_MAP_METAS) return doc
+  return { ...doc, metas: [...doc.metas, ref] }
+}
+
+/** Where a meta sits in the table, or -1. */
+export function metaSlotOf(doc: MapDoc, path: string): number {
+  return doc.metas.findIndex((meta) => meta.path === path)
+}
+
+/**
+ * Drops a meta from the map, with every placement that used it, and renumbers
+ * the slots above it.
+ *
+ * This is a *local* renumber — `metas` is this map's own list — so unlike a
+ * tileset reorder it needs no event and no other document hears about it.
+ */
+export function removeMetaRef(doc: MapDoc, slot: number): MapDoc {
+  if (!doc.metas[slot]) return doc
+  return {
+    ...doc,
+    metas: doc.metas.filter((_, i) => i !== slot),
+    layers: doc.layers.map((layer) => ({
+      ...layer,
+      placements: layer.placements
+        .filter((placement) => placement.slot !== slot)
+        .map((placement) => (placement.slot > slot ? { ...placement, slot: placement.slot - 1 } : placement))
+    }))
+  }
+}
+
+export function placeMeta(doc: MapDoc, layerIndex: number, slot: number, x: number, y: number): MapDoc {
+  const layer = doc.layers[layerIndex]
+  if (!layer || !doc.metas[slot] || x < 0 || y < 0 || x >= doc.width || y >= doc.height) return doc
+  const layers = doc.layers.slice()
+  layers[layerIndex] = { ...layer, placements: [...layer.placements, { slot, x, y }] }
+  return { ...doc, layers }
+}
+
+export function removePlacement(doc: MapDoc, layerIndex: number, index: number): MapDoc {
+  const layer = doc.layers[layerIndex]
+  if (!layer?.placements[index]) return doc
+  const layers = doc.layers.slice()
+  layers[layerIndex] = { ...layer, placements: layer.placements.filter((_, i) => i !== index) }
+  return { ...doc, layers }
+}
+
+export function movePlacement(doc: MapDoc, layerIndex: number, index: number, x: number, y: number): MapDoc {
+  const layer = doc.layers[layerIndex]
+  const placement = layer?.placements[index]
+  if (!placement || x < 0 || y < 0 || x >= doc.width || y >= doc.height) return doc
+  if (placement.x === x && placement.y === y) return doc
+  const placements = layer.placements.slice()
+  placements[index] = { ...placement, x, y }
+  const layers = doc.layers.slice()
+  layers[layerIndex] = { ...layer, placements }
+  return { ...doc, layers }
+}
+
+export function setPlacementBaked(doc: MapDoc, layerIndex: number, index: number, baked: boolean): MapDoc {
+  const layer = doc.layers[layerIndex]
+  const placement = layer?.placements[index]
+  if (!placement || placement.baked === baked) return doc
+  const placements = layer.placements.slice()
+  placements[index] = baked
+    ? { ...placement, baked: true }
+    : { slot: placement.slot, x: placement.x, y: placement.y }
+  const layers = doc.layers.slice()
+  layers[layerIndex] = { ...layer, placements }
+  return { ...doc, layers }
+}
+
+/**
+ * The topmost placement covering a cell, or null. Later placements draw over
+ * earlier ones, so the search runs backwards — what the user sees on top is
+ * what a click should select.
+ */
+export function placementAt(doc: MapDoc, layerIndex: number, x: number, y: number): number | null {
+  const layer = doc.layers[layerIndex]
+  if (!layer) return null
+  for (let i = layer.placements.length - 1; i >= 0; i--) {
+    const placement = layer.placements[i]
+    const ref = doc.metas[placement.slot]
+    if (!ref) continue
+    if (x >= placement.x && y >= placement.y && x < placement.x + ref.width && y < placement.y + ref.height) return i
+  }
+  return null
+}
+
+/** How many placements the whole map holds — what `_PLACEMENTS` counts. */
+export function placementCount(doc: MapDoc): number {
+  return doc.layers.reduce((sum, layer) => sum + layer.placements.length, 0)
+}
+
+/**
+ * The exported placement table: three bytes each, every layer in order.
+ *
+ * `baked` rides in bit 7 of the slot byte so a placement stays three bytes,
+ * which is why `MAX_MAP_METAS` is 128.
+ */
+export function placementBytes(doc: MapDoc): Uint8Array {
+  const out: number[] = []
+  for (const layer of doc.layers) {
+    for (const placement of layer.placements) {
+      out.push((placement.slot & 0x7f) | (placement.baked ? 0x80 : 0), placement.x & 0xff, placement.y & 0xff)
+    }
+  }
+  return Uint8Array.from(out)
+}
+
+/**
+ * The runtime side of placed meta-tiles: walk the table and draw each live one.
+ *
+ * Baked placements are skipped — their tiles are already in the layer the map
+ * just wrote, which is the whole point of baking them. They stay in the table
+ * so the game can still find them, and so the editor can re-stamp them.
+ *
+ * Each meta row is written as runs of non-transparent cells, for the reason
+ * `metaHelperC` does it: tile 0 means "skip this write", and a name table has
+ * no other way to be see-through.
+ */
+export function placementHelperC(doc: MapDoc, name: string): HelperC {
+  if (!placementCount(doc) || !doc.metas.length) return { header: [], source: [] }
+
+  const prefix = defineName(name)
+  const signature = `void ${name}_DrawPlacements(const u8* frames)`
+  return {
+    header: [
+      '',
+      `// ── ${name}: placed meta-tiles ────────────────────────────────────────`,
+      '//',
+      `// Draws the ${placementCount(doc)} meta-tile${placementCount(doc) === 1 ? '' : 's'} this map places.`,
+      '// `frames` is one byte per meta — frames[slot] is the frame that meta is',
+      '// currently showing — so animating them is a matter of advancing that',
+      '// array and calling this again.',
+      '//',
+      '// Baked placements are skipped: their tiles are already in the layer.',
+      '//',
+      '// Example:',
+      `//   u8 frames[${prefix}_METAS] = { 0 };`,
+      `//   ${name}_DrawPlacements(frames);`,
+      `${signature};`
+    ],
+    source: [
+      '',
+      ...doc.metas.map((meta) => `extern const u8 ${meta.name}[];`),
+      '',
+      "// Mirrored from each meta-tile's own file, so this compiles without",
+      '// including their headers.',
+      `static const struct { const u8* tiles; u8 w; u8 h; u8 cells; } ${name}_Metas[${prefix}_METAS] = {`,
+      ...doc.metas.map((meta) => `\t{ ${meta.name}, ${meta.width}, ${meta.height}, ${meta.width * meta.height} },`),
+      '};',
+      '',
+      signature,
+      '{',
+      `\tconst u8* p = ${name}_Placements;`,
+      `\tfor(u8 i = 0; i < ${prefix}_PLACEMENTS; ++i)`,
+      '\t{',
+      '\t\tu8 slot = *p++;',
+      '\t\tu8 px = *p++;',
+      '\t\tu8 py = *p++;',
+      '\t\tif(slot & 0x80) continue;',
+      `\t\tconst u8 w = ${name}_Metas[slot].w;`,
+      `\t\tconst u8* src = ${name}_Metas[slot].tiles + ((u16)frames[slot] * ${name}_Metas[slot].cells);`,
+      `\t\tfor(u8 row = 0; row < ${name}_Metas[slot].h; ++row)`,
+      '\t\t{',
+      '\t\t\tu8 col = 0;',
+      '\t\t\twhile(col < w)',
+      '\t\t\t{',
+      '\t\t\t\tif(src[col] == 0) { ++col; continue; }',
+      '\t\t\t\tu8 run = col;',
+      '\t\t\t\twhile(run < w && src[run] != 0) ++run;',
+      '\t\t\t\tVDP_WriteLayout_GM2(src + col, px + col, py + row, run - col, 1);',
+      '\t\t\t\tcol = run;',
+      '\t\t\t}',
+      '\t\t\tsrc += w;',
+      '\t\t}',
+      '\t}',
+      '}'
     ]
   }
 }

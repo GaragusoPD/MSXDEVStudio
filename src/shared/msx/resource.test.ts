@@ -3,6 +3,7 @@ import { unpackRlep } from './compress'
 import { defineName, emitBin, emitC } from './emitC'
 import { createMapDoc, normalizeMap } from './map'
 import { normalizeMetaTile } from './meta-tile'
+import { addMetaRef, placeMeta, setPlacementBaked } from './map'
 import { packGrb } from './palette'
 import {
   RESOURCE_SUFFIXES,
@@ -476,7 +477,6 @@ describe('map resource', () => {
       height: 2,
       layers: [{ name: 'background', data: [1, 2, 3, 4, 5, 6, 7, 8] }]
     })
-    expect(doc.meta).toBeNull()
     const header = rendered({ kind: 'map', doc }, 'res/level.map.json', {
       name: 'g_Level',
       format: 'c',
@@ -589,131 +589,66 @@ describe('meta-tile resource', () => {
   })
 })
 
-describe('meta-tile map', () => {
-  /** 4×2 metas of 2×2 tiles — an 8×4 tile world in 8 bytes. */
-  const metaMap = (extra: Record<string, unknown> = {}): ResourceDoc => ({
-    kind: 'map',
-    doc: normalizeMap({
-      tileset: 'res/canyon.meta-tiles.json',
-      width: 4,
-      height: 2,
-      meta: { width: 2, height: 2 },
-      layers: [{ name: 'terrain', data: [0, 1, 1, 0, 1, 0, 0, 1] }],
-      ...extra
-    })
+describe('placed meta-tiles on a map', () => {
+  const tree = { path: 'res/tree.meta-tiles.json', name: 'g_Tree', width: 2, height: 3, frames: 4, flags: 0x01 }
+  const coin = { path: 'res/coin.meta-tiles.json', name: 'g_Coin', width: 1, height: 1, frames: 6, flags: 0x02 }
+
+  const level = (): ResourceDoc => {
+    let doc = normalizeMap({ tileset: 'res/tiles.tiles.json', width: 32, height: 24 })
+    doc = addMetaRef(addMetaRef(doc, tree), coin)
+    doc = placeMeta(doc, 0, 0, 4, 4)
+    doc = placeMeta(doc, 0, 1, 10, 8)
+    doc = setPlacementBaked(doc, 0, 1, true)
+    return { kind: 'map', doc }
+  }
+
+  const block = { name: 'g_Level', format: 'c' as const, out: 'content/level.h', helpers: true }
+
+  it('emits the placement table beside the layer tables, three bytes each', () => {
+    const tables = resourceTables(level())
+    const placements = tables.find((table) => table.suffix === '_Placements')!
+    // slot|baked<<7, x, y — the second one is baked, so bit 7 is set.
+    expect([...placements.bytes]).toEqual([0, 4, 4, 0x81, 10, 8])
   })
 
-  it('counts its grid in metas and says what that is in tiles', () => {
-    const resource = metaMap()
-    expect(validateResource(resource)).toEqual([])
-    const header = rendered(resource, 'res/level.map.json', {
-      name: 'g_Level',
-      format: 'c',
-      out: 'content/level.h',
-      helpers: true
-    })
-    expect(header).toContain('#define G_LEVEL_W 4')
-    expect(header).toContain('#define G_LEVEL_H 2')
-    expect(header).toContain('#define G_LEVEL_META_W 2')
-    expect(header).toContain('#define G_LEVEL_META_CELLS 4')
-    expect(header).toContain('#define G_LEVEL_TILE_W 8')
-    expect(header).toContain('#define G_LEVEL_TILE_H 4')
-    // Eight bytes for a world that would have cost thirty-two.
-    expect(resourceTables(resource)[0].bytes).toHaveLength(8)
+  it('names each meta and mirrors its flags, so a game needs no other header', () => {
+    const header = rendered(level(), 'res/level.map.json', block)
+    expect(header).toContain('#define G_LEVEL_METAS 2')
+    expect(header).toContain('#define G_LEVEL_PLACEMENTS 2')
+    expect(header).toContain('#define G_LEVEL_META_G_TREE 0')
+    expect(header).toContain('#define G_LEVEL_META_G_COIN 1')
+    expect(header).toContain('#define G_LEVEL_FLAGS_G_TREE 0x01')
   })
 
-  it('emits the expansion helpers and never the plain name-table blit', () => {
-    const header = rendered(metaMap(), 'res/level.map.json', {
-      name: 'g_Level',
-      format: 'c',
-      out: 'content/level.h',
-      helpers: true
-    })
-    expect(header).toContain('void g_Level_ExpandRow(const u8* layer, const u8* metas, u8* dst, u8 tx, u8 ty, u8 w)')
-    expect(header).toContain('void g_Level_ExpandToRAM(const u8* layer, const u8* metas, u8* buffer)')
-    expect(header).toContain('void g_Level_DrawView(const u8* layer, const u8* metas, u8* rowbuf, u8 camX, u8 camY, u8 dx, u8 dy, u8 w, u8 h)')
-    // The layer holds meta indices. Writing it into the name table would draw
-    // whatever tiles happen to share those numbers — which is why _DrawLayer,
-    // the helper every other pattern-mode map gets, must not be here.
-    expect(header).not.toContain('_DrawLayer')
-    expect(header).not.toContain('VDP_WriteLayout_GM2(layer,')
-    // The expansion is a table read at the stride, with no multiply per cell.
-    expect(header).toContain('*dst++ = src[((u16)row[mx] * G_LEVEL_META_CELLS) + sx];')
+  it('externs each placed meta and builds a table from the mirror', () => {
+    const header = rendered(level(), 'res/level.map.json', block)
+    expect(header).toContain('extern const u8 g_Tree[];')
+    expect(header).toContain('extern const u8 g_Coin[];')
+    expect(header).toContain('{ g_Tree, 2, 3, 6 },')
+    expect(header).toContain('void g_Level_DrawPlacements(const u8* frames)')
   })
 
-  it('keeps the bitmap row blit at one HMMM per cell, so a scroller ports unchanged', () => {
-    const header = rendered(
-      metaMap({ cell: { width: 16, height: 16, cols: 16 }, transparent: 3 }),
-      'res/stage.map.json',
-      { name: 'g_Stage', format: 'c', out: 'content/stage.h', helpers: true }
-    )
-    // Same shape as before meta-tiles, plus `metas`: `row` is still a cell row.
-    expect(header).toContain('void g_Stage_DrawRow(const u8* layer, const u8* metas, u8 row, UY atlasY, UY destY)')
-    expect(header).toContain('void g_Stage_DrawRowOver(const u8* layer, const u8* metas, u8 row, UY atlasY, UY destY)')
-    expect(header).toContain('u8 col = G_STAGE_TILE_W;')
-    expect(header).toContain('if(cell != G_STAGE_TRANSPARENT)')
-    // Skipping drops the blit, never the column — both walk the row in step.
-    expect(header.match(/dx \+= G_STAGE_CELL_W;/g)).toHaveLength(2)
-    expect(header).not.toContain('VDP_WriteLayout_GM2')
+  it('skips baked placements, which the layer write already drew', () => {
+    expect(rendered(level(), 'res/level.map.json', block)).toContain('if(slot & 0x80) continue;')
   })
 
-  it('widens the counters when the map is longer than a byte can count', () => {
-    const header = rendered(
-      {
-        kind: 'map',
-        doc: normalizeMap({
-          tileset: 'res/canyon.meta-tiles.json',
-          width: 8,
-          height: 200,
-          meta: { width: 2, height: 2 },
-          layers: [{ name: 'terrain', data: new Array(1600).fill(0) }]
-        })
-      },
-      'res/level.map.json',
-      { name: 'g_Level', format: 'c', out: 'content/level.h', helpers: true }
-    )
-    // 400 tile rows: a u8 row counter would wrap and redraw the top of the map.
-    expect(header).toContain('#define G_LEVEL_TILE_H 400')
-    expect(header).toContain('u16 ty, u8 w)')
-    expect(header).toContain('for(u16 ty = 0; ty < G_LEVEL_TILE_H; ++ty)')
+  it('still emits the ordinary layer blit — placements are additive', () => {
+    const header = rendered(level(), 'res/level.map.json', block)
+    expect(header).toContain('VDP_WriteLayout_GM2(layer, x, y, G_LEVEL_W, G_LEVEL_H)')
   })
 
-  it('packs a meta layer with RLEp like any other, since it is just a smaller array', () => {
-    const doc = normalizeMap({
-      tileset: 'res/canyon.meta-tiles.json',
-      width: 16,
-      height: 12,
-      meta: { width: 2, height: 2 },
-      layers: [{ name: 'terrain', data: new Array(192).fill(3) }]
-    })
-    const [table] = resourceTables({ kind: 'map', doc }, 'rlep')
-    expect(table.unpacked).toBe(192)
-    expect([...unpackRlep(table.bytes)]).toEqual(doc.layers[0].data)
-
-    const header = rendered({ kind: 'map', doc }, 'res/level.map.json', {
-      name: 'g_Level',
-      format: 'c',
-      out: 'content/level.h',
-      helpers: true,
-      compress: 'rlep'
-    })
-    // The helpers read an unpacked layer — the game keeps it in RAM to mutate it
-    // anyway, and 192 bytes is why that is affordable.
-    expect(header).toContain('RLEp_UnpackToRAM')
-    expect(header).toContain('must be a RAM buffer you filled')
+  it('a map that places nothing gets exactly the C it always did', () => {
+    const plain: ResourceDoc = { kind: 'map', doc: normalizeMap({ tileset: 'res/tiles.tiles.json', width: 8, height: 8 }) }
+    const header = rendered(plain, 'res/plain.map.json', { ...block, name: 'g_Plain' })
+    expect(header).not.toContain('_PLACEMENTS')
+    expect(header).not.toContain('DrawPlacements')
+    expect(resourceTables(plain).some((table) => table.suffix === '_Placements')).toBe(false)
   })
 
-  it('catches a map and a tileset that disagree about what a cell means', () => {
-    // Both directions look like garbage on screen with nothing to point at the
-    // cause, so the check is a pure suffix comparison and costs no file read.
-    expect(validateResource(metaMap({ tileset: 'res/canyon.tiles.json' })).join(' ')).toContain(
-      'cells are meta indices'
-    )
-    const noMeta = normalizeMap({
-      tileset: 'res/canyon.meta-tiles.json',
-      layers: [{ name: 'terrain', data: new Array(768).fill(0) }]
-    })
-    expect(validateResource({ kind: 'map', doc: noMeta }).join(' ')).toContain('still plain tiles')
+  it('warns when a placement hangs off the edge of the grid', () => {
+    let doc = normalizeMap({ tileset: 'res/tiles.tiles.json', width: 8, height: 8 })
+    doc = placeMeta(addMetaRef(doc, tree), 0, 0, 7, 7)
+    expect(validateResource({ kind: 'map', doc }).join(' ')).toContain('extends past the map')
   })
 })
 
@@ -1018,15 +953,6 @@ describe('SCREEN 3 export', () => {
     expect(text.match(/#define G_PLAY_W /g)).toHaveLength(1)
     expect(text).toContain('#define G_PLAY_W 48')
     expect(text).toContain('#define G_PLAY_SIZE 1536')
-  })
-
-  it('refuses a meta-tile set over a SCREEN 3 tileset rather than exporting V9938 calls', () => {
-    const doc = normalizeMap({
-      tileset: 'res/set.meta-btiles.json',
-      cell: { width: 2, height: 2, cols: 16, sc3: true },
-      meta: { width: 2, height: 2 }
-    })
-    expect(validateResource({ kind: 'map', doc }).join(' ')).toContain('not supported yet')
   })
 
   it('rejects a fragment that starts or ends mid-byte', () => {

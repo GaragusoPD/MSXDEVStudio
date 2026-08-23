@@ -22,7 +22,16 @@ import {
   type BitmapTilesDoc
 } from './bitmap-tile'
 import { defineName, emitBin, emitC, type EmitTable, type HelperC } from './emitC'
-import { normalizeMap, mapExport, mapHelperC, mapTileSize, validateMap, type MapDoc } from './map'
+import {
+  normalizeMap,
+  mapExport,
+  mapHelperC,
+  placementBytes,
+  placementCount,
+  placementHelperC,
+  validateMap,
+  type MapDoc
+} from './map'
 import {
   metaBytes,
   metaCells,
@@ -401,8 +410,8 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       }
       return tables
     }
-    case 'map':
-      return mapExport(resource.doc, compress).layers.map(({ bytes, unpacked }, index) => {
+    case 'map': {
+      const tables: EmitTable[] = mapExport(resource.doc, compress).layers.map(({ bytes, unpacked }, index) => {
         const layer = resource.doc.layers[index]
         const size = `${resource.doc.width}×${resource.doc.height}`
         return {
@@ -417,6 +426,18 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
                 'Unpack with MSXgl\'s RLEp_UnpackToRAM before writing it to VRAM.'
         }
       })
+      // Uncompressed on purpose, unlike the layers: a placement table is three
+      // bytes an entry and the game indexes into it directly.
+      if (placementCount(resource.doc)) {
+        tables.push({
+          suffix: '_Placements',
+          bytes: placementBytes(resource.doc),
+          perLine: 3,
+          comment: 'Placed meta-tiles: slot | baked<<7, x, y — three bytes each, every layer in order'
+        })
+      }
+      return tables
+    }
     case 'screen': {
       const { doc } = resource
       const pixels = screenPixels(doc)
@@ -597,11 +618,10 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
         `Size: ${resource.doc.width}×${resource.doc.height}`,
         `Layers: ${resource.doc.layers.map((layer) => layer.name).join(', ')}`
       )
-      if (resource.doc.meta) {
-        const tiles = mapTileSize(resource.doc)
+      if (resource.doc.metas.length) {
         notes.push(
-          `Cells: meta-tiles of ${resource.doc.meta.width}×${resource.doc.meta.height} tiles ` +
-            `(${tiles.width}×${tiles.height} tiles in all) — layer bytes index the meta-tile set, not the tileset`
+          `Meta-tiles: ${resource.doc.metas.map((meta) => meta.name).join(', ')}`,
+          `Placements: ${placementCount(resource.doc)}`
         )
       }
       if (resource.doc.cell) {
@@ -737,22 +757,20 @@ function resourceConstants(
   if (resource.kind === 'swsprites') return swSpriteConstants(resource.doc, name)
   if (resource.kind === 'map') {
     // The helper C needs the map's shape, and so does anything that walks a layer.
-    const { cell, meta } = resource.doc
-    const tiles = mapTileSize(resource.doc)
+    const { cell, metas } = resource.doc
     return [
       `#define ${prefix}_W ${resource.doc.width}`,
       `#define ${prefix}_H ${resource.doc.height}`,
-      // A meta map's _W/_H count metas, so the size in tiles — what the game
-      // actually draws and collides against — has to be spelled out beside them.
-      // _META_CELLS is the table stride, kept as a define so the expansion never
-      // does a multiply the compiler could have.
-      ...(meta
+      // The placement table's shape, and a name per meta so game code says
+      // `LEVEL_META_TREE` rather than 2. `_FLAGS_` is mirrored here so a game
+      // walking the placements can ask "is this one solid?" without including
+      // every meta's own header.
+      ...(metas.length
         ? [
-            `#define ${prefix}_META_W ${meta.width}`,
-            `#define ${prefix}_META_H ${meta.height}`,
-            `#define ${prefix}_META_CELLS ${meta.width * meta.height}`,
-            `#define ${prefix}_TILE_W ${tiles.width}`,
-            `#define ${prefix}_TILE_H ${tiles.height}`
+            `#define ${prefix}_METAS ${metas.length}`,
+            `#define ${prefix}_PLACEMENTS ${placementCount(resource.doc)}`,
+            ...metas.map((meta, index) => `#define ${prefix}_META_${defineName(meta.name)} ${index}`),
+            ...metas.map((meta) => `#define ${prefix}_FLAGS_${defineName(meta.name)} 0x${meta.flags.toString(16).padStart(2, '0')}`)
           ]
         : []),
       // A bitmap-mode map also needs what a cell *is*, since nothing else knows.
@@ -838,7 +856,16 @@ function resourceCode(
   if (resource.kind === 'map') {
     const first = resource.doc.layers[0]
     if (!first) return NO_CODE
-    return mapHelperC(resource.doc, name, mapExport(resource.doc, compress).compressed, `${name}_${pascal(first.name)}`)
+    const layers = mapHelperC(
+      resource.doc,
+      name,
+      mapExport(resource.doc, compress).compressed,
+      `${name}_${pascal(first.name)}`
+    )
+    // The placement runtime is additive: a map that places nothing gets exactly
+    // the C it always did.
+    const placed = placementHelperC(resource.doc, name)
+    return { header: [...layers.header, ...placed.header], source: [...layers.source, ...placed.source] }
   }
   if (resource.kind === 'screen') {
     const banded = screenDataExport(resource.doc, compress).geometry

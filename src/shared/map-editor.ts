@@ -182,7 +182,7 @@ export function clearRect(doc: MapDoc, layerIndex: number, rect: Rect): MapDoc {
 
 export function addLayer(doc: MapDoc, name: string): MapDoc {
   const data = new Array<number>(doc.width * doc.height).fill(0)
-  return { ...doc, layers: [...doc.layers, { name, kind: 'tiles', data, visible: true }] }
+  return { ...doc, layers: [...doc.layers, { name, kind: 'tiles', data, visible: true, placements: [] }] }
 }
 
 /** Refuses to drop the last layer — a map with zero layers has nothing to paint. */
