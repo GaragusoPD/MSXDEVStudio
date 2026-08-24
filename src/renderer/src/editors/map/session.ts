@@ -25,6 +25,7 @@ import {
   normalizeMap,
   placeMeta,
   placementAt,
+  metaRefFrom,
   removePlacement,
   resizeMap,
   type MetaRef,
@@ -704,35 +705,15 @@ export function pickMeta(session: MapSession, path: string): void {
 }
 
 /**
- * The C symbol a placed meta exports under.
+ * The mirror of one meta, for this session.
  *
- * Its own export block first; `defaultExport` for one that has never been set
- * up, which is the name it will take the moment it is.
- *
- * This used to derive a name from the file alone, and it was wrong every time:
- * `defaultExport` appends the resource kind, so `ground_rocks.meta-tiles.json`
- * exports `g_GroundRocksMetatiles` while the file-name rule produced
- * `g_GroundRocks`. The map then `extern`ed a symbol nothing defined — a link
- * error with no file and no line, on every map that placed a meta with helpers
- * on.
+ * The shared builder, not a local one: the exporter refreshes the same mirror
+ * from the same function, and the last time these two had independent rules
+ * they disagreed about the symbol name and every map with helpers on failed to
+ * link.
  */
-function symbolFor(path: string, meta: MetaTileDoc): string {
-  return meta.export?.name || defaultExport(path).name
-}
-
-/** The mirror a map keeps of one meta — see `MetaRef`. */
 function refFor(path: string, meta: MetaTileDoc): MetaRef {
-  return {
-    path,
-    name: symbolFor(path, meta),
-    width: meta.width,
-    height: meta.height,
-    frames: meta.frames.length,
-    flags: meta.flags,
-    // Only colour 0 can be blitted transparently — the V9938 hardwires
-    // VDP_OP_TIMP to it — so this is a yes/no, not the index itself.
-    ...(meta.transparent === 0 ? { masked: true } : {})
-  }
+  return metaRefFrom(path, meta, defaultExport(path).name)
 }
 
 export function placeMetaAt(session: MapSession, x: number, y: number): void {

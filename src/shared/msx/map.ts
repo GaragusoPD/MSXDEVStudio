@@ -10,6 +10,9 @@
 
 import { packRlep } from './compress'
 import { defineName, type HelperC } from './emitC'
+// Type-only, so it erases: `meta-tile.ts` takes `MapCell` from here the same
+// way, and neither import exists at runtime.
+import type { MetaTileDoc } from './meta-tile'
 import type { ExportBlock } from './resource'
 
 
@@ -672,6 +675,31 @@ function bitmapOverlayC(doc: MapDoc, name: string, prefix: string): HelperC {
  * there — the meta may have been resized or gained a frame since this map last
  * saw it.
  */
+/**
+ * The mirror of one meta, built from the meta itself.
+ *
+ * Pure, and shared by everything that has a `MetaTileDoc` in hand: the map
+ * editor when a meta is picked or a map is opened, and the exporter before it
+ * renders. Both used to build this independently, which is how they came to
+ * disagree about the one field that has to match a real C symbol.
+ */
+export function metaRefFrom(path: string, meta: MetaTileDoc, fallbackName: string): MetaRef {
+  return {
+    path,
+    // Its own export block first; the name it *will* take otherwise. Never one
+    // invented from the file name — `defaultExport` appends the resource kind,
+    // so any independent rule disagrees with the symbol the meta really emits.
+    name: meta.export?.name || fallbackName,
+    width: meta.width,
+    height: meta.height,
+    frames: meta.frames.length,
+    flags: meta.flags,
+    // Only colour 0 can be blitted transparently — the V9938 hardwires
+    // VDP_OP_TIMP to it — so this is a yes/no, not the index itself.
+    ...(meta.transparent === 0 ? { masked: true } : {})
+  }
+}
+
 export function addMetaRef(doc: MapDoc, ref: MetaRef): MapDoc {
   const existing = doc.metas.findIndex((meta) => meta.path === ref.path)
   if (existing >= 0) {

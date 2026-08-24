@@ -13,8 +13,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join, resolve } from 'node:path'
 import { isIgnoredName, resolveRelativePath } from '../../shared/fs-safety'
 import type { ImgRule, MsxProject } from '../../shared/msxproj'
-import { parseResource, renderResourceFiles,
-  sourcePathFor, resourceKindOf, validateResource } from '../../shared/msx/resource'
+import { defaultExport, isMetaKind, parseResource, renderResourceFiles,
+  sourcePathFor, resourceKindOf, validateResource, type ResourceDoc } from '../../shared/msx/resource'
+import { metaRefFrom } from '../../shared/msx/map'
+import type { MetaTileDoc } from '../../shared/msx/meta-tile'
 
 /** `<msxgl>/tools/MSXtk/bin/MSXimg(.exe)` — MSXgl ships Linux and Windows builds. */
 export function msximgPath(msxglPath: string): string {
@@ -117,6 +119,41 @@ export function generatedSourceModules(root: string): string[] {
 }
 
 /** Converts one editor resource into the file its `export` block names. */
+/**
+ * Re-reads a map's meta-tile mirror from the meta files themselves.
+ *
+ * `MapDoc.metas` copies each meta's symbol, size, frames and flags because
+ * `shared/msx/map.ts` is dependency-free and cannot open another file — that is
+ * the whole reason the mirror exists. It follows that the copy goes stale, and
+ * that only a layer with filesystem access can refresh it. This is that layer.
+ *
+ * The map editor refreshes the same mirror when a map is open, but a build does
+ * not go through the editor: a fresh clone, a CI run, or an agent editing `res/`
+ * JSON by hand all reach the exporter with whatever the file last said. That is
+ * the common case, not the exotic one, and it is where an out-of-date symbol
+ * became `?ASlink-Warning-Undefined Global`.
+ *
+ * A meta that cannot be read keeps the mirror it had: the map still exports,
+ * and `validateResource` is what complains about a meta that is genuinely gone.
+ */
+function refreshMapMetas(root: string, resource: ResourceDoc): void {
+  if (resource.kind !== 'map' || !resource.doc.metas.length) return
+  resource.doc = {
+    ...resource.doc,
+    metas: resource.doc.metas.map((ref) => {
+      const abs = insideRoot(root, ref.path)
+      if (!abs || !existsSync(abs)) return ref
+      try {
+        const parsed = parseResource(ref.path, readFileSync(abs, 'utf-8'))
+        if (!isMetaKind(parsed.kind)) return ref
+        return metaRefFrom(ref.path, parsed.doc as MetaTileDoc, defaultExport(ref.path).name)
+      } catch {
+        return ref
+      }
+    })
+  }
+}
+
 export function exportResourceFile(root: string, relative: string, options: ExportOptions = {}): ConversionResult {
   const sourceAbs = insideRoot(root, relative)
   const base: ConversionResult = { kind: 'resource', input: relative, out: '', status: 'failed' }
@@ -135,6 +172,11 @@ export function exportResourceFile(root: string, relative: string, options: Expo
     if (upToDate(sourceAbs, outAbs, options) && (!pairAbs || upToDate(sourceAbs, pairAbs, options))) {
       return { ...base, out: block.out, status: 'skipped' }
     }
+
+    // Before validation, not just before rendering: a stale mirror also means
+    // stale sizes, and "this placement hangs off the map" must be judged
+    // against the meta as it is now.
+    refreshMapMetas(root, resource)
 
     const problems = validateResource(resource)
     if (problems.length) return { ...base, out: block.out, message: problems.join('; ') }

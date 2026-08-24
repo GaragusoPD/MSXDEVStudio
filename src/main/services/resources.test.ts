@@ -441,3 +441,98 @@ describe('generated headers compile into a ROM', () => {
     BUILD_TIMEOUT
   )
 })
+
+/**
+ * The mirror a map keeps of the metas it places, refreshed at export time.
+ *
+ * These export **without opening the map in the editor**, which is the common
+ * case and the one that was broken: a fresh clone, a CI build, or an agent
+ * editing `res/` JSON by hand all reach the exporter with whatever the file
+ * last said. The editor's own re-sync never runs on that path.
+ */
+describe('exporting a map whose meta mirror is stale', () => {
+  /** A tileset, a meta over it, and a map placing that meta with a wrong name. */
+  function project(root: string, mirrorName: string): void {
+    writeTileset(root, 'res/main.tiles.json')
+    const meta = {
+      version: 2,
+      tileset: 'res/main.tiles.json',
+      width: 2,
+      height: 3,
+      frames: [{ tiles: [1, 1, 1, 1, 1, 1] }],
+      flags: 0x01,
+      export: { name: 'g_GroundRocksMetatiles', format: 'c', out: 'content/ground_rocks_metatiles.h' }
+    }
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(join(root, 'res/ground_rocks.meta-tiles.json'), JSON.stringify(meta))
+    writeFileSync(
+      join(root, 'res/level.map.json'),
+      JSON.stringify({
+        version: 1,
+        tileset: 'res/main.tiles.json',
+        width: 8,
+        height: 8,
+        // Stale on every count — the name a file-name rule would have produced,
+        // and the size the meta had before it grew.
+        metas: [{ path: 'res/ground_rocks.meta-tiles.json', name: mirrorName, width: 2, height: 2, frames: 1, flags: 0 }],
+        layers: [{ name: 'background', placements: [{ slot: 0, x: 1, y: 1 }] }],
+        export: { name: 'g_LevelMap', format: 'c', out: 'content/level_map.h', helpers: true }
+      })
+    )
+  }
+
+  it("externs the symbol the meta really exports, not the one the map remembered", () => {
+    const root = scratch('stale-mirror')
+    project(root, 'g_GroundRocks')
+
+    expect(exportResourceFile(root, 'res/level.map.json')).toMatchObject({ status: 'converted' })
+    const source = readFileSync(join(root, 'content/level_map.c'), 'utf-8')
+
+    // The exact link failure this replaced:
+    //   ?ASlink-Warning-Undefined Global _g_GroundRocks referenced by module level_map
+    expect(source).toContain('extern const u8 g_GroundRocksMetatiles[];')
+    expect(source).not.toContain('extern const u8 g_GroundRocks[];')
+  })
+
+  it('refreshes the size and flags too, so _MetaInfo describes the meta as it is now', () => {
+    const root = scratch('stale-size')
+    project(root, 'g_GroundRocksMetatiles')
+
+    exportResourceFile(root, 'res/level.map.json')
+    const source = readFileSync(join(root, 'content/level_map.c'), 'utf-8')
+    // 2x3 and flags 0x01, from the meta file — not the 2x2 / flags 0 the map held.
+    expect(source).toMatch(/g_LevelMap_MetaInfo\[\]\s*=\s*\{[^}]*0x02,\s*0x03,\s*0x01/s)
+    expect(source).toContain('{ g_GroundRocksMetatiles, 2, 3, 6 },')
+  })
+
+  it('keeps the mirror when the meta file is gone, so the map still exports', () => {
+    const root = scratch('missing-meta')
+    project(root, 'g_GroundRocksMetatiles')
+    rmSync(join(root, 'res/ground_rocks.meta-tiles.json'))
+
+    expect(exportResourceFile(root, 'res/level.map.json')).toMatchObject({ status: 'converted' })
+    expect(readFileSync(join(root, 'content/level_map.c'), 'utf-8')).toContain(
+      'extern const u8 g_GroundRocksMetatiles[];'
+    )
+  })
+
+  it('leaves a map that places nothing exactly as it was', () => {
+    const root = scratch('no-metas')
+    writeTileset(root, 'res/main.tiles.json')
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(
+      join(root, 'res/plain.map.json'),
+      JSON.stringify({
+        version: 1,
+        tileset: 'res/main.tiles.json',
+        width: 4,
+        height: 4,
+        export: { name: 'g_Plain', format: 'c', out: 'content/plain.h', helpers: true }
+      })
+    )
+    exportResourceFile(root, 'res/plain.map.json')
+    const source = readFileSync(join(root, 'content/plain.c'), 'utf-8')
+    expect(source).not.toContain('_MetaInfo')
+    expect(source).not.toContain('DrawPlacements')
+  })
+})
