@@ -876,8 +876,11 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
       '',
       "// Mirrored from each meta-tile's own file, so this compiles without",
       '// including their headers.',
-      `static const struct { const u8* tiles; u8 w; u8 h; u8 cells; } ${name}_Metas[${prefix}_METAS] = {`,
-      ...doc.metas.map((meta) => `\t{ ${meta.name}, ${meta.width}, ${meta.height}, ${meta.width * meta.height} },`),
+      `static const struct { const u8* tiles; u8 w; u8 h; u8 cells; u8 frames; } ${name}_Metas[${prefix}_METAS] = {`,
+      ...doc.metas.map(
+        (meta) =>
+          `\t{ ${meta.name}, ${meta.width}, ${meta.height}, ${meta.width * meta.height}, ${meta.frames} },`
+      ),
       '};',
       '',
       signature,
@@ -890,7 +893,14 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
       '\t\tu8 py = *p++;',
       '\t\tif(slot & 0x80) continue;',
       `\t\tconst u8 w = ${name}_Metas[slot].w;`,
-      `\t\tconst u8* src = ${name}_Metas[slot].tiles + ((u16)frames[slot] * ${name}_Metas[slot].cells);`,
+      '\t\t// Clamped, because `frames` belongs to the caller and an',
+      '\t\t// uninitialised global is boot garbage on a ROM target, not zero.',
+      '\t\t// Unclamped, a stray index reads a whole frame past the end of the',
+      '\t\t// table and draws whatever followed in ROM — deterministically, so',
+      '\t\t// it looks like art rather than like a bug.',
+      `\t\tu8 f = frames[slot];`,
+      `\t\tif(f >= ${name}_Metas[slot].frames) f = 0;`,
+      `\t\tconst u8* src = ${name}_Metas[slot].tiles + ((u16)f * ${name}_Metas[slot].cells);`,
       `\t\tfor(u8 row = 0; row < ${name}_Metas[slot].h; ++row)`,
       '\t\t{',
       '\t\t\tu8 col = 0;',
@@ -954,10 +964,11 @@ function bitmapPlacementHelperC(doc: MapDoc, name: string): HelperC {
       "// Mirrored from each meta-tile's own file, so this compiles without",
       '// including their headers. `masked` is whether its cells blit with',
       '// transparency.',
-      `static const struct { const u8* tiles; u8 w; u8 h; u8 cells; u8 masked; } ${name}_Metas[${prefix}_METAS] = {`,
+      `static const struct { const u8* tiles; u8 w; u8 h; u8 cells; u8 frames; u8 masked; } ${name}_Metas[${prefix}_METAS] = {`,
       ...doc.metas.map(
         (meta) =>
-          `\t{ ${meta.name}, ${meta.width}, ${meta.height}, ${meta.width * meta.height}, ${meta.masked ? 1 : 0} },`
+          `\t{ ${meta.name}, ${meta.width}, ${meta.height}, ${meta.width * meta.height}, ` +
+          `${meta.frames}, ${meta.masked ? 1 : 0} },`
       ),
       '};',
       '',
@@ -971,7 +982,14 @@ function bitmapPlacementHelperC(doc: MapDoc, name: string): HelperC {
       '\t\tu8 py = *p++;',
       '\t\tif(slot & 0x80) continue;',
       `\t\tconst u8 w = ${name}_Metas[slot].w;`,
-      `\t\tconst u8* src = ${name}_Metas[slot].tiles + ((u16)frames[slot] * ${name}_Metas[slot].cells);`,
+      '\t\t// Clamped, because `frames` belongs to the caller and an',
+      '\t\t// uninitialised global is boot garbage on a ROM target, not zero.',
+      '\t\t// Unclamped, a stray index reads a whole frame past the end of the',
+      '\t\t// table and draws whatever followed in ROM — deterministically, so',
+      '\t\t// it looks like art rather than like a bug.',
+      `\t\tu8 f = frames[slot];`,
+      `\t\tif(f >= ${name}_Metas[slot].frames) f = 0;`,
+      `\t\tconst u8* src = ${name}_Metas[slot].tiles + ((u16)f * ${name}_Metas[slot].cells);`,
       `\t\tfor(u8 row = 0; row < ${name}_Metas[slot].h; ++row)`,
       '\t\t{',
       '\t\t\tfor(u8 col = 0; col < w; ++col)',

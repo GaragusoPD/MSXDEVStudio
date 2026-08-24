@@ -502,7 +502,7 @@ describe('exporting a map whose meta mirror is stale', () => {
     const source = readFileSync(join(root, 'content/level_map.c'), 'utf-8')
     // 2x3 and flags 0x01, from the meta file — not the 2x2 / flags 0 the map held.
     expect(source).toMatch(/g_LevelMap_MetaInfo\[\]\s*=\s*\{[^}]*0x02,\s*0x03,\s*0x01/s)
-    expect(source).toContain('{ g_GroundRocksMetatiles, 2, 3, 6 },')
+    expect(source).toContain('{ g_GroundRocksMetatiles, 2, 3, 6, 1 },')
   })
 
   it('keeps the mirror when the meta file is gone, so the map still exports', () => {

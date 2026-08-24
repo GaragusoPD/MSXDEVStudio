@@ -219,7 +219,7 @@ extern const u8 g_Level_MetaInfo[];     // per slot: width, height, flags — 3 
 extern const u8 g_Level_Placements[];   // slot | baked<<7, x, y — 3 bytes each
 
 // With helpers on:
-u8 frames[G_LEVEL_METAS] = { 0 };
+u8 frames[G_LEVEL_METAS] = { 0 };              // a local: SDCC really does zero this
 g_Level_DrawLayer(g_Level_Background, 0, 0);   // the grid, one call
 g_Level_DrawPlacements(frames);                // the metas over it
 \`\`\`
@@ -227,6 +227,13 @@ g_Level_DrawPlacements(frames);                // the metas over it
 \`frames[slot]\` is the frame each meta is currently showing, so animating a
 placed meta is advancing that array and calling \`_DrawPlacements\` again. Pace
 it yourself — hold a pose for several frames rather than stepping at 50/60 Hz.
+
+**If you make \`frames\` a global, zero it explicitly** — see rule 4 under
+*Working in this project*. Nothing clears uninitialised RAM on a ROM target, and
+a stray frame index reads past the end of the meta's own table. The helper
+clamps an out-of-range index back to frame 0, so the worst case is a wrong pose
+rather than whatever byte followed in ROM — but a zeroed array is the actual
+fix.
 
 Two kinds of placement, and the difference is where the tiles are:
 
@@ -636,7 +643,7 @@ side-by-side strip, so a single \`HMMC\` uploads every frame at once. With
 helpers on you get a save/restore/blit cycle per object:
 
 \`\`\`c
-g_Hero_SwSprite hero;
+g_Hero_SwSprite hero = { 0 };   // zero it in your init if you make it a global
 g_Hero_Upload(212);                              // strip → off-screen VRAM
 g_Hero_Draw(&hero, G_HERO_WALK, x, y, 212);      // save background, then blit frame
 // each frame, before moving:
@@ -721,7 +728,25 @@ calls** — it is the fastest way to get a signature right.
    only real check on Z80 C — no runtime will catch it later.
 3. Z80 reality: no floats, 8-bit is cheaper than 16-bit, \`u8\`/\`u16\`/\`i8\`/\`i16\`
    from MSXgl's types, and globals beat locals for anything hot.
-4. When a resource looks wrong, fix it in the editor / \`res/\` file, then
+4. **On a ROM target, a global is not zero at boot.** Startup copies the
+   *initialised* data out of ROM into RAM; it does not clear the uninitialised
+   section, so a \`static u8 x;\` holds whatever that RAM held at power-on. It is
+   deterministic, which is the trap — the same garbage every run reads as a
+   logic bug rather than an uninitialised one. Zero anything you rely on being
+   zero, in your init:
+
+   \`\`\`c
+   static u8 g_Frames[G_LEVEL_METAS];
+   // ...
+   Mem_Set(0x00, g_Frames, sizeof(g_Frames));   // in Play_Init, not at the declaration
+   \`\`\`
+
+   This bites hardest exactly where rule 3 sends you: an array that is safe as
+   \`u8 frames[N] = { 0 };\` inside a function becomes unsafe the moment you hoist
+   it to a global for speed. Every emitted helper that takes a buffer you own is
+   one of these — \`_DrawPlacements\`'s \`frames\`, a software sprite's
+   \`_SwSprite\` state.
+5. When a resource looks wrong, fix it in the editor / \`res/\` file, then
    rebuild — not in \`content/\`.
 ${kit ? kitChapter(kit) : ''}`
 }

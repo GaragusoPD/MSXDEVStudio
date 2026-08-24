@@ -624,7 +624,7 @@ describe('placed meta-tiles on a map', () => {
     const header = rendered(level(), 'res/level.map.json', block)
     expect(header).toContain('extern const u8 g_Tree[];')
     expect(header).toContain('extern const u8 g_Coin[];')
-    expect(header).toContain('{ g_Tree, 2, 3, 6 },')
+    expect(header).toContain('{ g_Tree, 2, 3, 6, 4 },')
     expect(header).toContain('void g_Level_DrawPlacements(const u8* frames)')
   })
 

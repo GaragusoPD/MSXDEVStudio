@@ -162,3 +162,30 @@ describe('the guide teaches what the exporter emits', () => {
     expect(guide('1')).toContain('128')
   })
 })
+
+describe('the ROM zero-initialisation trap', () => {
+  /**
+   * Two pieces of correct advice combining into a bug: the guide says globals
+   * beat locals for anything hot, and the placement example uses a local array
+   * that SDCC really does zero. Hoist it for speed, as told, and on a ROM
+   * target it holds boot garbage — a stray frame index that reads past the end
+   * of the meta's table and draws whatever followed in ROM.
+   */
+  it('warns that a global is not zero at boot, where the advice collides', () => {
+    for (const machine of ['1', '2']) {
+      const text = guide(machine)
+      expect(text, machine).toContain('a global is not zero at boot')
+      expect(text, machine).toContain('Mem_Set')
+      // Named next to the rule that sends you there, not buried elsewhere.
+      expect(text, machine).toContain('globals beat locals for anything hot')
+    }
+  })
+
+  it('points at it from the placements section too', () => {
+    expect(guide('1')).toContain('If you make `frames` a global, zero it explicitly')
+  })
+
+  it('shows the software-sprite state zeroed, which has the same shape', () => {
+    expect(guide('2')).toContain('g_Hero_SwSprite hero = { 0 };')
+  })
+})

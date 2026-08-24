@@ -193,7 +193,7 @@ describe('placements in a bitmap mode', () => {
     const source = placementHelperC(bitmapMap(), 'g_Stage').source.join('\n')
     expect(source).toContain('VDP_OP_TIMP')
     expect(source).toContain('VDP_CommandHMMM(sx, sy, dx, dy, 16, 16);')
-    expect(source).toContain('{ tree, 2, 2, 4, 1 },')
+    expect(source).toContain('{ tree, 2, 2, 4, 4, 1 },')
   })
 
   it('still skips baked placements', () => {
@@ -209,5 +209,25 @@ describe('placements in a bitmap mode', () => {
     const doc = bitmapMap({ cell: { width: 2, height: 2, cols: 16, sc3: true } })
     expect(validateMap(doc).join(' ')).not.toContain('command engine')
     expect(placementHelperC(doc, 'g_Stage').source.join('\n')).toContain('VDP_WriteLayout_GM2')
+  })
+})
+
+describe('the placement runtime defends its caller-owned frame array', () => {
+  const withFrames = (frames: number): ReturnType<typeof normalizeMap> =>
+    placeMeta(addMetaRef(normalizeMap({ tileset: 't.tiles.json', width: 8, height: 8 }), { ...tree, frames }), 0, 0, 1, 1)
+
+  it('clamps an out-of-range frame index back to 0', () => {
+    // `frames` is the caller's array, and on a ROM target an uninitialised
+    // global holds boot garbage rather than zero. Unclamped, a stray index
+    // reads a whole frame past the end of the meta's table — deterministically,
+    // so the wrong tiles look like art. This cost a real debugging session.
+    const source = placementHelperC(withFrames(4), 'g_Level').source.join('\n')
+    expect(source).toContain('u8 f = frames[slot];')
+    expect(source).toContain('if(f >= g_Level_Metas[slot].frames) f = 0;')
+    expect(source).toContain('((u16)f * g_Level_Metas[slot].cells)')
+  })
+
+  it('carries each meta\'s frame count in the table it clamps against', () => {
+    expect(placementHelperC(withFrames(6), 'g_Level').source.join('\n')).toContain('{ tree, 2, 3, 6, 6 },')
   })
 })
