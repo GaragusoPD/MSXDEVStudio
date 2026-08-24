@@ -240,6 +240,10 @@ the grid. A placement's own \`_FLAGS_\` define is for asking what the *object*
 is — is this one solid, is it a hazard — without going through the tiles under
 it.
 
+One map places at most **128** different meta-tiles: bit 7 of the slot byte
+carries \`baked\`, so a slot is seven bits. The number of *placements* is not
+capped.
+
 ### Animated tiles
 
 There are two ways to make every coin in a level spin: change *which* tile each
@@ -508,10 +512,12 @@ g_Level_DrawLayer(g_Level_Background, 0, 0);
 Bigger tiles have no name-table shape at all: their map exports a \`_DrawRow\`
 that blits into the shadow buffer instead.
 
-**Meta-tile sets do not work over a SCREEN 3 tileset yet.** A meta map's helper
-is built on the V9938 command engine, so the export is refused rather than
-emitting \`VDP_CommandHMMM\` an MSX1 cannot run — point the map at the tileset
-directly.
+**Meta-tiles in SCREEN 3 depend on the tile size.** A **2×2** tileset makes its
+map a name-table map, so meta-tiles place there exactly as they do in SCREEN
+1/2 — including a cell holding tile 0 being skipped. Any other sc3 tile size
+blits its cells, and this machine has no command engine to blit with, so
+placements on those maps are refused at export rather than emitting
+\`VDP_CommandHMMM\` an MSX1 cannot run.
 
 ${
   msx1
@@ -570,14 +576,24 @@ one layer.
 
 Meta-tiles work in bitmap modes too (\`*.meta-btiles.json\` over a
 \`*.btiles.json\`), painted and placed the same way. The blit differs: there is
-no name table, so \`_Draw(x, y, frame, atlasY)\` and
-\`_DrawPlacements(frames, atlasY)\` copy cells out of the atlas.
+no name table, so the helpers take the atlas position and copy cells out of it.
+
+\`\`\`c
+#define G_ROCK_CELL_W      16
+#define G_ROCK_CELL_H      16
+#define G_ROCK_ATLAS_COLS  16
+#define G_ROCK_TRANSPARENT 0    // only present when the tileset nominates one
+
+g_Rock_Draw(64, 32, 0, ATLAS_Y);              // one meta, frame 0
+g_Stage_DrawPlacements(frames, ATLAS_Y);      // every live placement
+\`\`\`
 
 Two kinds of transparency, and they compose. A cell holding tile 0 is not
 blitted at all. If the tileset nominates **colour 0** as transparent, the copy
-is \`LMMM\` with \`VDP_OP_TIMP\` instead of \`HMMM\`, so colour-0 pixels *inside* a
-cell show through as well. Only colour 0 — the V9938 hardwires TIMP to it — and
-a tileset naming any other index gets an opaque copy plus a comment saying why.
+is \`VDP_CommandLMMM\` with \`VDP_OP_TIMP\` instead of \`VDP_CommandHMMM\`, so
+colour-0 pixels *inside* a cell show through as well. Only colour 0 — the V9938
+hardwires TIMP to it — and a tileset naming any other index gets an opaque copy
+plus a comment saying why.
 
 SCREEN 3 has no command engine. Its **2×2** form is a name-table map, so
 meta-tiles place there normally; any other sc3 tile size blits, and placements
@@ -649,10 +665,10 @@ Compression pays when the data was going to be copied to RAM anyway — a level
 you unpack once at startup and then read and write. Unpacking a map you meant to
 read straight out of ROM costs you the RAM you were trying to save.
 
-Meta-tiles and RLEp stack: the meta layer is just a smaller array, so it packs
-like any other. A meta map's helpers all read an **unpacked** layer, so unpack
-it once at startup rather than per call — which is what you wanted anyway, since
-a meta layer is small enough to keep in RAM and edit.
+Placed meta-tiles do not change any of this. A map's tile layers are the same
+arrays they always were and pack the same way; the \`_Placements\` table is left
+**uncompressed** on purpose — it is three bytes an entry and the runtime indexes
+straight into it, so packing it would cost a RAM copy to save almost nothing.
 
 ## Engine modules
 
