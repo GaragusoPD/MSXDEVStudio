@@ -13,7 +13,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { serializeResource } from '../../../shared/msx/resource'
-import { normalizeTiles } from '../../../shared/msx/tile'
+import { normalizeTiles, type TilesDoc } from '../../../shared/msx/tile'
 import type { TilesReorderEvent } from '../../../shared/tile-editor'
 import { resetExternalWatches } from '../editors/external-changes'
 import { useTilesetStore } from './tilesetStore'
@@ -201,7 +201,7 @@ describe('edits made outside the app', () => {
     store.onExternalChange(PATH, 'tile-tab', listener)
 
     // Exactly what `save` writes — the same serializer produced it.
-    await fileChangedOutside(PATH, serializeResource({ kind: 'tiles', doc }))
+    await fileChangedOutside(PATH, serializeResource({ kind: 'tiles', doc: doc as TilesDoc }))
     expect(listener).not.toHaveBeenCalled()
     expect(store.doc(PATH)).toBe(doc)
   })

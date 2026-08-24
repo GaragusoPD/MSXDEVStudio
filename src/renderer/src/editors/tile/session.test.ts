@@ -47,6 +47,9 @@ beforeEach(() => {
   files = { [PATH]: bank() }
   ;(globalThis as { window?: unknown }).window = {
     api: {
+      // The tileset store registers a file watcher on load, so `on` has to
+      // exist even when a test never fires an event through it.
+      on: vi.fn(),
       invoke: vi.fn(async (channel: string, args: { path: string; content?: string }) => {
         if (channel === 'fs:read') return files[args.path] ?? ''
         if (channel === 'fs:write') {
