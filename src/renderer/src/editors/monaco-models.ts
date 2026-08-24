@@ -2,6 +2,7 @@ import * as monaco from './monaco-full'
 import { type EditorConfigRule, parseEditorConfig, resolveEditorConfig } from '../../../shared/editorconfig'
 import { languageFor } from '../../../shared/file-kind'
 import { type EditorTab, useTabsStore } from '../stores/tabsStore'
+import { watchExternalEdits } from './external-changes'
 
 const models = new Map<string, monaco.editor.ITextModel>()
 const savedVersionIds = new Map<string, number>()
@@ -56,10 +57,44 @@ async function createModel(tab: EditorTab): Promise<monaco.editor.ITextModel> {
     useTabsStore().setDirty(tab.id, dirty)
   })
   models.set(tab.id, model)
+  watchers.set(
+    tab.id,
+    watchExternalEdits(tab.id, filePath, ({ text }) => adoptExternalText(tab.id, model, text))
+  )
   return model
 }
 
+/**
+ * Takes an out-of-band edit into an open buffer.
+ *
+ * Returns false when it declined — the buffer has unsaved edits and the file
+ * has moved on, so the two have genuinely diverged and only the user can say
+ * which wins. Clobbering here would silently destroy work.
+ */
+function adoptExternalText(tabId: string, model: monaco.editor.ITextModel, text: string): boolean {
+  // Our own save comes back through the watcher; identical text means it was
+  // us. Setting it anyway would push an undo step for a no-op edit.
+  if (model.getValue() === text) return true
+  const tab = useTabsStore().tabs.find((entry) => entry.id === tabId)
+  if (tab?.dirty) {
+    useTabsStore().setDiverged(tabId, true)
+    return false
+  }
+
+  // `pushEditOperations` rather than `setValue`: it keeps the undo stack, the
+  // cursor and the folding state, so a file rewritten under you does not also
+  // scroll to the top and forget where you were.
+  model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null)
+  // Re-baselined, not dirtied: the buffer now matches the file exactly.
+  savedVersionIds.set(tabId, model.getAlternativeVersionId())
+  useTabsStore().setDirty(tabId, false)
+  useTabsStore().setDiverged(tabId, false)
+  return true
+}
+
 const pending = new Map<string, Promise<monaco.editor.ITextModel>>()
+/** One unsubscribe per open model, so a closed tab stops listening. */
+const watchers = new Map<string, () => void>()
 
 /** Gets the tab's Monaco model, creating (and loading its file content) on first use. Models persist across
  *  tab switches and across the Monaco editor component being unmounted (e.g. while viewing Welcome). */
@@ -86,9 +121,13 @@ export async function saveModel(tab: EditorTab): Promise<void> {
   await window.api.invoke('fs:write', { path: tab.filePath, content: model.getValue() })
   savedVersionIds.set(tab.id, model.getAlternativeVersionId())
   useTabsStore().setDirty(tab.id, false)
+  // Saving is how a divergence is resolved: this buffer is now the file.
+  useTabsStore().setDiverged(tab.id, false)
 }
 
 export function disposeModel(tabId: string): void {
+  watchers.get(tabId)?.()
+  watchers.delete(tabId)
   models.get(tabId)?.dispose()
   models.delete(tabId)
   savedVersionIds.delete(tabId)

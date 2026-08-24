@@ -26,6 +26,7 @@ import { normalizeTiles, type TilesDoc } from '../../../shared/msx/tile'
 import { normalizeBitmapTiles, type BitmapTilesDoc } from '../../../shared/msx/bitmap-tile'
 import { resourceKindOf, serializeResource } from '../../../shared/msx/resource'
 import type { TilesReorderEvent } from '../../../shared/tile-editor'
+import { watchExternalEdits, type ExternalChange } from '../editors/external-changes'
 import { useTabsStore } from './tabsStore'
 
 /**
@@ -70,6 +71,8 @@ export const useTilesetStore = defineStore('tileset', () => {
    * next save, and the last save would win again.
    */
   const holders = new Map<string, number>()
+  /** One unsubscribe per watched file. */
+  const watchers = new Map<string, () => void>()
 
   function doc(path: string): AnyTilesDoc | null {
     return docs.value.get(path) ?? null
@@ -110,6 +113,9 @@ export const useTilesetStore = defineStore('tileset', () => {
       logs.set(path, Array.isArray(raw.reorderLog) ? raw.reorderLog : [])
       docs.value.set(path, parsed)
       docs.value = new Map(docs.value)
+      // One watch per file, however many sessions hold it: the document is
+      // shared, so adopting an out-of-band edit once updates all of them.
+      if (!watchers.has(path)) watchers.set(path, watchExternalEdits(`tileset:${path}`, path, adopt))
       return parsed
     })().finally(() => inflight.delete(path))
     inflight.set(path, promise)
@@ -152,6 +158,38 @@ export const useTilesetStore = defineStore('tileset', () => {
     return dirty.value.has(path)
   }
 
+  /**
+   * Takes a tileset rewritten outside the app — by an agent, or a checkout.
+   *
+   * Declines while the document is dirty: an unsaved bank and a rewritten file
+   * have genuinely diverged, and discarding either without asking is worse than
+   * saying nothing happened.
+   */
+  function adopt({ path, text }: ExternalChange): boolean {
+    const current = docs.value.get(path)
+    if (!current) return true
+    // Our own save comes back through the watcher. Comparing the serialized
+    // form is exact — it is the same function that wrote the file.
+    const kind = isBitmapPath(path) ? 'btiles' : 'tiles'
+    const mine = serializeResource(
+      kind === 'btiles'
+        ? { kind, doc: current as BitmapTilesDoc }
+        : { kind, doc: current as TilesDoc }
+    )
+    if (mine === text) return true
+    if (dirty.value.has(path)) return false
+
+    const raw = (text.trim() ? JSON.parse(text) : {}) as SavedTiles
+    logs.set(path, Array.isArray(raw.reorderLog) ? raw.reorderLog : [])
+    const parsed = isBitmapPath(path) ? normalizeBitmapTiles(raw) : normalizeTiles(raw)
+    docs.value.set(path, parsed)
+    docs.value = new Map(docs.value)
+    // Source 'external' belongs to nobody, so *every* session rebases onto it —
+    // unlike a write from one editor, which the writer already has.
+    for (const listener of listeners.get(path) ?? []) listener.fn(parsed)
+    return true
+  }
+
   /** Records a tile renumbering so it survives the save. Emitting it is the caller's job. */
   function appendReorder(path: string, event: TilesReorderEvent): void {
     logs.set(path, [...(logs.get(path) ?? []), event])
@@ -184,6 +222,8 @@ export const useTilesetStore = defineStore('tileset', () => {
     }
     holders.delete(path)
     if (dirty.value.has(path)) return
+    watchers.get(path)?.()
+    watchers.delete(path)
     docs.value.delete(path)
     docs.value = new Map(docs.value)
     logs.delete(path)

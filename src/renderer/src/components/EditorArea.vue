@@ -101,6 +101,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <span
             v-if="tab.dirty"
             class="dirty-dot"
+            :class="{ diverged: tab.diverged }"
+            :title="
+              tab.diverged
+                ? 'This file changed on disk while you had unsaved edits — nothing was reloaded. Save to keep yours.'
+                : 'Unsaved changes'
+            "
           />
           <span class="label">{{ tab.title }}</span>
           <span
@@ -200,6 +206,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   border-radius: 50%;
   background: currentColor;
   flex-shrink: 0;
+}
+
+/* Diverged: the buffer and the file both moved, and neither was discarded. */
+.dirty-dot.diverged {
+  background: var(--color-error);
 }
 
 .close {

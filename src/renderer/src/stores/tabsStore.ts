@@ -10,6 +10,12 @@ export interface EditorTab {
   /** Project-root-relative path — unset for non-file tabs (e.g. Welcome). */
   filePath?: string
   dirty: boolean
+  /**
+   * The file changed on disk while this tab held unsaved edits, so the two have
+   * diverged and nothing was reloaded. Saving resolves it in the buffer's
+   * favour; reverting resolves it in the file's.
+   */
+  diverged?: boolean
   closable: boolean
 }
 
@@ -73,6 +79,11 @@ export const useTabsStore = defineStore('tabs', {
     setDirty(id: string, dirty: boolean): void {
       const tab = this.tabs.find((t) => t.id === id)
       if (tab) tab.dirty = dirty
+    },
+
+    setDiverged(id: string, diverged: boolean): void {
+      const tab = this.tabs.find((t) => t.id === id)
+      if (tab) tab.diverged = diverged
     },
 
     close(id: string): void {

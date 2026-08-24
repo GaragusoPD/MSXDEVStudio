@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { serializeResource } from '../../../shared/msx/resource'
 import { normalizeTiles } from '../../../shared/msx/tile'
 import type { TilesReorderEvent } from '../../../shared/tile-editor'
+import { resetExternalWatches } from '../editors/external-changes'
 import { useTilesetStore } from './tilesetStore'
 
 const PATH = 'res/tiles.tiles.json'
@@ -22,9 +23,19 @@ const PATH = 'res/tiles.tiles.json'
 /** What the fake filesystem holds, and what was last written to it. */
 let files: Record<string, string>
 let writes: { path: string; content: string }[]
+/** Push-event handlers the code under test registered, so tests can fire them. */
+let pushed: Record<string, ((payload: unknown) => void)[]>
+
+/** Fires `fs:changed` and waits for the watcher's debounce and its read. */
+async function fileChangedOutside(path: string, text: string): Promise<void> {
+  files[path] = text
+  for (const handler of pushed['fs:changed'] ?? []) handler({ type: 'change', path })
+  await new Promise((resolve) => setTimeout(resolve, 140))
+}
 
 function stubApi(): void {
   writes = []
+  pushed = {}
   const invoke = vi.fn(async (channel: string, args: { path: string; content?: string }) => {
     if (channel === 'fs:read') return files[args.path] ?? ''
     if (channel === 'fs:write') {
@@ -34,7 +45,10 @@ function stubApi(): void {
     }
     throw new Error(`unexpected channel ${channel}`)
   })
-  ;(globalThis as { window?: unknown }).window = { api: { invoke } }
+  const on = vi.fn((channel: string, handler: (payload: unknown) => void) => {
+    ;(pushed[channel] ??= []).push(handler)
+  })
+  ;(globalThis as { window?: unknown }).window = { api: { invoke, on } }
 }
 
 const withLog = (log: TilesReorderEvent[]): string =>
@@ -44,6 +58,7 @@ const withLog = (log: TilesReorderEvent[]): string =>
   })
 
 beforeEach(() => {
+  resetExternalWatches()
   setActivePinia(createPinia())
   files = { [PATH]: serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 4 }) }) }
   stubApi()
@@ -159,5 +174,55 @@ describe('external change', () => {
     store.release(PATH)
     store.set(PATH, { ...doc, count: 5 }, 'meta-tab')
     expect(listener).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('edits made outside the app', () => {
+  const rewritten = (count: number): string =>
+    serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count }) })
+
+  it('adopts a file rewritten on disk, and tells every session', async () => {
+    const store = useTilesetStore()
+    await store.load(PATH)
+    const listener = vi.fn()
+    store.onExternalChange(PATH, 'tile-tab', listener)
+
+    await fileChangedOutside(PATH, rewritten(9))
+    expect(store.doc(PATH)!.count).toBe(9)
+    // 'external' belongs to no editor, so even the tab that would have been the
+    // writer hears about it.
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores the app\'s own save coming back through the watcher', async () => {
+    const store = useTilesetStore()
+    const doc = await store.load(PATH)
+    const listener = vi.fn()
+    store.onExternalChange(PATH, 'tile-tab', listener)
+
+    // Exactly what `save` writes — the same serializer produced it.
+    await fileChangedOutside(PATH, serializeResource({ kind: 'tiles', doc }))
+    expect(listener).not.toHaveBeenCalled()
+    expect(store.doc(PATH)).toBe(doc)
+  })
+
+  it('never discards unsaved work — a dirty document declines', async () => {
+    const store = useTilesetStore()
+    const doc = await store.load(PATH)
+    store.set(PATH, { ...doc, count: 5 }, 'tile-tab')
+
+    await fileChangedOutside(PATH, rewritten(9))
+    // The buffer wins until the user decides; the file is not silently taken.
+    expect(store.doc(PATH)!.count).toBe(5)
+    expect(store.isDirty(PATH)).toBe(true)
+  })
+
+  it('stops listening once the last session lets go', async () => {
+    const store = useTilesetStore()
+    await store.load(PATH)
+    store.release(PATH)
+
+    await fileChangedOutside(PATH, rewritten(9))
+    expect(store.doc(PATH)).toBeNull()
   })
 })
