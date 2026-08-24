@@ -7,6 +7,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Any text file opens
+
+- **Text is the editor's default, not an allowlist.** Shell scripts, batch
+  files, `.txt`, `.yml`, `.ini`, `.gitignore`, `Makefile`, files with no
+  extension — all of these used to land on "No editor registered for this file
+  type yet", because the text editor was registered against seven hardcoded
+  extensions. A specific editor still wins where one exists; everything that is
+  not a known binary kind now opens as text.
+- Only genuinely binary types (`.rom`, `.png`, `.wav`, `.exe`, archives, fonts)
+  get nothing, and they say so instead of showing mojibake.
+- Syntax highlighting added for shell, batch, PowerShell, YAML, TOML/INI, XML,
+  HTML, CSS, JS/TS, Python and SQL. Missing from that list is not a gate — an
+  unknown extension is `plaintext` and still opens.
+
 ### Application preferences
 
 - **Preferences dialog** (File → Preferences…) for the editor and terminal font

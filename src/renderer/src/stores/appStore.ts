@@ -60,10 +60,19 @@ export const useAppStore = defineStore('app', {
       await window.api.invoke('app:quit', undefined)
     },
 
-    /** Applies a partial update locally and asks main to persist it. */
+    /**
+     * Applies a partial update locally and asks main to persist it.
+     *
+     * Sent as plain data, not as it sits in the store: anything read back off
+     * a Pinia state object is a reactive proxy, and structured clone — which is
+     * what IPC uses — refuses to copy one. A nested value is where this bites,
+     * since spreading the top level leaves the groups underneath still
+     * proxied. These are all JSON settings, so a round trip is the cheap way to
+     * be sure.
+     */
     async persist(partial: Partial<AppState>): Promise<void> {
       this.$patch(partial)
-      await window.api.invoke('app:setState', partial)
+      await window.api.invoke('app:setState', JSON.parse(JSON.stringify(partial)) as Partial<AppState>)
     },
 
     /**

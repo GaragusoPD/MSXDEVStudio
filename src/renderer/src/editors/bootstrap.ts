@@ -1,4 +1,4 @@
-import { registerEditor } from './registry'
+import { registerEditor, registerFallbackEditor } from './registry'
 import { registerMsxglCompletions } from './msxgl-completions'
 import { setupMonacoEnvironment } from './monaco-setup'
 import { useProjectStore } from '../stores/projectStore'
@@ -30,10 +30,11 @@ setupMonacoEnvironment()
 // The symbol index itself is fetched lazily, on the first completion request.
 registerMsxglCompletions()
 
-registerEditor({
-  extensions: ['c', 'h', 's', 'asm', 'json', 'md', 'markdown'],
-  component: MonacoEditorTab
-})
+// Text is the default, not a list of blessed extensions: a project holds shell
+// scripts, batch files, READMEs, .gitignore and files with no extension at all,
+// and every one of those used to land on "no editor registered". Only the
+// resource editors below and the known-binary types are exceptions.
+registerFallbackEditor({ extensions: [], component: MonacoEditorTab })
 
 // Opening the project's `.msxproj` from the explorer is the settings UI. Its
 // document is the project store rather than a per-path session, but Save is

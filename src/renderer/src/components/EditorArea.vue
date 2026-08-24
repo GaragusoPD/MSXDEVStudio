@@ -131,7 +131,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         v-else
         class="no-editor"
       >
-        No editor registered for this file type yet.
+        This looks like a binary file, so there is nothing useful to show as text.
       </div>
     </div>
   </div>
