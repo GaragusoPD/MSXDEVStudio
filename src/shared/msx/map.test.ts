@@ -7,6 +7,7 @@ import {
   normalizeMap,
   placeMeta,
   placementAt,
+  metaInfoBytes,
   placementBytes,
   placementCount,
   placementHelperC,
@@ -131,6 +132,26 @@ describe('placementBytes', () => {
     doc = placeMeta(doc, 1, 0, 2, 2)
     expect([...placementBytes(doc)]).toEqual([0, 1, 1, 0, 2, 2])
     expect(placementCount(doc)).toBe(2)
+  })
+})
+
+describe('metaInfoBytes', () => {
+  it('describes each slot in three bytes, in slot order', () => {
+    const doc = addMetaRef(withTree(), {
+      path: 'res/house.meta-tiles.json',
+      name: 'g_House',
+      width: 3,
+      height: 3,
+      frames: 1,
+      flags: 0x05
+    })
+    // withTree()'s meta is 2x3 flags 0x01; the house follows it.
+    expect([...metaInfoBytes(doc)]).toEqual([2, 3, 0x01, 3, 3, 0x05])
+  })
+
+  it('is empty for a map that uses no metas', () => {
+    const doc = normalizeMap({ tileset: 't.tiles.json', width: 8, height: 8 })
+    expect([...metaInfoBytes(doc)]).toEqual([])
   })
 })
 

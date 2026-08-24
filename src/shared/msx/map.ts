@@ -789,6 +789,23 @@ export function placementBytes(doc: MapDoc): Uint8Array {
 }
 
 /**
+ * What each meta slot *is*, rather than where its copies are: width, height and
+ * flags, three bytes a slot, indexed by the slot byte a placement carries.
+ *
+ * `_DrawPlacements` mirrors the same sizes into a private table, but this is
+ * data rather than helper C on purpose. Collision is not a drawing concern: a
+ * game that never ticks *Export ready-made C* still has to know that a house is
+ * 3x3 and solid, and reaching into each meta's own header to find that out is
+ * exactly what stops a second meta from being free to add — the include, the
+ * hand-written row, and the hand-kept agreement with this map's slot order.
+ */
+export function metaInfoBytes(doc: MapDoc): Uint8Array {
+  const out: number[] = []
+  for (const meta of doc.metas) out.push(meta.width & 0xff, meta.height & 0xff, meta.flags & 0xff)
+  return Uint8Array.from(out)
+}
+
+/**
  * The runtime side of placed meta-tiles: walk the table and draw each live one.
  *
  * Baked placements are skipped — their tiles are already in the layer the map

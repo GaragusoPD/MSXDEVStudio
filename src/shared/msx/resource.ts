@@ -26,6 +26,7 @@ import {
   normalizeMap,
   mapExport,
   mapHelperC,
+  metaInfoBytes,
   placementBytes,
   placementCount,
   placementHelperC,
@@ -432,6 +433,15 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       // Uncompressed on purpose, unlike the layers: a placement table is three
       // bytes an entry and the game indexes into it directly.
       if (placementCount(resource.doc)) {
+        // Ahead of the placements, because it describes what they index.
+        if (resource.doc.metas.length) {
+          tables.push({
+            suffix: '_MetaInfo',
+            bytes: metaInfoBytes(resource.doc),
+            perLine: 3,
+            comment: 'Per meta slot: width, height, flags — three bytes each, indexed by a placement\'s slot'
+          })
+        }
         tables.push({
           suffix: '_Placements',
           bytes: placementBytes(resource.doc),
