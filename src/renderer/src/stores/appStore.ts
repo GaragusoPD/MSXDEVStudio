@@ -28,8 +28,11 @@ export const useAppStore = defineStore('app', {
   // panel layout it belongs to rather than earning a store of its own.
   // `stateLoaded` is the same kind of thing: App.vue renders nothing until it
   // flips, so an accepted user never sees the licence gate flash past.
+  // `structuredClone`, not a spread: a spread shares every nested object with
+  // `DEFAULT_STATE`, and `$patch` merges *into* those — so the first preference
+  // anyone changed rewrote the defaults themselves, for the rest of the session.
   state: (): AppState & { bottomTab: BottomTab; stateLoaded: boolean; preferencesVisible: boolean } => ({
-    ...DEFAULT_STATE,
+    ...structuredClone(DEFAULT_STATE),
     bottomTab: 'output',
     stateLoaded: false,
     /** View state: the Preferences modal is open. Not persisted. */

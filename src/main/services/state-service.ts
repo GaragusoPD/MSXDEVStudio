@@ -37,7 +37,9 @@ export class StateService {
     try {
       if (existsSync(this.filePath)) {
         const raw = JSON.parse(readFileSync(this.filePath, 'utf-8')) as Partial<AppState>
-        const merged = { ...DEFAULT_STATE, ...raw }
+        // Cloned for the same reason the renderer's store clones: nested
+         // defaults shared with `DEFAULT_STATE` would be mutated through it.
+        const merged = { ...structuredClone(DEFAULT_STATE), ...raw }
         // A state.json written before the cap dropped to MAX_RECENT_PROJECTS
         // still holds more; trim once on load so the list is bounded now rather
         // than after the next project is opened.
@@ -46,7 +48,7 @@ export class StateService {
     } catch (error) {
       console.error('[StateService] failed to load state.json, using defaults', error)
     }
-    return { ...DEFAULT_STATE }
+    return structuredClone(DEFAULT_STATE)
   }
 
   get(): AppState {
