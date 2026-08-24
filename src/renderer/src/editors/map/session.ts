@@ -769,9 +769,13 @@ export function setBaked(session: MapSession, baked: boolean): void {
   const tiles = meta.frames[0]?.tiles ?? []
   const points: Point[] = []
   const values: number[] = []
-  for (let ty = 0; ty < ref.height; ty++) {
-    for (let tx = 0; tx < ref.width; tx++) {
-      const tile = tiles[ty * ref.width + tx] ?? 0
+  // The *meta's* geometry, not the mirror's: `tiles` is the meta's array, so
+  // only the meta's width is a valid stride into it. They agree after a
+  // refresh, and reading one with the other's stride when they do not is how a
+  // stale mirror would silently bake the wrong tiles.
+  for (let ty = 0; ty < meta.height; ty++) {
+    for (let tx = 0; tx < meta.width; tx++) {
+      const tile = tiles[ty * meta.width + tx] ?? 0
       if (tile === 0) continue
       points.push({ x: placement.x + tx, y: placement.y + ty })
       values.push(baked ? tile : 0)

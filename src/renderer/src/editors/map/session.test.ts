@@ -12,7 +12,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import { normalizeTiles } from '../../../../shared/msx/tile'
-import { doc, mapSession, pickMeta, pruneMapSessions } from './session'
+import {
+  doc,
+  mapSession,
+  pickMeta,
+  placeMetaAt,
+  pruneMapSessions,
+  selectPlacementAt,
+  setBaked,
+  undo
+} from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 
 const MAP = 'res/level.map.json'
@@ -27,7 +36,26 @@ function metaFile(exported: boolean, width = 2, height = 3): string {
   const base = createMetaTileDoc(TILES, width, height)
   return serializeResource({
     kind: 'metatiles',
-    doc: { ...base, flags: 0x01, export: exported ? defaultExport(META) : null }
+    doc: {
+      ...base,
+      frames: [{ tiles: new Array(width * height).fill(1) }],
+      flags: 0x01,
+      export: exported ? defaultExport(META) : null
+    }
+  })
+}
+
+/** Like `metaFile`, but with the middle-left cell transparent. */
+function holedMetaFile(): string {
+  const base = createMetaTileDoc(TILES, 2, 3)
+  return serializeResource({
+    kind: 'metatiles',
+    doc: {
+      ...base,
+      frames: [{ tiles: [1, 1, 0, 1, 1, 1] }],
+      flags: 0x01,
+      export: defaultExport(META)
+    }
   })
 }
 
@@ -118,5 +146,79 @@ describe('the mirror is refreshed from the files', () => {
     const session = await openMap()
     expect(doc(session).metas[0].name).toBe('g_Gone')
     expect(doc(session).layers[0].placements).toHaveLength(1)
+  })
+})
+
+describe('baking a placement into the layer', () => {
+  /** Opens a map, places the meta, and selects that placement. */
+  async function placed(): Promise<ReturnType<typeof mapSession>> {
+    const session = await openMap()
+    pickMeta(session, META)
+    placeMetaAt(session, 2, 2)
+    return session
+  }
+
+  const cell = (session: ReturnType<typeof mapSession>, x: number, y: number): number =>
+    doc(session).layers[0].data[y * doc(session).width + x]
+
+  it('writes frame 0 into the grid and marks the placement', async () => {
+    const session = await placed()
+    setBaked(session, true)
+
+    expect(doc(session).layers[0].placements[0].baked).toBe(true)
+    // The meta is 2x3 of tile 1 (see metaFile), stamped at 2,2.
+    expect(cell(session, 2, 2)).toBe(1)
+    expect(cell(session, 3, 4)).toBe(1)
+    // Outside it, untouched.
+    expect(cell(session, 1, 2)).toBe(0)
+  })
+
+  it('leaves transparent cells alone, so a hole stays a hole', async () => {
+    // A meta whose middle-left cell is transparent.
+    files[META] = holedMetaFile()
+    const session = await placed()
+    setBaked(session, true)
+
+    expect(cell(session, 2, 2)).toBe(1)
+    // The hole: tile 0 in the meta must not be written into the grid.
+    expect(cell(session, 2, 3)).toBe(0)
+  })
+
+  it('unbaking clears exactly the cells it wrote', async () => {
+    const session = await placed()
+    setBaked(session, true)
+    setBaked(session, false)
+
+    expect(doc(session).layers[0].placements[0].baked).toBeUndefined()
+    expect(cell(session, 2, 2)).toBe(0)
+    expect(cell(session, 3, 4)).toBe(0)
+  })
+
+  it('is one undo step, so baking can be taken back whole', async () => {
+    const session = await placed()
+    setBaked(session, true)
+    undo(session)
+    expect(cell(session, 2, 2)).toBe(0)
+    expect(doc(session).layers[0].placements[0].baked).toBeUndefined()
+  })
+
+  it('uses the meta\'s own geometry, not the mirror\'s, to read its tiles', async () => {
+    // A map remembering the meta as 1x1 while it is really 2x3. The refresh
+    // corrects the mirror; this pins that baking reads the array with the
+    // stride that actually indexes it.
+    files[MAP] = JSON.stringify({
+      version: 1,
+      tileset: TILES,
+      width: 8,
+      height: 8,
+      metas: [{ path: META, name: 'g_Stale', width: 1, height: 1, frames: 1, flags: 0 }],
+      layers: [{ name: 'background', placements: [{ slot: 0, x: 2, y: 2 }] }]
+    })
+    const session = await openMap()
+    selectPlacementAt(session, 2, 2)
+    setBaked(session, true)
+
+    // All six cells of the real 2x3 meta, not one cell of the remembered 1x1.
+    expect(cell(session, 3, 4)).toBe(1)
   })
 })
