@@ -27,6 +27,7 @@ import {
   placementAt,
   removePlacement,
   resizeMap,
+  type MetaRef,
   setPlacementBaked,
   type MapCell,
   type MapDoc
@@ -36,7 +37,7 @@ import type { TilesDoc } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
 import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
-import { parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { defaultExport, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { screenPixels } from '../../../../shared/msx/screen'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
 import {
@@ -272,6 +273,29 @@ async function loadMetaDocs(session: MapSession): Promise<void> {
     }
   }
   session.metaDocs = found
+  refreshMetaRefs(session)
+}
+
+/**
+ * Re-syncs the map's mirror from the meta files it references.
+ *
+ * `MetaRef` exists only because the exporter reads one resource at a time, so
+ * it is *derived* data — and derived data that is only refreshed when the user
+ * happens to re-pick a meta goes stale silently. Whenever the real documents
+ * are in hand, they win: a meta renamed, resized, or given a frame since this
+ * map was last opened is corrected here rather than exported wrong.
+ */
+function refreshMetaRefs(session: MapSession): void {
+  const current = doc(session)
+  if (!current.metas.length) return
+  let next = current
+  for (const ref of current.metas) {
+    const meta = session.metaDocs.get(ref.path)
+    if (meta) next = addMetaRef(next, refFor(ref.path, meta))
+  }
+  // Silent: this is a correction, not an edit the user made, so it must not
+  // dirty the tab or land on the undo stack.
+  if (next !== current) session.history = { ...session.history, present: next }
 }
 
 export async function reloadMetaDocs(session: MapSession): Promise<void> {
@@ -669,18 +693,7 @@ export { canRedo, canUndo }
 export function pickMeta(session: MapSession, path: string): void {
   const meta = session.metaDocs.get(path)
   if (!meta) return
-  const name = defineNameFor(path)
-  const next = addMetaRef(doc(session), {
-    path,
-    name,
-    width: meta.width,
-    height: meta.height,
-    frames: meta.frames.length,
-    flags: meta.flags,
-    // Only colour 0 can be blitted transparently — the V9938 hardwires
-    // VDP_OP_TIMP to it — so this is a yes/no, not the index itself.
-    ...(meta.transparent === 0 ? { masked: true } : {})
-  })
+  const next = addMetaRef(doc(session), refFor(path, meta))
   if (next === doc(session) && metaSlotOf(doc(session), path) < 0) {
     session.status = `A map can place ${MAX_MAP_METAS} different meta-tiles.`
     return
@@ -693,14 +706,33 @@ export function pickMeta(session: MapSession, path: string): void {
 /**
  * The C symbol a placed meta exports under.
  *
- * Taken from the file name rather than read out of the meta's own export block,
- * because a meta that has never been exported has no name yet and the map still
- * has to emit something that links. `MapMetaPicker` shows it, so a mismatch is
- * visible before the build rather than after it.
+ * Its own export block first; `defaultExport` for one that has never been set
+ * up, which is the name it will take the moment it is.
+ *
+ * This used to derive a name from the file alone, and it was wrong every time:
+ * `defaultExport` appends the resource kind, so `ground_rocks.meta-tiles.json`
+ * exports `g_GroundRocksMetatiles` while the file-name rule produced
+ * `g_GroundRocks`. The map then `extern`ed a symbol nothing defined — a link
+ * error with no file and no line, on every map that placed a meta with helpers
+ * on.
  */
-function defineNameFor(path: string): string {
-  const base = path.split(/[\\/]/).pop() ?? path
-  return `g_${base.replace(/\.meta-b?tiles\.json$/i, '').replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).map((word) => word[0].toUpperCase() + word.slice(1)).join('')}`
+function symbolFor(path: string, meta: MetaTileDoc): string {
+  return meta.export?.name || defaultExport(path).name
+}
+
+/** The mirror a map keeps of one meta — see `MetaRef`. */
+function refFor(path: string, meta: MetaTileDoc): MetaRef {
+  return {
+    path,
+    name: symbolFor(path, meta),
+    width: meta.width,
+    height: meta.height,
+    frames: meta.frames.length,
+    flags: meta.flags,
+    // Only colour 0 can be blitted transparently — the V9938 hardwires
+    // VDP_OP_TIMP to it — so this is a yes/no, not the index itself.
+    ...(meta.transparent === 0 ? { masked: true } : {})
+  }
 }
 
 export function placeMetaAt(session: MapSession, x: number, y: number): void {

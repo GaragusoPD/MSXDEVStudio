@@ -215,6 +215,7 @@ of the metas the map uses.
 #define G_LEVEL_PLACEMENTS 12
 #define G_LEVEL_META_G_TREE 0    // a name per meta, so code says the name
 #define G_LEVEL_FLAGS_G_TREE 0x01
+extern const u8 g_Level_MetaInfo[];     // per slot: width, height, flags — 3 bytes each
 extern const u8 g_Level_Placements[];   // slot | baked<<7, x, y — 3 bytes each
 
 // With helpers on:
@@ -238,7 +239,34 @@ Two kinds of placement, and the difference is where the tiles are:
 Collision still reads the tileset's \`_Flags\`, indexed by tile, for anything in
 the grid. A placement's own \`_FLAGS_\` define is for asking what the *object*
 is — is this one solid, is it a hazard — without going through the tiles under
-it.
+it. That flag belongs to the object, not to the tiles it is drawn from: those
+are shared with the rest of the map, so the meta's meaning cannot travel through
+a tile index.
+
+\`_MetaInfo\` is how a game reads that per slot instead of per name — width,
+height, flags, three bytes each, in the map's own slot order. It is a data table,
+not helper C, so it is there whether or not *Export ready-made C* is ticked:
+
+\`\`\`c
+// A RAM grid of flag bytes, from the tiles first and the objects over them.
+u8 collision[G_LEVEL_W * G_LEVEL_H];
+for(u16 i = 0; i < G_LEVEL_W * G_LEVEL_H; ++i)
+    collision[i] = g_MyTiles_Flags[g_Level_Background[i]];
+for(u8 i = 0; i < G_LEVEL_PLACEMENTS; ++i)
+{
+    const u8* p = g_Level_Placements + i * 3;
+    const u8* m = g_Level_MetaInfo + (p[0] & 0x7F) * 3;   // bit 7 is baked, not slot
+    for(u8 y = 0; y < m[1]; ++y)                          // baked or live, it still collides
+        for(u8 x = 0; x < m[0]; ++x)
+            collision[(p[2] + y) * G_LEVEL_W + p[1] + x] |= m[2];
+}
+\`\`\`
+
+Nothing there names a meta, so adding a third one is an edit in the map editor
+and no C at all. Reaching into each meta's own \`_META_W\`/\`_FLAGS\` header
+instead costs an include, a hand-written row, and a hand-kept agreement with the
+map's slot order — get that order wrong and you stamp a house where a rock goes,
+silently.
 
 One map places at most **128** different meta-tiles: bit 7 of the slot byte
 carries \`baked\`, so a slot is seven bits. The number of *placements* is not

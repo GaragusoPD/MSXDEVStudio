@@ -628,6 +628,20 @@ describe('placed meta-tiles on a map', () => {
     expect(header).toContain('void g_Level_DrawPlacements(const u8* frames)')
   })
 
+  it('emits a slot table of width, height and flags, so collision needs no meta header', () => {
+    const tables = resourceTables(level())
+    const info = tables.find((table) => table.suffix === '_MetaInfo')!
+    expect([...info.bytes]).toEqual([2, 3, 0x01, 1, 1, 0x02])
+    const header = rendered(level(), 'res/level.map.json', block)
+    expect(header).toContain('extern const unsigned char g_Level_MetaInfo[];')
+  })
+
+  it('emits the slot table with helpers off — it is data, not ready-made C', () => {
+    const header = rendered(level(), 'res/level.map.json', { ...block, helpers: false })
+    expect(header).toContain('extern const unsigned char g_Level_MetaInfo[];')
+    expect(header).not.toContain('DrawPlacements')
+  })
+
   it('skips baked placements, which the layer write already drew', () => {
     expect(rendered(level(), 'res/level.map.json', block)).toContain('if(slot & 0x80) continue;')
   })
@@ -643,6 +657,7 @@ describe('placed meta-tiles on a map', () => {
     expect(header).not.toContain('_PLACEMENTS')
     expect(header).not.toContain('DrawPlacements')
     expect(resourceTables(plain).some((table) => table.suffix === '_Placements')).toBe(false)
+    expect(resourceTables(plain).some((table) => table.suffix === '_MetaInfo')).toBe(false)
   })
 
   it('warns when a placement hangs off the edge of the grid', () => {
