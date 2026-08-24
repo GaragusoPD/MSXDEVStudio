@@ -33,6 +33,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   machine.
 - Built around a section list rather than one long form, so a future page of
   options is one entry plus one group on `Preferences`.
+- Preferences are stored with the application (`state.json` in the user data
+  directory), not with the project, so they follow the machine rather than the
+  code. **Save** and **Cancel** say which is which: edits preview live and are
+  written as you make them, and Cancel — like Escape or clicking away — puts
+  back what you had when you opened the dialog.
 
 ### Editors follow files changed outside the app
 

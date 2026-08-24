@@ -12,7 +12,7 @@
  * view): these are *this machine's* preferences and travel with the install,
  * not with the code.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { FontSetting, Preferences } from '../../../shared/ipc'
 import { useAppStore } from '../stores/appStore'
 import Modal from './Modal.vue'
@@ -39,13 +39,45 @@ const active = ref(SECTIONS[0].id)
 const fonts = ref<string[]>([])
 const loadingFonts = ref(true)
 
+/**
+ * Preferences as they were when the dialog opened.
+ *
+ * Edits apply and persist as they are made — that is what makes the font
+ * preview the real editor rather than a mock-up — so **Cancel** means "put back
+ * what I found", not "discard a pending form". A plain-data copy, because the
+ * live one is a reactive proxy that would follow the edits it is meant to
+ * remember.
+ */
+const original = JSON.parse(JSON.stringify(appStore.preferences)) as Preferences
+
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') cancel()
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', onKeydown)
   try {
     fonts.value = await window.api.invoke('app:listFonts', undefined)
   } finally {
     loadingFonts.value = false
   }
 })
+
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+
+/** Already saved on every keystroke; this only dismisses. */
+function save(): void {
+  emit('close')
+}
+
+async function cancel(): Promise<void> {
+  for (const group of Object.keys(original) as (keyof Preferences)[]) {
+    await appStore.patchPreferences(group, original[group])
+  }
+  emit('close')
+}
+
+const changed = computed(() => JSON.stringify(appStore.preferences) !== JSON.stringify(original))
 
 /** The two surfaces that carry a font today. */
 const FONT_GROUPS: { group: keyof Preferences; label: string; hint: string }[] = [
@@ -76,7 +108,7 @@ function reset(group: keyof Preferences): void {
   <Modal
     title="Preferences"
     wide
-    @close="emit('close')"
+    @close="cancel"
   >
     <div class="prefs">
       <nav class="sections">
@@ -94,7 +126,8 @@ function reset(group: keyof Preferences): void {
       <div class="panel">
         <template v-if="active === 'appearance'">
           <p class="hint">
-            Fonts apply immediately. Leave a family blank to use the theme's own.
+            Fonts apply to open editors and terminals as you type. Leave a family blank to use the
+            theme's own.
           </p>
 
           <section
@@ -161,11 +194,27 @@ function reset(group: keyof Preferences): void {
     </div>
 
     <footer class="actions">
+      <p class="saved-note">
+        <template v-if="changed">
+          Changes preview live and are already saved. <strong>Cancel</strong> puts back what you
+          had when you opened this.
+        </template>
+        <template v-else>
+          Saved with the application, not with the project — they follow this machine.
+        </template>
+      </p>
       <button
         type="button"
-        @click="emit('close')"
+        @click="cancel"
       >
-        Close
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        @click="save"
+      >
+        Save
       </button>
     </footer>
   </Modal>
@@ -271,7 +320,25 @@ input[type='number'] {
 
 .actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Takes the slack, so the buttons stay right-aligned. */
+.saved-note {
+  flex: 1;
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #000;
+  font-weight: 600;
 }
 </style>
