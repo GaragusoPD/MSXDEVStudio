@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { AppState, PanelLayout, Theme } from '../../../shared/ipc'
+import type { AppState, PanelLayout, Preferences, Theme } from '../../../shared/ipc'
 import { LICENSE_VERSION } from '../../../shared/license'
 
 const DEFAULT_STATE: AppState = {
@@ -9,7 +9,10 @@ const DEFAULT_STATE: AppState = {
   theme: 'dark',
   panelLayout: { sideVisible: true, sideWidth: 260, bottomVisible: true, bottomHeight: 220 },
   toolchain: { msxglPath: null, openmsxPath: null, nodePath: null },
-  licenseAccepted: null
+  licenseAccepted: null,
+  // null family = the theme's own, so a fresh install looks the way it always
+  // did and only a deliberate choice changes it.
+  preferences: { editor: { family: null, size: 13 }, terminal: { family: null, size: 13 } }
 }
 
 /**
@@ -25,10 +28,12 @@ export const useAppStore = defineStore('app', {
   // panel layout it belongs to rather than earning a store of its own.
   // `stateLoaded` is the same kind of thing: App.vue renders nothing until it
   // flips, so an accepted user never sees the licence gate flash past.
-  state: (): AppState & { bottomTab: BottomTab; stateLoaded: boolean } => ({
+  state: (): AppState & { bottomTab: BottomTab; stateLoaded: boolean; preferencesVisible: boolean } => ({
     ...DEFAULT_STATE,
     bottomTab: 'output',
-    stateLoaded: false
+    stateLoaded: false,
+    /** View state: the Preferences modal is open. Not persisted. */
+    preferencesVisible: false
   }),
 
   getters: {
@@ -59,6 +64,22 @@ export const useAppStore = defineStore('app', {
     async persist(partial: Partial<AppState>): Promise<void> {
       this.$patch(partial)
       await window.api.invoke('app:setState', partial)
+    },
+
+    /**
+     * Merges one preference group onto the current preferences and persists it.
+     *
+     * By group rather than by leaf: `app:setState` replaces a top-level key
+     * wholesale, so sending a half-built `preferences` would drop every other
+     * group.
+     */
+    async patchPreferences<K extends keyof Preferences>(
+      group: K,
+      partial: Partial<Preferences[K]>
+    ): Promise<void> {
+      await this.persist({
+        preferences: { ...this.preferences, [group]: { ...this.preferences[group], ...partial } }
+      })
     },
 
     /** Merges a partial layout update onto the current one and persists it. */

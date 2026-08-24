@@ -48,6 +48,7 @@ export function menuTemplate(send: (command: MenuCommand) => void): MenuItemCons
         { type: 'separator' },
         item('Project Settings', 'file.projectSettings'),
         item('Toolchain Settings', 'file.toolchainSettings'),
+        item('Preferences…', 'file.preferences'),
         { type: 'separator' },
         item('Close Tab', 'file.closeTab', 'Ctrl+W'),
         { role: 'quit', label: 'Exit' }

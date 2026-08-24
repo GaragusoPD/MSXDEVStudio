@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { applyTheme, attach, focus, refit } from '../editors/terminal/session'
+import { applyFont, applyTheme, attach, focus, refit } from '../editors/terminal/session'
 import { useAppStore } from '../stores/appStore'
 
 /** Renders one terminal session. The session itself outlives this component — see `terminal/session.ts`. */
@@ -22,6 +22,15 @@ onMounted(() => {
 })
 
 watch(() => appStore.theme, applyTheme)
+// A different cell size means a different row/column count, so the shell has to
+// be re-measured — `refit` is what tells it.
+watch(
+  () => [appStore.preferences.terminal.family, appStore.preferences.terminal.size],
+  ([family, size]) => {
+    applyFont(family as string | null, size as number)
+    if (props.id) refit(props.id)
+  }
+)
 
 onBeforeUnmount(() => {
   observer?.disconnect()

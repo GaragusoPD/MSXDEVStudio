@@ -10,6 +10,7 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { useAppStore } from '../../stores/appStore'
 
 interface TerminalSession {
   term: Terminal
@@ -48,6 +49,20 @@ function xtermTheme(): Record<string, string> {
 }
 
 /** Re-reads the theme variables into every terminal. Called when the app theme flips. */
+/**
+ * Applies the font preference to every live terminal.
+ *
+ * A null family means the theme's own, which is what a fresh install has.
+ * Callers refit afterwards: changing the cell size changes how many rows and
+ * columns fit, and the shell has to be told.
+ */
+export function applyFont(family: string | null, size: number): void {
+  for (const session of sessions.values()) {
+    session.term.options.fontFamily = family ?? cssVar('--font-mono') ?? 'monospace'
+    session.term.options.fontSize = size
+  }
+}
+
 export function applyTheme(): void {
   for (const session of sessions.values()) session.term.options.theme = xtermTheme()
 }
@@ -84,9 +99,10 @@ export function attach(id: string, parent: HTMLElement): void {
   container.style.cssText = 'width:100%;height:100%'
   parent.appendChild(container)
 
+  const prefs = useAppStore().preferences.terminal
   const term = new Terminal({
-    fontFamily: cssVar('--font-mono') || 'monospace',
-    fontSize: 13,
+    fontFamily: prefs.family ?? cssVar('--font-mono') ?? 'monospace',
+    fontSize: prefs.size,
     cursorBlink: true,
     scrollback: 10000,
     theme: xtermTheme()

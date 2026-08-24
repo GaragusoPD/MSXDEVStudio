@@ -43,11 +43,25 @@ onMounted(() => {
     tabSize: 4,
     insertSpaces: true,
     minimap: { enabled: true },
-    theme: appStore.theme === 'light' ? 'vs' : 'vs-dark'
+    theme: appStore.theme === 'light' ? 'vs' : 'vs-dark',
+    fontSize: appStore.preferences.editor.size,
+    ...(appStore.preferences.editor.family ? { fontFamily: appStore.preferences.editor.family } : {})
   })
   setMountedEditor(editor)
   void attachActiveTab()
 })
+
+// Preferences apply to the live editor, not only to the next one opened.
+watch(
+  () => [appStore.preferences.editor.family, appStore.preferences.editor.size],
+  ([family, size]) => {
+    editor?.updateOptions({
+      fontSize: size as number,
+      // Undefined, not empty string: Monaco treats '' as a family named ''.
+      fontFamily: (family as string | null) ?? undefined
+    })
+  }
+)
 
 watch(() => tabsStore.activeTabId, () => void attachActiveTab())
 watch(

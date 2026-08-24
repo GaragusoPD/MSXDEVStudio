@@ -151,6 +151,9 @@ export function runMenuCommand(command: MenuCommand): void {
     case 'file.toolchainSettings':
       showView('/settings')
       break
+    case 'file.preferences':
+      useAppStore().preferencesVisible = true
+      break
     case 'file.closeTab':
       if (tabsStore.activeTabId) closeTabWithPrompt(tabsStore.activeTabId)
       break

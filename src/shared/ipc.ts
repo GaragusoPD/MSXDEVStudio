@@ -109,6 +109,31 @@ export interface FsChangeEvent {
   path: string
 }
 
+/**
+ * One surface's typeface. `family` is null for "whatever the theme picked",
+ * which is what every install starts as — a stored family that is not installed
+ * on the next machine would silently fall back to something arbitrary, so the
+ * default has to mean *unset* rather than a name.
+ */
+export interface FontSetting {
+  family: string | null
+  size: number
+}
+
+/**
+ * User preferences, grouped by the surface they affect.
+ *
+ * Grouped rather than flat on purpose: this is where every future application
+ * option lands, and a flat bag of `editorFontSize`, `terminalFontSize`,
+ * `editorTabSize`… stops being readable at about a dozen entries. Adding a
+ * group here and a section to `PreferencesDialog` is the whole cost of a new
+ * page of settings.
+ */
+export interface Preferences {
+  editor: FontSetting
+  terminal: FontSetting
+}
+
 export interface AppState {
   windowBounds: WindowBounds
   /** Absolute path to the last opened project, if any. */
@@ -123,6 +148,7 @@ export interface AppState {
    * they never have. Anything other than the current version re-shows the gate.
    */
   licenseAccepted: string | null
+  preferences: Preferences
 }
 
 /** The currently open project, as `project:open`/`create`/`save` return it. */
@@ -282,6 +308,13 @@ export interface IpcApi {
   'app:setState': { req: Partial<AppState>; res: AppState }
   /** Declining the licence gate: there is no way into the app, so the app exits. */
   'app:quit': { req: void; res: void }
+  /**
+   * Font families installed on this machine, sorted, deduplicated. Empty when
+   * the platform query is unavailable — the dialog still lets the user type a
+   * name, so an empty list degrades to a plain text field rather than a dead
+   * control.
+   */
+  'app:listFonts': { req: void; res: string[] }
   'toolchain:getStatus': { req: void; res: ToolchainStatus }
   'toolchain:setPaths': { req: Partial<ToolchainSettings>; res: ToolchainStatus }
   'toolchain:downloadMsxgl': { req: { targetDir?: string }; res: ToolchainStatus }
@@ -430,6 +463,7 @@ export type MenuCommand =
   | 'file.saveAll'
   | 'file.projectSettings'
   | 'file.toolchainSettings'
+  | 'file.preferences'
   | 'file.closeTab'
   | 'edit.undo'
   | 'edit.redo'

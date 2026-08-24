@@ -15,6 +15,7 @@ import GitBranchPicker from './components/GitBranchPicker.vue'
 import LicenseGate from './components/LicenseGate.vue'
 import NewGameDialog from './components/NewGameDialog.vue'
 import NewProjectDialog from './components/NewProjectDialog.vue'
+import PreferencesDialog from './components/PreferencesDialog.vue'
 import StatusBar from './components/StatusBar.vue'
 import Splitter from './components/Splitter.vue'
 
@@ -132,6 +133,10 @@ onUnmounted(() => {
       <StatusBar />
       <NewProjectDialog v-if="projectStore.wizardVisible || examplesStore.forkSource" />
       <NewGameDialog v-if="projectStore.gameWizardVisible" />
+      <PreferencesDialog
+        v-if="appStore.preferencesVisible"
+        @close="appStore.preferencesVisible = false"
+      />
       <GitBranchPicker v-if="gitStore.branchPickerOpen" />
     </template>
   </div>

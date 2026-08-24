@@ -7,6 +7,32 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Application preferences
+
+- **Preferences dialog** (File → Preferences…) for the editor and terminal font
+  family and size. Changes apply to open editors and live terminals
+  immediately, and persist with the rest of the application state.
+- Font families are read from the system (`fc-list`, `system_profiler`,
+  PowerShell). The control is a text field with those as suggestions, so a
+  machine that cannot enumerate them is still fully usable — and a family blank
+  means the theme's own rather than a pinned name that may not exist on the next
+  machine.
+- Built around a section list rather than one long form, so a future page of
+  options is one entry plus one group on `Preferences`.
+
+### Editors follow files changed outside the app
+
+- An open editor now picks up edits made by something else — an agent working in
+  the project, a `git checkout`, another tool. Wired for Monaco buffers and the
+  shared tileset store.
+- The app's own saves come back through the same watcher, so each document
+  compares the incoming text against what it holds; identical means it was us.
+  A content check rather than suppressing events around a save, which would be a
+  race an agent writing mid-save falls straight through.
+- **Unsaved work is never discarded.** A dirty buffer declines the reload and its
+  tab dot turns red: the file and the buffer have diverged, and only the user can
+  say which wins. Saving resolves it.
+
 ### Meta-tiles as authored objects
 
 Design approved 2026-08-24 —

@@ -11,7 +11,10 @@ const DEFAULT_STATE: AppState = {
   theme: 'dark',
   panelLayout: { sideVisible: true, sideWidth: 260, bottomVisible: true, bottomHeight: 220 },
   toolchain: { msxglPath: null, openmsxPath: null, nodePath: null },
-  licenseAccepted: null
+  licenseAccepted: null,
+  // null family = the theme's own, so an install with no preferences saved
+  // looks exactly as it did before preferences existed.
+  preferences: { editor: { family: null, size: 13 }, terminal: { family: null, size: 13 } }
 }
 
 const SAVE_DEBOUNCE_MS = 300

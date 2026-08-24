@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { listSystemFonts } from './services/fonts'
 import { demosRoot, installDemos, planInstall } from './services/demos'
 import { aboutDetail, aboutMessage, aboutTitle } from './services/about'
 import { docsMounts, resolveDocRequest } from './services/docs'
@@ -256,6 +257,9 @@ function createWindow(): void {
 // `before-quit` flushes the state; the acceptance flag is deliberately never
 // written on decline, which is what brings the gate back on the next launch.
 ipcMain.handle('app:quit', (): void => app.quit())
+// Queried on demand rather than at startup: it shells out, and only the
+// Preferences dialog ever needs the answer.
+ipcMain.handle('app:listFonts', (): Promise<string[]> => listSystemFonts())
 
 ipcMain.handle('app:getState', (): AppState => stateService.get())
 
