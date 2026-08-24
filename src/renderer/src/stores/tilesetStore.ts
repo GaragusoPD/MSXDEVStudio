@@ -21,7 +21,7 @@
  */
 
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { shallowRef } from 'vue'
 import { normalizeTiles, type TilesDoc } from '../../../shared/msx/tile'
 import { normalizeBitmapTiles, type BitmapTilesDoc } from '../../../shared/msx/bitmap-tile'
 import { resourceKindOf, serializeResource } from '../../../shared/msx/resource'
@@ -48,8 +48,15 @@ interface Listener {
 type SavedTiles = AnyTilesDoc & { reorderLog?: TilesReorderEvent[] }
 
 export const useTilesetStore = defineStore('tileset', () => {
-  const docs = ref(new Map<string, AnyTilesDoc>())
-  const dirty = ref(new Set<string>())
+  /**
+   * `shallowRef`, not `ref`: these documents are immutable snapshots replaced
+   * wholesale, and a deep `ref` would proxy every tile of every one of them —
+   * expensive, and it hands callers a proxy rather than the object they put in,
+   * so identity comparisons (including this store's own early-return below)
+   * silently never match.
+   */
+  const docs = shallowRef(new Map<string, AnyTilesDoc>())
+  const dirty = shallowRef(new Set<string>())
   const inflight = new Map<string, Promise<AnyTilesDoc>>()
   const listeners = new Map<string, Listener[]>()
   /** Per path, the reorder log that travels beside the document on disk. */

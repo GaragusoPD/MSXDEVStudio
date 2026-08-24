@@ -222,7 +222,10 @@ export function paint(session: TileSession, points: Point[], role?: 'fg' | 'bg')
   // same as a single-tile stroke that gets interrupted.
   for (const [tile, tilePoints] of strokesByTile(session, points)) {
     if (role) {
-      session.doc = applyRoleStroke(session.doc, tile, tilePoints, role)
+      // Left button paints the row's ink, right its paper — the same model as
+      // the meta-tile editor, and the reason a second colour lands instead of
+      // raising a popover the user has to answer per pixel.
+      session.doc = applyRoleStroke(session.doc, tile, tilePoints, session.color, role)
       continue
     }
     const result = applyStroke(session.doc, tile, tilePoints, session.color)

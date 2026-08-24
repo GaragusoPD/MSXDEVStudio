@@ -70,6 +70,15 @@ editor; bitmap and multicolour modes follow in stage 2.
 
 ### Tile editor
 
+#### Changed
+
+- **Left click paints the row's ink with the selected colour, right click its
+  paper** — the same model as the meta-tile editor. The buttons used to assign a
+  pixel to whichever colours the row *already* held, ignoring the palette
+  entirely, so choosing a colour and drawing appeared to do nothing. A role
+  always has somewhere to go, so a third colour now replaces one of the two
+  rather than raising a conflict popover per pixel.
+
 #### Fixed
 
 - **Deleting a multi-tile selection** removes every tile in it, behind a single

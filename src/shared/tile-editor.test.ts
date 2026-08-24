@@ -159,41 +159,50 @@ describe('applyRoleStroke — the left/right mouse buttons', () => {
   /** Row 0 already holds two colors, which is exactly where applyStroke would conflict. */
   const twoToneRow = (): TilesDoc => sc2(0b11110000, 15, 1)
 
-  it('sets pattern bits for fg and clears them for bg, without touching colors', () => {
+  it('makes the chosen colour the row ink, and every ink pixel follows', () => {
     const before = twoToneRow()
-    const fg = applyRoleStroke(before, 0, [{ x: 5, y: 0 }], 'fg')
-    expect(fg.tiles[0].pattern[0]).toBe(0b11110100)
-    const bg = applyRoleStroke(fg, 0, [{ x: 0, y: 0 }], 'bg')
-    expect(bg.tiles[0].pattern[0]).toBe(0b01110100)
-    // The row's palette is untouched by either button.
-    expect(bg.tiles[0].color[0]).toBe(before.tiles[0].color[0])
+    const after = applyRoleStroke(before, 0, [{ x: 5, y: 0 }], 9, 'fg')
+    // The bit is set for the painted pixel...
+    expect(after.tiles[0].pattern[0]).toBe(0b11110100)
+    // ...and the row's ink is now 9, so the four pixels already inked change too.
+    // That is what two colours per row means; it is not the editor losing work.
+    expect(splitColorByte(after.tiles[0].color[0])).toEqual({ fg: 9, bg: 1 })
   })
 
-  it('never conflicts on a row that already uses two colors', () => {
-    // The same stroke through applyStroke with a third color is a conflict...
-    const conflicting = applyStroke(twoToneRow(), 0, [{ x: 5, y: 0 }], 7)
-    expect(conflicting.ok).toBe(false)
-    // ...but painting the row's own roles always succeeds.
-    expect(() => applyRoleStroke(twoToneRow(), 0, [{ x: 5, y: 0 }], 'fg')).not.toThrow()
+  it('the right button does the same for paper', () => {
+    const after = applyRoleStroke(twoToneRow(), 0, [{ x: 0, y: 0 }], 6, 'bg')
+    expect(after.tiles[0].pattern[0]).toBe(0b01110000)
+    expect(splitColorByte(after.tiles[0].color[0])).toEqual({ fg: 15, bg: 6 })
   })
 
-  it('paints each row with that row\'s own colors across a multi-row stroke', () => {
+  it('never conflicts, even where a role-less stroke would', () => {
+    // A third colour with no role has nowhere to go and raises the popover...
+    expect(applyStroke(twoToneRow(), 0, [{ x: 5, y: 0 }], 7).ok).toBe(false)
+    // ...but with a role it replaces one of the two and always lands.
+    const after = applyRoleStroke(twoToneRow(), 0, [{ x: 5, y: 0 }], 7, 'fg')
+    expect(splitColorByte(after.tiles[0].color[0]).fg).toBe(7)
+  })
+
+  it('recolours each row of a multi-row stroke independently', () => {
     let doc = normalizeTiles({
       mode: 'sc2',
       count: 1,
       tiles: [{ pattern: [0, 0, 0, 0, 0, 0, 0, 0], color: [mergeColorByte(4, 5), mergeColorByte(6, 7), 0, 0, 0, 0, 0, 0] }]
     })
-    doc = applyRoleStroke(doc, 0, [{ x: 0, y: 0 }, { x: 0, y: 1 }], 'fg')
-    // Both bits set; each pixel resolves to its own row's foreground.
-    expect(tilePixels(doc, 0)[0]).toBe(4)
-    expect(tilePixels(doc, 0)[8]).toBe(6)   // 8 px per row, so index 8 is row 1
+    doc = applyRoleStroke(doc, 0, [{ x: 0, y: 0 }, { x: 0, y: 1 }], 11, 'fg')
+    // Both pixels wear the new ink; each row carries its own pair, and only the
+    // ink half moved.
+    expect(tilePixels(doc, 0)[0]).toBe(11)
+    expect(tilePixels(doc, 0)[8]).toBe(11) // 8 px per row, so index 8 is row 1
+    expect(splitColorByte(doc.tiles[0].color[0]).bg).toBe(5)
+    expect(splitColorByte(doc.tiles[0].color[1]).bg).toBe(7)
   })
 
-  it('ignores points outside the tile and returns the same document when nothing changes', () => {
+  it('ignores points outside the tile, and is a no-op when nothing changes', () => {
     const doc = twoToneRow()
-    expect(applyRoleStroke(doc, 0, [{ x: -1, y: 0 }, { x: 9, y: 0 }], 'fg')).toBe(doc)
-    // x=0 is already foreground, so asking for foreground again is a no-op.
-    expect(applyRoleStroke(doc, 0, [{ x: 0, y: 0 }], 'fg')).toBe(doc)
+    expect(applyRoleStroke(doc, 0, [{ x: -1, y: 0 }, { x: 9, y: 0 }], 9, 'fg')).toBe(doc)
+    // x=0 is already ink 15, so asking for ink 15 there changes nothing.
+    expect(applyRoleStroke(doc, 0, [{ x: 0, y: 0 }], 15, 'fg')).toBe(doc)
   })
 })
 

@@ -23,7 +23,6 @@ import {
   TILE_SIZE,
   tileFromPixels,
   tilePixels,
-  setPixelRole,
   TILE_FLAG_COUNT,
   type PaintConflict,
   type TileBlock,
@@ -163,29 +162,52 @@ export function applyStroke(
 }
 
 /**
- * Paints each point with the row's own foreground or background, which is what
- * left and right mouse buttons do on the canvas. Because it only ever sets or
- * clears pattern bits it cannot introduce a third color into a row, so it has
- * no failure case and no conflict to resolve.
+ * Paints every point with `color`, as that row's foreground or background —
+ * which is what the left and right mouse buttons do on the canvas.
+ *
+ * The role *recolours* the row: left button makes `color` the row's ink, right
+ * button its paper, and every pixel already wearing that role changes with it.
+ * That is what two-colours-per-row means, and it is why this has no failure
+ * case — a role always has somewhere to go, so a third colour replaces one of
+ * the two rather than being refused.
+ *
+ * `applyStroke` is the other half of the same idea, for a stroke with no role:
+ * there a third colour has nowhere to go and raises the conflict popover.
+ *
+ * In sc1 the "row" is the whole group of eight tiles, because that is what
+ * shares a colour pair there.
  */
 export function applyRoleStroke(
   doc: TilesDoc,
   tileIndex: number,
   points: readonly Point[],
+  color: number,
   role: 'fg' | 'bg'
 ): TilesDoc {
   let current = doc
   for (const { x, y } of points.filter(inTile)) {
-    current = setPixelRole(current, tileIndex, x, y, role)
+    const result = paintPixel(current, tileIndex, x, y, color, role)
+    // `paintPixel` with an explicit role always succeeds; the guard is for the
+    // type, not for a case that happens.
+    if (result.ok) current = result.doc
   }
-  return current
+  // A role always rewrites the colour byte, so `paintPixel` hands back a fresh
+  // document even when it wrote the same bytes. Returning it would make a
+  // stroke that changed nothing count as an undo step.
+  return sameTile(doc, current, tileIndex) ? doc : current
 }
 
-/**
- * Flips one of a tile's eight gameplay bits. What each bit means is the game's
- * business; the editor only stores them, which is why they are numbered rather
- * than named.
- */
+function sameTile(a: TilesDoc, b: TilesDoc, index: number): boolean {
+  const left = a.tiles[index]
+  const right = b.tiles[index]
+  if (!left || !right) return false
+  if (a.mode === 'sc1' && a.groupColors[index >> 3] !== b.groupColors[index >> 3]) return false
+  return (
+    left.pattern.every((byte, i) => byte === right.pattern[i]) &&
+    left.color.every((byte, i) => byte === right.color[i])
+  )
+}
+
 export function setTileFlagBit(doc: TilesDoc, tileIndex: number, bit: number, on: boolean): TilesDoc {
   if (tileIndex < 0 || tileIndex >= doc.flags.length || bit < 0 || bit >= TILE_FLAG_COUNT) return doc
   const mask = 1 << bit

@@ -10,9 +10,20 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { serializeResource } from '../../../../shared/msx/resource'
-import { normalizeTiles, type TileEntry } from '../../../../shared/msx/tile'
+import { colorByteAt, normalizeTiles, splitColorByte, type TileEntry } from '../../../../shared/msx/tile'
 import { onTilesReordered, type TilesReorderEvent } from '../../../../shared/tile-editor'
-import { deleteTile, deleteTiles, pruneTileSessions, tileSession, undo } from './session'
+import {
+  beginStroke,
+  deleteTile,
+  deleteTiles,
+  endStroke,
+  paint,
+  pruneTileSessions,
+  setColor,
+  tileSession,
+  undo
+} from './session'
+import { useTilesetStore } from '../../stores/tilesetStore'
 
 const PATH = 'res/main.tiles.json'
 let files: Record<string, string>
@@ -116,5 +127,66 @@ describe('deleting a selection', () => {
 
     deleteTile(session, 0)
     expect(marks(session)).toEqual([1, 2, 3, 4, 5, 6, 7])
+  })
+})
+
+describe('drawing', () => {
+  it('a left-button stroke sets the row foreground and commits once', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    setColor(session, 9)
+
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    paint(session, [{ x: 1, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(splitColorByte(colorByteAt(session.doc, session.active, 0)).fg).toBe(9)
+    // The whole drag is one undo step.
+    undo(session)
+    expect(splitColorByte(colorByteAt(session.doc, session.active, 0)).fg).not.toBe(9)
+  })
+
+  it('a right-button stroke sets the row background', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    setColor(session, 6)
+
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'bg')
+    endStroke(session, 'paint')
+
+    expect(splitColorByte(colorByteAt(session.doc, session.active, 0)).bg).toBe(6)
+  })
+
+  it('changing colour mid-drawing keeps working, as in the meta editor', async () => {
+    const session = tileSession(PATH)
+    await settled()
+
+    setColor(session, 15)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    setColor(session, 4)
+    beginStroke(session)
+    paint(session, [{ x: 1, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.conflict).toBeNull()
+    expect(splitColorByte(colorByteAt(session.doc, session.active, 0)).fg).toBe(4)
+  })
+
+  it('publishes the edit to the shared store, so a meta editor sees it', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    setColor(session, 9)
+
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(useTilesetStore().patternDoc(PATH)).toBe(session.doc)
+    expect(session.dirty).toBe(true)
   })
 })
