@@ -23,12 +23,15 @@ import {
   undo
 } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
+import { resetExternalWatches } from '../external-changes'
 
 const MAP = 'res/level.map.json'
 const TILES = 'res/main.tiles.json'
 const META = 'res/ground_rocks.meta-tiles.json'
 
 let files: Record<string, string>
+/** Push-event handlers the session registered, so tests can fire fs:changed. */
+let pushed: Record<string, ((payload: unknown) => void)[]>
 const settled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 /** A meta file, optionally with an export block naming its table. */
@@ -60,15 +63,19 @@ function holedMetaFile(): string {
 }
 
 beforeEach(() => {
+  resetExternalWatches()
   setActivePinia(createPinia())
   files = {
     [MAP]: JSON.stringify({ version: 1, tileset: TILES, width: 8, height: 8 }),
     [TILES]: serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 4 }) }),
     [META]: metaFile(true)
   }
+  pushed = {}
   ;(globalThis as { window?: unknown }).window = {
     api: {
-      on: vi.fn(),
+      on: vi.fn((channel: string, handler: (payload: unknown) => void) => {
+        ;(pushed[channel] ??= []).push(handler)
+      }),
       invoke: vi.fn(async (channel: string, args: { path: string; content?: string }) => {
         if (channel === 'fs:read') return files[args.path] ?? ''
         if (channel === 'fs:write') {
@@ -220,5 +227,32 @@ describe('baking a placement into the layer', () => {
 
     // All six cells of the real 2x3 meta, not one cell of the remembered 1x1.
     expect(cell(session, 3, 4)).toBe(1)
+  })
+})
+
+describe('a map rewritten outside the app', () => {
+  it('is picked up while the tab is open and clean', async () => {
+    const session = await openMap()
+    expect(doc(session).width).toBe(8)
+
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 20, height: 12 })
+    for (const handler of pushed['fs:changed'] ?? []) handler({ type: 'change', path: MAP })
+    await new Promise((resolve) => setTimeout(resolve, 160))
+    for (let i = 0; i < 4; i++) await settled()
+
+    expect(doc(session).width).toBe(20)
+  })
+
+  it('is left alone while the tab has unsaved edits', async () => {
+    const session = await openMap()
+    pickMeta(session, META) // dirties it
+
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 20, height: 12 })
+    for (const handler of pushed['fs:changed'] ?? []) handler({ type: 'change', path: MAP })
+    await new Promise((resolve) => setTimeout(resolve, 160))
+    for (let i = 0; i < 4; i++) await settled()
+
+    expect(doc(session).width).toBe(8)
+    expect(session.dirty).toBe(true)
   })
 })

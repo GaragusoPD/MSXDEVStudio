@@ -20,9 +20,12 @@ import {
   type SfxHistory
 } from '../../../../shared/sfx-editor'
 import { useTabsStore } from '../../stores/tabsStore'
+import { watchResourceFile } from '../external-changes'
 
 export interface SfxSession {
   path: string
+  /** Drops this session's file watch. */
+  stopWatching: (() => void) | null
   history: SfxHistory
   loading: boolean
   error: string | null
@@ -43,6 +46,7 @@ export function sfxSession(path: string): SfxSession {
   if (existing) return existing
   const session = shallowReactive<SfxSession>({
     path,
+    stopWatching: null,
     history: createHistory(createSfxDoc()),
     loading: true,
     error: null,
@@ -54,13 +58,25 @@ export function sfxSession(path: string): SfxSession {
     status: ''
   })
   sessions.set(path, session)
+  // An agent or a checkout can rewrite this file underneath the editor.
+  // `load` is reused rather than a bespoke parse: it already does whatever
+  // fix-ups this resource needs after reading.
+  session.stopWatching = watchResourceFile(path, {
+    serialize: () => serializeResource({ kind: 'sfx', doc: doc(session) }),
+    reload: () => void load(session),
+    isDirty: () => session.dirty
+  })
   void load(session)
   return session
 }
 
 /** Drops sessions for tabs that were closed. Called by the tab component when the tab set changes. */
 export function pruneSfxSessions(openPaths: Set<string>): void {
-  for (const path of [...sessions.keys()]) if (!openPaths.has(path)) sessions.delete(path)
+  for (const path of [...sessions.keys()]) {
+    if (openPaths.has(path)) continue
+    sessions.get(path)?.stopWatching?.()
+    sessions.delete(path)
+  }
 }
 
 async function load(session: SfxSession): Promise<void> {

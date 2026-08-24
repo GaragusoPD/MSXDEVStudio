@@ -51,6 +51,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Unsaved work is never discarded.** A dirty buffer declines the reload and its
   tab dot turns red: the file and the buffer have diverged, and only the user can
   say which wins. Saving resolves it.
+- Every resource editor is now covered — maps, meta-tiles, sprites, software
+  sprites, screens, SFX, and both tileset kinds — not just text buffers. Each
+  reuses its own `load()`, so a reloaded file gets the same fix-ups it would on
+  open: a map re-reads its tileset, a screen its source image.
 
 ### Meta-tiles as authored objects
 

@@ -37,12 +37,15 @@ import {
   type SwSpritesDoc
 } from '../../../../shared/msx/swsprite'
 import { useTabsStore } from '../../stores/tabsStore'
+import { watchResourceFile } from '../external-changes'
 
 /** `bitmapToolPoints`' four, plus the eyedropper this editor adds on top of them. */
 export type SwTool = TileTool | 'pick'
 
 export interface SwSpriteSession {
   path: string
+  /** Drops this session's file watch. */
+  stopWatching: (() => void) | null
   history: History<SwSpritesDoc>
   loading: boolean
   error: string | null
@@ -75,6 +78,7 @@ export function swSpriteSession(path: string): SwSpriteSession {
   if (existing) return existing
   const session = shallowReactive<SwSpriteSession>({
     path,
+    stopWatching: null,
     history: createHistory(createSwSpritesDoc('sc3')),
     loading: true,
     error: null,
@@ -92,12 +96,24 @@ export function swSpriteSession(path: string): SwSpriteSession {
     fps: 8
   })
   sessions.set(path, session)
+  // An agent or a checkout can rewrite this file underneath the editor.
+  // `load` is reused rather than a bespoke parse: it already does whatever
+  // fix-ups this resource needs after reading.
+  session.stopWatching = watchResourceFile(path, {
+    serialize: () => serializeResource({ kind: 'swsprites', doc: session.history.present }),
+    reload: () => void load(session),
+    isDirty: () => session.dirty
+  })
   void load(session)
   return session
 }
 
 export function pruneSwSpriteSessions(openPaths: Set<string>): void {
-  for (const key of [...sessions.keys()]) if (!openPaths.has(key)) sessions.delete(key)
+  for (const key of [...sessions.keys()]) {
+    if (openPaths.has(key)) continue
+    sessions.get(key)?.stopWatching?.()
+    sessions.delete(key)
+  }
 }
 
 export function doc(session: SwSpriteSession): SwSpritesDoc {

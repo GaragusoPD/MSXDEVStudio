@@ -22,11 +22,14 @@ import {
   type SpriteTool
 } from '../../../../shared/sprite-editor'
 import { useTabsStore } from '../../stores/tabsStore'
+import { watchResourceFile } from '../external-changes'
 
 export type PlaybackBackground = 'checkered' | 'solid'
 
 export interface SpriteSession {
   path: string
+  /** Drops this session's file watch. */
+  stopWatching: (() => void) | null
   history: SpriteHistory
   loading: boolean
   error: string | null
@@ -53,6 +56,7 @@ export function spriteSession(path: string): SpriteSession {
   if (existing) return existing
   const session = shallowReactive<SpriteSession>({
     path,
+    stopWatching: null,
     history: createHistory(createSpritesDoc()),
     loading: true,
     error: null,
@@ -67,13 +71,25 @@ export function spriteSession(path: string): SpriteSession {
     status: ''
   })
   sessions.set(path, session)
+  // An agent or a checkout can rewrite this file underneath the editor.
+  // `load` is reused rather than a bespoke parse: it already does whatever
+  // fix-ups this resource needs after reading.
+  session.stopWatching = watchResourceFile(path, {
+    serialize: () => serializeResource({ kind: 'sprites', doc: session.history.present }),
+    reload: () => void load(session),
+    isDirty: () => session.dirty
+  })
   void load(session)
   return session
 }
 
 /** Drops sessions for tabs that were closed. Called by the tab component when the tab set changes. */
 export function pruneSpriteSessions(openPaths: Set<string>): void {
-  for (const path of [...sessions.keys()]) if (!openPaths.has(path)) sessions.delete(path)
+  for (const path of [...sessions.keys()]) {
+    if (openPaths.has(path)) continue
+    sessions.get(path)?.stopWatching?.()
+    sessions.delete(path)
+  }
 }
 
 async function load(session: SpriteSession): Promise<void> {

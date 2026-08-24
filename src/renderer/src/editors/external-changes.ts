@@ -108,6 +108,43 @@ export function watchExternalEdits(id: string, path: string, handler: ExternalCh
 }
 
 /**
+ * What a resource editor has to answer for its own file to be watched.
+ *
+ * Every editor session is the same shape — a document, a dirty flag, and a
+ * `load()` that already knows how to read the file and fix up whatever depends
+ * on it — so this is the contract rather than six copies of the same handler.
+ */
+export interface WatchedResource {
+  /** The document as it *would be written*, for spotting our own saves. */
+  serialize: () => string
+  /** Re-read the file. Usually the session's own `load`, which does the fixups. */
+  reload: () => void
+  isDirty: () => boolean
+  /** Told when a dirty document declined a change, so the editor can say so. */
+  onDiverged?: () => void
+}
+
+/**
+ * Watches one resource file on behalf of an editor session.
+ *
+ * `serialize` must produce exactly what that session's `saveSession` writes,
+ * sibling keys and all — otherwise the editor's own save reads back as an
+ * outside edit and reloads over the user's work.
+ */
+export function watchResourceFile(path: string, resource: WatchedResource): () => void {
+  return watchExternalEdits(`resource:${path}`, path, ({ text }) => {
+    // Our own save, arriving back through the watcher.
+    if (resource.serialize() === text) return true
+    if (resource.isDirty()) {
+      resource.onDiverged?.()
+      return false
+    }
+    resource.reload()
+    return true
+  })
+}
+
+/**
  * Test seam: forget every registration *and* the subscription itself, so the
  * next `watchExternalEdits` re-subscribes against a fresh `window.api`.
  */

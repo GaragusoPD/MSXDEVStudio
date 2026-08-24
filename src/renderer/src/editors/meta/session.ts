@@ -61,6 +61,7 @@ import {
 import { pendingReorders, samePath, type Point } from '../../../../shared/map-editor'
 import { emitTilesReordered, onTilesReordered, type TileTool, type TilesReorderEvent } from '../../../../shared/tile-editor'
 import { useTabsStore } from '../../stores/tabsStore'
+import { watchResourceFile } from '../external-changes'
 import { useTilesetStore } from '../../stores/tilesetStore'
 
 /** The one sibling key `normalizeMetaTile` ignores, kept around the parse the way maps do. */
@@ -176,6 +177,17 @@ export function metaSession(path: string): MetaSession {
     stopWatching: null
   })
   sessions.set(path, session)
+  // Byte-for-byte what `saveSession` writes, sibling key included. The tileset
+  // this meta references is watched separately, by the tileset store.
+  session.stopWatching = watchResourceFile(path, {
+    serialize: () => {
+      const content: SavedMetaTile = { ...session.history.present }
+      if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
+      return serializeResource({ kind: session.kind, doc: content })
+    },
+    reload: () => void load(session),
+    isDirty: () => session.dirty
+  })
   void load(session)
   return session
 }

@@ -73,12 +73,15 @@ import {
 import { onTilesReordered, type TilesReorderEvent } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
+import { watchResourceFile } from '../external-changes'
 
 /** `.map.json` carries the reorder-seen marker as an extra key `normalizeMap` ignores (see module header). */
 type SavedMap = MapDoc & { tilesetReorderSeen?: number }
 
 export interface MapSession {
   path: string
+  /** Drops this session's file watch. */
+  stopWatching: (() => void) | null
   history: MapHistory
   loading: boolean
   error: string | null
@@ -148,6 +151,7 @@ export function mapSession(path: string): MapSession {
   const doc = normalizeMap({})
   const session = shallowReactive<MapSession>({
     path,
+    stopWatching: null,
     history: createHistory(doc),
     loading: true,
     error: null,
@@ -178,6 +182,20 @@ export function mapSession(path: string): MapSession {
     preview: null
   })
   sessions.set(path, session)
+  // `serialize` must produce byte-for-byte what `saveSession` writes, sibling
+  // key included — otherwise the editor's own save reads back as an outside
+  // edit and reloads over the user's work.
+  session.stopWatching = watchResourceFile(path, {
+    serialize: () => {
+      // `session.history.present`, not `doc(session)`: a local `doc` shadows the
+      // accessor in this scope, and the preview is not what a save writes anyway.
+      const content: SavedMap = { ...session.history.present }
+      if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
+      return serializeResource({ kind: 'map', doc: content })
+    },
+    reload: () => void load(session),
+    isDirty: () => session.dirty
+  })
   void load(session)
   return session
 }
