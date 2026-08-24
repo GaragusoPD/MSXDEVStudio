@@ -14,17 +14,19 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { addMetaRef, normalizeMap, placeMeta, setPlacementBaked } from '../../shared/msx/map'
 import { createMetaTileDoc } from '../../shared/msx/meta-tile'
 import { paintMeta } from '../../shared/msx/meta-paint'
-import { defaultExport, renderResourceFiles, type ResourceDoc } from '../../shared/msx/resource'
+import { defaultExport, serializeResource, type ResourceDoc } from '../../shared/msx/resource'
 import { normalizeTiles } from '../../shared/msx/tile'
 import { REAL_MSXGL, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
 import { buildScript } from './build'
-import { resolveNodeBinary } from './project'
+import { resolveNodeBinary, writeGeneratedConfig } from './project'
+import { exportResourceFile, generatedSourceModules } from './resources'
+import { normalizeProject } from '../../shared/msxproj'
 
 const NODE = hasMsxgl ? resolveNodeBinary(REAL_MSXGL) : null
 const runsBuilds = hasMsxgl && NODE !== null
@@ -49,7 +51,7 @@ const cell = (ox: number, oy: number): { x: number; y: number }[] =>
  * live, one baked. Both halves of the transparency path and both kinds of
  * placement, in one build.
  */
-function fixture(): { tiles: ResourceDoc; meta: ResourceDoc; map: ResourceDoc } {
+function fixture(): Record<string, ResourceDoc> {
   let tiles = normalizeTiles({ mode: 'sc2', count: 1, reserveTile0: true })
   let meta = createMetaTileDoc('res/tree.meta-tiles.json', 2, 2)
   for (const points of [cell(0, 0), cell(8, 8)]) {
@@ -72,9 +74,22 @@ function fixture(): { tiles: ResourceDoc; meta: ResourceDoc; map: ResourceDoc } 
   map = setPlacementBaked(map, 0, 1, true)
 
   return {
-    tiles: { kind: 'tiles', doc: { ...tiles, export: { ...defaultExport('res/tiles.tiles.json'), name: 'g_Tiles', out: 'content/tiles.h' } } },
-    meta: { kind: 'metatiles', doc: { ...meta, flags: 0x01, export: { ...defaultExport('res/tree.meta-tiles.json'), name: 'g_Tree', out: 'content/tree.h', helpers: true } } },
-    map: { kind: 'map', doc: { ...map, export: { ...defaultExport('res/level.map.json'), name: 'g_Level', out: 'content/level.h', helpers: true } } }
+    'tiles.tiles': {
+      kind: 'tiles',
+      doc: { ...tiles, export: { ...defaultExport('res/tiles.tiles.json'), name: 'g_Tiles', out: 'content/tiles.h' } }
+    },
+    'tree.meta-tiles': {
+      kind: 'metatiles',
+      doc: {
+        ...meta,
+        flags: 0x01,
+        export: { ...defaultExport('res/tree.meta-tiles.json'), name: 'g_Tree', out: 'content/tree.h', helpers: true }
+      }
+    },
+    'level.map': {
+      kind: 'map',
+      doc: { ...map, export: { ...defaultExport('res/level.map.json'), name: 'g_Level', out: 'content/level.h', helpers: true } }
+    }
   }
 }
 
@@ -102,29 +117,54 @@ void main(void)
 }
 `
 
-function buildFixture(): string {
+/**
+ * Builds the fixture exactly as the IDE does, which is the part the first
+ * version of this test got wrong: it rendered the headers straight to disk and
+ * never told MSXgl about the generated `.c` files, so every symbol came back
+ * undefined and it looked like the emitted C was broken. The pre-build step —
+ * export each resource, then regenerate `project_config.js` with the modules
+ * those exports produced — is not optional scaffolding, it is how the data
+ * reaches the link.
+ */
+function buildFixture(): { output: string; root: string } {
   const root = mkdtempSync(join(scratchRoot(), 'meta-'))
   dirs.push(root)
   cpSync(join(REAL_MSXGL, 'projects/template'), root, { recursive: true })
-  rmSync(join(root, 'template.c'), { force: true })
 
-  mkdirSync(join(root, 'content'), { recursive: true })
+  // The resources, as `res/*.json` — the same files the editors write.
+  mkdirSync(join(root, 'res'), { recursive: true })
   const resources = fixture()
   for (const [name, resource] of Object.entries(resources)) {
-    const block = resource.doc.export!
-    const files = renderResourceFiles(resource, `res/${name}.json`, block)
-    const base = join(root, block.out.replace(/\.h$/, ''))
-    if (files.header) writeFileSync(`${base}.h`, files.header)
-    if (files.source) writeFileSync(`${base}.c`, files.source)
+    writeFileSync(join(root, `res/${name}.json`), serializeResource(resource))
   }
-  writeFileSync(join(root, 'template.c'), MAIN)
+
+  // Export them through the real exporter, not `renderResourceFiles` directly:
+  // that is what refreshes the map's meta mirror, so this covers the export
+  // path as well as the C it emits.
+  for (const name of Object.keys(resources)) {
+    const result = exportResourceFile(root, `res/${name}.json`, { force: true })
+    if (result.status === 'failed') throw new Error(`export ${name}: ${result.message}`)
+  }
+
+  // `main.c`, not the template's `template.c`: `writeGeneratedConfig` emits
+  // `ProjModules` the way the IDE's own wizard does, and that is the name it
+  // uses. Leaving template.c behind would compile it as well.
+  rmSync(join(root, 'template.c'), { force: true })
+  writeFileSync(join(root, 'main.c'), MAIN)
+  writeGeneratedConfig(
+    root,
+    'metatest.msxproj',
+    normalizeProject({ name: 'metatest', machine: '1', target: 'ROM_32K' }, 'metatest'),
+    generatedSourceModules(root)
+  )
 
   try {
-    return execFileSync(NODE as string, [buildScript(REAL_MSXGL), 'all'], {
+    const output = execFileSync(NODE as string, [buildScript(REAL_MSXGL), 'all'], {
       cwd: root,
       encoding: 'utf-8',
       stdio: 'pipe'
     })
+    return { output, root }
   } catch (error) {
     const spawned = error as { stdout?: string; stderr?: string }
     throw new Error(`${spawned.stdout ?? ''}\n${spawned.stderr ?? ''}`, { cause: error })
@@ -135,13 +175,17 @@ describe.runIf(runsBuilds)('the emitted meta-tile C builds against real MSXgl', 
   it(
     'a painted meta and a map that places it, live and baked',
     () => {
-      const output = buildFixture()
+      const { output, root } = buildFixture()
       // MSXgl reports a failed step in its output as well as its exit code.
       expect(output).not.toMatch(/\bError:/i)
       // The failure this test exists for: a helper calling something the engine
       // does not export links "successfully" until the linker resolves globals.
       expect(output).not.toMatch(/Undefined Global/i)
       expect(output).toMatch(/Success/)
+      // A quiet build is not the same as a ROM. Assert the artefact.
+      const rom = join(root, 'out', 'metatest.rom')
+      expect(existsSync(rom), `${rom} should exist`).toBe(true)
+      expect(statSync(rom).size).toBeGreaterThan(1024)
     },
     BUILD_TIMEOUT
   )

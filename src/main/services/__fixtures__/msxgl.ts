@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 const CANDIDATES = [
   '/home/pablo/MSXgl',
   join(homedir(), 'MSXgl'),
+  join(homedir(), 'Applications', 'MSXgl'),
   join(homedir(), 'Development', 'msx', 'MSXgl')
 ]
 
