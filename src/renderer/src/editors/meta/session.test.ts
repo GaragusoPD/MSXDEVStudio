@@ -23,6 +23,7 @@ import {
   metaSession,
   paint,
   pruneMetaSessions,
+  reserveTile0,
   saveSession,
   setColor,
   tiles,
@@ -221,5 +222,27 @@ describe('a drag is one edit, not one per sample', () => {
     expect(session.status).toMatch(/reclaimed 2 unused tiles/i)
     // The surviving tile is still the one the meta points at.
     expect(frameTileAt(doc(session), 0, 0, 0)).not.toBe(0)
+  })
+})
+
+describe('reserving tile 0 on a tileset that already holds art', () => {
+  it('refuses a full bank rather than dropping the last tile', async () => {
+    // `demo_msx1/res/intro.tiles.json` really is 256 tiles. Shifting one in
+    // means one falls off the end, and two live indices collapse onto one.
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 256, reserveTile0: false })
+    })
+    const session = metaSession(META)
+    await settled()
+    await settled()
+    const before = useTilesetStore().patternDoc(TILES)!
+
+    reserveTile0(session)
+
+    const after = useTilesetStore().patternDoc(TILES)!
+    expect(after).toBe(before)
+    expect(after.reserveTile0).toBe(false)
+    expect(session.status).toMatch(/full/i)
   })
 })

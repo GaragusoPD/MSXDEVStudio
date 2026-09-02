@@ -36,7 +36,7 @@ import {
 } from '../../../../shared/msx/meta-tile'
 import { paintBitmapMeta, paintMeta, usedTiles } from '../../../../shared/msx/meta-paint'
 import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
-import { mergeColorByte, removeTile, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
+import { MAX_TILES, mergeColorByte, removeTile, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
 import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import {
   MAX_BITMAP_TILES,
@@ -448,6 +448,10 @@ export function reserveTile0(session: MetaSession): void {
   const store = useTilesetStore()
   const tileset = store.patternDoc(session.tilesetPath)
   if (!tileset || tileset.reserveTile0) return
+  if (tileset.count >= MAX_TILES) {
+    session.status = 'The tileset is full, so tile 0 cannot be shifted out of the way. Free a tile first.'
+    return
+  }
   const used = tileset.tiles.some((tile) => tile.pattern.some((byte) => byte !== 0))
   if (
     used &&
