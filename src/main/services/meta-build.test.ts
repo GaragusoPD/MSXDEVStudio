@@ -314,6 +314,17 @@ void main(void)
 \t// VDP_SetMode does not clear the display page either.
 \tVDP_CommandHMMV(0, 0, 256, 212, 0);
 \tg_Level_DrawPlacements(frames, 212);
+\t// \`helpers: true\` also emits g_Atlas_Draw, g_Atlas_DrawBlock and
+\t// g_Rock_Draw — none of them reached by the map's own draw calls above.
+\t// A helper never called links fine even when its body references a symbol
+\t// that does not exist, so each one needs its own call here. Drawn well
+\t// below the two placements asserted at (32,32) and (48,48) so nothing
+\t// collides with that screenshot. Tile 4 is the one \`bitmapFixture\` painted
+\t// (G_ATLAS_COUNT is 5: tiles 0-3 start blank, painting grows one more).
+\tstatic const u8 block[4] = { 4, 0, 0, 4 };
+\tg_Atlas_Draw(4, 80, 100, 212);
+\tg_Atlas_DrawBlock(block, 2, 2, 120, 100, 212);
+\tg_Rock_Draw(80, 140, 0, 212);
 \twhile(1) { Halt(); }
 }
 `
