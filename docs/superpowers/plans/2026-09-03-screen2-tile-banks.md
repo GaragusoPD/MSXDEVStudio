@@ -469,7 +469,7 @@ describe('exporting a banked tileset', () => {
     })
 
   it('emits a table and a count per bank, plus the common set', () => {
-    const header = renderResource({ kind: 'tiles', doc: banked() })
+    const header = rendered({ kind: 'tiles', doc: banked() })
     expect(header).toContain('#define G_TITLE_BANK0_TILES 4')
     expect(header).toContain('#define G_TITLE_BANK1_TILES 6')
     expect(header).toContain('g_Title_Bank0_Patterns')
@@ -479,7 +479,7 @@ describe('exporting a banked tileset', () => {
   })
 
   it('each bank loads the common tail from its own offset', () => {
-    const header = renderResource({ kind: 'tiles', doc: banked() })
+    const header = rendered({ kind: 'tiles', doc: banked() })
     // Bank 0 overrides 0..3, so it still shows the common set from 4 up; bank 1
     // from 6. Loading the same slice into both would draw the wrong art.
     expect(header).toContain('VDP_LoadBankPattern_GM2(g_Title_Patterns + 4 * 8, G_TITLE_TILES - 4, 0, 4)')
@@ -490,15 +490,15 @@ describe('exporting a banked tileset', () => {
   it('an unbanked tileset exports exactly what it exports today', () => {
     // The feature's promise, asserted rather than assumed.
     const doc = normalizeTiles({ mode: 'sc2', count: 4, export: { name: 'g_T', format: 'c', out: 'content/t.h', helpers: true } })
-    const header = renderResource({ kind: 'tiles', doc })
+    const header = rendered({ kind: 'tiles', doc })
     expect(header).not.toContain('Bank')
     expect(header).not.toContain('LoadBankPattern')
   })
 })
 ```
 
-Use whatever helper `resource.test.ts` already uses to render a resource to text;
-if it is named differently from `renderResource`, use that name throughout.
+`rendered(...)` is the helper this file already defines at
+`src/shared/msx/resource.test.ts:45`, wrapping `renderResourceFiles`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
