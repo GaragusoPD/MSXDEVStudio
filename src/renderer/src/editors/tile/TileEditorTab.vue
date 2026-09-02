@@ -10,9 +10,6 @@ import type { MaterialSymbol } from '@material-symbols/font-400'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
-import { mapFromLayout } from '../../../../shared/msx/map'
-import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
-import { blankTileEntry, MAX_TILES, normalizeTiles, packTiles, rebucketSc1, TILE_SIZE } from '../../../../shared/msx/tile'
 import type { TileTool, TileTransform } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -25,8 +22,8 @@ import { isTypingTarget } from '../../commands'
 import {
   canRedo,
   canUndo,
-  commit,
   copySelection,
+  importImage,
   pasteClipboard,
   pruneTileSessions,
   redo,
@@ -78,77 +75,10 @@ async function exportNow(): Promise<void> {
   await resourcesStore.exportOne(session.value.path)
 }
 
-function onImported(result: ImportResult): void {
-  const active = session.value
-  const packed = packTiles(result.indices, result.width, result.height, active.doc.mode, { dedup: importDedup.value })
-  // Replacing into a bank that already reserves tile 0 would otherwise let
-  // `normalizeTiles` blank the freshly imported top-left tile in place below —
-  // silently losing it, since `packTiles`'s own layout always starts at index
-  // 0. Prepending a blank instead shifts every tile up by one, the same
-  // migration `reserveTile0()` performs by hand, so the art survives and the
-  // layout's own indices need the same +1.
-  const keepsTile0 = importMode.value === 'replace' && active.doc.reserveTile0
-  // Read before `commit`: once that call lands, `active.doc.tiles` is the
-  // post-merge count and every index below would be offset by the wrong amount.
-  const offset = importMode.value === 'replace' ? (keepsTile0 ? 1 : 0) : active.doc.tiles.length
-  const tiles =
-    importMode.value === 'replace'
-      ? keepsTile0
-        ? [blankTileEntry(active.doc.mode), ...packed.doc.tiles]
-        : packed.doc.tiles
-      : [...active.doc.tiles, ...packed.doc.tiles].slice(0, MAX_TILES)
-  const doc = normalizeTiles({
-    ...active.doc,
-    // sc4 can adopt the converter's optimized palette; MSX1 modes keep the fixed one.
-    palette: active.doc.mode === 'sc4' ? (result.palette ?? active.doc.palette) : null,
-    count: tiles.length,
-    tiles,
-    groupColors: importMode.value === 'replace' ? packed.doc.groupColors : active.doc.groupColors
-  })
-  // sc1 shares one color pair across 8 tiles, so the prepend above moves group
-  // boundaries the same way `reserveTile0()`'s own shift does, and needs the
-  // same fix-up. `packed.doc.groupColors` — not `doc.groupColors`, which
-  // `normalizeTiles` just padded with white-on-black defaults for the group the
-  // shift added — is the pre-shift array `rebucketSc1` expects to extend from.
-  const rebucket = keepsTile0 ? rebucketSc1({ ...doc, groupColors: packed.doc.groupColors }) : null
-  const finalDoc = rebucket ? { ...doc, groupColors: rebucket.doc.groupColors } : doc
-  commit(active, finalDoc, 'import image')
-
-  // Same reason as the import dialog: without this the arrangement the
-  // conversion computed is discarded, and only the bank survives. Appending
-  // puts the new tiles after the old ones, so their indices shift with them.
-  const mapPath = active.path.replace(/\.tiles\.json$/, '.map.json')
-  const cols = Math.floor(result.width / TILE_SIZE)
-  const rows = Math.floor(result.height / TILE_SIZE)
-  const map = mapFromLayout(active.path, packed.layout, cols, rows, offset)
-  map.export = defaultExport(mapPath)
-
-  // Two distinct 256-tile failures, both silent unless reported here:
-  // `packTiles` itself may not have placed every cell (the bank it built alone
-  // already hit 256), and separately, merging into — or shifting for — an
-  // existing bank can push `layout`'s own indices past the 256-tile ceiling
-  // once `offset` is added, even though every individual index was in range.
-  const short = cols * rows - packed.layout.length
-  const overflow = map.layers[0].data.some((index) => index > 255)
-  const rebucketed = rebucket?.lossyTiles.length ?? 0
-
-  active.status =
-    `Imported ${packed.doc.count} tiles` +
-    (packed.lossyTiles.length ? ` — ${packed.lossyTiles.length} needed color reduction` : '') +
-    (rebucketed > 0
-      ? `; ${rebucketed} tile${rebucketed === 1 ? '' : 's'} at the reserved-tile-0 shift lost the color pair it was authored with`
-      : '') +
-    (short > 0 ? `; ${short} cells could not be placed (the bank filled at 256 tiles)` : '') +
-    (overflow
-      ? `; the bank is over the 256-tile limit — ${mapPath} will not export until it's reduced`
-      : '')
-
-  void window.api
-    .invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
-    .then(() => resourcesStore.refresh())
-    .catch((error) => {
-      active.status = `${active.status} — failed to write ${mapPath}: ${String(error)}`
-    })
+/** The branching logic lives in `session.ts`'s `importImage` — testable there, not here. */
+async function onImported(result: ImportResult): Promise<void> {
+  await importImage(session.value, result, importMode.value, importDedup.value)
+  await resourcesStore.refresh()
 }
 
 function onKeydown(event: KeyboardEvent): void {

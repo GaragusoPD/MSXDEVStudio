@@ -67,6 +67,23 @@ async function saveTileset(): Promise<void> {
   if (!result || !isTileMode(importer.options.mode)) return
   saving.value = true
   try {
+    const stem = targetName.value.replace(/[^A-Za-z0-9_-]/g, '') || 'imported'
+    const path = `${stem}.tiles.json`
+    const mapPath = `${stem}.map.json`
+    // `targetName` is free text, so nothing stops it from naming a resource
+    // that already exists. Check both paths before writing either — a partial
+    // write (tileset landed, map skipped, or the reverse) would leave a pair
+    // that does not match, which is its own kind of silent damage.
+    const [tilesetExists, mapExists] = await Promise.all([
+      window.api.invoke('fs:stat', { path }),
+      window.api.invoke('fs:stat', { path: mapPath })
+    ])
+    if (tilesetExists || mapExists) {
+      const blocking = [tilesetExists ? path : null, mapExists ? mapPath : null].filter(Boolean).join(' and ')
+      saved.value = `${blocking} already exist — pick a different name or remove them first.`
+      return
+    }
+
     const { doc, layout, lossyTiles } = packTiles(
       result.indices,
       result.width,
@@ -74,8 +91,6 @@ async function saveTileset(): Promise<void> {
       importer.options.mode,
       { dedup: true }
     )
-    const stem = targetName.value.replace(/[^A-Za-z0-9_-]/g, '') || 'imported'
-    const path = `${stem}.tiles.json`
     doc.export = defaultExport(path)
     await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'tiles', doc }) })
 
@@ -83,7 +98,6 @@ async function saveTileset(): Promise<void> {
     // the conversion already worked out, and without this it was discarded.
     const cols = Math.floor(result.width / TILE_SIZE)
     const rows = Math.floor(result.height / TILE_SIZE)
-    const mapPath = `${stem}.map.json`
     const map = mapFromLayout(path, layout, cols, rows)
     map.export = defaultExport(mapPath)
     await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })

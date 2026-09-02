@@ -10,13 +10,19 @@
 
 import { shallowReactive, shallowRef } from 'vue'
 import type { TileMode } from '../../../../shared/msx/modes'
+import type { ImportResult } from '../../composables/useImageImport'
+import { mapFromLayout } from '../../../../shared/msx/map'
+import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import {
+  blankTileEntry,
   blockPixels,
   createTilesDoc,
   MAX_BLOCK,
   MAX_TILES,
   convertTileMode,
   normalizeTiles,
+  packTiles,
+  regroupAfterTile0Shift,
   removeTile,
   reorderTiles,
   swapRowColors,
@@ -197,6 +203,122 @@ export function commit(session: TileSession, doc: TilesDoc, label: string, remap
   session.history = pushHistory(session.history, doc, label, remap)
   useTilesetStore().set(session.path, doc, session.path)
   markDirty(session)
+}
+
+// ── import (Spec 08's own image import) ─────────────────────────────────────
+
+/**
+ * Applies a converted image to the open tileset: packs it, commits the
+ * result, saves it, and — unless a `.map.json` already sits beside it —
+ * writes the arrangement `packTiles` computed as a map next to it.
+ *
+ * Extracted out of `TileEditorTab.vue` rather than left inline: this is
+ * exactly the kind of branching logic CLAUDE.md keeps out of a component, and
+ * `offset`'s ordering below is the likeliest silent defect in the whole
+ * import path — worth a test that would actually fail if it regressed, which
+ * a comment alone cannot give it.
+ */
+export async function importImage(
+  session: TileSession,
+  result: ImportResult,
+  mode: 'replace' | 'merge',
+  dedup: boolean
+): Promise<void> {
+  const packed = packTiles(result.indices, result.width, result.height, session.doc.mode, { dedup })
+  // Replacing into a bank that already reserves tile 0 would otherwise let
+  // `normalizeTiles` blank the freshly imported top-left tile in place below —
+  // silently losing it, since `packTiles`'s own layout always starts at index
+  // 0. Prepending a blank instead shifts every tile up by one, the same
+  // migration `reserveTile0()` performs by hand, so the art survives and the
+  // layout's own indices need the same +1.
+  const keepsTile0 = mode === 'replace' && session.doc.reserveTile0
+  // Read before `commit`, from the pre-import tile count: once commit lands,
+  // `session.doc.tiles` is the post-merge count and every index below would be
+  // offset by the wrong amount.
+  const offset = mode === 'replace' ? (keepsTile0 ? 1 : 0) : session.doc.tiles.length
+  const tiles =
+    mode === 'replace'
+      ? keepsTile0
+        ? [blankTileEntry(session.doc.mode), ...packed.doc.tiles]
+        : packed.doc.tiles
+      : [...session.doc.tiles, ...packed.doc.tiles].slice(0, MAX_TILES)
+  const doc = normalizeTiles({
+    ...session.doc,
+    // sc4 can adopt the converter's optimized palette; MSX1 modes keep the fixed one.
+    palette: session.doc.mode === 'sc4' ? (result.palette ?? session.doc.palette) : null,
+    count: tiles.length,
+    tiles,
+    groupColors: mode === 'replace' ? packed.doc.groupColors : session.doc.groupColors
+  })
+  // sc1 shares one color pair across 8 tiles, so the prepend above moves group
+  // boundaries the same way `reserveTile0()`'s own shift does, and needs the
+  // same fix-up. `packed.doc.groupColors` — not `doc.groupColors`, which
+  // `normalizeTiles` just padded with white-on-black defaults for the group the
+  // shift added — is the pre-shift array `regroupAfterTile0Shift` expects to
+  // extend from.
+  const rebucket = keepsTile0 ? regroupAfterTile0Shift({ ...doc, groupColors: packed.doc.groupColors }) : null
+  const finalDoc = rebucket ? { ...doc, groupColors: rebucket.doc.groupColors } : doc
+  commit(session, finalDoc, 'import image')
+
+  const rebucketed = rebucket?.lossyTiles.length ?? 0
+  // Two distinct 256-tile failures. `packTiles` itself may not have placed
+  // every source cell — the bank it built alone already hit 256, so `layout`
+  // is short. Separately, merging into (or shifting for) an existing bank can
+  // drop tiles `packTiles` *did* place, once the combined array is clamped
+  // back to `MAX_TILES` above — `dropped` is exactly how many, computed from
+  // the pre-clamp total (`offset + packed.doc.count`) against what survived
+  // (`doc.count`), not from a boolean "is anything out of range" guess.
+  const cols = Math.floor(result.width / TILE_SIZE)
+  const rows = Math.floor(result.height / TILE_SIZE)
+  const short = cols * rows - packed.layout.length
+  const dropped = offset + packed.doc.count - doc.count
+
+  const status =
+    `Imported ${packed.doc.count} tiles` +
+    (packed.lossyTiles.length ? ` — ${packed.lossyTiles.length} needed color reduction` : '') +
+    (rebucketed > 0
+      ? `; ${rebucketed} tile${rebucketed === 1 ? '' : 's'} at the reserved-tile-0 shift lost the color pair it was authored with`
+      : '') +
+    (short > 0 ? `; ${short} cells could not be placed (the bank filled at 256 tiles)` : '') +
+    (dropped > 0 ? `; ${dropped} tile${dropped === 1 ? '' : 's'} could not be added — the bank is full` : '')
+
+  // The map has to describe what a build will actually read — the tileset as
+  // it lands on disk, not just the in-memory doc `commit` above updated — so
+  // it must not be written until the save succeeds, and never on its own if
+  // the save fails: a map paired with the wrong tileset is worse than no map.
+  try {
+    await saveSession(session)
+  } catch (error) {
+    session.status = `${status} — failed to save the tileset, so the map was not written: ${String(error)}`
+    return
+  }
+
+  const mapPath = session.path.replace(/\.tiles\.json$/, '.map.json')
+  // A merge just to top up the bank must never silently destroy a map that
+  // was already sitting next to it: `demo_msx1/res/intro.tiles.json` ships
+  // beside a hand-authored `intro.map.json`, exactly this pairing, and this
+  // import used to overwrite it with no prompt and no undo.
+  let clobbers: unknown
+  try {
+    clobbers = await window.api.invoke('fs:stat', { path: mapPath })
+  } catch (error) {
+    // Fail safe: never write a file this could not confirm was safe to write.
+    session.status = `${status} — could not check ${mapPath}, so the map was not written: ${String(error)}`
+    return
+  }
+  if (clobbers) {
+    session.status = `${status}; ${mapPath} already exists and was left untouched`
+    return
+  }
+
+  const map = mapFromLayout(session.path, packed.layout, cols, rows, offset)
+  map.export = defaultExport(mapPath)
+  session.status = status
+  try {
+    await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
+  } catch (error) {
+    session.status = `${status} — failed to write ${mapPath}: ${String(error)}`
+  }
 }
 
 // ── painting ────────────────────────────────────────────────────────────────

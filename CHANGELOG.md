@@ -22,7 +22,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   conversion always computed which tile goes in which cell, then discarded it,
   so a SCREEN 1/2/4 import produced a tileset that could not be rearranged back
   into the image. Both import routes — the Import-image dialog and the tile
-  editor's own import — now write a `.map.json` beside the tileset. A picture
+  editor's own import — now write a `.map.json` beside the tileset, unless one
+  is already there: neither route overwrites an existing map. A picture
   needing more than 256 unique cells says how many it could not place.
 
 ### Any text file opens

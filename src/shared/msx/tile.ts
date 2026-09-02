@@ -391,7 +391,7 @@ export function packTiles(
  *
  * A no-op outside sc1, so both call sites can run it unconditionally.
  */
-export function rebucketSc1(doc: TilesDoc): { doc: TilesDoc; lossyTiles: number[] } {
+export function regroupAfterTile0Shift(doc: TilesDoc): { doc: TilesDoc; lossyTiles: number[] } {
   if (doc.mode !== 'sc1') return { doc, lossyTiles: [] }
   const groupCount = Math.ceil(doc.count / SC1_GROUP)
   const groupColors = new Array<number>(groupCount)

@@ -7,7 +7,7 @@ import {
   normalizeTiles,
   packTiles,
   paintPixel,
-  rebucketSc1,
+  regroupAfterTile0Shift,
   reorderTiles,
   rowColorViolations,
   splitColorByte,
@@ -224,7 +224,7 @@ describe('pixels ↔ bytes', () => {
   })
 })
 
-describe('rebucketSc1 — fixing up group colors after a tile-0 shift', () => {
+describe('regroupAfterTile0Shift — fixing up group colors after a tile-0 shift', () => {
   // Simulates exactly what `reserveTile0()`'s prepend-a-blank-tile shift leaves
   // behind: 16 old tiles (two groups, A and B) become 17 after the shift, but
   // `groupColors` is still the pre-shift, two-entry array — nobody has told it
@@ -239,7 +239,7 @@ describe('rebucketSc1 — fixing up group colors after a tile-0 shift', () => {
   it('flags the boundary tile lossy when the two old groups differ, and pads the new trailing group from the last', () => {
     const A = mergeColorByte(1, 2)
     const B = mergeColorByte(3, 4)
-    const { doc, lossyTiles } = rebucketSc1(shiftedTwoGroupDoc([A, B]))
+    const { doc, lossyTiles } = regroupAfterTile0Shift(shiftedTwoGroupDoc([A, B]))
     // Old index 7 (the last tile of group A) is now at new index 8 — the first
     // slot of the shifted group 1 — and renders with B, not the A it was
     // authored with. It is the *only* tile that changed: the other seven tiles
@@ -253,13 +253,13 @@ describe('rebucketSc1 — fixing up group colors after a tile-0 shift', () => {
 
   it('flags nothing when the old groups already share a pair', () => {
     const A = mergeColorByte(1, 2)
-    const { lossyTiles } = rebucketSc1(shiftedTwoGroupDoc([A, A]))
+    const { lossyTiles } = regroupAfterTile0Shift(shiftedTwoGroupDoc([A, A]))
     expect(lossyTiles).toEqual([])
   })
 
   it('is a no-op outside sc1, so both call sites can run it unconditionally', () => {
     const doc = createTilesDoc('sc2', 4)
-    const result = rebucketSc1(doc)
+    const result = regroupAfterTile0Shift(doc)
     expect(result.doc).toBe(doc)
     expect(result.lossyTiles).toEqual([])
   })

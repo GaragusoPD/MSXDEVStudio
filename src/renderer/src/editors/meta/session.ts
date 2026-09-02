@@ -40,7 +40,7 @@ import {
   blankTileEntry,
   MAX_TILES,
   mergeColorByte,
-  rebucketSc1,
+  regroupAfterTile0Shift,
   removeTile,
   TILE_SIZE,
   type TilesDoc
@@ -485,7 +485,7 @@ export function reserveTile0(session: MetaSession): void {
   // sc1 shares one color pair across 8 tiles, so the shift above moves group
   // boundaries too: the tile that lands on a new boundary can end up rendered
   // with the wrong pair unless this re-derives it. A no-op in every other mode.
-  const { doc: rebucketed, lossyTiles } = rebucketSc1(shifted)
+  const { doc: rebucketed, lossyTiles } = regroupAfterTile0Shift(shifted)
   const mapping = tileset.tiles.map((_, i) => i + 1)
   store.set(session.tilesetPath, { ...rebucketed, tiles: rebucketed.tiles.slice() }, session.path)
   const event: TilesReorderEvent = { path: session.tilesetPath, mapping, at: Date.now() }
