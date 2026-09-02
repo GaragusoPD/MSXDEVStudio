@@ -130,7 +130,13 @@ export function normalizeTiles(raw: unknown): TilesDoc {
   const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<TilesDoc>
   const mode: TileMode = isTileMode(String(input.mode)) ? (input.mode as TileMode) : 'sc2'
   const rawTiles = Array.isArray(input.tiles) ? input.tiles : []
-  const count = Math.max(1, Math.min(MAX_TILES, Number(input.count) || rawTiles.length || MAX_TILES))
+  // `count` is how many tiles the bank *holds*, not how many it could — every
+  // append lands at `count` and is refused past `MAX_TILES`. So a document with
+  // neither a count nor any tiles is an empty bank (1 tile), not a full one:
+  // defaulting to MAX_TILES here made every tileset created from `{"mode":…}`
+  // — which is exactly what the Resources panel writes — born at the ceiling,
+  // so the first stroke against it was refused as "the tileset is full".
+  const count = Math.max(1, Math.min(MAX_TILES, Number(input.count) || rawTiles.length || 1))
   const perRowColor = mode !== 'sc1'
 
   const tiles: TileEntry[] = []

@@ -384,3 +384,20 @@ describe('reserveTile0', () => {
     expect(createTilesDoc('sc2', 16, true).reserveTile0).toBe(true)
   })
 })
+
+describe('a tileset created from the Resources panel', () => {
+  it('is born empty, not full', () => {
+    // `{"mode":"sc2"}` is exactly what ResourcesPanel.createResource() writes.
+    // Defaulting `count` to MAX_TILES made the bank born at the hardware
+    // ceiling, so findOrCreateTile had nowhere to append and the meta editor
+    // refused every stroke with "the tileset is full" — against 256 blank tiles.
+    const doc = normalizeTiles({ mode: 'sc2' })
+    expect(doc.count).toBe(1)
+    expect(doc.tiles).toHaveLength(1)
+  })
+
+  it('still takes the count a real file states, or the tiles it carries', () => {
+    expect(normalizeTiles({ mode: 'sc2', count: 64 }).count).toBe(64)
+    expect(normalizeTiles({ mode: 'sc2', tiles: [{}, {}, {}] }).count).toBe(3)
+  })
+})
