@@ -4,8 +4,9 @@
 
 **Goal:** Close the two `reserveTile0` bugs the 2026-09-02 spec audit found, cover
 that function with the session tests it never had, put the bitmap placement
-runtime through a real compile and a real boot, and make the design doc's
-*Deviations* section agree with the code that shipped.
+runtime through a real compile and a real boot, make the design doc's
+*Deviations* section agree with the code that shipped, and stop the image
+importer from discarding the layout that reconstructs the imported picture.
 
 **Architecture:** Both bugs live in one function — `reserveTile0()` in
 `src/renderer/src/editors/meta/session.ts:447`. Its bitmap sibling
@@ -711,6 +712,223 @@ git commit -m "docs(meta-tiles): the design doc's deviations match what shipped"
 
 ---
 
+### Task 5: An imported image keeps the arrangement, not just the tiles
+
+Reported by Pablo on 2026-09-02, and confirmed: `packTiles` returns a `layout` —
+"the tile index per source cell, row-major", which its own docstring calls
+"exactly the name table Spec 10's map editor wants" (`tile.ts:295`) — and
+**every call site destructures it away**. `grep -rn "\.layout\b" src/renderer`
+returns nothing.
+
+The consequence is the bug as reported: convert an image to a SCREEN 1/2/4
+tileset and you get the bank, but nothing records which tile goes in which cell,
+so the picture cannot be rebuilt. The data is already computed; it is thrown on
+the floor one line after it exists.
+
+Both import routes are in scope (Pablo's call, 2026-09-02):
+
+| Call site | Today | After |
+|---|---|---|
+| `ImportImageDialog.vue:69` `saveTileset()` | writes `<name>.tiles.json` | also writes `<name>.map.json` |
+| `TileEditorTab.vue:81` `onImported()` | merges tiles into the open bank | also writes a `.map.json` beside that tileset, with the layout offset by the pre-existing tile count in **append** mode |
+
+**Files:**
+- Modify: `src/shared/msx/map.ts` (add `mapFromLayout`)
+- Modify: `src/renderer/src/components/ImportImageDialog.vue` — `saveTileset()`
+- Modify: `src/renderer/src/editors/tile/TileEditorTab.vue` — `onImported()`
+- Test: `src/shared/msx/map.test.ts`
+
+**Interfaces:**
+- Consumes: `normalizeMap(raw): MapDoc` (`map.ts:173`); `packTiles(...): PackResult` with `{ doc, layout, lossyTiles }` (`tile.ts:306`); `serializeResource`, `defaultExport` from `src/shared/msx/resource.ts`.
+- Produces: `mapFromLayout(tileset: string, layout: readonly number[], cols: number, rows: number, offset?: number): MapDoc`, used by both call sites.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `src/shared/msx/map.test.ts`, importing `mapFromLayout` from `./map`:
+
+```ts
+describe('mapFromLayout — an imported image keeps its arrangement', () => {
+  it('lays the packed layout into one background layer', () => {
+    const doc = mapFromLayout('art/hero.tiles.json', [0, 1, 2, 3, 4, 5], 3, 2)
+    expect(doc.tileset).toBe('art/hero.tiles.json')
+    expect(doc.width).toBe(3)
+    expect(doc.height).toBe(2)
+    expect(doc.layers).toHaveLength(1)
+    expect(doc.layers[0].name).toBe('background')
+    expect(doc.layers[0].data).toEqual([0, 1, 2, 3, 4, 5])
+  })
+
+  it('offsets every index, which is what an append-mode import needs', () => {
+    // The importer appended its tiles after 10 that were already there, so the
+    // layout's tile 0 is really tile 10.
+    const doc = mapFromLayout('art/hero.tiles.json', [0, 1, 0, 2], 2, 2, 10)
+    expect(doc.layers[0].data).toEqual([10, 11, 10, 12])
+  })
+
+  it('pads a short layout, because packTiles stops at the 256-tile ceiling', () => {
+    // `packTiles` breaks out mid-row when the bank fills, so `layout` can be
+    // shorter than cols*rows. The cells it never reached read as tile 0 rather
+    // than as undefined.
+    const doc = mapFromLayout('art/hero.tiles.json', [7, 8], 2, 2)
+    expect(doc.layers[0].data).toEqual([7, 8, 0, 0])
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run src/shared/msx/map.test.ts -t 'mapFromLayout'`
+
+Expected: FAIL — `mapFromLayout is not a function`.
+
+- [ ] **Step 3: Add `mapFromLayout`**
+
+In `src/shared/msx/map.ts`, beside `normalizeMap`:
+
+```ts
+/**
+ * The map that rebuilds an imported picture.
+ *
+ * `packTiles` already returns the tile index per source cell; until this
+ * existed every caller destructured that `layout` away, so converting an image
+ * to a SCREEN 1/2/4 tileset produced a bank with no record of how to arrange
+ * it. `offset` is the pre-existing tile count when the import *appended* to a
+ * bank rather than replacing it — the layout counts from the tiles it added.
+ *
+ * A short `layout` pads with tile 0: `packTiles` breaks out mid-row once the
+ * bank hits 256 tiles, and the cells it never reached have no index to give.
+ */
+export function mapFromLayout(
+  tileset: string,
+  layout: readonly number[],
+  cols: number,
+  rows: number,
+  offset = 0
+): MapDoc {
+  return normalizeMap({
+    tileset,
+    width: cols,
+    height: rows,
+    layers: [{ name: 'background', data: layout.map((tile) => tile + offset) }]
+  })
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npx vitest run src/shared/msx/map.test.ts -t 'mapFromLayout'`
+
+Expected: PASS, all three cases.
+
+- [ ] **Step 5: Write the map from the standalone import dialog**
+
+In `src/renderer/src/components/ImportImageDialog.vue`, `saveTileset()` currently
+destructures `{ doc, lossyTiles }` and writes one file. Take `layout` too and
+write the second. Replace the body between `packTiles(...)` and the `saved.value`
+assignment:
+
+```ts
+    const { doc, layout, lossyTiles } = packTiles(
+      result.indices,
+      result.width,
+      result.height,
+      importer.options.mode,
+      { dedup: true }
+    )
+    const stem = targetName.value.replace(/[^A-Za-z0-9_-]/g, '') || 'imported'
+    const path = `${stem}.tiles.json`
+    doc.export = defaultExport(path)
+    await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'tiles', doc }) })
+
+    // The tiles alone cannot rebuild the picture. `layout` is the arrangement
+    // the conversion already worked out, and without this it was discarded.
+    const cols = Math.floor(result.width / TILE_SIZE)
+    const rows = Math.floor(result.height / TILE_SIZE)
+    const mapPath = `${stem}.map.json`
+    const map = mapFromLayout(path, layout, cols, rows)
+    map.export = defaultExport(mapPath)
+    await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
+
+    const short = cols * rows - layout.length
+    saved.value =
+      `${path} — ${doc.count} tiles${lossyTiles.length ? `, ${lossyTiles.length} lossy` : ''}; ` +
+      `${mapPath} — ${cols}×${rows}` +
+      (short > 0 ? `, ${short} cells unplaced (the bank filled at 256 tiles)` : '')
+```
+
+Add to the imports at the top of that file: `mapFromLayout` from
+`../../../shared/msx/map`, and `TILE_SIZE` alongside the existing `packTiles`
+import from `../../../shared/msx/tile`.
+
+Reporting `short` matters: a picture with more than 256 unique 8×8 cells cannot
+be represented, and silently writing a map whose tail is all tile 0 would look
+like a conversion bug rather than a hardware limit.
+
+- [ ] **Step 6: Write the map from the tile editor's own import**
+
+In `src/renderer/src/editors/tile/TileEditorTab.vue`, `onImported()` merges into
+an open bank. In `replace` mode the layout is already correct; in `append` mode
+every index must shift past the tiles that were already there. Add after the
+existing `commit(active, doc, 'import image')` call:
+
+```ts
+  // Same reason as the import dialog: without this the arrangement the
+  // conversion computed is discarded, and only the bank survives. Appending
+  // puts the new tiles after the old ones, so their indices shift with them.
+  const offset = importMode.value === 'replace' ? 0 : active.doc.tiles.length
+  const mapPath = active.path.replace(/\.tiles\.json$/, '.map.json')
+  const cols = Math.floor(result.width / TILE_SIZE)
+  const rows = Math.floor(result.height / TILE_SIZE)
+  const map = mapFromLayout(active.path, packed.layout, cols, rows, offset)
+  map.export = defaultExport(mapPath)
+  void window.api
+    .invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
+    .then(() => resourcesStore.refresh())
+```
+
+`offset` is read **before** `commit`, from the pre-import `active.doc.tiles` — if
+you compute it after, it is the post-merge count and every index is wrong. Verify
+that ordering in the file you edit; move the `const offset` line above `commit`
+if the code there does not already place it so.
+
+Imports to add in this file (verified absent as of `9c8b445`): `mapFromLayout`
+from `../../../../shared/msx/map`; `TILE_SIZE` onto the existing
+`../../../../shared/msx/tile` clause (line 13, which already brings in
+`MAX_TILES, normalizeTiles, packTiles`); and `defaultExport, serializeResource`
+from `../../../../shared/msx/resource`, which this file does not import at all
+yet. `resourcesStore` is already in scope (line 39) and `session.value.path` is
+already used (line 76), so `active.path` needs nothing new.
+
+- [ ] **Step 7: Run the gate**
+
+Run: `npm run check && npx vitest run src/shared/msx/map.test.ts src/shared/msx/tile.test.ts src/renderer/src/editors src/renderer/src/stores`
+
+Expected: lint and both typechecks clean, all suites green.
+
+- [ ] **Step 8: Update the CHANGELOG**
+
+Add to the `### Fixed` section Task 4 created in `CHANGELOG.md`:
+
+```markdown
+- **Importing an image now keeps the picture, not just the tiles.** The
+  conversion always computed which tile goes in which cell, then discarded it,
+  so a SCREEN 1/2/4 import produced a tileset that could not be rearranged back
+  into the image. Both import routes — the Import-image dialog and the tile
+  editor's own import — now write a `.map.json` beside the tileset. A picture
+  needing more than 256 unique cells says how many it could not place.
+```
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/shared/msx/map.ts src/shared/msx/map.test.ts \
+  src/renderer/src/components/ImportImageDialog.vue \
+  src/renderer/src/editors/tile/TileEditorTab.vue CHANGELOG.md
+git commit -m "fix(import): an imported image keeps its arrangement, not just its tiles"
+```
+
+---
+
 ## Not in this plan
 
 One audit finding is not fixable by editing code: **Pablo's manual UI pass from
@@ -725,7 +943,9 @@ here changes that.
 - **Spec coverage:** every audit finding maps to a task — full-bank data loss →
   Task 1, art-instead-of-blank → Task 2, bitmap runtime never executed → Task 3,
   the unrecorded and the stale deviation → Task 4, the manual pass → *Not in this
-  plan*, with its reason.
+  plan*, with its reason. Task 5 is not from the audit: it is the discarded-layout
+  bug Pablo reported on 2026-09-02, added to this plan because it is small, is in
+  the same release, and needs the same CHANGELOG section.
 - **Placeholders:** none. Task 3 Step 4 names the two concrete failures it expects
   and where each is fixed, rather than "handle errors", and Step 5 carries the
   real openMSX path (`/home/pablo/Applications/openMSX`) rather than a
