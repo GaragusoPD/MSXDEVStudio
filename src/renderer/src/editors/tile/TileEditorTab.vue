@@ -12,7 +12,7 @@ import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import { mapFromLayout } from '../../../../shared/msx/map'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
-import { blankTileEntry, MAX_TILES, normalizeTiles, packTiles, TILE_SIZE } from '../../../../shared/msx/tile'
+import { blankTileEntry, MAX_TILES, normalizeTiles, packTiles, rebucketSc1, TILE_SIZE } from '../../../../shared/msx/tile'
 import type { TileTool, TileTransform } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -105,7 +105,14 @@ function onImported(result: ImportResult): void {
     tiles,
     groupColors: importMode.value === 'replace' ? packed.doc.groupColors : active.doc.groupColors
   })
-  commit(active, doc, 'import image')
+  // sc1 shares one color pair across 8 tiles, so the prepend above moves group
+  // boundaries the same way `reserveTile0()`'s own shift does, and needs the
+  // same fix-up. `packed.doc.groupColors` — not `doc.groupColors`, which
+  // `normalizeTiles` just padded with white-on-black defaults for the group the
+  // shift added — is the pre-shift array `rebucketSc1` expects to extend from.
+  const rebucket = keepsTile0 ? rebucketSc1({ ...doc, groupColors: packed.doc.groupColors }) : null
+  const finalDoc = rebucket ? { ...doc, groupColors: rebucket.doc.groupColors } : doc
+  commit(active, finalDoc, 'import image')
 
   // Same reason as the import dialog: without this the arrangement the
   // conversion computed is discarded, and only the bank survives. Appending
@@ -123,10 +130,14 @@ function onImported(result: ImportResult): void {
   // once `offset` is added, even though every individual index was in range.
   const short = cols * rows - packed.layout.length
   const overflow = map.layers[0].data.some((index) => index > 255)
+  const rebucketed = rebucket?.lossyTiles.length ?? 0
 
   active.status =
     `Imported ${packed.doc.count} tiles` +
     (packed.lossyTiles.length ? ` — ${packed.lossyTiles.length} needed color reduction` : '') +
+    (rebucketed > 0
+      ? `; ${rebucketed} tile${rebucketed === 1 ? '' : 's'} at the reserved-tile-0 shift lost the color pair it was authored with`
+      : '') +
     (short > 0 ? `; ${short} cells could not be placed (the bank filled at 256 tiles)` : '') +
     (overflow
       ? `; the bank is over the 256-tile limit — ${mapPath} will not export until it's reduced`

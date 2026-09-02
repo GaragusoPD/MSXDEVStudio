@@ -36,7 +36,15 @@ import {
 } from '../../../../shared/msx/meta-tile'
 import { paintBitmapMeta, paintMeta, usedTiles } from '../../../../shared/msx/meta-paint'
 import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
-import { blankTileEntry, MAX_TILES, mergeColorByte, removeTile, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
+import {
+  blankTileEntry,
+  MAX_TILES,
+  mergeColorByte,
+  rebucketSc1,
+  removeTile,
+  TILE_SIZE,
+  type TilesDoc
+} from '../../../../shared/msx/tile'
 import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import {
   MAX_BITMAP_TILES,
@@ -474,12 +482,20 @@ export function reserveTile0(session: MetaSession): void {
     flags: [0, ...tileset.flags],
     blocks: tileset.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => tile + 1) }))
   }
+  // sc1 shares one color pair across 8 tiles, so the shift above moves group
+  // boundaries too: the tile that lands on a new boundary can end up rendered
+  // with the wrong pair unless this re-derives it. A no-op in every other mode.
+  const { doc: rebucketed, lossyTiles } = rebucketSc1(shifted)
   const mapping = tileset.tiles.map((_, i) => i + 1)
-  store.set(session.tilesetPath, { ...shifted, tiles: shifted.tiles.slice() }, session.path)
+  store.set(session.tilesetPath, { ...rebucketed, tiles: rebucketed.tiles.slice() }, session.path)
   const event: TilesReorderEvent = { path: session.tilesetPath, mapping, at: Date.now() }
   store.appendReorder(session.tilesetPath, event)
   emitTilesReordered(event)
-  session.status = 'Tile 0 reserved.'
+  session.status =
+    'Tile 0 reserved.' +
+    (lossyTiles.length
+      ? ` ${lossyTiles.length} tile${lossyTiles.length === 1 ? '' : 's'} at a new group boundary lost the color pair it was authored with.`
+      : '')
 }
 
 /** The tileset's own sheet — what the frame strip and the canvas draw a tile from. */

@@ -14,7 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMetaTileDoc, frameTileAt } from '../../../../shared/msx/meta-tile'
 import { serializeResource } from '../../../../shared/msx/resource'
-import { colorByteAt, normalizeTiles, splitColorByte } from '../../../../shared/msx/tile'
+import { colorByteAt, mergeColorByte, normalizeTiles, splitColorByte } from '../../../../shared/msx/tile'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import {
   beginStroke,
@@ -275,5 +275,30 @@ describe('reserving tile 0 on a tileset that already holds art', () => {
     // Nothing is destroyed: the old artwork is one slot along.
     expect(shifted.tiles[1].pattern).toEqual(new Array(8).fill(0xff))
     expect(shifted.tiles.length).toBe(5)
+  })
+
+  it('flags the group-boundary tile lossy in sc1, and says so in the status', async () => {
+    // sc1 shares one color pair across 8 tiles: 16 tiles in two groups with
+    // different pairs (A, B) become 17 after the shift, and the tile that used
+    // to be the last of group A now sits at the front of the shifted group B —
+    // rendered with B, not the A it was authored with.
+    const A = mergeColorByte(1, 2)
+    const B = mergeColorByte(3, 4)
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc1', count: 16, reserveTile0: false, groupColors: [A, B] })
+    })
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    reserveTile0(session)
+
+    const shifted = useTilesetStore().patternDoc(TILES)!
+    expect(shifted.count).toBe(17)
+    // A third group appears for the 17th tile; it has no sibling to disagree
+    // with, so it repeats group 1's pair rather than losing anything.
+    expect(shifted.groupColors).toEqual([A, B, B])
+    expect(session.status).toMatch(/lost the color pair/)
   })
 })

@@ -359,6 +359,52 @@ export function packTiles(
   return { doc, layout, lossyTiles }
 }
 
+/**
+ * Fixes up `groupColors` after prepending exactly one blank tile at index 0
+ * (`reserveTile0`'s migration, and the tile editor's own import into a bank
+ * that already reserves it) — **only** valid immediately after that specific
+ * shift, not as a general sc1 sanity check.
+ *
+ * The shift moves every old tile up by one, so group boundaries move too: new
+ * group `g` (for `g >= 1`) is the *last* tile of old group `g - 1` followed by
+ * the first seven tiles of old group `g`. Seven of eight tiles keep the pair
+ * they were authored with — `doc.groupColors[g]`, untouched, is already right
+ * for them — so this does not re-derive every tile against a chosen "first"
+ * one the way `packTiles`'s own sc1 loop does: that convention picks whichever
+ * tile sits at the group's first slot, which after this shift is always the
+ * *foreign* tile from the old group before it. Anchoring there would flag the
+ * seven tiles that already agree instead of the one that does not — the
+ * opposite of "one tile in eight" lossy. What can genuinely change is only
+ * that one carried-over tile at each new group's first slot (index `g *
+ * SC1_GROUP`): it renders with `groupColors[g]` now, not the `groupColors[g -
+ * 1]` it was authored with, so it is lossy exactly when those two differ — a
+ * fact both sides of the comparison already have, read straight off the
+ * unmodified array, no history beyond `doc` itself required.
+ *
+ * A group with no old sibling to inherit from (the bank grew past a new
+ * multiple of eight) repeats the previous group's pair: its one tile is not
+ * competing with anything, so it costs nothing.
+ *
+ * `blankTileEntry` never lands in a comparison: group 0 has no "group -1" to
+ * differ from, so the prepended blank is never counted lossy, and the 7
+ * genuine tiles behind it keep `groupColors[0]` exactly as before.
+ *
+ * A no-op outside sc1, so both call sites can run it unconditionally.
+ */
+export function rebucketSc1(doc: TilesDoc): { doc: TilesDoc; lossyTiles: number[] } {
+  if (doc.mode !== 'sc1') return { doc, lossyTiles: [] }
+  const groupCount = Math.ceil(doc.count / SC1_GROUP)
+  const groupColors = new Array<number>(groupCount)
+  for (let g = 0; g < groupCount; g++) {
+    groupColors[g] = g < doc.groupColors.length ? doc.groupColors[g] : (groupColors[g - 1] ?? 0xf1)
+  }
+  const lossyTiles: number[] = []
+  for (let g = 1; g < groupCount; g++) {
+    if (groupColors[g - 1] !== groupColors[g]) lossyTiles.push(g * SC1_GROUP)
+  }
+  return { doc: { ...doc, groupColors }, lossyTiles }
+}
+
 // ── paint with conflict resolution (the Spec 08 core) ───────────────────────
 
 export interface PaintConflict {

@@ -7,6 +7,7 @@ import {
   normalizeTiles,
   packTiles,
   paintPixel,
+  rebucketSc1,
   reorderTiles,
   rowColorViolations,
   splitColorByte,
@@ -220,6 +221,47 @@ describe('pixels ↔ bytes', () => {
     const { doc, layout } = packTiles(indices, 16, 16, 'sc2', { dedup: true })
     expect(doc.count).toBe(1)
     expect(layout).toEqual([0, 0, 0, 0])
+  })
+})
+
+describe('rebucketSc1 — fixing up group colors after a tile-0 shift', () => {
+  // Simulates exactly what `reserveTile0()`'s prepend-a-blank-tile shift leaves
+  // behind: 16 old tiles (two groups, A and B) become 17 after the shift, but
+  // `groupColors` is still the pre-shift, two-entry array — nobody has told it
+  // group boundaries moved.
+  const shiftedTwoGroupDoc = (groupColors: number[]): TilesDoc => ({
+    ...createTilesDoc('sc1', 8),
+    count: 17,
+    tiles: Array.from({ length: 17 }, () => blankTileEntry('sc1')),
+    groupColors
+  })
+
+  it('flags the boundary tile lossy when the two old groups differ, and pads the new trailing group from the last', () => {
+    const A = mergeColorByte(1, 2)
+    const B = mergeColorByte(3, 4)
+    const { doc, lossyTiles } = rebucketSc1(shiftedTwoGroupDoc([A, B]))
+    // Old index 7 (the last tile of group A) is now at new index 8 — the first
+    // slot of the shifted group 1 — and renders with B, not the A it was
+    // authored with. It is the *only* tile that changed: the other seven tiles
+    // now sharing group 1 came from old group B's first seven and still match.
+    expect(lossyTiles).toEqual([8])
+    // A third group appears (17 tiles need ceil(17/8) = 3), holding only the
+    // old bank's very last tile. It has no sibling to disagree with, so it
+    // repeats the previous group's pair rather than losing anything.
+    expect(doc.groupColors).toEqual([A, B, B])
+  })
+
+  it('flags nothing when the old groups already share a pair', () => {
+    const A = mergeColorByte(1, 2)
+    const { lossyTiles } = rebucketSc1(shiftedTwoGroupDoc([A, A]))
+    expect(lossyTiles).toEqual([])
+  })
+
+  it('is a no-op outside sc1, so both call sites can run it unconditionally', () => {
+    const doc = createTilesDoc('sc2', 4)
+    const result = rebucketSc1(doc)
+    expect(result.doc).toBe(doc)
+    expect(result.lossyTiles).toEqual([])
   })
 })
 
