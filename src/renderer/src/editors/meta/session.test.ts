@@ -302,3 +302,28 @@ describe('reserving tile 0 on a tileset that already holds art', () => {
     expect(session.status).toMatch(/lost the color pair/)
   })
 })
+
+describe('a refused stroke is announced where the user is looking', () => {
+  it('sets `blocked` when the bank has no room, and clears it once one does', async () => {
+    // A full bank refuses every stroke. This went to `status` only, which the
+    // toolbar renders ellipsised at 11px and 0.8 opacity — so the message was
+    // invisible and the pencil simply looked broken.
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 256, reserveTile0: false })
+    })
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    paint(session, [{ x: 0, y: 0 }])
+    expect(session.blocked).toMatch(/full/i)
+    expect(frameTileAt(doc(session), 0, 0, 0)).toBe(0)
+
+    // Room again: the banner must go away rather than linger over a working
+    // canvas, which would be its own kind of lie.
+    useTilesetStore().set(TILES, normalizeTiles({ mode: 'sc2', count: 4 }), 'test')
+    paint(session, [{ x: 1, y: 1 }])
+    expect(session.blocked).toBeNull()
+  })
+})

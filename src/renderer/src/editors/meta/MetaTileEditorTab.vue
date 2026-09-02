@@ -240,6 +240,18 @@ watch(
       {{ session.tilesetError ?? 'Pick a tileset in the side panel before drawing.' }}
     </p>
 
+    <!--
+      A refusal stops every stroke, so it belongs where the user is looking —
+      the canvas — not in the toolbar's ellipsised status span, which is where
+      "the tileset is full" went unread while the pencil looked broken.
+    -->
+    <p
+      v-else-if="session.blocked"
+      class="banner error"
+    >
+      {{ session.blocked }}
+    </p>
+
     <div class="body">
       <div class="centre">
         <MetaCanvas :session="session" />

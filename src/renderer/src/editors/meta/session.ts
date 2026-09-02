@@ -124,6 +124,16 @@ export interface MetaSession {
   gridVisible: boolean
   status: string
   /**
+   * Why the last stroke was refused outright — nothing was drawn — or null.
+   *
+   * Separate from `status` because the two differ in kind, not degree: a
+   * dropped pixel is a note, while a refusal means the editor is inert until
+   * the user acts. Sharing one field put "the tileset is full" in an
+   * ellipsised 11px toolbar span at 0.8 opacity, where it read as no message
+   * at all and the pencil just looked broken.
+   */
+  blocked: string | null
+  /**
    * Tiles this session appended, in order. Compact reclaims the ones no longer
    * referenced — and only these, because a tile that existed before this
    * session opened may be referenced by a file nobody has open.
@@ -176,6 +186,7 @@ export function metaSession(path: string): MetaSession {
     zoom: 16,
     gridVisible: true,
     status: '',
+    blocked: null,
     appended: [],
     strokePoints: [],
     strokeRole: 'fg',
@@ -576,10 +587,12 @@ function extendStroke(session: MetaSession, points: Point[]): void {
     const result = paintBitmapMeta(committed(session), base, session.frame, all, session.color)
     if (result.refused) {
       session.status = result.refused
+      session.blocked = result.refused
       return
     }
     session.previewMeta = result.meta
     session.previewTiles = result.tiles
+    session.blocked = null
     session.status = ''
     return
   }
@@ -591,10 +604,12 @@ function extendStroke(session: MetaSession, points: Point[]): void {
   const result = paintMeta(committed(session), base, session.frame, all, session.color, session.strokeRole)
   if (result.refused) {
     session.status = result.refused
+    session.blocked = result.refused
     return
   }
   session.previewMeta = result.meta
   session.previewTiles = result.tiles
+  session.blocked = null
   session.status = result.dropped
     ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`
     : ''
