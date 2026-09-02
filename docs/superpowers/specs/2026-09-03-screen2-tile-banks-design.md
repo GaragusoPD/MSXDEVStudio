@@ -83,6 +83,20 @@ interface TilesDoc {
    * ones.
    */
   bankTiles: TileEntry[][]
+
+  /**
+   * How many indices, counting down from 255, the shared allocator has claimed
+   * for meta-tiles. 0 in every unbanked tileset, where nothing overrides
+   * anything and the whole common set is already shared.
+   *
+   * Stored rather than derived: "the trailing entries that are shared" cannot
+   * be read off the data, because an all-blank tile is legitimate art and a
+   * shared tile is not distinguishable from a common one by inspection. The
+   * per-bank allocation constraint — `bankTiles[b].length + sharedTiles <= 256`
+   * — needs this number to be exact, so it is a fact the document carries, not
+   * one a reader guesses.
+   */
+  sharedTiles: number
 }
 ```
 
