@@ -117,12 +117,13 @@ Pointing a meta at a tileset without the flag prompts once:
 > **[ Reserve and migrate ] [ Cancel ]**
 
 Migration shifts every index up by one and publishes it on the existing
-`TilesReorderEvent` seam, so open maps and metas renumber the way they already
-do after a tile reorder. Declining leaves the meta drawable, not read-only — see deviation 3. A cell
-holding tile 0 is skipped either way: `MetaCanvas.vue` draws the checkerboard
-through it and the emitted `_Draw` does not write it. What the flag buys is
-that tile 0 is *blank*, so the cell a meta skips is also blank for everything
-else drawing from that tileset — a map's own grid included.
+`TilesReorderEvent` seam, so open maps and metas renumber the way they
+already do after a tile reorder. Declining leaves the meta drawable, not
+read-only — see deviation 3. A cell holding tile 0 is skipped either
+way: `MetaCanvas.vue` draws the checkerboard through it and the emitted
+`_Draw` does not write it. What the flag buys is that tile 0 is *blank*,
+so the cell a meta skips is also blank for everything else drawing from
+that tileset — a map's own grid included.
 
 ### What is deleted
 
@@ -398,8 +399,8 @@ otherwise and the record should agree with the code.
    **Superseded.** Stage 2 shipped: a bitmap meta is authored with the same
    pixel tools, reserves tile 0 through `reserveBitmapTile0`, and is placed on a
    map like any other, drawn by `bitmapPlacementHelperC` over the VDP command
-   engine. See the *Meta-tiles in bitmap and multicolour modes* entry in
-   `CHANGELOG.md`.
+   engine. See the *Meta-tiles in bitmap and multicolour modes (stage 2)*
+   entry in `CHANGELOG.md`.
 
 2. **Erase is a colour, not a tool.** §4 listed it among the tools. It ships as a
    toolbar button that selects the transparent index, which composes with every

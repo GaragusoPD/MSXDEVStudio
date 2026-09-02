@@ -12,7 +12,7 @@ import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import { mapFromLayout } from '../../../../shared/msx/map'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
-import { MAX_TILES, normalizeTiles, packTiles, TILE_SIZE } from '../../../../shared/msx/tile'
+import { blankTileEntry, MAX_TILES, normalizeTiles, packTiles, TILE_SIZE } from '../../../../shared/msx/tile'
 import type { TileTool, TileTransform } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -81,12 +81,21 @@ async function exportNow(): Promise<void> {
 function onImported(result: ImportResult): void {
   const active = session.value
   const packed = packTiles(result.indices, result.width, result.height, active.doc.mode, { dedup: importDedup.value })
+  // Replacing into a bank that already reserves tile 0 would otherwise let
+  // `normalizeTiles` blank the freshly imported top-left tile in place below —
+  // silently losing it, since `packTiles`'s own layout always starts at index
+  // 0. Prepending a blank instead shifts every tile up by one, the same
+  // migration `reserveTile0()` performs by hand, so the art survives and the
+  // layout's own indices need the same +1.
+  const keepsTile0 = importMode.value === 'replace' && active.doc.reserveTile0
   // Read before `commit`: once that call lands, `active.doc.tiles` is the
   // post-merge count and every index below would be offset by the wrong amount.
-  const offset = importMode.value === 'replace' ? 0 : active.doc.tiles.length
+  const offset = importMode.value === 'replace' ? (keepsTile0 ? 1 : 0) : active.doc.tiles.length
   const tiles =
     importMode.value === 'replace'
-      ? packed.doc.tiles
+      ? keepsTile0
+        ? [blankTileEntry(active.doc.mode), ...packed.doc.tiles]
+        : packed.doc.tiles
       : [...active.doc.tiles, ...packed.doc.tiles].slice(0, MAX_TILES)
   const doc = normalizeTiles({
     ...active.doc,
@@ -106,13 +115,29 @@ function onImported(result: ImportResult): void {
   const rows = Math.floor(result.height / TILE_SIZE)
   const map = mapFromLayout(active.path, packed.layout, cols, rows, offset)
   map.export = defaultExport(mapPath)
-  void window.api
-    .invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
-    .then(() => resourcesStore.refresh())
+
+  // Two distinct 256-tile failures, both silent unless reported here:
+  // `packTiles` itself may not have placed every cell (the bank it built alone
+  // already hit 256), and separately, merging into — or shifting for — an
+  // existing bank can push `layout`'s own indices past the 256-tile ceiling
+  // once `offset` is added, even though every individual index was in range.
+  const short = cols * rows - packed.layout.length
+  const overflow = map.layers[0].data.some((index) => index > 255)
 
   active.status =
     `Imported ${packed.doc.count} tiles` +
-    (packed.lossyTiles.length ? ` — ${packed.lossyTiles.length} needed color reduction` : '')
+    (packed.lossyTiles.length ? ` — ${packed.lossyTiles.length} needed color reduction` : '') +
+    (short > 0 ? `; ${short} cells could not be placed (the bank filled at 256 tiles)` : '') +
+    (overflow
+      ? `; the bank is over the 256-tile limit — ${mapPath} will not export until it's reduced`
+      : '')
+
+  void window.api
+    .invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
+    .then(() => resourcesStore.refresh())
+    .catch((error) => {
+      active.status = `${active.status} — failed to write ${mapPath}: ${String(error)}`
+    })
 }
 
 function onKeydown(event: KeyboardEvent): void {

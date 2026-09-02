@@ -448,7 +448,7 @@ export function reserveTile0(session: MetaSession): void {
   const store = useTilesetStore()
   const tileset = store.patternDoc(session.tilesetPath)
   if (!tileset || tileset.reserveTile0) return
-  if (tileset.count >= MAX_TILES) {
+  if (tileset.count >= MAX_TILES || tileset.tiles.length >= MAX_TILES) {
     session.status = 'The tileset is full, so tile 0 cannot be shifted out of the way. Free a tile first.'
     return
   }
