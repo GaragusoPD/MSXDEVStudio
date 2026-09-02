@@ -65,44 +65,57 @@ tidier-looking array.
 
 ### Storage, and why there is no migration
 
-`TilesDoc.tiles` keeps exactly its present meaning: **the shared set**. A new
-field holds the per-bank uniques.
+`TilesDoc.tiles` keeps exactly its present meaning — **`tiles[i]` is the art at
+hardware index `i`** — and becomes the *common* set every bank falls back to. A
+new field holds each bank's own overrides.
 
 ```ts
 interface TilesDoc {
   // …unchanged…
   /**
-   * Per-bank artwork for SCREEN 2/4's three pattern banks, `[bank0, bank1,
-   * bank2]`, each growing from index 0. Empty in every file that predates this
-   * and in every tileset that does not need banking — which is most of them,
-   * because a game that draws the same tile at any screen height wants one bank
-   * replicated, not three distinct ones.
+   * Per-bank overrides for SCREEN 2/4's three pattern banks, `[bank0, bank1,
+   * bank2]`. `bankTiles[b][i]`, when present, is the art bank `b` shows at
+   * hardware index `i` **instead of** `tiles[i]`.
+   *
+   * Empty in every file that predates this and in every tileset that does not
+   * need banking — which is most of them, because a game that draws the same
+   * tile at any screen height wants one bank replicated, not three distinct
+   * ones.
    */
   bankTiles: TileEntry[][]
 }
 ```
 
-An existing tileset normalizes to `bankTiles: [[], [], []]`, so all three banks
-show only the shared set — every tile identical in every bank, which is what the
-file already meant and what `VDP_LoadPattern_GM2` already does. **No file
-changes, no version bump, no remap event.**
-
-`banked` is therefore a derived question, not a stored flag:
-`bankTiles.some((b) => b.length > 0)`.
-
-### Resolving an index
-
-One function, used by the editors, the map renderer and the exporter, so they
-cannot disagree:
+Resolution is an override lookup, which is what keeps this simple:
 
 ```ts
 /** The art a name-table byte means, for a cell in the given bank. */
-export function bankTileAt(doc: TilesDoc, bank: number, index: number): TileEntry
+export function bankTileAt(doc: TilesDoc, bank: number, index: number): TileEntry {
+  return doc.bankTiles[bank]?.[index] ?? doc.tiles[index] ?? blankTileEntry(doc.mode)
+}
 ```
 
-`index >= 256 - doc.tiles.length` → shared tile `255 - index`; otherwise
-`bankTiles[bank][index]`. Out of range is the blank tile, matching what
-`tilePixels` already does for a reference past the end of the bank.
+An existing tileset normalizes to `bankTiles: [[], [], []]`, so every bank falls
+back to `tiles` — every tile identical in every bank, which is what the file
+already meant and what `VDP_LoadPattern_GM2` already does. **No file changes, no
+version bump, no remap event, and no re-indexing.**
+
+The two regions are therefore *where each allocator writes*, not two different
+addressing schemes:
+
+- a **unique** tile is appended to `bankTiles[b]`, so it takes the next free
+  index from 0 up in that bank alone;
+- a **shared** tile is written into `tiles` at index `255 − k` for the *k*-th
+  one, so it resolves identically in all three banks.
+
+`banked` is a derived question, not a stored flag:
+`bankTiles.some((b) => b.length > 0)`.
+
+> **An earlier draft of this spec had `tiles` hold the shared set addressed from
+> the top.** That would have made `tiles[0]` mean hardware index 255, silently
+> reversing the tile order of every existing tileset — the exact migration this
+> design exists to avoid. The override model above keeps `tiles` index-addressed,
+> which is the only reading under which today's files stay correct untouched.
 
 ## Maps
 
@@ -146,31 +159,49 @@ dedup is the "find" half; a stroke that cannot allocate refuses whole.
 
 ## Export
 
-Data tables gain per-bank sections; the shared set is emitted once and loaded
-three times.
+The common set is emitted once, as today. Each bank additionally emits its own
+overrides, and loads them over the top.
 
 ```c
-#define G_TITLE_SHARED       48      // shared tiles, at indices 208..255
-#define G_TITLE_BANK0_TILES  180
+#define G_TITLE_TILES        256     // the common set — unchanged meaning
+#define G_TITLE_BANK0_TILES  180     // bank 0's overrides, indices 0..179
 #define G_TITLE_BANK1_TILES  204
 #define G_TITLE_BANK2_TILES  160
 
-extern const u8 g_Title_Patterns[];        // shared, 48 tiles
+extern const u8 g_Title_Patterns[];        // common, as today
+extern const u8 g_Title_Colors[];
 extern const u8 g_Title_Bank0_Patterns[];  // bank 0's own, from index 0
-// …Bank1, Bank2, and the matching _Colors for each…
+extern const u8 g_Title_Bank0_Colors[];
+// …Bank1, Bank2…
 
 // opt-in helper
 void g_Title_Load(void);
 ```
 
-`_Load` is six `VDP_LoadBankPattern_GM2` / `VDP_LoadBankColor_GM2` calls per bank
-— MSXgl already provides both, taking `(src, count, bank, offset)`, so nothing is
-reimplemented. The shared set loads at offset `256 - SHARED` in each of the three
-banks; each bank's uniques load at offset 0.
+`_Load` is, per bank *b* with `Ub` overrides:
 
-An unbanked tileset emits exactly what it emits today, including the single
-`VDP_LoadPattern_GM2` form. The banked tables appear only when `bankTiles` is
-non-empty.
+```c
+// the common tail this bank still shows, at its own offset…
+VDP_LoadBankPattern_GM2(g_Title_Patterns + Ub * 8, G_TITLE_TILES - Ub, b, Ub);
+VDP_LoadBankColor_GM2  (g_Title_Colors   + Ub * 8, G_TITLE_TILES - Ub, b, Ub);
+// …then this bank's own art over indices 0..Ub-1
+VDP_LoadBankPattern_GM2(g_Title_Bank0_Patterns, G_TITLE_BANK0_TILES, b, 0);
+VDP_LoadBankColor_GM2  (g_Title_Bank0_Colors,   G_TITLE_BANK0_TILES, b, 0);
+```
+
+Both MSXgl functions already exist and take `(src, count, bank, offset)`, so
+nothing is reimplemented.
+
+Note each bank loads a **different slice** of the common table — from its own
+`Ub` upward — which is the direct consequence of the override model: bank 0 with
+180 overrides still falls back to `tiles[180..255]`, while bank 1 with 204 falls
+back only to `tiles[204..255]`. Emitting the common table in full is therefore
+not waste; those entries are live for the banks that do not override them.
+
+An unbanked tileset has every `Ub = 0`, so the per-bank tables are absent and the
+helper collapses to the single `VDP_LoadPattern_GM2` / `VDP_LoadColor_GM2` pair
+it emits today. **Byte-for-byte unchanged output for every existing file** — the
+regression test for this task asserts exactly that.
 
 ## The importer
 
