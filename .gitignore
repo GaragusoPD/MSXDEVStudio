@@ -11,3 +11,4 @@ demo_msx2/emul
 
 # Per-user IDE session state (open tabs), written into each project
 .msxdevstudio/
+.superpowers/
