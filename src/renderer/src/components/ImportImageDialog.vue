@@ -8,7 +8,7 @@ import { computed, ref, watch } from 'vue'
 import { BITMAP_MODES, MODES, TILE_MODES, isTileMode, type ScreenMode } from '../../../shared/msx/modes'
 import { mapFromLayout } from '../../../shared/msx/map'
 import { packTiles, TILE_SIZE } from '../../../shared/msx/tile'
-import { defaultExport, serializeResource } from '../../../shared/msx/resource'
+import { RESOURCE_DIR, defaultExport, serializeResource } from '../../../shared/msx/resource'
 import { useImageImport, type ImportResult } from '../composables/useImageImport'
 import { useProjectStore } from '../stores/projectStore'
 import { useResourcesStore } from '../stores/resourcesStore'
@@ -68,8 +68,12 @@ async function saveTileset(): Promise<void> {
   saving.value = true
   try {
     const stem = targetName.value.replace(/[^A-Za-z0-9_-]/g, '') || 'imported'
-    const path = `${stem}.tiles.json`
-    const mapPath = `${stem}.map.json`
+    // Into `res/`, where every other resource lives and where the exporter and
+    // the Resources panel look. Writing these to the project root left them
+    // invisible to the panel and gave the map a `tileset` field naming a path
+    // no other resource uses.
+    const path = `${RESOURCE_DIR}/${stem}.tiles.json`
+    const mapPath = `${RESOURCE_DIR}/${stem}.map.json`
     // `targetName` is free text, so nothing stops it from naming a resource
     // that already exists. Unlike the tile editor's own import — where the
     // map write is an implicit side effect of editing an already-open file —
@@ -100,6 +104,9 @@ async function saveTileset(): Promise<void> {
       { dedup: true }
     )
     doc.export = defaultExport(path)
+    // `fs:write` doesn't create parent folders, and a project whose res/ was
+    // never made (or was deleted) hasn't got one. mkdir is idempotent.
+    await window.api.invoke('fs:create', { path: RESOURCE_DIR, kind: 'directory' })
     await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'tiles', doc }) })
 
     // The tiles alone cannot rebuild the picture. `layout` is the arrangement
