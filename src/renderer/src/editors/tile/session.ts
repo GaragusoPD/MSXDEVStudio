@@ -280,7 +280,9 @@ export async function importImage(
       ? `; ${rebucketed} tile${rebucketed === 1 ? '' : 's'} at the reserved-tile-0 shift lost the color pair it was authored with`
       : '') +
     (short > 0 ? `; ${short} cells could not be placed (the bank filled at 256 tiles)` : '') +
-    (dropped > 0 ? `; ${dropped} tile${dropped === 1 ? '' : 's'} could not be added — the bank is full` : '')
+    (dropped > 0
+      ? `; ${dropped} tile${dropped === 1 ? '' : 's'} could not be added — the bank is full, and this map will not export until it has room for them`
+      : '')
 
   // The map has to describe what a build will actually read — the tileset as
   // it lands on disk, not just the in-memory doc `commit` above updated — so

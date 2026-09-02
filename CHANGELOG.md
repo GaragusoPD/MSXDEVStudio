@@ -22,9 +22,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   conversion always computed which tile goes in which cell, then discarded it,
   so a SCREEN 1/2/4 import produced a tileset that could not be rearranged back
   into the image. Both import routes — the Import-image dialog and the tile
-  editor's own import — now write a `.map.json` beside the tileset, unless one
-  is already there: neither route overwrites an existing map. A picture
-  needing more than 256 unique cells says how many it could not place.
+  editor's own import — now write a `.map.json` beside the tileset. Neither
+  clobbers an existing one without saying so: the tile editor's import, a
+  side effect of editing an already-open file, never overwrites one; the
+  dialog's explicit "save as" asks first, since refusing outright would block
+  the normal import-adjust-reimport workflow. A picture needing more than 256
+  unique cells says how many it could not place.
 
 ### Any text file opens
 

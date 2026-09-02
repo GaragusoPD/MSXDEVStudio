@@ -271,10 +271,12 @@ describe('importImage', () => {
     expect(session.status).toMatch(/failed to save the tileset/)
   })
 
-  it('reports how many tiles were dropped, not a false "over the limit"', async () => {
+  it('reports how many tiles were dropped, not a false "over the limit" — and that the map will not export', async () => {
     // 255 existing tiles plus 4 new, distinct ones overflows the 256-tile
     // ceiling by 3 once the merged array is clamped back down. Nothing is
     // "over the limit" to reduce — those 3 tiles were simply never added.
+    // The map that gets written still references them, so the user needs to
+    // learn now, not at the next export attempt, that it will fail.
     const tiles: Partial<TileEntry>[] = Array.from({ length: 255 }, (_, i) => ({ pattern: [i % 256, 0, 0, 0, 0, 0, 0, 0] }))
     files[PATH] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 255, tiles }) })
     const session = tileSession(PATH)
@@ -283,6 +285,7 @@ describe('importImage', () => {
     await importImage(session, picture(4), 'merge', false)
 
     expect(session.status).toMatch(/3 tiles could not be added — the bank is full/)
+    expect(session.status).toMatch(/will not export/)
     expect(session.status).not.toMatch(/over the 256-tile limit/)
   })
 

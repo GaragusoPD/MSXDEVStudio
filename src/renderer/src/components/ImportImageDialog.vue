@@ -71,17 +71,25 @@ async function saveTileset(): Promise<void> {
     const path = `${stem}.tiles.json`
     const mapPath = `${stem}.map.json`
     // `targetName` is free text, so nothing stops it from naming a resource
-    // that already exists. Check both paths before writing either — a partial
-    // write (tileset landed, map skipped, or the reverse) would leave a pair
-    // that does not match, which is its own kind of silent damage.
+    // that already exists. Unlike the tile editor's own import — where the
+    // map write is an implicit side effect of editing an already-open file —
+    // this is an explicit "save as" the user just typed a name and pressed a
+    // button for, and the normal way to iterate on a conversion is exactly
+    // "import, look at it, adjust an option, import again under the same
+    // name." Refusing that would block the ordinary workflow, so this asks
+    // instead of silently refusing or silently overwriting.
     const [tilesetExists, mapExists] = await Promise.all([
       window.api.invoke('fs:stat', { path }),
       window.api.invoke('fs:stat', { path: mapPath })
     ])
     if (tilesetExists || mapExists) {
-      const blocking = [tilesetExists ? path : null, mapExists ? mapPath : null].filter(Boolean).join(' and ')
-      saved.value = `${blocking} already exist — pick a different name or remove them first.`
-      return
+      const collisions = [tilesetExists ? path : null, mapExists ? mapPath : null].filter(Boolean) as string[]
+      const verb = collisions.length > 1 ? 'exist' : 'exists'
+      const blocking = collisions.join(' and ')
+      if (!window.confirm(`${blocking} already ${verb}. Overwrite?`)) {
+        saved.value = `Not saved — ${blocking} already ${verb}.`
+        return
+      }
     }
 
     const { doc, layout, lossyTiles } = packTiles(
