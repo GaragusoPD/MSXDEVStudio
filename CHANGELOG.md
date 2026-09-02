@@ -7,6 +7,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reserving tile 0 on a full tileset no longer loses a tile.** Shifting a
+  256-tile bank up by one dropped the last tile's art and merged the two highest
+  indices onto one. It now refuses and says why, as the bitmap path already did.
+  `demo_msx1/res/intro.tiles.json` is a real 256-tile bank, so this was
+  reachable.
+- **A newly reserved tile 0 is blank.** The migration prepended a copy of the art
+  it displaced, so until the next reload the in-memory bank held art in the index
+  the canvas and the emitted `_Draw` both skip. Exported data was never affected —
+  the export path normalizes on read.
+
 ### Any text file opens
 
 - **Text is the editor's default, not an allowlist.** Shell scripts, batch

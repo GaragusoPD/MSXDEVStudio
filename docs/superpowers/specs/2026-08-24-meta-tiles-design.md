@@ -1,8 +1,9 @@
 # Meta-tiles as authored objects — design
 
 **Date:** 2026-08-24
-**Status:** implemented on `dev02`. Two deviations from this document are
-recorded at the end, under *Deviations during implementation*.
+**Status:** implemented on `dev02`, merged to `main` at `80a3910`. Three
+deviations from this document are recorded at the end, under *Deviations during
+implementation*; stage 2 has since superseded the first.
 **Scope:** stage 1 — pattern-mode tiled screens (SCREEN 1 / 2 / 4) and the map editor.
 Bitmap and multicolour modes are stage 2 and are named here only where the data
 model has to leave room for them.
@@ -117,8 +118,11 @@ Pointing a meta at a tileset without the flag prompts once:
 
 Migration shifts every index up by one and publishes it on the existing
 `TilesReorderEvent` seam, so open maps and metas renumber the way they already
-do after a tile reorder. Declining leaves the meta read-only until a tileset
-with the flag is chosen.
+do after a tile reorder. Declining leaves the meta drawable, not read-only — see deviation 3. A cell
+holding tile 0 is skipped either way: `MetaCanvas.vue` draws the checkerboard
+through it and the emitted `_Draw` does not write it. What the flag buys is
+that tile 0 is *blank*, so the cell a meta skips is also blank for everything
+else drawing from that tileset — a map's own grid included.
 
 ### What is deleted
 
@@ -384,20 +388,29 @@ Stated so a review catches them if any is wrong.
 
 ## Deviations during implementation
 
-Both are defensible and neither was a silent choice, but this document said
+All three are defensible and none was a silent choice, but this document said
 otherwise and the record should agree with the code.
 
 1. **`.meta-btiles.json` lost its cell-stamping editor.** §1 said it would keep
    today's interaction until stage 2. The rewrite replaced the editor wholesale,
-   so a bitmap meta is now view-only: it records its size, frames and flags and
-   exports a `_Draw`, but cannot be authored and cannot be placed on a map. No
-   project holds such a file, so nothing regressed — but it is less than was
-   promised here.
+   so a bitmap meta was briefly view-only.
+
+   **Superseded.** Stage 2 shipped: a bitmap meta is authored with the same
+   pixel tools, reserves tile 0 through `reserveBitmapTile0`, and is placed on a
+   map like any other, drawn by `bitmapPlacementHelperC` over the VDP command
+   engine. See the *Meta-tiles in bitmap and multicolour modes* entry in
+   `CHANGELOG.md`.
 
 2. **Erase is a colour, not a tool.** §4 listed it among the tools. It ships as a
    toolbar button that selects the transparent index, which composes with every
    tool rather than being a sixth one — erase with the pencil, with a line, with
    a spray of holes.
+
+3. **Painting is not gated on `reserveTile0`.** §1 said declining the migration
+   leaves the meta read-only. It does not: the flag buys *transparency*, not the
+   right to draw. Refusing strokes made every pre-existing tileset — which is all
+   of them, the flag being off by default — look like a broken editor. Covered by
+   `session.test.ts`'s *draws even when the tileset has not reserved tile 0*.
 
 ## Out of scope for stage 1
 
