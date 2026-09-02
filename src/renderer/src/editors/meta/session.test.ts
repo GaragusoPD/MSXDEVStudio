@@ -49,6 +49,8 @@ beforeEach(() => {
     [TILES]: tilesFile(true)
   }
   ;(globalThis as { window?: unknown }).window = {
+    // reserveTile0() asks before a migration; every test here says yes.
+    confirm: vi.fn(() => true),
     api: {
       // The tileset store registers a file watcher on load, so `on` has to
       // exist even when a test never fires an event through it.
@@ -244,5 +246,34 @@ describe('reserving tile 0 on a tileset that already holds art', () => {
     expect(after).toBe(before)
     expect(after.reserveTile0).toBe(false)
     expect(session.status).toMatch(/full/i)
+  })
+
+  it('blanks the new tile 0 and moves the art to tile 1', async () => {
+    // Tile 0 as real, load-bearing art is the case this whole flag exists for:
+    // `demo_msx1/res/tiles.tiles.json` draws its tile 0 274 times.
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 4,
+        reserveTile0: false,
+        tiles: [{ pattern: new Array(8).fill(0xff) }]
+      })
+    })
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    reserveTile0(session)
+
+    const shifted = useTilesetStore().patternDoc(TILES)!
+    expect(shifted.reserveTile0).toBe(true)
+    expect(shifted.count).toBe(5)
+    // A cell holding 0 is a skipped write, so index 0 must not hold art.
+    expect(shifted.tiles[0].pattern).toEqual(new Array(8).fill(0))
+    expect(shifted.tiles[0].color).toEqual(new Array(8).fill(0))
+    // Nothing is destroyed: the old artwork is one slot along.
+    expect(shifted.tiles[1].pattern).toEqual(new Array(8).fill(0xff))
+    expect(shifted.tiles.length).toBe(5)
   })
 })

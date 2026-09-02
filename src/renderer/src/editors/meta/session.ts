@@ -36,7 +36,7 @@ import {
 } from '../../../../shared/msx/meta-tile'
 import { paintBitmapMeta, paintMeta, usedTiles } from '../../../../shared/msx/meta-paint'
 import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
-import { MAX_TILES, mergeColorByte, removeTile, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
+import { blankTileEntry, MAX_TILES, mergeColorByte, removeTile, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
 import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import {
   MAX_BITMAP_TILES,
@@ -462,16 +462,19 @@ export function reserveTile0(session: MetaSession): void {
   ) {
     return
   }
-  // Shift by prepending a blank: every old index i becomes i + 1.
+  // Shift by prepending a genuinely blank tile: every old index i becomes i + 1.
+  // `normalizeTiles` would blank it on the next load anyway; doing it here keeps
+  // the in-memory doc honest, because `tilesetStore.set()` does not normalize.
+  // No truncation: the guard above already refused a bank with no room.
   const shifted: TilesDoc = {
     ...tileset,
     reserveTile0: true,
-    count: Math.min(256, tileset.count + 1),
-    tiles: [tileset.tiles[0], ...tileset.tiles].slice(0, 256),
-    flags: [0, ...tileset.flags].slice(0, 256),
+    count: tileset.count + 1,
+    tiles: [blankTileEntry(tileset.mode), ...tileset.tiles],
+    flags: [0, ...tileset.flags],
     blocks: tileset.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => tile + 1) }))
   }
-  const mapping = tileset.tiles.map((_, i) => Math.min(255, i + 1))
+  const mapping = tileset.tiles.map((_, i) => i + 1)
   store.set(session.tilesetPath, { ...shifted, tiles: shifted.tiles.slice() }, session.path)
   const event: TilesReorderEvent = { path: session.tilesetPath, mapping, at: Date.now() }
   store.appendReorder(session.tilesetPath, event)
