@@ -206,6 +206,33 @@ export function normalizeMap(raw: unknown): MapDoc {
   }
 }
 
+/**
+ * The map that rebuilds an imported picture.
+ *
+ * `packTiles` already returns the tile index per source cell; until this
+ * existed every caller destructured that `layout` away, so converting an image
+ * to a SCREEN 1/2/4 tileset produced a bank with no record of how to arrange
+ * it. `offset` is the pre-existing tile count when the import *appended* to a
+ * bank rather than replacing it — the layout counts from the tiles it added.
+ *
+ * A short `layout` pads with tile 0: `packTiles` breaks out mid-row once the
+ * bank hits 256 tiles, and the cells it never reached have no index to give.
+ */
+export function mapFromLayout(
+  tileset: string,
+  layout: readonly number[],
+  cols: number,
+  rows: number,
+  offset = 0
+): MapDoc {
+  return normalizeMap({
+    tileset,
+    width: cols,
+    height: rows,
+    layers: [{ name: 'background', data: layout.map((tile) => tile + offset) }]
+  })
+}
+
 /** The map's size in tiles. Its own grid — a cell is one tile again. */
 export function mapTileSize(doc: MapDoc): { width: number; height: number } {
   return { width: doc.width, height: doc.height }

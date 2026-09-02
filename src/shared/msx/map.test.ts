@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   addMetaRef,
   MAX_MAP_METAS,
+  mapFromLayout,
   metaSlotOf,
   movePlacement,
   normalizeMap,
@@ -229,5 +230,32 @@ describe('the placement runtime defends its caller-owned frame array', () => {
 
   it('carries each meta\'s frame count in the table it clamps against', () => {
     expect(placementHelperC(withFrames(6), 'g_Level').source.join('\n')).toContain('{ tree, 2, 3, 6, 6 },')
+  })
+})
+
+describe('mapFromLayout — an imported image keeps its arrangement', () => {
+  it('lays the packed layout into one background layer', () => {
+    const doc = mapFromLayout('art/hero.tiles.json', [0, 1, 2, 3, 4, 5], 3, 2)
+    expect(doc.tileset).toBe('art/hero.tiles.json')
+    expect(doc.width).toBe(3)
+    expect(doc.height).toBe(2)
+    expect(doc.layers).toHaveLength(1)
+    expect(doc.layers[0].name).toBe('background')
+    expect(doc.layers[0].data).toEqual([0, 1, 2, 3, 4, 5])
+  })
+
+  it('offsets every index, which is what an append-mode import needs', () => {
+    // The importer appended its tiles after 10 that were already there, so the
+    // layout's tile 0 is really tile 10.
+    const doc = mapFromLayout('art/hero.tiles.json', [0, 1, 0, 2], 2, 2, 10)
+    expect(doc.layers[0].data).toEqual([10, 11, 10, 12])
+  })
+
+  it('pads a short layout, because packTiles stops at the 256-tile ceiling', () => {
+    // `packTiles` breaks out mid-row when the bank fills, so `layout` can be
+    // shorter than cols*rows. The cells it never reached read as tile 0 rather
+    // than as undefined.
+    const doc = mapFromLayout('art/hero.tiles.json', [7, 8], 2, 2)
+    expect(doc.layers[0].data).toEqual([7, 8, 0, 0])
   })
 })

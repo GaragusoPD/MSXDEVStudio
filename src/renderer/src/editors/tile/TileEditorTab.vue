@@ -10,7 +10,9 @@ import type { MaterialSymbol } from '@material-symbols/font-400'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
-import { MAX_TILES, normalizeTiles, packTiles } from '../../../../shared/msx/tile'
+import { mapFromLayout } from '../../../../shared/msx/map'
+import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
+import { MAX_TILES, normalizeTiles, packTiles, TILE_SIZE } from '../../../../shared/msx/tile'
 import type { TileTool, TileTransform } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -79,6 +81,9 @@ async function exportNow(): Promise<void> {
 function onImported(result: ImportResult): void {
   const active = session.value
   const packed = packTiles(result.indices, result.width, result.height, active.doc.mode, { dedup: importDedup.value })
+  // Read before `commit`: once that call lands, `active.doc.tiles` is the
+  // post-merge count and every index below would be offset by the wrong amount.
+  const offset = importMode.value === 'replace' ? 0 : active.doc.tiles.length
   const tiles =
     importMode.value === 'replace'
       ? packed.doc.tiles
@@ -92,6 +97,19 @@ function onImported(result: ImportResult): void {
     groupColors: importMode.value === 'replace' ? packed.doc.groupColors : active.doc.groupColors
   })
   commit(active, doc, 'import image')
+
+  // Same reason as the import dialog: without this the arrangement the
+  // conversion computed is discarded, and only the bank survives. Appending
+  // puts the new tiles after the old ones, so their indices shift with them.
+  const mapPath = active.path.replace(/\.tiles\.json$/, '.map.json')
+  const cols = Math.floor(result.width / TILE_SIZE)
+  const rows = Math.floor(result.height / TILE_SIZE)
+  const map = mapFromLayout(active.path, packed.layout, cols, rows, offset)
+  map.export = defaultExport(mapPath)
+  void window.api
+    .invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
+    .then(() => resourcesStore.refresh())
+
   active.status =
     `Imported ${packed.doc.count} tiles` +
     (packed.lossyTiles.length ? ` — ${packed.lossyTiles.length} needed color reduction` : '')

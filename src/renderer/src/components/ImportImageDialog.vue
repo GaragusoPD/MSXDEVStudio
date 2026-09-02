@@ -6,7 +6,8 @@
  */
 import { computed, ref, watch } from 'vue'
 import { BITMAP_MODES, MODES, TILE_MODES, isTileMode, type ScreenMode } from '../../../shared/msx/modes'
-import { packTiles } from '../../../shared/msx/tile'
+import { mapFromLayout } from '../../../shared/msx/map'
+import { packTiles, TILE_SIZE } from '../../../shared/msx/tile'
 import { defaultExport, serializeResource } from '../../../shared/msx/resource'
 import { useImageImport, type ImportResult } from '../composables/useImageImport'
 import { useProjectStore } from '../stores/projectStore'
@@ -66,13 +67,32 @@ async function saveTileset(): Promise<void> {
   if (!result || !isTileMode(importer.options.mode)) return
   saving.value = true
   try {
-    const { doc, lossyTiles } = packTiles(result.indices, result.width, result.height, importer.options.mode, {
-      dedup: true
-    })
-    const path = `${targetName.value.replace(/[^A-Za-z0-9_-]/g, '') || 'imported'}.tiles.json`
+    const { doc, layout, lossyTiles } = packTiles(
+      result.indices,
+      result.width,
+      result.height,
+      importer.options.mode,
+      { dedup: true }
+    )
+    const stem = targetName.value.replace(/[^A-Za-z0-9_-]/g, '') || 'imported'
+    const path = `${stem}.tiles.json`
     doc.export = defaultExport(path)
     await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'tiles', doc }) })
-    saved.value = `${path} — ${doc.count} tiles${lossyTiles.length ? `, ${lossyTiles.length} lossy` : ''}`
+
+    // The tiles alone cannot rebuild the picture. `layout` is the arrangement
+    // the conversion already worked out, and without this it was discarded.
+    const cols = Math.floor(result.width / TILE_SIZE)
+    const rows = Math.floor(result.height / TILE_SIZE)
+    const mapPath = `${stem}.map.json`
+    const map = mapFromLayout(path, layout, cols, rows)
+    map.export = defaultExport(mapPath)
+    await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
+
+    const short = cols * rows - layout.length
+    saved.value =
+      `${path} — ${doc.count} tiles${lossyTiles.length ? `, ${lossyTiles.length} lossy` : ''}; ` +
+      `${mapPath} — ${cols}×${rows}` +
+      (short > 0 ? `, ${short} cells unplaced (the bank filled at 256 tiles)` : '')
     await resourcesStore.refresh()
   } catch (error) {
     saved.value = `Failed: ${String(error)}`

@@ -18,6 +18,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   it displaced, so until the next reload the in-memory bank held art in the index
   the canvas and the emitted `_Draw` both skip. Exported data was never affected —
   the export path normalizes on read.
+- **Importing an image now keeps the picture, not just the tiles.** The
+  conversion always computed which tile goes in which cell, then discarded it,
+  so a SCREEN 1/2/4 import produced a tileset that could not be rearranged back
+  into the image. Both import routes — the Import-image dialog and the tile
+  editor's own import — now write a `.map.json` beside the tileset. A picture
+  needing more than 256 unique cells says how many it could not place.
 
 ### Any text file opens
 
