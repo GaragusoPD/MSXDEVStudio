@@ -35,8 +35,10 @@ import { metaCells, setFrameTile, type MetaTileDoc } from './meta-tile'
 import { BAYER4 } from './quantize'
 import type { Point } from '../tile-editor'
 import {
+  bankCapacityLeft,
   blankTileEntry,
   colorByteAt,
+  isBanked,
   MAX_TILES,
   paintPixel,
   SC1_GROUP,
@@ -83,6 +85,17 @@ export function findOrCreateTile(
     // different pairs are different artwork.
     if (sc1 && doc.groupColors[i >> SC1_SHIFT] !== pair) continue
     return { doc, index: i }
+  }
+
+  // On a banked tileset a meta's tiles go at the top, mirrored into every bank
+  // by the fallback in `bankTileAt`, so one index means one picture wherever it
+  // is drawn — which is what lets `_DrawPlacements` stay bank-unaware.
+  if (isBanked(doc)) {
+    if (Math.min(...doc.bankTiles.map((_, b) => bankCapacityLeft(doc, b))) <= 0) return null
+    const index = MAX_TILES - 1 - doc.sharedTiles
+    const tiles = doc.tiles.slice()
+    tiles[index] = entry
+    return { doc: { ...doc, tiles, sharedTiles: doc.sharedTiles + 1 }, index }
   }
 
   let index = doc.count

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createMetaTileDoc, frameTileAt } from './meta-tile'
 import { findOrCreateTile, paintBitmapMeta, paintMeta, sprayPoints, usedTiles } from './meta-paint'
 import { normalizeBitmapTiles, tileImage, type BitmapTilesDoc } from './bitmap-tile'
-import { blankTileEntry, normalizeTiles, tilePixels, type TilesDoc } from './tile'
+import { blankTileEntry, normalizeTiles, tilePixels, type TileEntry, type TilesDoc } from './tile'
 
 const bank = (over: Record<string, unknown> = {}): TilesDoc =>
   normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: true, ...over })
@@ -177,6 +177,49 @@ describe('usedTiles', () => {
   it('collects every index across every frame', () => {
     const doc = { ...createMetaTileDoc('t', 2, 1), frames: [{ tiles: [1, 2] }, { tiles: [2, 3] }] }
     expect([...usedTiles(doc)].sort((a, b) => a - b)).toEqual([1, 2, 3])
+  })
+})
+
+describe('allocating into a banked tileset', () => {
+  const solid = (byte: number): TileEntry => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
+
+  it('takes the top index down, so a meta means one picture in every bank', () => {
+    const doc = normalizeTiles({ mode: 'sc2', count: 256, bankTiles: [[solid(1)], [], []], sharedTiles: 0 })
+    const first = findOrCreateTile(doc, solid(0xaa))
+    expect(first?.index).toBe(255)
+    expect(first?.doc.sharedTiles).toBe(1)
+
+    const second = findOrCreateTile(first!.doc, solid(0xbb))
+    // Downward, and the one already placed does not move — a shifted meta index
+    // would renumber every map drawn with this tileset.
+    expect(second?.index).toBe(254)
+    expect(second!.doc.tiles[255].pattern).toEqual(new Array(8).fill(0xaa))
+  })
+
+  it('finds a shared tile it already placed instead of taking another slot', () => {
+    const doc = normalizeTiles({ mode: 'sc2', count: 256, bankTiles: [[solid(1)], [], []], sharedTiles: 0 })
+    const first = findOrCreateTile(doc, solid(0xaa))!
+    const again = findOrCreateTile(first.doc, solid(0xaa))!
+    expect(again.index).toBe(255)
+    expect(again.doc.sharedTiles).toBe(1)
+  })
+
+  it('refuses when the fullest bank has no room left for another shared tile', () => {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 256,
+      bankTiles: [[], new Array(250).fill(solid(2)), []],
+      sharedTiles: 6
+    })
+    // Bank 1 holds 250 + 6 shared = 256. One more shared tile would collide.
+    expect(findOrCreateTile(doc, solid(0xcc))).toBeNull()
+  })
+
+  it('an unbanked tileset still appends at count, exactly as before', () => {
+    const doc = normalizeTiles({ mode: 'sc2', count: 4 })
+    const result = findOrCreateTile(doc, solid(0xaa))
+    expect(result?.index).toBe(4)
+    expect(result?.doc.sharedTiles).toBe(0)
   })
 })
 
