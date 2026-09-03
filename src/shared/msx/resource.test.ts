@@ -1191,6 +1191,34 @@ describe('exporting a banked tileset', () => {
     expect(header).not.toContain('LoadBankPattern')
   })
 
+  it('a stray sharedTiles with no bank to justify it is incoherent state, not a real one', () => {
+    // A hand-edited (or half-migrated) file could carry `sharedTiles > 0`
+    // with `bankTiles` empty — nothing here ever writes that shape, but
+    // `normalizeTiles` cannot assume a file was produced by this app. Before
+    // the producer clamped this, `resourceTables` (gated on `sharedTiles >
+    // 0` alone) emitted `_Shared_Patterns`/`_Shared_Colors`, while
+    // `resourceConstants`/`resourceCode` (gated on `isBanked`) emitted
+    // neither `_SHARED_TILES` nor a loader for them — two dead tables in an
+    // otherwise data-only header, and the art they held still never reached
+    // any bank's VRAM. `normalizeTiles` now clamps `sharedTiles` to 0 in this
+    // shape (see `tile.ts`), so all three should agree there is nothing
+    // banked here at all — the output should be byte-for-byte the plain
+    // unbanked case, with or without helpers.
+    const strayShared = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      sharedTiles: 3,
+      export: { name: 'g_T', format: 'c', out: 'content/t.h', helpers: true }
+    })
+    const plain = normalizeTiles({ mode: 'sc2', count: 4, export: { name: 'g_T', format: 'c', out: 'content/t.h', helpers: true } })
+    expect(strayShared.sharedTiles).toBe(0)
+    expect(rendered({ kind: 'tiles', doc: strayShared })).toBe(rendered({ kind: 'tiles', doc: plain }))
+
+    const strayNoHelpers = { ...strayShared, export: { ...strayShared.export!, helpers: false } }
+    const plainNoHelpers = { ...plain, export: { ...plain.export!, helpers: false } }
+    expect(rendered({ kind: 'tiles', doc: strayNoHelpers })).toBe(rendered({ kind: 'tiles', doc: plainNoHelpers }))
+  })
+
   it('the shared (meta-tile) region reaches every bank, not just when count already covers it', () => {
     // `banked()` above uses count:256, which already spans the whole array —
     // `tilePatternBytes` (bounded to `count`) happens to include the shared

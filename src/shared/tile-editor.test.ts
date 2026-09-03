@@ -618,8 +618,16 @@ describe('multi-tile blocks', () => {
   it('refuses a block that would grow count into the shared reservation', () => {
     // Plenty of raw MAX_TILES room (250 + 4 = 254 < 256), but the top 6 slots
     // are reserved for meta-tiles — a block landing on one would give a
-    // common cell and a meta's shared art the same hardware index.
-    const doc = normalizeTiles({ mode: 'sc2', count: 250, sharedTiles: 6 })
+    // common cell and a meta's shared art the same hardware index. A bank
+    // override, so `sharedTiles` is not clamped away as incoherent state —
+    // `createBlock`'s own check is against `MAX_TILES - sharedTiles` only,
+    // not per-bank capacity, so the numbers below are unaffected by which bank.
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 250,
+      bankTiles: [[{ pattern: new Array(8).fill(1), color: new Array(8).fill(0xf1) }], [], []],
+      sharedTiles: 6
+    })
     expect(createBlock(doc, 'huge', 2, 2)).toBe(doc)
   })
 
@@ -741,10 +749,12 @@ describe('delete and mode conversion', () => {
     // rebuild then silently discarded it — even though this removal has
     // nothing to do with it. `sharedTiles: 1` here stands in for a meta in
     // another, unrelated session; this removal must never know it exists.
+    // A bank override, so `sharedTiles` is genuinely banked rather than
+    // clamped away as incoherent state (see `normalizeTiles`).
     const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
     const rawTiles: unknown[] = [solid(1), solid(2), solid(3), solid(4), solid(5), solid(6)]
     rawTiles[255] = solid(0xaa)
-    const doc = normalizeTiles({ mode: 'sc2', count: 6, tiles: rawTiles, sharedTiles: 1 })
+    const doc = normalizeTiles({ mode: 'sc2', count: 6, tiles: rawTiles, bankTiles: [[solid(9)], [], []], sharedTiles: 1 })
 
     const { doc: next, mapping } = removeTile(doc, 3) // removes the common tile holding solid(4)
 
@@ -760,7 +770,9 @@ describe('delete and mode conversion', () => {
     const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
     const rawTiles: unknown[] = [solid(1), solid(2)]
     rawTiles[255] = solid(0xaa)
-    const doc = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, sharedTiles: 1 })
+    // A bank override, so `sharedTiles` is genuinely banked rather than
+    // clamped away as incoherent state (see `normalizeTiles`).
+    const doc = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, bankTiles: [[solid(9)], [], []], sharedTiles: 1 })
     const { doc: next, mapping } = reorderTiles(doc, 255, 0)
     expect(next).toBe(doc)
     expect(mapping[255]).toBe(255)
@@ -807,7 +819,11 @@ describe('delete and mode conversion', () => {
     const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
     const rawTiles: unknown[] = [solid(1), solid(2)]
     rawTiles[255] = solid(0xaa)
-    const shared = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, sharedTiles: 1 })
+    // A bank override, so `sharedTiles` is genuinely banked rather than
+    // clamped away as incoherent state (see `normalizeTiles`) — `isBanked`
+    // alone already makes this lossy, but the point of this fixture is the
+    // shared-region hole the comment above describes.
+    const shared = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, bankTiles: [[solid(9)], [], []], sharedTiles: 1 })
     expect(() => tileModeConversionLossy(shared, 'sc1')).not.toThrow()
     expect(tileModeConversionLossy(shared, 'sc1')).toBe(true)
 

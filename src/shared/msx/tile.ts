@@ -11,7 +11,7 @@
  *   shares that FG/BG pair.
  */
 
-import type { HelperC } from './emitC'
+import { defineName, type HelperC } from './emitC'
 import { MSX1_PALETTE_GRB } from './palette'
 import { isTileMode, type TileMode } from './modes'
 import type { ExportBlock } from './resource'
@@ -184,12 +184,23 @@ export function normalizeTiles(raw: unknown): TilesDoc {
   // so the first stroke against it was refused as "the tileset is full".
   const count = Math.max(1, Math.min(MAX_TILES, Number(input.count) || rawTiles.length || 1))
   const perRowColor = mode !== 'sc1'
-  // sc1's pattern table is one bank of 256 — there is nowhere for a shared,
-  // grow-from-255 reservation to live, so the field is clamped the same way
-  // `rawBanks` below clamps `bankTiles`. Without this, a doc converted from a
-  // banked sc2/sc4 to sc1 would carry a stale nonzero `sharedTiles` forward
-  // with no bank data left to justify it.
-  const sharedTiles = mode === 'sc1' ? 0 : Math.max(0, Math.min(MAX_TILES, Number(input.sharedTiles) || 0))
+  // Read off the *raw* input, not the normalized `bankTiles` built further
+  // down (too late — `sharedTiles` has to exist before that runs, since the
+  // shared-region decode loop below needs `sharedStart`). sc1 never banks
+  // (one pattern table, not three), so it is unbanked unconditionally here.
+  const rawBanked =
+    mode !== 'sc1' &&
+    Array.isArray(input.bankTiles) &&
+    input.bankTiles.some((bank) => Array.isArray(bank) && bank.length > 0)
+  // On an unbanked document every bank already falls back to `tiles` (see
+  // `bankTileAt`), so there is no "shared vs. common" distinction to make —
+  // every tile is already shown everywhere. A nonzero `sharedTiles` with no
+  // bank to justify it is therefore incoherent state, not a real capability:
+  // clamped to 0 here rather than left for every consumer (the exported
+  // tables, the constants, the `_Load` helper) to separately decide what it
+  // means. This also covers sc1 and a stale value left behind by converting a
+  // banked sc2/sc4 tileset down to it.
+  const sharedTiles = rawBanked ? Math.max(0, Math.min(MAX_TILES, Number(input.sharedTiles) || 0)) : 0
   const sharedStart = MAX_TILES - sharedTiles
 
   const decodeEntry = (i: number): TileEntry => {
@@ -887,7 +898,7 @@ export function tileHelperC(doc: TilesDoc, name: string): HelperC {
  * `VDP_LoadColor_GM2` call it always emitted, untouched.
  */
 export function bankLoadHelperC(doc: TilesDoc, name: string): HelperC {
-  const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
+  const prefix = defineName(name)
   const signature = `void ${name}_Load(void)`
   const body: string[] = [
     "\t// Each bank shows the common set above its own overrides, so each loads a",

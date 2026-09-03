@@ -525,8 +525,27 @@ describe('pattern banks', () => {
     const rawTiles: unknown[] = [solid(1), solid(2)]
     rawTiles[254] = solid(0xaa)
     rawTiles[255] = solid(0xbb)
-    const doc = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, sharedTiles: 2 })
+    // A bank override, so this is genuinely banked — `normalizeTiles` clamps
+    // `sharedTiles` to 0 without one (see the "incoherent state" tests below).
+    const doc = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, bankTiles: [[solid(9)], [], []], sharedTiles: 2 })
     expect(sharedPatternBytes(doc)).toEqual(Uint8Array.from([...new Array(8).fill(0xaa), ...new Array(8).fill(0xbb)]))
     expect(sharedColorBytes(doc)).toEqual(Uint8Array.from(new Array(16).fill(0xf1)))
+  })
+
+  it('a stray sharedTiles with no bank to justify it clamps to 0 — an unbanked doc has no shared/common split', () => {
+    // On an unbanked document every bank already falls back to `tiles`, so
+    // there is nothing for `sharedTiles` to mean. Without this clamp, the
+    // three export-side consumers of `sharedTiles`/`isBanked` (see
+    // `resource.ts`) would disagree about whether this state is banked at
+    // all.
+    const rawTiles: unknown[] = [solid(1), solid(2)]
+    rawTiles[255] = solid(0xaa)
+    const doc = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, sharedTiles: 1 })
+    expect(doc.sharedTiles).toBe(0)
+    expect(isBanked(doc)).toBe(false)
+    // The shared region was never decoded, so it isn't just unreachable via
+    // `sharedTiles` — it never entered `doc.tiles` in the first place, the
+    // same as any other index past `count` on an unbanked tileset.
+    expect(doc.tiles).toHaveLength(2)
   })
 })

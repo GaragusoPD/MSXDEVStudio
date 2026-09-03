@@ -168,8 +168,15 @@ describe('addTile', () => {
       kind: 'tiles',
       // 250 common tiles, 6 reserved for meta-tiles: 256 total, none free —
       // but well under MAX_TILES on its own, which is what the old
-      // `count >= MAX_TILES` check alone would have missed.
-      doc: normalizeTiles({ mode: 'sc2', count: 250, sharedTiles: 6 })
+      // `count >= MAX_TILES` check alone would have missed. A bank override,
+      // so `sharedTiles` is genuinely banked rather than clamped away as
+      // incoherent state (see `normalizeTiles`).
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 250,
+        bankTiles: [[{ pattern: new Array(8).fill(1), color: new Array(8).fill(0xf1) }], [], []],
+        sharedTiles: 6
+      })
     })
     const session = tileSession(PATH)
     await settled()
@@ -346,7 +353,15 @@ describe('importImage', () => {
     rawTiles[255] = live
     files[PATH] = serializeResource({
       kind: 'tiles',
-      doc: normalizeTiles({ mode: 'sc2', count: 8, tiles: rawTiles, sharedTiles: 1 })
+      // A bank override, so `sharedTiles` is genuinely banked rather than
+      // clamped away as incoherent state (see `normalizeTiles`).
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 8,
+        tiles: rawTiles,
+        bankTiles: [[{ pattern: new Array(8).fill(9), color: new Array(8).fill(0xf1) }], [], []],
+        sharedTiles: 1
+      })
     })
     const session = tileSession(PATH)
     await settled()
@@ -370,7 +385,15 @@ describe('importImage', () => {
     rawTiles[255] = live
     files[PATH] = serializeResource({
       kind: 'tiles',
-      doc: normalizeTiles({ mode: 'sc2', count: 8, tiles: rawTiles, sharedTiles: 1 })
+      // A bank override, so `sharedTiles` is genuinely banked rather than
+      // clamped away as incoherent state (see `normalizeTiles`).
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 8,
+        tiles: rawTiles,
+        bankTiles: [[{ pattern: new Array(8).fill(9), color: new Array(8).fill(0xf1) }], [], []],
+        sharedTiles: 1
+      })
     })
     const session = tileSession(PATH)
     await settled()

@@ -260,7 +260,15 @@ describe('reserving tile 0 on a tileset that already holds art', () => {
     // the two apart.
     files[TILES] = serializeResource({
       kind: 'tiles',
-      doc: normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: false, sharedTiles: 1 })
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 4,
+        reserveTile0: false,
+        // A bank override, so `sharedTiles` is genuinely banked rather than
+        // clamped away as incoherent state (see `normalizeTiles`).
+        bankTiles: [[{ pattern: new Array(8).fill(1), color: new Array(8).fill(0xf1) }], [], []],
+        sharedTiles: 1
+      })
     })
     const session = metaSession(META)
     await settled()
