@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BANK_COUNT,
+  bankCapacityLeft,
+  bankTileAt,
   blankTileEntry,
   colorByteAt,
   createTilesDoc,
+  isBanked,
   mergeColorByte,
   normalizeTiles,
   packTiles,
@@ -399,5 +403,59 @@ describe('a tileset created from the Resources panel', () => {
   it('still takes the count a real file states, or the tiles it carries', () => {
     expect(normalizeTiles({ mode: 'sc2', count: 64 }).count).toBe(64)
     expect(normalizeTiles({ mode: 'sc2', tiles: [{}, {}, {}] }).count).toBe(3)
+  })
+})
+
+describe('pattern banks', () => {
+  const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
+
+  it('a file that predates banking normalizes to no overrides', () => {
+    // The feature's central promise: today's files mean exactly what they meant.
+    const doc = normalizeTiles({ mode: 'sc2', count: 4, tiles: [solid(0x11), solid(0x22), solid(0x33), solid(0x44)] })
+    expect(doc.bankTiles).toEqual([[], [], []])
+    expect(doc.sharedTiles).toBe(0)
+    expect(isBanked(doc)).toBe(false)
+    // Every bank shows the common set, which is what VDP_LoadPattern_GM2 does.
+    for (let bank = 0; bank < BANK_COUNT; bank++) {
+      expect(bankTileAt(doc, bank, 2).pattern).toEqual(new Array(8).fill(0x33))
+    }
+  })
+
+  it('a bank override wins over the common set, and only for that bank', () => {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: [solid(0x11), solid(0x22), solid(0x33), solid(0x44)],
+      bankTiles: [[], [solid(0xaa)], []]
+    })
+    expect(isBanked(doc)).toBe(true)
+    expect(bankTileAt(doc, 1, 0).pattern).toEqual(new Array(8).fill(0xaa))
+    expect(bankTileAt(doc, 0, 0).pattern).toEqual(new Array(8).fill(0x11))
+    expect(bankTileAt(doc, 2, 0).pattern).toEqual(new Array(8).fill(0x11))
+    // Past its own overrides, a bank falls back to the common set again.
+    expect(bankTileAt(doc, 1, 1).pattern).toEqual(new Array(8).fill(0x22))
+  })
+
+  it('an index nothing defines is the blank tile, not undefined', () => {
+    const doc = normalizeTiles({ mode: 'sc2', count: 1 })
+    expect(bankTileAt(doc, 0, 200).pattern).toEqual(new Array(8).fill(0))
+  })
+
+  it('capacity is per bank, and the shared reservation costs every bank', () => {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 256,
+      bankTiles: [new Array(180).fill(solid(1)), new Array(204).fill(solid(2)), []],
+      sharedTiles: 48
+    })
+    expect(bankCapacityLeft(doc, 0)).toBe(256 - 180 - 48)
+    expect(bankCapacityLeft(doc, 1)).toBe(256 - 204 - 48)
+    expect(bankCapacityLeft(doc, 2)).toBe(256 - 0 - 48)
+  })
+
+  it('sc1 is never banked — it has one pattern table, not three', () => {
+    const doc = normalizeTiles({ mode: 'sc1', count: 8, bankTiles: [[solid(9)], [], []] })
+    expect(doc.bankTiles).toEqual([[], [], []])
+    expect(isBanked(doc)).toBe(false)
   })
 })

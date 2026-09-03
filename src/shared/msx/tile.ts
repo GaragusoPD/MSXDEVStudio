@@ -61,6 +61,25 @@ export interface TilesDoc {
   /** Named multi-tile designs over the tiles above. Empty in files that predate them. */
   blocks: TileBlock[]
   export: ExportBlock | null
+  /**
+   * Per-bank overrides for SCREEN 2/4's three pattern banks, `[bank0, bank1,
+   * bank2]`. `bankTiles[b][i]`, when present, is the art bank `b` shows at
+   * hardware index `i` instead of `tiles[i]`.
+   *
+   * Empty in every file that predates banking and in every tileset that does
+   * not need it — which is most of them: a game that draws the same tile at any
+   * screen height wants one bank replicated, which is what falling back to
+   * `tiles` gives it, and what `VDP_LoadPattern_GM2` already does.
+   */
+  bankTiles: TileEntry[][]
+
+  /**
+   * How many indices, counting down from 255, are reserved for meta-tiles —
+   * shared, so a meta's index means the same art in every bank. Stored rather
+   * than derived: an all-blank tile is legitimate art, so "the trailing shared
+   * entries" cannot be read off the data.
+   */
+  sharedTiles: number
 }
 
 /**
@@ -108,6 +127,33 @@ const zeros = (n: number): number[] => new Array<number>(n).fill(0)
  */
 export function blankTileEntry(mode: TileMode): TileEntry {
   return { pattern: zeros(TILE_SIZE), color: mode === 'sc1' ? [] : zeros(TILE_SIZE) }
+}
+
+/** SCREEN 2/4's pattern table is three banks of 256; SCREEN 1's is one. */
+export const BANK_COUNT = 3
+
+/** True once any bank carries art of its own. Never true in sc1. */
+export function isBanked(doc: TilesDoc): boolean {
+  return doc.bankTiles.some((bank) => bank.length > 0)
+}
+
+/**
+ * The art a name-table byte means, for a cell in the given bank.
+ *
+ * The one place the override rule lives, so the editors, the map renderer and
+ * the exporter cannot disagree about what a screen actually shows.
+ */
+export function bankTileAt(doc: TilesDoc, bank: number, index: number): TileEntry {
+  return doc.bankTiles[bank]?.[index] ?? doc.tiles[index] ?? blankTileEntry(doc.mode)
+}
+
+/**
+ * How many more tiles this bank can take before its own art would collide with
+ * the shared reservation at the top. The shared tiles cost every bank, which is
+ * the price of a meta index meaning one picture everywhere.
+ */
+export function bankCapacityLeft(doc: TilesDoc, bank: number): number {
+  return MAX_TILES - (doc.bankTiles[bank]?.length ?? 0) - doc.sharedTiles
 }
 
 /**
@@ -174,6 +220,24 @@ export function normalizeTiles(raw: unknown): TilesDoc {
   // Absent in files written before tile flags existed, so default to none.
   const rawFlags = Array.isArray(input.flags) ? input.flags : []
 
+  // sc1's pattern table is one bank of 256, so banking cannot apply — a file
+  // claiming otherwise is wrong rather than interesting.
+  const rawBanks = mode === 'sc1' || !Array.isArray(input.bankTiles) ? [] : input.bankTiles
+  const bankTiles: TileEntry[][] = Array.from({ length: BANK_COUNT }, (_, b) => {
+    const bank = Array.isArray(rawBanks[b]) ? rawBanks[b] : []
+    return bank.slice(0, MAX_TILES).map((entry) => {
+      const source = (entry ?? {}) as Partial<TileEntry>
+      const pattern = zeros(TILE_SIZE)
+      const color = perRowColor ? zeros(TILE_SIZE) : []
+      for (let y = 0; y < TILE_SIZE; y++) {
+        pattern[y] = byte(source.pattern?.[y])
+        if (perRowColor) color[y] = source.color?.[y] === undefined ? 0xf1 : byte(source.color[y])
+      }
+      return { pattern, color }
+    })
+  })
+  const sharedTiles = Math.max(0, Math.min(MAX_TILES, Number(input.sharedTiles) || 0))
+
   return {
     version: 1,
     mode,
@@ -184,7 +248,9 @@ export function normalizeTiles(raw: unknown): TilesDoc {
     groupColors,
     flags: Array.from({ length: count }, (_, i) => (Number(rawFlags[i]) || 0) & 0xff),
     blocks: normalizeBlocks(input.blocks, count),
-    export: (input.export as ExportBlock | undefined) ?? null
+    export: (input.export as ExportBlock | undefined) ?? null,
+    bankTiles,
+    sharedTiles
   }
 }
 
