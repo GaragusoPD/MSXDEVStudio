@@ -12,10 +12,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ImportResult } from '../../composables/useImageImport'
 import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import type { MapDoc } from '../../../../shared/msx/map'
-import { colorByteAt, normalizeTiles, splitColorByte, type TileEntry } from '../../../../shared/msx/tile'
+import { colorByteAt, MAX_TILES, normalizeTiles, splitColorByte, type TileEntry } from '../../../../shared/msx/tile'
 import { onTilesReordered, type TilesReorderEvent } from '../../../../shared/tile-editor'
 import {
   addTile,
+  bankBudgetLabel,
   beginStroke,
   deleteTile,
   deleteTiles,
@@ -23,6 +24,10 @@ import {
   importImage,
   paint,
   pruneTileSessions,
+  reorder,
+  resolveConflict,
+  select,
+  setBank,
   setColor,
   tileSession,
   undo
@@ -404,5 +409,251 @@ describe('importImage', () => {
     expect(written.count).toBe(2) // replace throws away the old common tiles...
     expect(written.sharedTiles).toBe(1) // ...but not a meta's shared art
     expect(written.tiles[255]).toEqual(live)
+  })
+})
+
+// ── banking (Task 7) ─────────────────────────────────────────────────────────
+
+/** One identifiable tile entry, its own first pattern byte its mark. */
+function mark(value: number): TileEntry {
+  return { pattern: [value, 0, 0, 0, 0, 0, 0, 0], color: new Array(8).fill(0xf1) }
+}
+
+describe('bank editing', () => {
+  it('painting a banked tileset edits that bank, not the common set', async () => {
+    // Bank 2 alone carries an override, so `isBanked` is true while bank 0
+    // (the "Bank 1" this test paints) starts genuinely empty — the sparse
+    // case the fixture-density warning on this branch asks for, not a
+    // uniform `count: 256` doc that would hide a wrong-array write.
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[], [], [mark(9)]] })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 0)
+    select(session, 0)
+    setColor(session, 5)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.doc.bankTiles[0]).not.toEqual([])
+    expect(session.doc.bankTiles[0][0]).not.toEqual(session.doc.tiles[0])
+    // Painting bank 0 must not touch a bank it wasn't asked to.
+    expect(session.doc.bankTiles[1]).toEqual([])
+  })
+
+  it('growing into an unoverridden index seeds the gap from the common tile it was already showing', async () => {
+    const commonTiles = [mark(10), mark(11), mark(12), mark(13)]
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 4, tiles: commonTiles, bankTiles: [[mark(99)], [], []] })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 0)
+    select(session, 3)
+    setColor(session, 5)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.doc.bankTiles[0]).toHaveLength(4)
+    // The slots between the pre-existing override and the one just painted
+    // were never touched — they show, and now store, exactly the common
+    // tile the bank was already falling back to there.
+    expect(session.doc.bankTiles[0][1]).toEqual(commonTiles[1])
+    expect(session.doc.bankTiles[0][2]).toEqual(commonTiles[2])
+    // The pre-existing override at index 0 is untouched by painting index 3.
+    expect(session.doc.bankTiles[0][0].pattern[0]).toBe(99)
+  })
+
+  it('painting an already-overridden index edits it in place, without growing the array', async () => {
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[mark(1), mark(2)], [], []] })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 0)
+    select(session, 1)
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.doc.bankTiles[0]).toHaveLength(2)
+    expect(splitColorByte(session.doc.bankTiles[0][1].color[0]).fg).toBe(9)
+  })
+
+  it('refuses to paint a shared tile from a bank view', async () => {
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[mark(1)], [], []], sharedTiles: 2 })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 0)
+    select(session, MAX_TILES - 1) // inside the top 2 shared indices
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.doc.bankTiles[0]).toHaveLength(1) // unchanged
+    expect(session.status).toMatch(/shared/i)
+  })
+
+  it('refuses to paint tile 0 in a bank view when reserveTile0 locks it', async () => {
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 1, reserveTile0: true, bankTiles: [[], [], [mark(1)]] })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 1)
+    select(session, 0)
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.doc.bankTiles[1]).toEqual([])
+    expect(session.status).toMatch(/reserved/i)
+  })
+
+  it('still raises the conflict popover on a bank row, and resolving it lands in bankTiles', async () => {
+    // Pattern bit 1 set (x=1 is FG), everything else clear (BG) — so painting
+    // x=2 with a third, distinct color has both roles already in use in that
+    // row and cannot resolve on its own.
+    const rowInUse: TileEntry = { pattern: [0x40, 0, 0, 0, 0, 0, 0, 0], color: [0x12, 0xf1, 0xf1, 0xf1, 0xf1, 0xf1, 0xf1, 0xf1] }
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[rowInUse], [], []] })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 0)
+    select(session, 0)
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 2, y: 0 }]) // no role — can conflict
+    expect(session.conflict).not.toBeNull()
+    expect(session.conflict?.bank).toBe(0)
+
+    resolveConflict(session, 'bg')
+    endStroke(session, 'paint')
+
+    expect(session.conflict).toBeNull()
+    expect(splitColorByte(session.doc.bankTiles[0][0].color[0]).bg).toBe(9)
+  })
+
+  it('undo after a bank paint restores bankTiles without resetting the selection', async () => {
+    // `count` is 1 here, the shape a `packBankedTiles` import actually leaves
+    // behind — a naive `active >= doc.count` clamp on undo would yank the
+    // selection back to tile 0.
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[], [], [mark(1)]] })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 1)
+    select(session, 5)
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.doc.bankTiles[1]).toHaveLength(6)
+    expect(session.active).toBe(5)
+
+    undo(session)
+
+    expect(session.doc.bankTiles[1]).toEqual([])
+    expect(session.active).toBe(5)
+  })
+
+  it('fills a bank exactly to its capacity, and refuses the tile just past it', async () => {
+    // 252 distinct overrides, 3 shared — one free hardware index (252) before
+    // the shared region starts at 253. Deliberately not `count: 256`: every
+    // entry differs (`mark(i)`), so a wrong-index write would still show up.
+    const overrides = Array.from({ length: MAX_TILES - 4 }, (_, i) => mark(i % 256))
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [overrides, [], []], sharedTiles: 3 })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 0)
+    setColor(session, 9)
+
+    select(session, MAX_TILES - 4) // the last hardware index before the shared region
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.doc.bankTiles[0]).toHaveLength(MAX_TILES - 3)
+    expect(bankBudgetLabel(session.doc, 0)).toBe(`bank 1: ${MAX_TILES - 3} + 3 shared = ${MAX_TILES} / ${MAX_TILES}`)
+
+    select(session, MAX_TILES - 3) // the first shared index
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(session.doc.bankTiles[0]).toHaveLength(MAX_TILES - 3) // refused; capacity unchanged
+  })
+
+  it('refuses to delete or reorder tiles on a banked tileset — a bank\'s own art does not renumber with the common set', async () => {
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 4, tiles: [mark(0), mark(1), mark(2), mark(3)], bankTiles: [[mark(9)], [], []] })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    deleteTiles(session, [1])
+    expect(session.doc.count).toBe(4)
+    expect(session.status).toMatch(/renumber/i)
+
+    reorder(session, 0, 2)
+    expect(session.doc.tiles.map((t) => t.pattern[0])).toEqual([0, 1, 2, 3])
+    expect(session.status).toMatch(/renumber/i)
+  })
+})
+
+describe('bankBudgetLabel', () => {
+  it('reports overrides, shared and the 256 ceiling for a partial bank', () => {
+    const doc = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[mark(1)], [], []], sharedTiles: 0 })
+    expect(bankBudgetLabel(doc, 0)).toBe('bank 1: 1 + 0 shared = 1 / 256')
+    expect(bankBudgetLabel(doc, 1)).toBe('bank 2: 0 + 0 shared = 0 / 256')
+    expect(bankBudgetLabel(doc, 2)).toBe('bank 3: 0 + 0 shared = 0 / 256')
+  })
+})
+
+describe('setBank', () => {
+  it('clamps to a valid bank index', async () => {
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[mark(1)], [], []] })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    setBank(session, 5)
+    expect(session.bank).toBe(2)
+    setBank(session, -1)
+    expect(session.bank).toBe(0)
+    setBank(session, Number.NaN)
+    expect(session.bank).toBe(0)
   })
 })

@@ -14,9 +14,13 @@ import type { ImportResult } from '../../composables/useImageImport'
 import { mapFromLayout } from '../../../../shared/msx/map'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import {
+  bankTileAt,
+  BANK_COUNT,
   blankTileEntry,
   blockPixels,
+  colorByteAt,
   createTilesDoc,
+  isBanked,
   MAX_BLOCK,
   MAX_TILES,
   convertTileMode,
@@ -31,6 +35,7 @@ import {
   tilePixels,
   type PaintConflict,
   type TileBlock,
+  type TileEntry,
   type TilesDoc
 } from '../../../../shared/msx/tile'
 import {
@@ -59,6 +64,7 @@ import {
   transformTile,
   undoHistory,
   type Point,
+  type StrokeResult,
   type TileClipboard,
   type TileHistory,
   type TileTool,
@@ -74,6 +80,9 @@ export interface PendingConflict {
   pending: Point[]
   color: number
   tileIndex: number
+  /** The bank this conflict was raised against, or null for the common set — so
+   * resolving it peels the answer back into the same place it was read from. */
+  bank: number | null
 }
 
 export interface TileSession {
@@ -86,6 +95,14 @@ export interface TileSession {
   /** Selected tiles in the grid; `active` is the one the row/flag controls act on. */
   selection: number[]
   active: number
+  /**
+   * Which of SCREEN 2/4's three pattern banks the grid and canvas show —
+   * 0-based (`BANK_COUNT` of them), meaningful only once `isBanked(doc)`; an
+   * ordinary tileset ignores it. `active` keeps meaning the same hardware
+   * index across a bank switch, since every bank is a view onto the same
+   * 0..255 range.
+   */
+  bank: number
   /** Tiles per row in the sheet — the grid wraps to its pane, so this is measured, not fixed. */
   columns: number
   /**
@@ -126,6 +143,7 @@ export function tileSession(path: string): TileSession {
     dirty: false,
     selection: [0],
     active: 0,
+    bank: 0,
     columns: GRID_COLUMNS,
     block: null,
     blockWide: false,
@@ -341,6 +359,126 @@ export async function importImage(
   }
 }
 
+// ── bank editing (Task 7) ───────────────────────────────────────────────────
+//
+// A bank's own art is a dense run of hardware indices 0..L-1 — never a sparse
+// set (see `bankLoadHelperC` in `shared/msx/tile.ts`, which loads a bank's
+// override table as exactly that many tiles from offset 0). So there is no
+// way to give one hardware index its own art without every index below it
+// also becoming "this bank's own", even when they still look exactly like the
+// common tile they used to fall back to. `writeBankTile` is where that
+// growth happens; `bankView`/`editBankEntry` are what let every existing
+// pixel/row/transform function do the actual edit without knowing banks
+// exist at all.
+
+/**
+ * The document as the selected bank sees it: `tiles[index]` substituted for
+ * that bank's own art at hardware index `index` (`bankTileAt`). Handed to
+ * `paintPixel`/`setRowColors`/`swapRowColors`/`transformTile` unchanged, so
+ * the two-colors-per-row constraint and every transform work the same as they
+ * always have — they only ever read `doc.tiles[index]`, and that's now the
+ * bank's entry instead of the common one.
+ */
+function bankView(doc: TilesDoc, bank: number, index: number): TilesDoc {
+  const tiles = doc.tiles.slice()
+  tiles[index] = bankTileAt(doc, bank, index)
+  return { ...doc, tiles }
+}
+
+/**
+ * Writes `entry` into bank `bank` at hardware index `index`, growing the
+ * override array from wherever it currently ends through `index` — see the
+ * section comment for why that growth is unavoidable. Every newly created
+ * slot below `index` is seeded from `bankTileAt`, so nothing the user isn't
+ * looking at changes appearance; only the bank's own budget shrinks.
+ */
+function writeBankTile(doc: TilesDoc, bank: number, index: number, entry: TileEntry): TilesDoc {
+  const grown = (doc.bankTiles[bank] ?? []).slice()
+  for (let i = grown.length; i < index; i++) grown[i] = bankTileAt(doc, bank, i)
+  grown[index] = entry
+  const bankTiles = doc.bankTiles.slice()
+  bankTiles[bank] = grown
+  return { ...doc, bankTiles }
+}
+
+/**
+ * Runs `edit` against the bank's own view of `index` and peels the result back
+ * into `bankTiles[bank]`. `edit` returning its input unchanged (the pattern
+ * `applyRoleStroke` uses for "nothing actually changed") is passed straight
+ * through as `doc`, so a stroke that painted nothing doesn't grow the bank
+ * array or manufacture a spurious undo step.
+ */
+function editBankEntry(doc: TilesDoc, bank: number, index: number, edit: (view: TilesDoc) => TilesDoc): TilesDoc {
+  const view = bankView(doc, bank, index)
+  const edited = edit(view)
+  return edited === view ? doc : writeBankTile(doc, bank, index, edited.tiles[index])
+}
+
+/** `applyStroke`, but through the selected bank's own art at `tileIndex` (see `bankView`). */
+function applyBankStroke(
+  doc: TilesDoc,
+  bank: number,
+  tileIndex: number,
+  points: readonly Point[],
+  color: number,
+  resolution?: 'fg' | 'bg'
+): StrokeResult {
+  const result = applyStroke(bankView(doc, bank, tileIndex), tileIndex, points, color, resolution)
+  const next = writeBankTile(doc, bank, tileIndex, result.doc.tiles[tileIndex])
+  return result.ok
+    ? { ok: true, doc: next, changed: result.changed }
+    : { ok: false, doc: next, conflict: result.conflict, pending: result.pending }
+}
+
+/** The bank the canvas is currently editing, or null on an ordinary (unbanked) tileset. */
+function activeBank(session: TileSession): number | null {
+  return isBanked(session.doc) ? session.bank : null
+}
+
+/**
+ * False for a shared (meta-tile) index — editing one from a bank view would
+ * silently repaint all three banks while the user is looking at one, which is
+ * exactly the lie this editor must not tell — and for index 0 when
+ * `reserveTile0` locks it blank in every bank, the same rule the common
+ * tileset already enforces.
+ */
+function bankIndexEditable(doc: TilesDoc, index: number): boolean {
+  return index < MAX_TILES - doc.sharedTiles && !(doc.reserveTile0 && index === 0)
+}
+
+function bankEditRefusal(doc: TilesDoc, index: number): string {
+  return index >= MAX_TILES - doc.sharedTiles
+    ? `Tile ${index} is shared meta-tile art — the same picture in every bank. Edit it from the meta-tile editor.`
+    : 'Tile 0 is reserved blank in every bank.'
+}
+
+/**
+ * "bank 1: 180 + 48 shared = 228 / 256" — spells out the arithmetic
+ * `bankCapacityLeft` runs, so the budget is visible before a stroke hits the
+ * wall rather than only after.
+ */
+export function bankBudgetLabel(doc: TilesDoc, bank: number): string {
+  const overrides = doc.bankTiles[bank]?.length ?? 0
+  const shared = doc.sharedTiles
+  return `bank ${bank + 1}: ${overrides} + ${shared} shared = ${overrides + shared} / ${MAX_TILES}`
+}
+
+/** Chooses which pattern bank the grid and canvas edit — clamped, since the UI only ever offers `BANK_COUNT` of them. */
+export function setBank(session: TileSession, bank: number): void {
+  const value = Number.isFinite(bank) ? Math.round(bank) : session.bank
+  session.bank = Math.max(0, Math.min(BANK_COUNT - 1, value))
+}
+
+/**
+ * The FG/BG byte tile `index` row `y` shows right now — the selected bank's
+ * own byte when banked, so the side panel's strip and the canvas's role-color
+ * preview agree with what a stroke is actually about to write.
+ */
+export function tileColorByte(session: TileSession, index: number, y: number): number {
+  const bank = activeBank(session)
+  return colorByteAt(bank !== null ? bankView(session.doc, bank, index) : session.doc, index, y)
+}
+
 // ── painting ────────────────────────────────────────────────────────────────
 
 export function beginStroke(session: TileSession): void {
@@ -358,22 +496,34 @@ export function beginStroke(session: TileSession): void {
  */
 export function paint(session: TileSession, points: Point[], role?: 'fg' | 'bg'): void {
   if (session.conflict) return
+  const bank = activeBank(session)
   // In block mode the points are in block space and can span several tiles, so
   // the stroke becomes one stroke per tile. A conflict stops it there — the
   // popover answers for one tile, and the rest of the stroke is dropped, the
-  // same as a single-tile stroke that gets interrupted.
+  // same as a single-tile stroke that gets interrupted. Blocks never open on a
+  // banked tileset (see `activeBlock`), so a bank stroke is always one tile.
   for (const [tile, tilePoints] of strokesByTile(session, points)) {
+    if (bank !== null && !bankIndexEditable(session.doc, tile)) {
+      session.status = bankEditRefusal(session.doc, tile)
+      continue
+    }
     if (role) {
       // Left button paints the row's ink, right its paper — the same model as
       // the meta-tile editor, and the reason a second colour lands instead of
       // raising a popover the user has to answer per pixel.
-      session.doc = applyRoleStroke(session.doc, tile, tilePoints, session.color, role)
+      session.doc =
+        bank !== null
+          ? editBankEntry(session.doc, bank, tile, (view) => applyRoleStroke(view, tile, tilePoints, session.color, role))
+          : applyRoleStroke(session.doc, tile, tilePoints, session.color, role)
       continue
     }
-    const result = applyStroke(session.doc, tile, tilePoints, session.color)
+    const result =
+      bank !== null
+        ? applyBankStroke(session.doc, bank, tile, tilePoints, session.color)
+        : applyStroke(session.doc, tile, tilePoints, session.color)
     session.doc = result.doc
     if (!result.ok) {
-      session.conflict = { conflict: result.conflict, pending: result.pending, color: session.color, tileIndex: tile }
+      session.conflict = { conflict: result.conflict, pending: result.pending, color: session.color, tileIndex: tile, bank }
       return
     }
   }
@@ -401,7 +551,10 @@ export function resolveConflict(session: TileSession, resolution: 'fg' | 'bg'): 
   const open = session.conflict
   if (!open) return
   session.conflict = null
-  const result = applyStroke(session.doc, open.tileIndex, open.pending, open.color, resolution)
+  const result =
+    open.bank !== null
+      ? applyBankStroke(session.doc, open.bank, open.tileIndex, open.pending, open.color, resolution)
+      : applyStroke(session.doc, open.tileIndex, open.pending, open.color, resolution)
   session.doc = result.doc
   if (!result.ok) {
     session.conflict = { ...open, conflict: result.conflict, pending: result.pending }
@@ -422,8 +575,17 @@ export function cancelConflict(session: TileSession): void {
  * The block the canvas is editing: a named one when the user opened it, and
  * otherwise the grid marquee itself — selecting a rectangle of tiles is all it
  * takes to edit them as one image. Null when a single tile is selected.
+ *
+ * Also null on any banked tileset. A block's tiles are indices into the
+ * *common* set (`TileBlock.tiles`), which is not what a bank view shows or
+ * edits — spreading one colour edit or transform over several hardware
+ * indices at once would either silently touch the common tileset while the
+ * user is looking at a bank, or require blocks to mean something per-bank
+ * they were never designed to. The grid falls back to single-tile selection
+ * whenever `isBanked(doc)`; see `TileGrid.vue`.
  */
 export function activeBlock(session: TileSession): TileBlock | null {
+  if (isBanked(session.doc)) return null
   if (session.block !== null) return session.doc.blocks[session.block] ?? null
   const marquee = selectionBlock(session.selection, session.columns)
   // Undo can shrink the bank under a selection made before it.
@@ -433,7 +595,9 @@ export function activeBlock(session: TileSession): TileBlock | null {
 /** What the canvas draws and the tools flood-fill over: one tile, or a whole block. */
 export function activePixels(session: TileSession): Uint8Array {
   const block = activeBlock(session)
-  return block ? blockPixels(session.doc, block) : tilePixels(session.doc, session.active)
+  if (block) return blockPixels(session.doc, block)
+  const bank = activeBank(session)
+  return tilePixels(bank !== null ? bankView(session.doc, bank, session.active) : session.doc, session.active)
 }
 
 /** Canvas size in pixels — `8 × 8` for a tile, `w*8 × h*8` for a block. */
@@ -490,6 +654,13 @@ export function nameSelection(session: TileSession): void {
 }
 
 export function addBlock(session: TileSession, name: string, width: number, height: number): void {
+  // A block is `width × height` references into the *common* set — nothing a
+  // bank view shows or lets `activeBlock` open (see its own comment) — so
+  // starting one here would create a block nobody can paint from this canvas.
+  if (isBanked(session.doc)) {
+    session.status = 'Blocks reference the common tileset, which a bank view does not show — not available here.'
+    return
+  }
   const next = createBlock(session.doc, name, width, height)
   if (next === session.doc) {
     session.status = `No room for a ${width}×${height} block — the bank holds ${MAX_TILES} tiles.`
@@ -523,6 +694,14 @@ export function tileClipboard(): TileClipboard | null {
 
 /** Copies the selection — pixels, per-row colours where the mode has them, and gameplay flags. */
 export function copySelection(session: TileSession): void {
+  // `copyTiles` reads `doc.tiles` — the common set — regardless of which bank
+  // the canvas is actually showing. Copying from a bank view would silently
+  // copy different pixels than the ones on screen, so it's refused rather
+  // than taught to read the bank: nothing here needs a cross-bank clipboard.
+  if (isBanked(session.doc)) {
+    session.status = 'Copy/paste works on the common tileset — not available from a bank view.'
+    return
+  }
   const copied = copyTiles(session.doc, session.selection, session.columns)
   if (!copied) {
     session.status = 'Select a tile, or drag a rectangle, before copying.'
@@ -536,6 +715,12 @@ export function copySelection(session: TileSession): void {
 export function pasteClipboard(session: TileSession): void {
   const source = clipboard.value
   if (!source) return
+  // See `copySelection`: `pasteTiles` writes into the common set, which a
+  // bank view neither shows nor edits.
+  if (isBanked(session.doc)) {
+    session.status = 'Copy/paste works on the common tileset — not available from a bank view.'
+    return
+  }
   const mode = session.doc.mode
   const { doc, pasted } = pasteTiles(session.doc, source, session.active, session.columns)
   if (!pasted) {
@@ -554,6 +739,19 @@ export function pasteClipboard(session: TileSession): void {
 // ── the rest of the toolbar ─────────────────────────────────────────────────
 
 export function transform(session: TileSession, op: TileTransform): void {
+  const bank = activeBank(session)
+  if (bank !== null) {
+    if (!bankIndexEditable(session.doc, session.active)) {
+      session.status = bankEditRefusal(session.doc, session.active)
+      return
+    }
+    const { doc: editedView, lossyRows } = transformTile(bankView(session.doc, bank, session.active), session.active, op)
+    commit(session, writeBankTile(session.doc, bank, session.active, editedView.tiles[session.active]), op)
+    session.status = lossyRows.length
+      ? `${op}: rows ${lossyRows.join(', ')} had more than two colors and were reduced.`
+      : ''
+    return
+  }
   const { doc, lossyRows } = transformTile(session.doc, session.active, op)
   commit(session, doc, op)
   session.status = lossyRows.length
@@ -574,12 +772,34 @@ function colorTargets(session: TileSession): number[] {
 }
 
 export function swapRow(session: TileSession, y: number): void {
+  const bank = activeBank(session)
+  if (bank !== null) {
+    if (!bankIndexEditable(session.doc, session.active)) {
+      session.status = bankEditRefusal(session.doc, session.active)
+      return
+    }
+    commit(session, editBankEntry(session.doc, bank, session.active, (view) => swapRowColors(view, session.active, y)), 'swap FG/BG')
+    return
+  }
   // Folded into one `commit`, so the whole block comes back in one undo step.
   const doc = colorTargets(session).reduce((next, tile) => swapRowColors(next, tile, y), session.doc)
   commit(session, doc, 'swap FG/BG')
 }
 
 export function setRow(session: TileSession, y: number, fg: number, bg: number): void {
+  const bank = activeBank(session)
+  if (bank !== null) {
+    if (!bankIndexEditable(session.doc, session.active)) {
+      session.status = bankEditRefusal(session.doc, session.active)
+      return
+    }
+    commit(
+      session,
+      editBankEntry(session.doc, bank, session.active, (view) => setRowColors(view, session.active, y, fg, bg)),
+      'row colors'
+    )
+    return
+  }
   const doc = colorTargets(session).reduce((next, tile) => setRowColors(next, tile, y, fg, bg), session.doc)
   commit(session, doc, 'row colors')
 }
@@ -624,6 +844,19 @@ export function deleteTile(session: TileSession, index: number): void {
  * mapping that maps and blocks replay.
  */
 export function deleteTiles(session: TileSession, indices: readonly number[]): void {
+  // `removeTile` renumbers the common range and publishes that remapping for
+  // any open map to replay — but a bank's own overrides are self-contained
+  // art anchored at fixed hardware indices, not references into `tiles`, so
+  // they never move (see `shared/msx/tile.ts`'s `removeTile`/`reorderTiles`).
+  // A map cell that resolves through a bank override therefore does not
+  // follow the remap the way a common-tile cell does, even though the
+  // published event claims otherwise. Refusing here — rather than teaching
+  // `tile.ts` about banks as a side effect of this UI task — keeps that
+  // mismatch unreachable instead of merely undetected.
+  if (isBanked(session.doc)) {
+    session.status = "Deleting renumbers the common tileset, and a bank's own art does not renumber with it — not available on a banked tileset."
+    return
+  }
   const doomed = [...new Set(indices)]
     .filter((index) => index >= 0 && index < session.doc.count)
     .sort((a, b) => b - a)
@@ -714,6 +947,13 @@ export function setColumns(session: TileSession, columns: number): void {
  */
 export function reorder(session: TileSession, from: number, to: number): void {
   if (from === to) return
+  // Same reasoning as `deleteTiles`'s guard: `reorderTiles` renumbers the
+  // common range and publishes that mapping, but a bank's own art is anchored
+  // at fixed hardware indices and never moves with it.
+  if (isBanked(session.doc)) {
+    session.status = "Reordering renumbers the common tileset, and a bank's own art does not renumber with it — not available on a banked tileset."
+    return
+  }
   const { doc, mapping } = reorderTiles(session.doc, from, to)
   publishRemap(session, mapping)
   commit(session, doc, `move tile ${from} → ${to}`, mapping)
@@ -752,7 +992,11 @@ function applyHistory(session: TileSession): void {
   useTilesetStore().set(session.path, session.doc, session.path)
   session.conflict = null
   session.strokeBase = null
-  if (session.active >= session.doc.count) select(session, session.doc.count - 1)
+  // `active` is a hardware index (0..255) in a bank view, not a position in
+  // the common set — `count` on a fully-banked doc is often tiny (a bare
+  // `packBankedTiles` import leaves it at 1), so clamping against it here
+  // would yank the selection to tile 0 on every undo/redo of a bank edit.
+  if (!isBanked(session.doc) && session.active >= session.doc.count) select(session, session.doc.count - 1)
   markDirty(session)
 }
 

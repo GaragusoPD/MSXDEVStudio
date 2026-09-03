@@ -19,12 +19,13 @@ import {
   unpackGrb
 } from '../../../../shared/msx/palette'
 import { defaultExport } from '../../../../shared/msx/resource'
-import { MAX_BLOCK, TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
-import { colorByteAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
+import { BANK_COUNT, isBanked, MAX_BLOCK, TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
+import { splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
 import { blockColorGroupWarning, renameBlock } from '../../../../shared/tile-editor'
 import {
   activeBlock,
   addBlock,
+  bankBudgetLabel,
   changeMode,
   commit,
   deleteBlock,
@@ -36,6 +37,7 @@ import {
   setPalette,
   setRow,
   swapRow,
+  tileColorByte,
   toggleFlag,
   type TileSession
 } from './session'
@@ -45,6 +47,8 @@ const props = defineProps<{ session: TileSession }>()
 const doc = computed(() => props.session.doc)
 const rgb = computed(() => paletteToRgb(doc.value.palette))
 const programmable = computed(() => doc.value.mode === 'sc4')
+/** Once any bank has overrides, the row strip and Blocks section follow the same view the grid does. */
+const banked = computed(() => isBanked(doc.value))
 /**
  * What the canvas is editing when it isn't a single tile — a named block, or
  * the grid marquee acting as one. Named apart from the block list's own `block`
@@ -52,7 +56,7 @@ const programmable = computed(() => doc.value.mode === 'sc4')
  */
 const canvasBlock = computed(() => activeBlock(props.session))
 const rows = computed(() =>
-  Array.from({ length: TILE_SIZE }, (_, y) => ({ y, ...splitColorByte(colorByteAt(doc.value, props.session.active, y)) }))
+  Array.from({ length: TILE_SIZE }, (_, y) => ({ y, ...splitColorByte(tileColorByte(props.session, props.session.active, y)) }))
 )
 
 /** sc1 shares one pair per group of 8 tiles, so the strip collapses to a single row. */
@@ -90,11 +94,17 @@ const blockWarning = computed(() => (canvasBlock.value ? blockColorGroupWarning(
 
 function switchMode(mode: TileMode): void {
   if (changeMode(props.session, mode)) return
-  if (
-    window.confirm(
-      'SCREEN 1 gives one FG/BG pair per group of 8 tiles. Converting keeps the first tile of each group’s top row and drops the rest. Continue?'
-    )
-  ) {
+  // SCREEN 1 has one pattern table, not three, so a banked (or shared-region)
+  // doc loses more than colour on the way there: `tileModeConversionLossy`
+  // refuses the plain conversion for exactly this doc precisely because every
+  // bank override and the whole meta-tile reservation would simply vanish,
+  // not just get recoloured — the confirmation has to say that, not the
+  // colour-only story every other tileset gets.
+  const message =
+    banked.value || doc.value.sharedTiles > 0
+      ? 'SCREEN 1 has one pattern table, not three: every bank override and the whole shared meta-tile reservation would be lost — not just recoloured. Continue?'
+      : 'SCREEN 1 gives one FG/BG pair per group of 8 tiles. Converting keeps the first tile of each group’s top row and drops the rest. Continue?'
+  if (window.confirm(message)) {
     changeMode(props.session, mode, true)
   }
 }
@@ -181,6 +191,23 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
       >
         {{ MODES[doc.mode].label }} uses the TMS9918A's fixed 16 colors.
       </p>
+    </section>
+
+    <section v-if="banked">
+      <h3>Banks</h3>
+      <p class="hint">
+        SCREEN 2/4's three pattern banks, each 256 tiles. A bank's own art plus the shared
+        (meta-tile) reservation both cost every bank the same room — this is what decides
+        whether the next stroke has anywhere to go, before it hits the wall.
+      </p>
+      <ul class="bank-budgets">
+        <li
+          v-for="b in BANK_COUNT"
+          :key="b"
+        >
+          {{ bankBudgetLabel(doc, b - 1) }}
+        </li>
+      </ul>
     </section>
 
     <section>
@@ -389,7 +416,12 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         >
         <button
           type="button"
-          title="Append that many blank tiles as a new block"
+          :disabled="banked"
+          :title="
+            banked
+              ? `Blocks reference the common tileset, which a bank view doesn't show — not available here`
+              : 'Append that many blank tiles as a new block'
+          "
           @click="createNewBlock"
         >
           + Block
@@ -402,7 +434,9 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         :title="
           marquee
             ? `Name the ${marquee.width}×${marquee.height} selection as a block — the tiles stay where they are`
-            : 'Drag a rectangle in the grid first'
+            : banked
+              ? `Blocks reference the common tileset, which a bank view doesn't show — not available here`
+              : 'Drag a rectangle in the grid first'
         "
         @click="nameSelection(session)"
       >
@@ -479,6 +513,19 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
   font-size: 10px;
   line-height: 1.4;
   color: var(--color-text-muted);
+}
+
+.bank-budgets {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.bank-budgets li {
+  padding: 1px 0;
 }
 
 .blocks {

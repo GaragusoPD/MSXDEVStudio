@@ -10,14 +10,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
 import Icon from '../../components/Icon.vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
-import { tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
+import { bankTilePixels, BANK_COUNT, isBanked, MAX_TILES, tilePixels, TILE_SIZE } from '../../../../shared/msx/tile'
 import { fitColumns, marqueeIndices } from '../../../../shared/tile-editor'
 import {
   addTile,
+  bankBudgetLabel,
   copySelection,
   deleteTiles,
   pasteClipboard,
   reorder,
+  setBank,
   setGridZoom,
   select,
   setColumns,
@@ -26,6 +28,18 @@ import {
 } from './session'
 
 const props = defineProps<{ session: TileSession }>()
+
+/**
+ * Once any bank has overrides, the grid stops showing the common sheet and
+ * shows one hardware bank's own 256-tile view instead — `bankTileAt` is the
+ * single place that rule lives (`session.ts` reads it too, for painting), so
+ * this only asks whether it applies. An ordinary tileset's grid is untouched.
+ */
+const banked = computed(() => isBanked(props.session.doc))
+/** A bank always covers all 256 hardware indices; the common sheet only as many as `count`. */
+const slotCount = computed(() => (banked.value ? MAX_TILES : props.session.doc.count))
+/** The first index of the shared (meta-tile) region — every index from here up is the same picture in every bank. */
+const sharedStart = computed(() => MAX_TILES - props.session.doc.sharedTiles)
 
 /**
  * Deleting renumbers every tile above it, which rewrites open maps through the
@@ -63,8 +77,8 @@ const cellHeight = computed(() => cell.value + (labelled.value ? 11 : 0))
  * narrower box → fewer columns again.
  */
 const paneWidth = ref(0)
-const COLUMNS = computed(() => fitColumns(paneWidth.value, cell.value, props.session.doc.count))
-const rows = computed(() => Math.ceil(props.session.doc.count / COLUMNS.value))
+const COLUMNS = computed(() => fitColumns(paneWidth.value, cell.value, slotCount.value))
+const rows = computed(() => Math.ceil(slotCount.value / COLUMNS.value))
 
 let observer: ResizeObserver | null = null
 onMounted(() => {
@@ -85,19 +99,28 @@ function indexAt(event: PointerEvent): number | null {
   const y = Math.floor((event.clientY - rect.top) / cellHeight.value)
   if (x < 0 || x >= COLUMNS.value || y < 0) return null
   const index = y * COLUMNS.value + x
-  return index < props.session.doc.count ? index : null
+  return index < slotCount.value ? index : null
 }
 
 /** Extends the marquee to `focus`; `active` stays on the anchor, so the row and flag controls don't jump. */
 function marqueeTo(focus: number): void {
   const from = anchor as number
-  select(props.session, from, marqueeIndices(from, focus, COLUMNS.value, props.session.doc.count))
+  select(props.session, from, marqueeIndices(from, focus, COLUMNS.value, slotCount.value))
 }
 
 function onDown(event: PointerEvent): void {
   const index = indexAt(event)
   if (index === null) return
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
+  // A bank view is always a single hardware tile at a time: a block's tiles
+  // are references into the common set (see `activeBlock`), and reordering
+  // renumbers the common set a bank's own art does not follow (see
+  // `reorder`'s guard in session.ts) — so neither the marquee nor the
+  // Alt-drag reorder gesture applies here.
+  if (banked.value) {
+    select(props.session, index)
+    return
+  }
   // Alt is the reorder gesture: it renumbers the bank, so it stays behind a
   // modifier and a confirmation, and a plain drag is free to select.
   if (event.altKey) {
@@ -154,8 +177,11 @@ watchEffect(() => {
   // One 8-bit-per-pixel sheet, then one scaled blit per tile row.
   const rgb = paletteToRgb(doc.palette)
   const sheet = new ImageData(COLUMNS.value * TILE_SIZE, Math.max(1, rows.value) * TILE_SIZE)
-  for (let index = 0; index < doc.count; index++) {
-    const pixels = tilePixels(doc, index)
+  for (let index = 0; index < slotCount.value; index++) {
+    // `bankTileAt` is the one place that decides what a hardware index shows
+    // for a given bank — this has to agree with it exactly, or the sheet lies
+    // about what a stroke here is about to edit.
+    const pixels = banked.value ? bankTilePixels(doc, props.session.bank, index) : tilePixels(doc, index)
     const ox = (index % COLUMNS.value) * TILE_SIZE
     const oy = Math.floor(index / COLUMNS.value) * TILE_SIZE
     for (let y = 0; y < TILE_SIZE; y++) {
@@ -192,10 +218,25 @@ watchEffect(() => {
   if (labelled.value) {
     context.font = '9px monospace'
     context.fillStyle = 'rgba(180, 180, 180, 0.9)'
-    for (let index = 0; index < doc.count; index++) {
+    for (let index = 0; index < slotCount.value; index++) {
       const x = (index % COLUMNS.value) * size
       const y = Math.floor(index / COLUMNS.value) * height
       context.fillText(`${index} ${hex(index)}`, x + 2, y + size + 9, size - 4)
+    }
+  }
+
+  // The shared (meta-tile) region: the same picture in every bank, so a
+  // stroke here would rewrite all three at once while only one is on screen —
+  // marked rather than editable, per `bankIndexEditable` in session.ts.
+  if (banked.value && doc.sharedTiles > 0) {
+    context.fillStyle = 'rgba(255, 210, 78, 0.16)'
+    context.strokeStyle = 'rgba(255, 210, 78, 0.55)'
+    context.lineWidth = 1
+    for (let index = sharedStart.value; index < slotCount.value; index++) {
+      const x = (index % COLUMNS.value) * size
+      const y = Math.floor(index / COLUMNS.value) * height
+      context.fillRect(x, y, size, size)
+      context.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1)
     }
   }
 
@@ -239,7 +280,28 @@ watchEffect(() => {
 <template>
   <div class="grid-pane">
     <header>
-      <span class="title">{{ session.doc.count }} tiles</span>
+      <div
+        v-if="banked"
+        class="banks"
+        role="group"
+        aria-label="Pattern bank"
+      >
+        <button
+          v-for="b in BANK_COUNT"
+          :key="b"
+          type="button"
+          class="bank-tab"
+          :class="{ active: session.bank === b - 1 }"
+          :title="bankBudgetLabel(session.doc, b - 1)"
+          @click="setBank(session, b - 1)"
+        >
+          Bank {{ b }}
+        </button>
+      </div>
+      <span
+        v-else
+        class="title"
+      >{{ session.doc.count }} tiles</span>
       <span class="readout">{{ hover ?? session.active }} · {{ hex(hover ?? session.active) }}</span>
       <label
         class="zoom"
@@ -257,22 +319,31 @@ watchEffect(() => {
       </label>
       <button
         type="button"
-        title="Copy the selected tiles — pixels, colours and flags (Ctrl+C)"
+        :title="
+          banked
+            ? 'Copy/paste works on the common tileset — not available from a bank view'
+            : 'Copy the selected tiles — pixels, colours and flags (Ctrl+C)'
+        "
+        :disabled="banked"
         @click="copySelection(session)"
       >
         copy
       </button>
       <button
         type="button"
-        title="Paste with the clipboard's top-left on the selected tile (Ctrl+V)"
-        :disabled="!tileClipboard()"
+        :title="
+          banked
+            ? 'Copy/paste works on the common tileset — not available from a bank view'
+            : `Paste with the clipboard's top-left on the selected tile (Ctrl+V)`
+        "
+        :disabled="banked || !tileClipboard()"
         @click="pasteClipboard(session)"
       >
         paste
       </button>
       <button
         type="button"
-        title="Append a blank tile"
+        title="Append a blank tile to the common set — shows through any bank whose own overrides don't reach this far"
         @click="addTile(session)"
       >
         <Icon
@@ -283,11 +354,13 @@ watchEffect(() => {
       <button
         type="button"
         :title="
-          session.selection.length > 1
-            ? `Delete the ${session.selection.length} selected tiles — maps and blocks using them fall back to tile 0`
-            : 'Delete the selected tile — maps and blocks using it fall back to tile 0'
+          banked
+            ? `Deleting renumbers the common tileset, and a bank's own art doesn't renumber with it — not available on a banked tileset`
+            : session.selection.length > 1
+              ? `Delete the ${session.selection.length} selected tiles — maps and blocks using them fall back to tile 0`
+              : 'Delete the selected tile — maps and blocks using it fall back to tile 0'
         "
-        :disabled="session.doc.count <= 1"
+        :disabled="banked || session.doc.count <= 1"
         @click="confirmDelete"
       >
         <Icon
@@ -310,7 +383,18 @@ watchEffect(() => {
         @pointerleave="hover = null"
       />
     </div>
-    <p class="hint">
+    <p
+      v-if="banked"
+      class="hint"
+    >
+      Showing Bank {{ session.bank + 1 }} — every hardware index it doesn't override of its own shows the common
+      tileset. Amber cells are shared meta-tile art, the same picture in every bank; edit those from the meta-tile
+      editor instead.
+    </p>
+    <p
+      v-else
+      class="hint"
+    >
       Drag a rectangle to edit those tiles as one image · Shift+click extends it · Ctrl+C/Ctrl+V
       copies tiles · Alt+drag a tile onto another to reorder.
     </p>
@@ -346,6 +430,25 @@ header button {
   display: flex;
   align-items: center;
   gap: 1px;
+}
+
+.banks {
+  display: flex;
+  gap: 2px;
+}
+
+.bank-tab {
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  font-size: 11px;
+}
+
+.bank-tab.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
 }
 
 .title {

@@ -341,6 +341,25 @@ export function tilePixels(doc: TilesDoc, index: number): Uint8Array {
   return out
 }
 
+/**
+ * `tilePixels`, but for what bank `bank` actually shows at hardware index
+ * `index` (`bankTileAt`) rather than the common tile there. A bank's own
+ * grid needs this for every one of its 256 hardware slots on every redraw
+ * (see `TileGrid.vue`), so this decodes straight from the resolved entry
+ * instead of `tilePixels`'s `doc.tiles.slice()`-and-substitute trick — that
+ * trick is fine once per edit, not 256 times per frame.
+ */
+export function bankTilePixels(doc: TilesDoc, bank: number, index: number): Uint8Array {
+  const out = new Uint8Array(TILE_SIZE * TILE_SIZE)
+  const tile = bankTileAt(doc, bank, index)
+  for (let y = 0; y < TILE_SIZE; y++) {
+    const { fg, bg } = splitColorByte(doc.mode === 'sc1' ? (doc.groupColors[index >> 3] ?? 0) : (tile.color[y] ?? 0))
+    const bits = tile.pattern[y]
+    for (let x = 0; x < TILE_SIZE; x++) out[y * TILE_SIZE + x] = bits & (0x80 >> x) ? fg : bg
+  }
+  return out
+}
+
 /** A block's pixels as one image, `width*8 × height*8` palette indices, row-major. */
 export function blockPixels(doc: TilesDoc, block: TileBlock): Uint8Array {
   const width = block.width * TILE_SIZE

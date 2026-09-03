@@ -9,7 +9,7 @@
  */
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
-import { blockTileAt, colorByteAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
+import { blockTileAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
 import { toolPoints, type Point } from '../../../../shared/tile-editor'
 import {
   activeBlock,
@@ -20,6 +20,7 @@ import {
   endStroke,
   paint,
   resolveConflict,
+  tileColorByte,
   type TileSession
 } from './session'
 
@@ -42,8 +43,12 @@ let role: 'fg' | 'bg' = 'fg'
 function roleColor(point: Point): number {
   const block = activeBlock(props.session)
   const hit = block && blockTileAt(block, point.x, point.y)
+  // `tileColorByte` reads through the selected bank when the doc is banked
+  // (blocks never open there, so `hit` is always null and this is always
+  // `session.active`) — the preview has to agree with what a stroke is about
+  // to write, not with the common tile the bank happens to be overriding.
   const { fg, bg } = splitColorByte(
-    colorByteAt(props.session.doc, hit ? hit.tile : props.session.active, hit ? hit.ty : point.y)
+    tileColorByte(props.session, hit ? hit.tile : props.session.active, hit ? hit.ty : point.y)
   )
   return role === 'fg' ? fg : bg
 }

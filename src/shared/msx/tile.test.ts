@@ -5,6 +5,7 @@ import {
   bankColorBytes,
   bankPatternBytes,
   bankTileAt,
+  bankTilePixels,
   blankTileEntry,
   colorByteAt,
   createTilesDoc,
@@ -446,6 +447,21 @@ describe('pattern banks', () => {
   it('an index nothing defines is the blank tile, not undefined', () => {
     const doc = normalizeTiles({ mode: 'sc2', count: 1 })
     expect(bankTileAt(doc, 0, 200).pattern).toEqual(new Array(8).fill(0))
+  })
+
+  it('bankTilePixels decodes exactly what bankTileAt resolves for that hardware index', () => {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: [solid(0x11), solid(0x22), solid(0x33), solid(0x44)],
+      bankTiles: [[], [solid(0xaa)], []]
+    })
+    // Bank 1's own override at index 0 — same bytes `tilePixels` would decode
+    // if that override sat in `tiles[0]` directly.
+    expect(bankTilePixels(doc, 1, 0)).toEqual(tilePixels({ ...doc, tiles: [solid(0xaa)] }, 0))
+    // Bank 0 has no override at index 0, so it falls back to the common tile —
+    // the same pixels the ordinary (unbanked) grid shows there.
+    expect(bankTilePixels(doc, 0, 0)).toEqual(tilePixels(doc, 0))
   })
 
   it('capacity is per bank, and the shared reservation costs every bank', () => {
