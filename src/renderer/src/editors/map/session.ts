@@ -19,6 +19,7 @@
 import { shallowReactive } from 'vue'
 import {
   addMetaRef,
+  bankForRow,
   MAX_MAP_METAS,
   metaSlotOf,
   movePlacement,
@@ -28,13 +29,14 @@ import {
   metaRefFrom,
   removePlacement,
   resizeMap,
+  SCREEN_ROWS,
   type MetaRef,
   setPlacementBaked,
   type MapCell,
   type MapDoc
 } from '../../../../shared/msx/map'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
-import type { TilesDoc } from '../../../../shared/msx/tile'
+import { BANK_COUNT, isBanked, MAX_TILES, type TilesDoc } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
 import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
@@ -126,6 +128,13 @@ export interface MapSession {
   pickerActive: number
   pickerSelection: number[]
   pickerZoom: number
+  /**
+   * Which of SCREEN 2/4's three pattern banks the picker shows — UI state,
+   * not a history entry, exactly like the tile editor's own `bank`
+   * (`tile/session.ts`). Ignored on an unbanked tileset, where it stays 0 and
+   * every cell is already the sheet index (see `bankSheetOffset`).
+   */
+  bank: number
 
   zoom: number
   gridVisible: boolean
@@ -174,6 +183,7 @@ export function mapSession(path: string): MapSession {
     pickerActive: 0,
     pickerSelection: [0],
     pickerZoom: 24,
+    bank: 0,
     zoom: 16,
     gridVisible: true,
     screenOutline: true,
@@ -520,6 +530,46 @@ export function sheet(session: MapSession): Sheet | null {
         ? tilesetSheet(session.tileset)
         : null
   return base
+}
+
+/**
+ * Chooses which pattern bank the picker shows — UI state, not a history
+ * entry, exactly like the tile editor's own `setBank` (`tile/session.ts`).
+ * Clamped since the UI only ever offers `BANK_COUNT` of them.
+ *
+ * This only steers which art the picker offers to paint with; it does not
+ * follow the brush onto the canvas. A byte picked from bank 1 and painted on
+ * row 3 shows bank 0's art there — one name-table byte means different art in
+ * different thirds of the screen, and the canvas already tells the truth
+ * about it (`bankSheetOffset`). That is the hardware, not a bug: no warning,
+ * conversion, or restriction to add here.
+ */
+export function setBank(session: MapSession, bank: number): void {
+  const value = Number.isFinite(bank) ? Math.round(bank) : session.bank
+  session.bank = Math.max(0, Math.min(BANK_COUNT - 1, value))
+}
+
+/**
+ * The stacked sheet's offset for a cell on this map row: the row's own bank
+ * slice (`bankForRow(row) * MAX_TILES`) when the tileset is banked, `0`
+ * otherwise. A name-table byte is 0-255 regardless of banking — this is what
+ * turns it into the right cell of `tilesetSheet`'s stacked layout.
+ * `MapCanvas.vue` adds this to the cell byte before computing `sx`/`sy`; it is
+ * the only banking-aware arithmetic that file needs.
+ *
+ * `bankForRow` only knows a *screen* row, 0-23 — `validateMap` refuses to
+ * export a banked map that isn't exactly `SCREEN_ROWS` tall, since banks are
+ * chosen by row and row 24 has none. But that check runs at export time, not
+ * while painting: `resize()` lets the canvas show a taller banked map for as
+ * long as the user leaves it that way, and without the `% SCREEN_ROWS` below,
+ * row 24 and up would index a cell past the stacked sheet's 768 and
+ * `drawImage` would silently draw nothing there — the exact bug class this
+ * function exists to fix, reappearing below the first screen. Wrapping every
+ * screen's worth of rows back onto banks 0-2 keeps the editor honest (if
+ * still unexportable) instead of quietly going blank.
+ */
+export function bankSheetOffset(session: MapSession, row: number): number {
+  return session.tileset && isBanked(session.tileset) ? bankForRow(row % SCREEN_ROWS) * MAX_TILES : 0
 }
 
 // ── tool state ───────────────────────────────────────────────────────────

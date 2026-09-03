@@ -3,6 +3,7 @@ import {
   BANK_COUNT,
   bankCapacityLeft,
   bankColorBytes,
+  bankedSheetPixels,
   bankPatternBytes,
   bankTileAt,
   bankTilePixels,
@@ -25,6 +26,7 @@ import {
   splitColorByte,
   swapRowColors,
   tileColorBytes,
+  TILE_SIZE,
   tileFromPixels,
   tilePatternBytes,
   tilePixels,
@@ -630,6 +632,84 @@ describe('pattern banks', () => {
       expect(removed.doc.count).toBe(3)
       expect(removed.mapping).toEqual([0, 0, 1, 2])
     })
+  })
+})
+
+describe('bankedSheetPixels — the map editor\'s stacked 768-cell layout', () => {
+  const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
+
+  // Banks at different lengths and a non-zero sharedTiles, deliberately not a
+  // uniform `count: 256` — Task 10's brief notes four earlier defects on this
+  // branch survived review because fixtures were too dense to show the bug
+  // they were meant to catch. bank 0 overrides 0..2, bank 1 overrides only 0,
+  // bank 2 overrides nothing at all (a pure fallback-to-common bank).
+  const rawTiles: unknown[] = [0, 1, 2, 3, 4, 5].map((i) => solid(0x10 + i))
+  rawTiles[254] = solid(0xee)
+  rawTiles[255] = solid(0xff)
+  const doc = normalizeTiles({
+    mode: 'sc2',
+    count: 6,
+    tiles: rawTiles,
+    bankTiles: [[solid(0xaa), solid(0xbb), solid(0xcc)], [solid(0xdd)], []],
+    sharedTiles: 2
+  })
+
+  /** The 8×8 palette-index block the stacked sheet holds at cell `cell` (16 columns). */
+  function cellPixels(sheet: { width: number; indices: Uint8Array }, cell: number): number[] {
+    const cols = 16
+    const ox = (cell % cols) * TILE_SIZE
+    const oy = Math.floor(cell / cols) * TILE_SIZE
+    const out: number[] = []
+    for (let y = 0; y < TILE_SIZE; y++) {
+      for (let x = 0; x < TILE_SIZE; x++) out.push(sheet.indices[(oy + y) * sheet.width + ox + x])
+    }
+    return out
+  }
+
+  it('sizes the sheet at 16 columns × 768 cells (48 rows of 8px tiles)', () => {
+    const sheet = bankedSheetPixels(doc)
+    expect(sheet.width).toBe(16 * TILE_SIZE)
+    expect(sheet.height).toBe(48 * TILE_SIZE)
+    expect(sheet.indices).toHaveLength(sheet.width * sheet.height)
+  })
+
+  it('places bank b\'s tile i at cell b * 256 + i — not i * 3 + b, the transposition that looks plausible on screen', () => {
+    const sheet = bankedSheetPixels(doc)
+    // A representative index from each bank, an overridden one and a
+    // fallen-through one, covering all three banks including the one with no
+    // overrides at all.
+    const cases: Array<[bank: number, index: number]> = [
+      [0, 0], // overridden (0xaa)
+      [0, 5], // falls through to the common tile (0x15)
+      [1, 0], // overridden (0xdd)
+      [1, 2], // falls through to the common tile (0x12)
+      [2, 0], // bank 2 has no overrides at all — pure fallback
+      [2, 5]
+    ]
+    for (const [bank, index] of cases) {
+      const cell = bank * MAX_TILES + index
+      expect(cellPixels(sheet, cell)).toEqual(Array.from(bankTilePixels(doc, bank, index)))
+    }
+  })
+
+  it('a bank with no overrides falls through to the common tile at every index it is asked for', () => {
+    const sheet = bankedSheetPixels(doc)
+    for (const index of [0, 1, 4, 5, 100, 253]) {
+      const cell = 2 * MAX_TILES + index
+      expect(cellPixels(sheet, cell)).toEqual(Array.from(tilePixels(doc, index)))
+    }
+  })
+
+  it('the shared region reads identically in all three banks', () => {
+    const sheet = bankedSheetPixels(doc)
+    for (const index of [254, 255]) {
+      const bank0 = cellPixels(sheet, 0 * MAX_TILES + index)
+      const bank1 = cellPixels(sheet, 1 * MAX_TILES + index)
+      const bank2 = cellPixels(sheet, 2 * MAX_TILES + index)
+      expect(bank1).toEqual(bank0)
+      expect(bank2).toEqual(bank0)
+      expect(bank0).toEqual(Array.from(tilePixels(doc, index)))
+    }
   })
 })
 

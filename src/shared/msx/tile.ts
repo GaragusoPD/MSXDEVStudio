@@ -360,6 +360,46 @@ export function bankTilePixels(doc: TilesDoc, bank: number, index: number): Uint
   return out
 }
 
+/** Sheet cells per row — matches `sheet.ts`'s own `TILESET_COLUMNS`, so the map editor's stacked-bank layout tiles into the same shape as its unbanked one. */
+const BANKED_SHEET_COLUMNS = 16
+
+/**
+ * The three pattern banks as one 768-cell sheet, `BANKED_SHEET_COLUMNS` wide:
+ * cell `bank * MAX_TILES + index` holds what `bankTileAt(doc, bank, index)`
+ * resolves for every hardware index, shared region included.
+ *
+ * This is the layout `sheet.ts`'s `tilesetSheet` paints from rather than
+ * looping itself — `sheet.ts` is renderer code vitest cannot reach (see
+ * CLAUDE.md), so the loop that decides *which cell holds which tile* has to
+ * live here, where a transposed `index * BANK_COUNT + bank` would be caught.
+ * One stacked sheet rather than three separate ones, because the map editor's
+ * sheet cache is a single module-level slot — three per-bank sheets would
+ * thrash it once per row of the canvas draw loop.
+ *
+ * 256 is a multiple of `BANKED_SHEET_COLUMNS`, so each bank starts on its own
+ * row boundary and every consumer's existing `cell % cols` / `cell / cols`
+ * arithmetic keeps working unmodified against the stacked layout.
+ */
+export function bankedSheetPixels(doc: TilesDoc): { width: number; height: number; indices: Uint8Array } {
+  const cols = BANKED_SHEET_COLUMNS
+  const totalCells = BANK_COUNT * MAX_TILES
+  const width = cols * TILE_SIZE
+  const height = (totalCells / cols) * TILE_SIZE
+  const indices = new Uint8Array(width * height)
+  for (let bank = 0; bank < BANK_COUNT; bank++) {
+    for (let index = 0; index < MAX_TILES; index++) {
+      const cell = bank * MAX_TILES + index
+      const pixels = bankTilePixels(doc, bank, index)
+      const ox = (cell % cols) * TILE_SIZE
+      const oy = Math.floor(cell / cols) * TILE_SIZE
+      for (let y = 0; y < TILE_SIZE; y++) {
+        indices.set(pixels.subarray(y * TILE_SIZE, y * TILE_SIZE + TILE_SIZE), (oy + y) * width + ox)
+      }
+    }
+  }
+  return { width, height, indices }
+}
+
 /** A block's pixels as one image, `width*8 × height*8` palette indices, row-major. */
 export function blockPixels(doc: TilesDoc, block: TileBlock): Uint8Array {
   const width = block.width * TILE_SIZE

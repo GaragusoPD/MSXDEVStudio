@@ -11,7 +11,8 @@
 import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { singleStamp, stampFromMarquee } from '../../../../shared/map-editor'
 import { fitColumns } from '../../../../shared/tile-editor'
-import { tilesetBlocks, pickBlock, pickTile, sheet, type MapSession } from './session'
+import { BANK_COUNT, isBanked, MAX_TILES } from '../../../../shared/msx/tile'
+import { setBank, tilesetBlocks, pickBlock, pickTile, sheet, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
@@ -35,7 +36,12 @@ const hasTileset = computed(() => Boolean(props.session.tileset ?? props.session
 
 const cells = computed(() => sheet(props.session))
 const cell = computed(() => props.session.pickerZoom)
-const count = computed(() => cells.value?.count ?? 0)
+/** True once the loaded tileset carries any bank art of its own — never for a bitmap tileset or an atlas. */
+const banked = computed(() => Boolean(props.session.tileset && isBanked(props.session.tileset)))
+// A banked sheet is 768 cells stacked (`tilesetSheet`'s banked layout), but the
+// picker only ever shows one bank's own 256-tile view at a time, exactly like
+// `TileGrid.vue` — the 768 lives in `cells.value.count`, not here.
+const count = computed(() => (banked.value ? MAX_TILES : (cells.value?.count ?? 0)))
 
 /** Same as `TileGrid.vue`: the sheet wraps into the pane instead of scrolling off the side of it. */
 const paneWidth = ref(0)
@@ -113,11 +119,16 @@ watchEffect(() => {
 
   // The pane's column count is measured, not the sheet's own, so each cell is
   // placed rather than the sheet blitted in rows — the two grids differ.
-  for (let index = 0; index < source.count; index++) {
+  //
+  // `session.bank * MAX_TILES` is the stacked sheet's offset for whichever
+  // bank the tabs below have selected — 0 on an unbanked tileset, where the
+  // bank never changes, so this is added unconditionally rather than branched.
+  for (let index = 0; index < count.value; index++) {
+    const cell = index + props.session.bank * MAX_TILES
     context.drawImage(
       source.canvas,
-      (index % source.cols) * source.cellW,
-      Math.floor(index / source.cols) * source.cellH,
+      (cell % source.cols) * source.cellW,
+      Math.floor(cell / source.cols) * source.cellH,
       source.cellW,
       source.cellH,
       (index % COLUMNS.value) * size,
@@ -138,7 +149,27 @@ watchEffect(() => {
 <template>
   <div class="picker-pane">
     <header>
-      <span class="title">Tileset</span>
+      <div
+        v-if="banked"
+        class="banks"
+        role="group"
+        aria-label="Pattern bank"
+      >
+        <button
+          v-for="b in BANK_COUNT"
+          :key="b"
+          type="button"
+          class="bank-tab"
+          :class="{ active: session.bank === b - 1 }"
+          @click="setBank(session, b - 1)"
+        >
+          Bank {{ b }}
+        </button>
+      </div>
+      <span
+        v-else
+        class="title"
+      >Tileset</span>
       <span class="readout">{{ hover ?? session.pickerActive }} · {{ hex(hover ?? session.pickerActive) }}</span>
     </header>
     <p
@@ -224,6 +255,25 @@ header {
 
 .title {
   color: var(--color-text-muted);
+}
+
+.banks {
+  display: flex;
+  gap: 2px;
+}
+
+.bank-tab {
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  font-size: 11px;
+}
+
+.bank-tab.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
 }
 
 .readout {

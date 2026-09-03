@@ -17,7 +17,7 @@
 import { sheetCols, sheetPixels, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { screenPixels, screenRgb, type ScreenDoc } from '../../../../shared/msx/screen'
-import { tilePixels, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
+import { bankedSheetPixels, BANK_COUNT, isBanked, MAX_TILES, tilePixels, TILE_SIZE, type TilesDoc } from '../../../../shared/msx/tile'
 import type { MapCell } from '../../../../shared/msx/map'
 import type { MetaTileDoc } from '../../../../shared/msx/meta-tile'
 
@@ -41,6 +41,12 @@ let cachedKey = ''
 let cached: Sheet | null = null
 
 export function tilesetSheet(tileset: TilesDoc): Sheet {
+  // A banked tileset's real art lives in `bankTiles[b]`, which the loop below
+  // never reads — painting `count` cells of the common set alone is how a
+  // banked map used to render blank. Its own function, its own cache key: the
+  // unbanked path below is otherwise untouched, cache key included, because
+  // most tilesets never bank and this must cost them nothing.
+  if (isBanked(tileset)) return bankedTilesetSheet(tileset)
   if (cachedSource === tileset && cachedKey === '' && cached) return cached
   const rows = Math.max(1, Math.ceil(tileset.count / TILESET_COLUMNS))
   const canvas = document.createElement('canvas')
@@ -69,6 +75,43 @@ export function tilesetSheet(tileset: TilesDoc): Sheet {
   ctx.putImageData(image, 0, 0)
   cachedSource = tileset
   cachedKey = ''
+  cached = sheet
+  return sheet
+}
+
+/**
+ * The banked branch of `tilesetSheet`: paints from `bankedSheetPixels` — the
+ * shared, testable layout — rather than looping over `tiles`/`bankTiles` here.
+ * Same shape as `bitmapTilesetSheet` below: the layout function decides which
+ * cell holds which tile, this only converts palette indices to RGB.
+ */
+function bankedTilesetSheet(tileset: TilesDoc): Sheet {
+  if (cachedSource === tileset && cachedKey === 'banked' && cached) return cached
+  const pixels = bankedSheetPixels(tileset)
+  const canvas = document.createElement('canvas')
+  canvas.width = pixels.width
+  canvas.height = pixels.height
+  const sheet: Sheet = {
+    canvas,
+    cellW: TILE_SIZE,
+    cellH: TILE_SIZE,
+    cols: TILESET_COLUMNS,
+    count: BANK_COUNT * MAX_TILES
+  }
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return sheet
+  const rgb = paletteToRgb(tileset.palette)
+  const image = new ImageData(canvas.width, canvas.height)
+  for (let i = 0; i < pixels.indices.length; i++) {
+    const color = rgb[pixels.indices[i]] ?? { r: 0, g: 0, b: 0 }
+    image.data[i * 4] = color.r
+    image.data[i * 4 + 1] = color.g
+    image.data[i * 4 + 2] = color.b
+    image.data[i * 4 + 3] = 255
+  }
+  ctx.putImageData(image, 0, 0)
+  cachedSource = tileset
+  cachedKey = 'banked'
   cached = sheet
   return sheet
 }

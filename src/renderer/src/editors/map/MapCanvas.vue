@@ -17,6 +17,7 @@ import { type Point } from '../../../../shared/map-editor'
 import { rectPoints } from '../../../../shared/tile-editor'
 import { metaThumbnail } from './sheet'
 import {
+  bankSheetOffset,
   clearSelection,
   copySelection,
   deleteSelection,
@@ -196,11 +197,16 @@ watchEffect(() => {
       base = false
       if (!layer.visible) continue
       for (let y = 0; y < current.height; y++) {
+        // A name-table byte means different art depending which third of the
+        // screen it sits in (see `bankSheetOffset`) — computed once per row,
+        // not per cell, since it only depends on `y`.
+        const offset = bankSheetOffset(props.session, y)
         for (let x = 0; x < current.width; x++) {
           const index = layer.data[y * current.width + x]
           if (!index && skipZero) continue
-          const sx = (index % cells.cols) * cells.cellW
-          const sy = Math.floor(index / cells.cols) * cells.cellH
+          const cell = index + offset
+          const sx = (cell % cells.cols) * cells.cellW
+          const sy = Math.floor(cell / cells.cols) * cells.cellH
           ctx.drawImage(cells.canvas, sx, sy, cells.cellW, cells.cellH, x * zoom, y * zoom, zoom, zoom)
         }
       }

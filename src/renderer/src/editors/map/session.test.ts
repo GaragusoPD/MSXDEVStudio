@@ -13,6 +13,7 @@ import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import { normalizeTiles } from '../../../../shared/msx/tile'
 import {
+  bankSheetOffset,
   doc,
   mapSession,
   pickMeta,
@@ -20,7 +21,8 @@ import {
   pruneMapSessions,
   selectPlacementAt,
   setBaked,
-  undo
+  undo,
+  type MapSession
 } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { resetExternalWatches } from '../external-changes'
@@ -254,5 +256,44 @@ describe('a map rewritten outside the app', () => {
 
     expect(doc(session).width).toBe(8)
     expect(session.dirty).toBe(true)
+  })
+})
+
+describe('bankSheetOffset — which row reads which pattern bank', () => {
+  const solid = () => ({ pattern: new Array(8).fill(0xaa), color: new Array(8).fill(0xf1) })
+  // Any bank carrying its own art at all is enough to make the tileset
+  // "banked" (see `isBanked`) — the fixture only needs one override.
+  const bankedTileset = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[solid()], [], []] })
+  const unbankedTileset = normalizeTiles({ mode: 'sc2', count: 1 })
+
+  it('returns 0/256/512 for rows 0/8/16 on a banked tileset — a whole band, not just the boundary row', () => {
+    const session = { tileset: bankedTileset } as MapSession
+    expect(bankSheetOffset(session, 0)).toBe(0)
+    expect(bankSheetOffset(session, 7)).toBe(0)
+    expect(bankSheetOffset(session, 8)).toBe(256)
+    expect(bankSheetOffset(session, 15)).toBe(256)
+    expect(bankSheetOffset(session, 16)).toBe(512)
+    expect(bankSheetOffset(session, 23)).toBe(512)
+  })
+
+  it('wraps every screen (24 rows) back onto banks 0-2, rather than reading off the end of the stacked sheet', () => {
+    // `validateMap` refuses to export a banked map that isn't exactly
+    // `SCREEN_ROWS` tall, but nothing stops the editor from showing a taller
+    // one mid-edit (`resize()`), so row 24 and up must still resolve to a
+    // real cell of the 768-cell sheet rather than one past its end.
+    const session = { tileset: bankedTileset } as MapSession
+    expect(bankSheetOffset(session, 24)).toBe(0)
+    expect(bankSheetOffset(session, 31)).toBe(0)
+    expect(bankSheetOffset(session, 32)).toBe(256)
+  })
+
+  it('is 0 for every row on an unbanked tileset — a byte is already the sheet index', () => {
+    const session = { tileset: unbankedTileset } as MapSession
+    for (const row of [0, 7, 8, 15, 16, 23]) expect(bankSheetOffset(session, row)).toBe(0)
+  })
+
+  it('is 0 with no tileset loaded at all', () => {
+    const session = { tileset: null } as MapSession
+    expect(bankSheetOffset(session, 8)).toBe(0)
   })
 })
