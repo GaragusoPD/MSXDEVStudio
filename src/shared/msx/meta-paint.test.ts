@@ -126,6 +126,18 @@ describe('paintMeta', () => {
     expect(paintMeta(meta, bank(), 0, [{ x: 99, y: 99 }, { x: -1, y: 0 }], 5).meta).toBe(meta)
   })
 
+  it('returns the same meta and tiles by reference when an in-bounds stroke repaints the tile already there', () => {
+    // Points are strictly in bounds (0,0 is cell 0 of a 2x1 meta), so the
+    // off-canvas early return cannot be what makes this pass — that path is
+    // already covered above. This is `pushHistory`'s reference-equal no-op
+    // check: a second, idle stroke must not look like an edit.
+    const first = paintMeta(meta, bank(), 0, [{ x: 0, y: 0 }], 5)
+    const second = paintMeta(first.meta, first.tiles, 0, [{ x: 0, y: 0 }], 5)
+    expect(second.meta).toBe(first.meta)
+    expect(second.tiles).toBe(first.tiles)
+    expect(second.added).toEqual([])
+  })
+
   it('is a no-op on a frame that does not exist', () => {
     expect(paintMeta(meta, bank(), 9, [{ x: 0, y: 0 }], 5).meta).toBe(meta)
   })
