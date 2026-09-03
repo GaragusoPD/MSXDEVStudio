@@ -890,5 +890,15 @@ describe('paint mode', () => {
       expect(session.tileset?.count).toBe(6)
       expect(session.mode).toBe('paint')
     })
+
+    it('survives being chosen before the map has loaded — a fresh tiled screen opens straight into paint', async () => {
+      // Task 9 opens the map it just wrote and calls `setMode` at once, while
+      // the tileset is still on its way: the reset must wait for the answer.
+      const session = mapSession(MAP)
+      setMode(session, 'paint')
+      for (let i = 0; i < 4; i++) await settled()
+      expect(canPaint(session)).toBe(true)
+      expect(session.mode).toBe('paint')
+    })
   })
 })
