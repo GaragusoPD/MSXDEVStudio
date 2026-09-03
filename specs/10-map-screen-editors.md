@@ -36,6 +36,58 @@ UI:
 Export via Spec 07: raw tile-index binary per layer (+ optional RLE variant if the
 MSXgl side supports one — decided in Spec 07), flags as a separate C table.
 
+### Banked tilesets (SCREEN 2/4)
+
+SCREEN 2 and SCREEN 4 hold three 256-tile pattern banks rather than one, one
+per third of the screen — bank 0 for name-table rows 0–7, bank 1 for 8–15,
+bank 2 for 16–23, `bankForRow(row) = row >> 3`. A `TilesDoc` may override the
+common set per bank (`bankTiles[b][i]`, falling back to `tiles[i]` where a
+bank has nothing of its own — `bankTileAt`), so up to 768 distinct tiles can
+be on screen at once instead of 256, at the cost of a name-table byte no
+longer meaning the same art everywhere: cell value 12 can be a rock in bank
+0's rows and a cloud in bank 2's.
+
+**A map drawn against a banked tileset must be exactly `SCREEN_ROWS` (24)
+rows.** Row 24 has no bank to read from, so `validateMap(doc, { banked: true
+})` refuses a taller one rather than exporting a bottom strip with nothing
+honest to show. Width is unconstrained — banks are chosen by row, not column,
+so horizontal scrolling still works.
+
+The tile editor (Spec 08) exposes this as a **bank selector** — a tab per
+bank (`session.bank`, `setBank`) that switches the grid and canvas to that
+bank's own view (`bankTileAt`) — and a **budget readout** per bank
+(`bankBudgetLabel`, driven by `bankCapacityLeft`) spelling out the arithmetic
+before a stroke hits the wall: a bank's own overrides plus the shared
+meta-tile reservation both cost every bank the same 256-tile ceiling. Most
+tilesets are never banked; the selector and readout only appear once a bank
+has at least one override.
+
+**A banked tileset's common range never renumbers.** Deleting or reordering a
+common tile, and the meta editor's reserve-tile-0 migration, are refused on a
+banked tileset; the meta editor's Compact there reclaims only shared orphans.
+The reason: a map cell resolves through `bankTiles[bank][v] ?? tiles[v]`, so a
+cell backed by a bank override does not follow a common-range renumber, and
+the replay path (`TilesReorderEvent`) cannot tell which cells those were at
+the time the reorder was logged.
+
+Export (Spec 07/09): the common tables as always, plus `_Bank<n>_Patterns` /
+`_Bank<n>_Colors` for each bank that actually overrides something (a bank with
+no art of its own emits no table), `_Shared_Patterns`/`_Shared_Colors` for the
+meta-tile region when one exists, `#define`s counting each (`_BANK<n>_TILES`,
+`_SHARED_TILES`), and a generated `_Load()` that puts all of it in the right
+place — the one thing that must be called instead of `VDP_LoadPattern_GM2`/
+`VDP_LoadColor_GM2`, which mirror into all three banks and are only correct
+for an unbanked tileset.
+
+Importing a full 256×192 screen (`packBankedTiles`) fills all three banks at
+once, deduping within each bank the way the unbanked importer dedupes within
+one, and reports which bank (if any) ran out of room rather than silently
+dropping cells.
+
+Existing tilesets are untouched: `bankTiles` is empty and `sharedTiles` is 0
+in every file written before banking existed, `isBanked` is false, and export
+keeps emitting exactly the tables it always did.
+
 ## B. Screen editor (`*.screen.json` = import settings + retouch strokes, or a drawing)
 
 For screens 5, 6, 7, 8 (and 10/12 YJK as import-only), **and SCREEN 3**, whose

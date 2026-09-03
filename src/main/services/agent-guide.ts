@@ -137,10 +137,17 @@ ${
 }
 \`\`\`
 
-\`VDP_LoadPattern_GM2\` mirrors the data into all three SCREEN 2 banks for you;
-\`count\` is a **tile count** (0 means all 256), while the \`VDP_WriteVRAM*\` count
-is in **bytes**. On SCREEN 1 there are no banks to mirror — write the tables
-directly instead of using the \`_GM2\` helpers.
+\`VDP_LoadPattern_GM2\` mirrors the data into all three SCREEN 2 banks for you —
+true for an **ordinary** tileset, which shows the same art in every third of
+the screen. **A banked tileset is the exception: call the generated
+\`g_MyTiles_Load()\` instead, never \`VDP_LoadPattern_GM2\`/\`VDP_LoadColor_GM2\`
+directly.** Those two mirror whatever you hand them into all three banks, so
+calling them on a banked tileset copies bank 0's art over banks 1 and 2 and
+leaves two-thirds of the screen wrong. See *Banked tilesets* below for what
+makes a tileset banked and what \`_Load()\` does. \`count\` is a **tile count**
+(0 means all 256), while the \`VDP_WriteVRAM*\` count is in **bytes**. On
+SCREEN 1 there are no banks to mirror — write the tables directly instead of
+using the \`_GM2\` helpers.
 ${
   msx1
     ? `
@@ -170,6 +177,77 @@ g_Scenery_DrawBlock(10, 4, G_SCENERY_HOUSE_BASE, G_SCENERY_HOUSE_W, G_SCENERY_HO
 // void g_MyMap_DrawLayer(const u8* layer, u8 x, u8 y);
 g_MyMap_DrawLayer(g_MyMap_Background, 0, 0);
 \`\`\`
+
+### Banked tilesets (SCREEN 2/4 only)
+
+SCREEN 2 and SCREEN 4 do not have one 256-tile pattern table — they have
+**three**, one per third of the screen: bank 0 covers name-table rows 0–7,
+bank 1 rows 8–15, bank 2 rows 16–23 (\`bank = row >> 3\`). \`VDP_LoadPattern_GM2\`
+writes the same picture into all three, which is why an ordinary tileset never
+has to think about banks — one name-table byte means one picture no matter
+which third of the screen it lands in.
+
+**A banked tileset gives that up on purpose.** The tile editor's *Banks* panel
+lets a bank override the common set at some of its indices, so the same
+name-table byte draws *different* art depending on which third of the screen
+it's in — up to 768 distinct tiles on screen at once instead of 256. Most
+tilesets are not banked; this section only applies once a bank has at least
+one override, and an unbanked tileset keeps exporting exactly what it always
+did.
+
+With *Export ready-made C* on, a banked tileset's header adds a loader — call
+it instead of \`VDP_LoadPattern_GM2\`/\`VDP_LoadColor_GM2\`:
+
+\`\`\`c
+void g_MyTiles_Load(void);   // loads all three banks correctly — never VDP_LoadPattern_GM2 on a banked tileset
+\`\`\`
+
+The header also carries, for **each bank that overrides anything** — a bank
+with no art of its own emits no table at all and shows the common set:
+
+\`\`\`c
+extern const u8 g_MyTiles_Bank0_Patterns[];   // this bank's own tiles, at hardware index 0 up
+extern const u8 g_MyTiles_Bank0_Colors[];
+#define G_MYTILES_BANK0_TILES 40              // how many indices bank 0 overrides
+\`\`\`
+
+If the tileset also holds meta-tile art, that art is shared rather than
+per-bank (allocated from index 255 down, so one meta means one picture in
+every bank): \`g_MyTiles_Shared_Patterns\`/\`_Colors\`, sized by
+\`G_MYTILES_SHARED_TILES\`. \`_Load()\` loads the bank tables, the shared table
+into all three banks, and the common tail each bank doesn't override — you
+never call \`VDP_LoadBankPattern_GM2\`/\`VDP_LoadBankColor_GM2\` yourself.
+
+**A map drawn against a banked tileset must be exactly 24 rows.** Row 24 has
+no bank to read from, so a taller map is refused at export rather than
+silently drawing whatever bank the arithmetic falls into. Width is free —
+banks are picked by row, not column, so a banked tileset scrolls horizontally
+with no special handling.
+
+\`\`\`c
+#include "msxgl.h"
+#include "content/mytiles.h"    // banked: some indices differ per bank
+#include "content/mylevel.h"    // 32x24 — must be exactly 24 rows against a banked tileset
+
+void main(void)
+{
+    VDP_SetMode(VDP_MODE_GRAPHIC2);   // SCREEN 2
+
+    g_MyTiles_Load();                 // not VDP_LoadPattern_GM2 — this tileset differs per bank
+${
+  msx1
+    ? `    VDP_WriteVRAM_16K(g_MyLevel_Background, g_ScreenLayoutLow, 32 * 24);`
+    : `    VDP_WriteVRAM(g_MyLevel_Background, g_ScreenLayoutLow, g_ScreenLayoutHigh, 32 * 24);`
+}
+
+    while (TRUE) {}
+}
+\`\`\`
+
+Once loaded, the map draws exactly like an ordinary one — \`g_MyLevel_Background\`
+is still one plain byte per cell. What changed is only what a byte *means*:
+the same value 12 can be a rock in bank 0's rows and a cloud in bank 2's,
+because the art each bank shows for index 12 differs, not the map data.
 
 ### Meta-tiles — designs bigger than one cell, placed on a map
 

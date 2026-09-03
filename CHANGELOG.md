@@ -7,6 +7,47 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### SCREEN 2/4 tile banks
+
+SCREEN 2 and SCREEN 4 have three 256-tile pattern banks, not one — a tileset
+can now give each bank its own art at some of its indices, so a name-table
+byte means different art in different thirds of the screen and a full
+256×192 picture can use up to 768 distinct tiles instead of 256.
+
+#### Added
+
+- **Per-bank overrides on `*.tiles.json`.** The tile editor's new **Banks**
+  panel is a tab per bank plus a budget readout ("bank 1: 180 + 48 shared =
+  228 / 256") that spells out the arithmetic — a bank's own overrides and the
+  shared meta-tile reservation both eat the same 256-tile ceiling — before a
+  stroke hits it.
+- **Importing a full 256×192 screen** now fills all three banks (deduping
+  within each one, the way the unbanked path already dedupes within its
+  single bank) and reports which bank, if any, ran out of room.
+- **Export** adds `_Bank<n>_Patterns`/`_Bank<n>_Colors` for each bank that
+  overrides anything (a bank with no art of its own emits no table),
+  `_Shared_Patterns`/`_Shared_Colors` for the meta-tile region, and a
+  generated `_Load()`. **A banked tileset must be loaded with `_Load()`, not
+  `VDP_LoadPattern_GM2`/`VDP_LoadColor_GM2`** — those mirror into all three
+  banks and are only correct for a tileset that isn't banked.
+- **A map against a banked tileset must be exactly 24 rows tall** (width is
+  free); export refuses a taller one rather than drawing a bottom strip with
+  no bank to read from.
+
+#### Changed
+
+- **A banked tileset's common tiles never renumber.** Deleting or reordering
+  a common tile, and reserving tile 0 for meta-tile transparency, are refused
+  once any bank has an override — a bank's own art is indexed by hardware
+  position and does not follow a common-range renumber — and the meta
+  editor's Compact reclaims only shared orphans there. This is the one
+  restriction users of the feature will actually hit.
+
+**Every tileset created before this release is untouched**: banking is
+opt-in per index from the editor, `bankTiles` stays empty and export keeps
+emitting exactly the tables it always did until a bank gets its first
+override. Most projects will never see a bank at all.
+
 ### Fixed
 
 - **Reserving tile 0 on a full tileset no longer loses a tile.** Shifting a
