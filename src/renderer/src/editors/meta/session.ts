@@ -38,6 +38,7 @@ import { paintBitmapMeta, paintMeta, usedTiles } from '../../../../shared/msx/me
 import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
 import {
   blankTileEntry,
+  isBanked,
   MAX_TILES,
   mergeColorByte,
   regroupAfterTile0Shift,
@@ -487,6 +488,23 @@ export function reserveTile0(session: MetaSession): void {
     session.status =
       'This tileset has shared meta-tile slots at the top of the bank, which a tile-0 shift ' +
       'cannot renumber without breaking every meta that references them.'
+    return
+  }
+  // A banked tileset (bank overrides with no shared slots yet — the case the
+  // check above does not catch) has the same problem one seam over: the shift
+  // below builds its own `i => i + 1` mapping and publishes it directly
+  // through `appendReorder`/`emitTilesReordered`, without going through
+  // `reorderTiles`/`removeTile` in `shared/msx/tile.ts` — so their `isBanked`
+  // refusal (see the comments there) does not cover this path on its own.
+  // A bank's own override sits at a fixed hardware index and does not shift
+  // with the common tiles under it, and that cannot be fixed by making the
+  // published mapping bank-aware: `replayReorders` (`shared/map-editor.ts`)
+  // replays it onto a map opened later, using whatever `bankTiles` lengths
+  // exist at replay time rather than at emit time, so a "shadowed?" test can
+  // disagree with the one that ran live.
+  if (isBanked(tileset)) {
+    session.status =
+      "Reserving tile 0 renumbers the common tileset, and a bank's own art does not renumber with it — not available on a banked tileset."
     return
   }
   if (tileset.count >= MAX_TILES) {

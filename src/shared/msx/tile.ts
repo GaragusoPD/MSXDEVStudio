@@ -841,6 +841,23 @@ export function reorderTiles(doc: TilesDoc, from: number, to: number): { doc: Ti
   // only shows 0..count-1), but nothing else stops a caller from asking.
   const sharedStart = MAX_TILES - doc.sharedTiles
   if (from >= sharedStart || to >= sharedStart) return { doc, mapping: doc.tiles.map((_, i) => i) }
+  // A banked tileset's common range never renumbers either. One guard covers
+  // the whole common range here: the check above already refused anything at
+  // or above `sharedStart`, so everything that reaches this line is common by
+  // construction. A bank's own override sits at a fixed hardware index; it
+  // does not move when the common tile under it does, so a live reorder would
+  // silently repoint whichever map cell resolves through `bankTileAt` to
+  // different art than the one the user moved. That could, in principle, be
+  // fixed for the LIVE caller
+  // (`onTilesReordered`, which has the current tileset in hand) but not for
+  // `replayReorders` (`map-editor.ts`), which reapplies a logged mapping to a
+  // map opened later using whatever `bankTiles` lengths exist at replay time —
+  // not what they were when the event was emitted. An index unshadowed at
+  // emit time can be shadowed by replay time, so the per-cell "does the bank
+  // override this?" test gives a different answer than it would have live,
+  // and a common-tile cell silently misses its renumber. Refusing here, for
+  // every caller, is the only way live and replayed agree.
+  if (isBanked(doc)) return { doc, mapping: doc.tiles.map((_, i) => i) }
   const tiles = doc.tiles.slice()
   const [moved] = tiles.splice(from, 1)
   tiles.splice(to, 0, moved)
@@ -892,10 +909,26 @@ export function removeTile(doc: TilesDoc, index: number): { doc: TilesDoc; mappi
     }
   }
 
-  // Common tiles (banked or unbanked): renumber as before. Remap *before*
-  // normalizing: normalizeTiles clamps block references against the new,
-  // smaller count, so an un-remapped reference to the last tile would be
-  // clamped to 0 instead of following the tile down a slot.
+  // A banked tileset's common range never renumbers — same invariant, same
+  // reasoning as `reorderTiles`'s guard above: a bank's own override sits at a
+  // fixed hardware index and does not follow the common tile under it when
+  // this shifts everything above `index` down a slot, so a map cell resolving
+  // through `bankTileAt` would end up pointing at different art. It cannot be
+  // fixed by teaching `replayReorders` (`map-editor.ts`) about banks, because
+  // it replays a logged mapping onto a map opened later using whatever
+  // `bankTiles` lengths exist at replay time, not what they were when the
+  // event was emitted — an index unshadowed at emit time can be shadowed by
+  // replay time, silently changing the answer. Placed *after* the shared-region
+  // branch above, which must keep working on a banked doc: it is how the meta
+  // editor reclaims orphaned meta art, and it is safe here precisely because it
+  // decrements `sharedTiles` without publishing any renumbering.
+  if (isBanked(doc)) return { doc, mapping: identity }
+
+  // Common tiles (unbanked only, now that the guard above has run): renumber
+  // as before. Remap *before* normalizing: normalizeTiles clamps block
+  // references against the new, smaller count, so an un-remapped reference to
+  // the last tile would be clamped to 0 instead of following the tile down a
+  // slot.
   //
   // The shared region sits at sharedStart..255 in this same sparse `tiles`
   // array, far above `count`, but it is real, live art a meta may be the only

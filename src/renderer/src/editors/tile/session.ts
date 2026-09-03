@@ -844,15 +844,15 @@ export function deleteTile(session: TileSession, index: number): void {
  * mapping that maps and blocks replay.
  */
 export function deleteTiles(session: TileSession, indices: readonly number[]): void {
-  // `removeTile` renumbers the common range and publishes that remapping for
-  // any open map to replay — but a bank's own overrides are self-contained
-  // art anchored at fixed hardware indices, not references into `tiles`, so
-  // they never move (see `shared/msx/tile.ts`'s `removeTile`/`reorderTiles`).
-  // A map cell that resolves through a bank override therefore does not
-  // follow the remap the way a common-tile cell does, even though the
-  // published event claims otherwise. Refusing here — rather than teaching
-  // `tile.ts` about banks as a side effect of this UI task — keeps that
-  // mismatch unreachable instead of merely undetected.
+  // `removeTile` itself now refuses a common-range removal on a banked
+  // tileset (see `shared/msx/tile.ts`) — a bank's own overrides are
+  // self-contained art anchored at fixed hardware indices, not references
+  // into `tiles`, so they never move with a renumber, and that cannot be
+  // fixed for `replayReorders` (`shared/map-editor.ts`), which replays a
+  // logged mapping onto a map opened later rather than one already open. This
+  // guard is no longer the enforcement, only the user-facing message over it:
+  // a status the user can read beats the silent no-op `removeTile` would
+  // otherwise hand back.
   if (isBanked(session.doc)) {
     session.status = "Deleting renumbers the common tileset, and a bank's own art does not renumber with it — not available on a banked tileset."
     return
@@ -947,9 +947,9 @@ export function setColumns(session: TileSession, columns: number): void {
  */
 export function reorder(session: TileSession, from: number, to: number): void {
   if (from === to) return
-  // Same reasoning as `deleteTiles`'s guard: `reorderTiles` renumbers the
-  // common range and publishes that mapping, but a bank's own art is anchored
-  // at fixed hardware indices and never moves with it.
+  // Same reasoning as `deleteTiles`'s guard: `reorderTiles` itself now
+  // refuses a banked tileset (see `shared/msx/tile.ts`), so this is the
+  // user-facing message over that enforcement, not the enforcement itself.
   if (isBanked(session.doc)) {
     session.status = "Reordering renumbers the common tileset, and a bank's own art does not renumber with it — not available on a banked tileset."
     return

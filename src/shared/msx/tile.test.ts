@@ -17,6 +17,7 @@ import {
   packTiles,
   paintPixel,
   regroupAfterTile0Shift,
+  removeTile,
   reorderTiles,
   rowColorViolations,
   sharedColorBytes,
@@ -566,6 +567,69 @@ describe('pattern banks', () => {
     // `sharedTiles` — it never entered `doc.tiles` in the first place, the
     // same as any other index past `count` on an unbanked tileset.
     expect(doc.tiles).toHaveLength(2)
+  })
+
+  describe('a banked common range never renumbers', () => {
+    // Banks at different lengths and a non-zero sharedTiles, deliberately not
+    // a uniform `count: 256` — Task 9's brief notes four earlier defects on
+    // this branch survived review because fixtures were too dense to show the
+    // bug they were meant to catch.
+    const banked = () =>
+      normalizeTiles({
+        mode: 'sc2',
+        count: 6,
+        tiles: [0, 1, 2, 3, 4, 5].map((i) => solid(0x10 + i)),
+        bankTiles: [[solid(0xaa), solid(0xbb), solid(0xcc)], [solid(0xdd)], []],
+        sharedTiles: 2
+      })
+
+    it('reorderTiles refuses on a banked doc, returning the identity mapping and the same doc', () => {
+      const doc = banked()
+      const result = reorderTiles(doc, 0, 2)
+      expect(result.doc).toBe(doc)
+      expect(result.mapping[0]).toBe(0)
+      expect(result.mapping[2]).toBe(2)
+      expect(result.mapping[5]).toBe(5)
+    })
+
+    it('removeTile refuses a common index on a banked doc, returning the identity mapping and the same doc', () => {
+      const doc = banked()
+      const result = removeTile(doc, 2)
+      expect(result.doc).toBe(doc)
+      expect(result.mapping[2]).toBe(2)
+      expect(doc.count).toBe(6)
+      expect(doc.bankTiles.map((b) => b.length)).toEqual([3, 1, 0])
+    })
+
+    it('removeTile still reclaims the newest shared index on a banked doc, decrementing sharedTiles without renumbering', () => {
+      const doc = banked()
+      const sharedStart = MAX_TILES - doc.sharedTiles
+      const result = removeTile(doc, sharedStart)
+      expect(result.doc).not.toBe(doc)
+      expect(result.doc.sharedTiles).toBe(1)
+      // The common range and the bank overrides are untouched by a shared-only reclaim.
+      expect(result.doc.count).toBe(6)
+      expect(result.doc.bankTiles.map((b) => b.length)).toEqual([3, 1, 0])
+      expect(result.doc.tiles[0].pattern[0]).toBe(0x10)
+    })
+
+    it('unbanked docs are unaffected: reorderTiles and removeTile still renumber the common range', () => {
+      const doc = normalizeTiles({
+        mode: 'sc2',
+        count: 4,
+        tiles: [0, 1, 2, 3].map((i) => solid(0x10 + i))
+      })
+      expect(isBanked(doc)).toBe(false)
+
+      const reordered = reorderTiles(doc, 0, 2)
+      expect(reordered.doc).not.toBe(doc)
+      expect(reordered.mapping).toEqual([2, 0, 1, 3])
+
+      const removed = removeTile(doc, 1)
+      expect(removed.doc).not.toBe(doc)
+      expect(removed.doc.count).toBe(3)
+      expect(removed.mapping).toEqual([0, 0, 1, 2])
+    })
   })
 })
 

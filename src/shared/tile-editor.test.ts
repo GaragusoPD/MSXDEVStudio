@@ -741,28 +741,36 @@ describe('delete and mode conversion', () => {
     expect(removeTile(solo, 0).doc).toBe(solo)
   })
 
-  it('leaves a live shared tile untouched — storage and mapping — when a common tile is removed', () => {
+  it('refuses to remove a common tile once the tileset is banked, so the shared tile at 255 is never even at risk', () => {
     // Round 3 fixed reclaimOrphans's sort order; the review that followed it
     // found this one level down: removeTile's own common branch filtered the
     // *whole* sparse `tiles` array, compacting the shared entry at 255 into
     // the gap the removal opened, where normalizeTiles's count-bounded
-    // rebuild then silently discarded it — even though this removal has
-    // nothing to do with it. `sharedTiles: 1` here stands in for a meta in
-    // another, unrelated session; this removal must never know it exists.
-    // A bank override, so `sharedTiles` is genuinely banked rather than
-    // clamped away as incoherent state (see `normalizeTiles`).
+    // rebuild then silently discarded it — even though this removal had
+    // nothing to do with it.
+    //
+    // Task 9 closes this a different way, at the seam rather than in this one
+    // branch: `removeTile` now refuses a common-range removal outright on any
+    // banked doc (see `shared/msx/tile.ts`), because a bank's own override
+    // sits at a fixed hardware index and does not renumber with the common
+    // tile under it. `sharedTiles > 0` requires a bank override in the first
+    // place (`normalizeTiles` clamps it to 0 without one), so the
+    // whole-array-filter bug this test used to exercise can no longer be
+    // reached at all — the doc below is exactly the banked case the new
+    // refusal covers.
     const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
     const rawTiles: unknown[] = [solid(1), solid(2), solid(3), solid(4), solid(5), solid(6)]
     rawTiles[255] = solid(0xaa)
     const doc = normalizeTiles({ mode: 'sc2', count: 6, tiles: rawTiles, bankTiles: [[solid(9)], [], []], sharedTiles: 1 })
 
-    const { doc: next, mapping } = removeTile(doc, 3) // removes the common tile holding solid(4)
+    const { doc: next, mapping } = removeTile(doc, 3) // would remove the common tile holding solid(4)
 
-    expect(next.count).toBe(5)
+    expect(next).toBe(doc) // refused outright — nothing renumbers, nothing is touched
+    expect(next.count).toBe(6)
     expect(next.sharedTiles).toBe(1) // this removal never touched the reservation
     expect(next.tiles[255].pattern).toEqual(new Array(8).fill(0xaa)) // the shared tile's art survives
     expect(mapping[255]).toBe(255) // and its index is never renumbered — the Spec 10 replay must leave it alone
-    expect(next.tiles.slice(0, 5).map((tile) => tile.pattern[0])).toEqual([1, 2, 3, 5, 6])
+    expect(mapping[3]).toBe(3) // the common index that would have been removed is untouched too
     expect(validateTiles(next)).toEqual([])
   })
 

@@ -283,6 +283,38 @@ describe('reserving tile 0 on a tileset that already holds art', () => {
     expect(session.status).toMatch(/shared/i)
   })
 
+  it('refuses on a banked tileset with no shared tiles yet — the boundary the check above does not catch', async () => {
+    // A bank override with `sharedTiles: 0` is genuinely banked (`isBanked`)
+    // but has none of the shared-region art the previous test's guard exists
+    // for, so that guard lets it through. The shift here builds its own
+    // `i => i + 1` mapping and publishes it directly, without ever going
+    // through `reorderTiles`/`removeTile` — so it needs its own `isBanked`
+    // refusal, and until Task 9 it had none.
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 4,
+        reserveTile0: false,
+        bankTiles: [[{ pattern: new Array(8).fill(1), color: new Array(8).fill(0xf1) }], [], []],
+        sharedTiles: 0
+      })
+    })
+    const session = metaSession(META)
+    await settled()
+    await settled()
+    const before = useTilesetStore().patternDoc(TILES)!
+
+    reserveTile0(session)
+
+    const after = useTilesetStore().patternDoc(TILES)!
+    expect(after).toBe(before)
+    expect(after.reserveTile0).toBe(false)
+    expect(session.status).toMatch(/banked/i)
+    // No reorder event went out — nothing shifted, so nothing should replay.
+    expect(useTilesetStore().reorderLog(TILES)).toEqual([])
+  })
+
   it('blanks the new tile 0 and moves the art to tile 1', async () => {
     // Tile 0 as real, load-bearing art is the case this whole flag exists for:
     // `demo_msx1/res/tiles.tiles.json` draws its tile 0 274 times.
@@ -455,14 +487,21 @@ describe('undo on a banked tileset tracks shared tiles for Compact', () => {
     expect(session.appended).toEqual([])
   })
 
-  it('reclaims orphans in both regions in one pass, and never touches a live shared tile that belongs to no reclaim', async () => {
+  it('reclaims the shared orphan on a banked tileset and leaves the common one alone, without touching a live shared tile that belongs to no reclaim', async () => {
     // The shape neither round 1-3's fixes nor their tests exercised: a single
-    // session with an orphan on *each* side of the sparse array, reclaimed
-    // together — plus a shared tile this session never created and never
-    // orphaned, standing in for a meta in some other, unrelated session. The
-    // round-3 review found `removeTile`'s common branch would compact that
-    // survivor into the gap its own removal opened and lose it, even though
-    // this reclaim never asked to touch it.
+    // session with an orphan on *each* side of the sparse array — plus a
+    // shared tile this session never created and never orphaned, standing in
+    // for a meta in some other, unrelated session. The round-3 review found
+    // `removeTile`'s common branch would compact that survivor into the gap
+    // its own removal opened and lose it, even though this reclaim never
+    // asked to touch it.
+    //
+    // Task 9 changed what "both regions" means here: a banked tileset's
+    // common range never renumbers (see `shared/msx/tile.ts`'s `removeTile`),
+    // so this reclaim now removes the shared orphan (254) and refuses the
+    // common one (4) — the common tile is a genuine, permanent leak once the
+    // tileset is banked, which is the documented cost of the rule (no tidying
+    // the common tail on a banked tileset).
     files[TILES] = tilesFile(true) // unbanked: count 4, reserveTile0
 
     const session = metaSession(META)
@@ -502,14 +541,17 @@ describe('undo on a banked tileset tracks shared tiles for Compact', () => {
     // and neither the pre-existing common tiles nor the other session's
     // shared tile at 255 are referenced by `appended` at all.
     const reclaimed = reclaimOrphans(session)
-    expect(reclaimed).toBe(2)
+    // Only the shared orphan (254) comes back: `removeTile` now refuses the
+    // common orphan (4) outright because the tileset is banked.
+    expect(reclaimed).toBe(1)
 
     const after = useTilesetStore().patternDoc(TILES)!
-    expect(after.count).toBe(4) // the common orphan's removal, and nothing else, dropped
+    // The common orphan is NOT removed on a banked tileset — count stays at 5
+    // (the pre-existing 4 plus this session's now-permanently-leaked tile 4).
+    expect(after.count).toBe(5)
     expect(after.sharedTiles).toBe(1) // only this session's shared orphan left; the other survives
     // The live shared tile: same position, same bytes — never compacted,
-    // never renumbered, never blanked by the common removal that ran in the
-    // same reclaim.
+    // never renumbered, never blanked by anything that ran in the same reclaim.
     expect(after.tiles[255]).toEqual(live)
     expect(session.appended).toEqual([])
   })
