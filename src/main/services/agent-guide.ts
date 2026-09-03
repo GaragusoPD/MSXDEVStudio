@@ -275,6 +275,9 @@ silently drawing whatever bank the arithmetic falls into. Width is free —
 banks are picked by row, not column, so a banked tileset scrolls horizontally
 with no special handling.
 
+With *Export ready-made C* on, loading and drawing the map together look like
+this — off, call the per-bank loaders shown above instead of \`_Load()\`:
+
 \`\`\`c
 #include "msxgl.h"
 #include "content/mytiles.h"    // banked: some indices differ per bank
@@ -413,16 +416,34 @@ capped.
 There are two ways to make every coin in a level spin: change *which* tile each
 cell points at, or change what that tile *looks like*. **Prefer the second.**
 
+Keep the poses as a block — a 4×1 rectangle named e.g. "coin" — then read their
+pattern indices out of \`_Blocks\` instead of treating \`_BASE\` as one of them.
+\`_BASE\`/\`_W\`/\`_H\` only say **where** the block's data starts inside
+\`_Blocks\`, an array of **name-table bytes** for \`_DrawBlock\`/
+\`VDP_WriteLayout_GM2\` to stamp onto the map (see *Tiles and maps* above); the
+pattern index a pose actually lives at is \`_Blocks[BASE + n]\`, not \`BASE + n\`
+itself. \`_Blocks\` is data — present whenever the tileset has a block, whether
+or not *Export ready-made C* is on:
+
 \`\`\`c
-// Keep the poses as a 4x1 block in the tileset, then per animation step:
-VDP_LoadPattern_GM2(g_MyTiles_Patterns + (G_MYTILES_COIN_BASE + step) * 8, 1, G_MYTILES_COIN_BASE);
+// _Blocks[G_MYTILES_COIN_BASE + n] is pose n's own pattern-table index. The
+// map's coin cells hold pose 0's index (_Blocks[G_MYTILES_COIN_BASE]) — rewrite
+// that slot's pattern, never the cell, to animate every coin at once.
+VDP_LoadPattern_GM2(g_MyTiles_Patterns + g_MyTiles_Blocks[G_MYTILES_COIN_BASE + step] * 8,
+                     1, g_MyTiles_Blocks[G_MYTILES_COIN_BASE]);
 \`\`\`
 
 That is 8 bytes into each of the three banks — 24 bytes, once — and every cell
-using that tile animates, including the ones scrolled off screen. Re-pointing
-cells costs a name-table write per copy per step and leaves off-screen ones
-behind. The catch is that it is all-or-nothing: *every* use of the tile
-animates, so anything that must hold still needs its own tile.
+holding that pattern index animates, including the ones scrolled off screen.
+Re-pointing cells costs a name-table write per copy per step and leaves
+off-screen ones behind. The catch is that it is all-or-nothing: *every* cell
+showing that index animates, so anything that must hold still needs its own
+tile.
+
+A hand-picked literal (\`#define COIN_TILE 20\`) would compile and behave the
+same way — until the next tile reorder, which renumbers a map and \`_Blocks\`
+together but has no way to reach into your C source and update a constant you
+typed yourself. Read the index out of \`_Blocks\`; don't write it down.
 
 **On a banked tileset this is only right for a shared-region tile.** There
 the mirror is exactly what you want — the same picture belongs in all three
