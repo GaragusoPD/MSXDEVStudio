@@ -1,8 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import { createMetaTileDoc, frameTileAt } from './meta-tile'
-import { findOrCreateTile, paintBitmapMeta, paintGrid, paintMeta, sprayPoints, usedTiles } from './meta-paint'
+import {
+  findOrCreateBankTile,
+  findOrCreateTile,
+  paintBitmapMeta,
+  paintGrid,
+  paintMeta,
+  sprayPoints,
+  usedTiles
+} from './meta-paint'
 import { normalizeBitmapTiles, tileImage, type BitmapTilesDoc } from './bitmap-tile'
-import { blankTileEntry, createTilesDoc, normalizeTiles, tilePixels, type TileEntry, type TilesDoc } from './tile'
+import {
+  bankTileAt,
+  blankTileEntry,
+  createTilesDoc,
+  MAX_TILES,
+  mergeColorByte,
+  normalizeTiles,
+  tilePixels,
+  type TileEntry,
+  type TilesDoc
+} from './tile'
 
 const bank = (over: Record<string, unknown> = {}): TilesDoc =>
   normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: true, ...over })
@@ -195,6 +213,101 @@ describe('paintGrid', () => {
     expect(twice.tiles).toBe(once.tiles)
     expect(twice.added).toEqual([])
   })
+})
+
+describe('findOrCreateBankTile', () => {
+  const solid = (byte: number) => ({
+    pattern: new Array(8).fill(byte),
+    color: new Array(8).fill(mergeColorByte(15, 4))
+  })
+
+  /** Uneven banks, a real shared region with real art, and count > 0. */
+  function banked(): TilesDoc {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 2,
+      tiles: [solid(0x11), solid(0x22)],
+      bankTiles: [[solid(0x33), solid(0x44), solid(0x55)], [solid(0x66)], []],
+      sharedTiles: 2
+    })
+    // normalizeTiles leaves the shared region blank; blank matches everything,
+    // so give it art or the "finds the shared region" test proves nothing.
+    const tiles = doc.tiles.slice()
+    tiles[MAX_TILES - 2] = solid(0xaa)
+    tiles[MAX_TILES - 1] = solid(0xbb)
+    return { ...doc, tiles }
+  }
+
+  it('appends above the common range, never shadowing a common tile', () => {
+    const doc = banked()
+    // Bank 2 has NO overrides and count is 2 — appending at 0 would shadow
+    // common tiles 0 and 1 for every cell in the bottom third of the screen.
+    const found = findOrCreateBankTile(doc, 2, solid(0x7e))
+
+    expect(found!.index).toBe(2)
+    expect(bankTileAt(found!.doc, 2, 0)).toEqual(bankTileAt(doc, 2, 0))
+    expect(bankTileAt(found!.doc, 2, 1)).toEqual(bankTileAt(doc, 2, 1))
+  })
+
+  it('appends into the named bank and leaves the other two alone', () => {
+    const doc = banked()
+    const found = findOrCreateBankTile(doc, 0, solid(0x7e))
+
+    expect(found!.index).toBe(3)
+    expect(found!.doc.bankTiles[1]).toHaveLength(1)
+    expect(found!.doc.bankTiles[2]).toHaveLength(0)
+    expect(found!.doc.sharedTiles).toBe(2)
+  })
+
+  it('reuses an identical tile already in that bank', () => {
+    const doc = banked()
+    const found = findOrCreateBankTile(doc, 0, doc.bankTiles[0][1])
+
+    expect(found!.index).toBe(1)
+    expect(found!.doc).toBe(doc)
+  })
+
+  it('finds the shared region too, since every bank shows it', () => {
+    const doc = banked()
+    const found = findOrCreateBankTile(doc, 1, doc.tiles[MAX_TILES - 1])
+
+    expect(found!.index).toBe(MAX_TILES - 1)
+    expect(found!.doc).toBe(doc)
+  })
+
+  it('returns null when the bank has no room below the shared region', () => {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 1,
+      bankTiles: [Array.from({ length: MAX_TILES - 2 }, (_, i) => solid(i & 0xff)), [], []],
+      sharedTiles: 2
+    })
+    // A probe that is NOT in the fill: solid(0x7e) collides with fill entry 126.
+    const probe = { pattern: [1, 2, 3, 4, 5, 6, 7, 8], color: new Array(8).fill(mergeColorByte(15, 4)) }
+
+    expect(findOrCreateBankTile(doc, 0, probe)).toBeNull()
+  })
+})
+
+it("paintGrid with bankOf derives from the bank's art, not the common set", () => {
+  const solid = (byte: number) => ({
+    pattern: new Array(8).fill(byte),
+    color: new Array(8).fill(mergeColorByte(15, 4))
+  })
+  // The shape a real import produces: count 1, art only in the banks.
+  const tiles = normalizeTiles({
+    mode: 'sc2',
+    count: 1,
+    bankTiles: [[solid(0xff)], [solid(0x0f)], []],
+    sharedTiles: 0
+  })
+  const grid = { width: 32, height: 24, tiles: new Array(32 * 24).fill(0) }
+
+  const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }], 0, 'bg', { bankOf: (row) => row >> 3 })
+
+  // Derived from bank 0's solid(0xff) with one dot cleared — NOT from a blank.
+  const painted = bankTileAt(result.tiles, 0, result.grid.tiles[0])
+  expect(painted.pattern[0]).toBe(0x7f)
 })
 
 describe('sprayPoints', () => {

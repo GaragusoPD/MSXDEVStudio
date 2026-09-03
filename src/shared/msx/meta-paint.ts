@@ -36,6 +36,7 @@ import { BAYER4 } from './quantize'
 import type { Point } from '../tile-editor'
 import {
   bankCapacityLeft,
+  bankTileAt,
   blankTileEntry,
   colorByteAt,
   isBanked,
@@ -129,6 +130,52 @@ export function findOrCreateTile(
 }
 
 /**
+ * The index of a tile identical to `entry` **in `bank`'s view**, appending to
+ * that bank's own overrides when it has none.
+ *
+ * The sibling of `findOrCreateTile` for painting a screen. That one allocates
+ * into the shared region, which every bank sees — right for a meta-tile, whose
+ * index must mean one picture wherever it is drawn. A screen cell is read in
+ * its row's bank only, so paying a slot in all three banks for it wastes the
+ * scarcest resource the tileset has.
+ *
+ * Null means the bank has no room below the shared region.
+ */
+export function findOrCreateBankTile(
+  doc: TilesDoc,
+  bank: number,
+  entry: TileEntry,
+  pair?: number
+): { doc: TilesDoc; index: number } | null {
+  const sc1 = doc.mode === 'sc1'
+  const sharedStart = MAX_TILES - doc.sharedTiles
+  const own = doc.bankTiles[bank] ?? []
+  for (let i = 0; i < MAX_TILES; i++) {
+    // Only a slot something actually fills is a real match — `bankTileAt`
+    // answers `blankTileEntry` for every slot past the bank, the common range
+    // and the shared region, and a blank probe would match all of them.
+    if (!own[i] && i >= doc.count && i < sharedStart) continue
+    if (!sameEntry(bankTileAt(doc, bank, i), entry)) continue
+    if (sc1 && doc.groupColors[i >> SC1_SHIFT] !== pair) continue
+    return { doc, index: i }
+  }
+
+  // Never below `count`: a bank override at a common index shadows that common
+  // tile for every cell in this bank's rows — including a reserved tile 0.
+  const index = Math.max(own.length, doc.count)
+  if (index >= sharedStart) return null
+
+  const grown = own.slice()
+  // Slots the bank did not have are seeded from what it already showed, so
+  // nothing the user is not looking at changes appearance.
+  for (let i = grown.length; i < index; i++) grown[i] = bankTileAt(doc, bank, i)
+  grown[index] = { pattern: entry.pattern.slice(), color: entry.color.slice() }
+  const bankTiles = doc.bankTiles.slice()
+  bankTiles[bank] = grown
+  return { doc: { ...doc, bankTiles }, index }
+}
+
+/**
  * The scratch tile's bytes, with a fully-erased cell collapsed to the canonical
  * blank.
  *
@@ -145,9 +192,9 @@ function canonical(work: TilesDoc): TileEntry {
   return work.tiles[0]
 }
 
-/** A one-tile document holding a copy of `tile`, for `paintPixel` to work on. */
-function scratch(doc: TilesDoc, tile: number): TilesDoc {
-  const entry = doc.tiles[tile] ?? blankTileEntry(doc.mode)
+/** A one-tile document holding a copy of `tile` as `bank` sees it, for `paintPixel` to work on. */
+function scratch(doc: TilesDoc, tile: number, bank: number | null): TilesDoc {
+  const entry = bank === null ? (doc.tiles[tile] ?? blankTileEntry(doc.mode)) : bankTileAt(doc, bank, tile)
   return {
     ...doc,
     count: 1,
@@ -175,6 +222,17 @@ export interface PaintGridResult {
   dropped: number
   /** Set when nothing could be done at all; `grid` and `tiles` come back unchanged. */
   refused?: string
+  /** The bank a full-bank refusal happened against, `null` for an unbanked (or shared-region) refusal. */
+  refusedBank?: number | null
+}
+
+export interface PaintOptions {
+  /**
+   * Which bank a cell row is drawn in — the **cell** row
+   * (`Math.floor(point.y / TILE_SIZE)`), not the pixel row. Omitted for a meta,
+   * whose tiles must mean one picture in every bank.
+   */
+  bankOf?: (cellRow: number) => number
 }
 
 /**
@@ -194,7 +252,8 @@ export function paintGrid(
   tiles: TilesDoc,
   points: readonly Point[],
   color: number,
-  role?: 'fg' | 'bg'
+  role?: 'fg' | 'bg',
+  options: PaintOptions = {}
 ): PaintGridResult {
   const byCell = new Map<number, Point[]>()
   for (const point of points) {
@@ -216,7 +275,9 @@ export function paintGrid(
   for (const key of byCell.keys()) {
     const cellPoints = byCell.get(key)!
     const currentTile = (nextCells ?? grid.tiles)[key] ?? 0
-    let work = scratch(nextTiles, currentTile)
+    const cy = Math.floor(key / grid.width)
+    const bank = options.bankOf && isBanked(nextTiles) ? options.bankOf(cy) : null
+    let work = scratch(nextTiles, currentTile, bank)
     for (const point of cellPoints) {
       const result = paintPixel(work, 0, point.x % TILE_SIZE, point.y % TILE_SIZE, color, role)
       // Only reachable without a role. With one, `paintPixel` recolours that
@@ -230,7 +291,10 @@ export function paintGrid(
     }
 
     const pair = nextTiles.mode === 'sc1' ? work.groupColors[0] : undefined
-    const found = findOrCreateTile(nextTiles, canonical(work), pair)
+    const found =
+      bank === null
+        ? findOrCreateTile(nextTiles, canonical(work), pair)
+        : findOrCreateBankTile(nextTiles, bank, canonical(work), pair)
     if (!found) {
       // A half-drawn stroke against a full bank is worse than no change at all.
       return {
@@ -238,17 +302,26 @@ export function paintGrid(
         tiles,
         added: [],
         dropped: 0,
+        refusedBank: bank,
         refused:
-          `The tileset is full — ${MAX_TILES} tiles is the hardware limit. ` +
-          'Run "Compact unused tiles", or free a tile in the tile editor.'
+          bank === null
+            ? `The tileset is full — ${MAX_TILES} tiles is the hardware limit. ` +
+              'Run "Compact unused tiles", or free a tile in the tile editor.'
+            : `Bank ${bank} is full — ${MAX_TILES} tiles is the hardware limit for one bank. ` +
+              'Free a tile, or paint on a row served by another bank.'
       }
     }
     // Track newly created tiles for the Compact command. An unbanked allocation
     // appends at `count`, so an index beyond the old count is new. A banked
-    // allocation takes from the shared top (count stays 256), so a new shared
-    // allocation is detected by `sharedTiles` growing.
-    if (found.index >= nextTiles.count || found.doc.sharedTiles > nextTiles.sharedTiles)
-      added.push(found.index)
+    // allocation into the shared region takes from the top (count stays put),
+    // so a new shared allocation is detected by `sharedTiles` growing instead.
+    // A bank-local allocation grows neither — it is detected by the bank's own
+    // override array growing.
+    const grew =
+      bank === null
+        ? found.index >= nextTiles.count || found.doc.sharedTiles > nextTiles.sharedTiles
+        : (found.doc.bankTiles[bank]?.length ?? 0) > (nextTiles.bankTiles[bank]?.length ?? 0)
+    if (grew) added.push(found.index)
     nextTiles = found.doc
     // Only clone once a cell actually moves. A stroke that resolves to the tile
     // already there must return the SAME array, or every caller's
