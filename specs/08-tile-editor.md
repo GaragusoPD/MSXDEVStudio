@@ -51,6 +51,17 @@ This logic lives in `src/shared/msx/tile.ts` as pure functions
 (`paintPixel(tile, x, y, colorIndex) → {ok} | {conflict: …}`) with unit tests —
 UI is a thin shell over it.
 
+## Banked tilesets (SCREEN 2/4)
+
+Once any bank holds an override, the grid and canvas gain a **bank selector**
+(a tab per bank, switching both to that bank's own view) and a **budget
+readout** spelling out how much of that bank's 256-tile ceiling a bank's own
+overrides and the shared meta-tile reservation have used between them. The
+banking model itself — what a bank overrides, the shared region, why export
+adds a `_Load()` and refuses a map that isn't exactly 24 rows tall — is
+Spec 10's *Banked tilesets* section; this editor is where it is authored, not
+where it is defined.
+
 ## Extras (small, in scope)
 
 - Import: PNG → tileset via Spec 07's converter (quantize + per-row constraint fit,

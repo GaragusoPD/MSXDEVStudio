@@ -26,10 +26,13 @@ byte means different art in different thirds of the screen and a full
   single bank) and reports which bank, if any, ran out of room.
 - **Export** adds `_Bank<n>_Patterns`/`_Bank<n>_Colors` for each bank that
   overrides anything (a bank with no art of its own emits no table),
-  `_Shared_Patterns`/`_Shared_Colors` for the meta-tile region, and a
-  generated `_Load()`. **A banked tileset must be loaded with `_Load()`, not
-  `VDP_LoadPattern_GM2`/`VDP_LoadColor_GM2`** — those mirror into all three
-  banks and are only correct for a tileset that isn't banked.
+  `_Shared_Patterns`/`_Shared_Colors` for the meta-tile region, and, with
+  *Export ready-made C* on, a generated `_Load()`. **A banked tileset must
+  never be loaded with `VDP_LoadPattern_GM2`/`VDP_LoadColor_GM2`** — those
+  mirror into all three banks and are only correct for a tileset that isn't
+  banked; call `_Load()` where it exists, or the same per-bank
+  `VDP_LoadBankPattern_GM2`/`VDP_LoadBankColor_GM2` calls by hand where
+  helpers are off.
 - **A map against a banked tileset must be exactly 24 rows tall** (width is
   free); export refuses a taller one rather than drawing a bottom strip with
   no bank to read from.
@@ -42,6 +45,15 @@ byte means different art in different thirds of the screen and a full
   position and does not follow a common-range renumber — and the meta
   editor's Compact reclaims only shared orphans there. This is the one
   restriction users of the feature will actually hit.
+- **Known gap: software sprites and banked tilesets can collide.** A software
+  sprite in SCREEN 1/2/4 reserves patterns 192–255 in every bank (its loader
+  also uses `VDP_LoadPattern_GM2`, which mirrors). The shared meta-tile
+  region is allocated from 255 down, so any banked tileset that has one
+  overlaps that reservation the moment it's non-empty; a bank's own overrides
+  collide too once they pass index 192. The budget readout does not warn
+  about this yet, and there is no export-time validation for it — projects
+  mixing the two should keep bank art and the shared region under index 192
+  until that lands.
 
 **Every tileset created before this release is untouched**: banking is
 opt-in per index from the editor, `bankTiles` stays empty and export keeps

@@ -139,12 +139,14 @@ ${
 
 \`VDP_LoadPattern_GM2\` mirrors the data into all three SCREEN 2 banks for you —
 true for an **ordinary** tileset, which shows the same art in every third of
-the screen. **A banked tileset is the exception: call the generated
-\`g_MyTiles_Load()\` instead, never \`VDP_LoadPattern_GM2\`/\`VDP_LoadColor_GM2\`
-directly.** Those two mirror whatever you hand them into all three banks, so
-calling them on a banked tileset copies bank 0's art over banks 1 and 2 and
-leaves two-thirds of the screen wrong. See *Banked tilesets* below for what
-makes a tileset banked and what \`_Load()\` does. \`count\` is a **tile count**
+the screen. **A banked tileset is the exception: those two calls are wrong for
+it**, whatever your export settings — they mirror whatever you hand them into
+all three banks, so calling them on a banked tileset copies bank 0's art over
+banks 1 and 2 and leaves two-thirds of the screen wrong. With *Export
+ready-made C* on, call the generated \`g_MyTiles_Load()\` instead; with it off
+\`_Load()\` does not exist, and you call the same per-bank loaders it wraps
+yourself. See *Banked tilesets* below for what makes a tileset banked and both
+forms. \`count\` is a **tile count**
 (0 means all 256), while the \`VDP_WriteVRAM*\` count is in **bytes**. On
 SCREEN 1 there are no banks to mirror — write the tables directly instead of
 using the \`_GM2\` helpers.
@@ -215,8 +217,57 @@ If the tileset also holds meta-tile art, that art is shared rather than
 per-bank (allocated from index 255 down, so one meta means one picture in
 every bank): \`g_MyTiles_Shared_Patterns\`/\`_Colors\`, sized by
 \`G_MYTILES_SHARED_TILES\`. \`_Load()\` loads the bank tables, the shared table
-into all three banks, and the common tail each bank doesn't override — you
-never call \`VDP_LoadBankPattern_GM2\`/\`VDP_LoadBankColor_GM2\` yourself.
+into all three banks, and the common tail each bank doesn't override.
+
+**With *Export ready-made C* off there is no \`_Load()\`** — the tables and
+\`#define\`s above are still emitted (they are data, not helper C), so you call
+the same per-bank loaders yourself, in the same order \`_Load()\` would:
+
+\`\`\`c
+// Per bank (0, 1, 2) that overrides anything — a bank with none has no
+// G_MYTILES_BANKn_TILES define and no g_MyTiles_BankN_... table; for that
+// bank, skip these four lines and load the whole common table below instead.
+VDP_LoadBankPattern_GM2(g_MyTiles_Patterns + G_MYTILES_BANK0_TILES * 8,
+                         G_MYTILES_TILES - G_MYTILES_BANK0_TILES, 0, G_MYTILES_BANK0_TILES);
+VDP_LoadBankColor_GM2(g_MyTiles_Colors + G_MYTILES_BANK0_TILES * 8,
+                       G_MYTILES_TILES - G_MYTILES_BANK0_TILES, 0, G_MYTILES_BANK0_TILES);
+VDP_LoadBankPattern_GM2(g_MyTiles_Bank0_Patterns, G_MYTILES_BANK0_TILES, 0, 0);
+VDP_LoadBankColor_GM2(g_MyTiles_Bank0_Colors, G_MYTILES_BANK0_TILES, 0, 0);
+// Skip the first two calls above (not the last two) for a bank whose own
+// overrides already reach G_MYTILES_TILES — nothing is left in the common
+// range for that bank to show.
+
+// Once, only when the tileset also holds meta-tile art
+// (G_MYTILES_SHARED_TILES is defined) — same offset, into all three banks:
+for (u8 bank = 0; bank < 3; bank++) {
+    VDP_LoadBankPattern_GM2(g_MyTiles_Shared_Patterns, G_MYTILES_SHARED_TILES,
+                             bank, 256 - G_MYTILES_SHARED_TILES);
+    VDP_LoadBankColor_GM2(g_MyTiles_Shared_Colors, G_MYTILES_SHARED_TILES,
+                           bank, 256 - G_MYTILES_SHARED_TILES);
+}
+\`\`\`
+
+**A software sprite in a pattern mode (SCREEN 1/2/4) reserves patterns
+192–255** (see *Software sprites* below) — the same 64 indices in *every*
+bank, because \`VDP_LoadPattern_GM2\` mirrors whatever a sprite writes there
+into all three. Nothing here reserves that range for you, and a banked
+tileset can land in it two ways:
+
+- **The shared (meta-tile) region always does, the moment it exists.** It is
+  allocated from index 255 down, and the sprite range's top is also 255, so
+  any banked tileset with \`sharedTiles > 0\` overlaps by
+  \`min(sharedTiles, 64)\` tiles — guaranteed, starting at 255. This is
+  specific to banking: an unbanked tileset has no shared region to collide.
+- **A bank's own overrides do too, once they pass index 192.** The *Banks*
+  panel's budget lets a bank grow to the full 256 (or \`256 - sharedTiles\`
+  with meta-tile art in the mix) with nothing in the readout saying the top
+  64 of that belong to a software sprite if this project uses them.
+
+Either way the collision is silent: a sprite's next load overwrites whatever
+real art sat there, in every bank at once, and the only symptom is corrupted
+patterns at runtime — there is no validation for this yet. If this project
+uses software sprites in a pattern mode, keep bank art and the shared region
+under index 192.
 
 **A map drawn against a banked tileset must be exactly 24 rows.** Row 24 has
 no bank to read from, so a taller map is refused at export rather than
@@ -373,6 +424,20 @@ cells costs a name-table write per copy per step and leaves off-screen ones
 behind. The catch is that it is all-or-nothing: *every* use of the tile
 animates, so anything that must hold still needs its own tile.
 
+**On a banked tileset this is only right for a shared-region tile.** There
+the mirror is exactly what you want — the same picture belongs in all three
+banks anyway, so the animation now plays in every third of the screen. It is
+**wrong for a tile that is one bank's own override**: \`VDP_LoadPattern_GM2\`
+still writes the new pose into all three banks at that index, so it stamps
+the animation over whatever unrelated art the other two banks show there.
+Load only the bank that owns it instead — the index inside that bank's own
+\`g_MyTiles_BankN_Patterns\` table *is* its hardware index in that bank (see
+*Banked tilesets* above), so no translation is needed:
+
+\`\`\`c
+VDP_LoadBankPattern_GM2(g_MyTiles_Bank0_Patterns + (base + step) * 8, 1, 0, base);
+\`\`\`
+
 Pace it yourself — hold each pose for several frames (a counter in the VBlank
 loop), don't rewrite VRAM at 50/60 Hz.
 
@@ -510,7 +575,9 @@ bitmap mode, of 8 in a pattern mode. In SCREEN 1/2/4 the two-colours-per-row
 rule applies to sprite art as much as to tiles, and the Problems panel says so
 before the export flattens it. The pattern-mode runtime also **borrows real
 patterns** — reserve that range in your tileset (\`..._FIRST_PATTERN\` up) or the
-sprite overwrites tiles the map is using.
+sprite overwrites tiles the map is using. On a banked tileset that reservation
+has to hold in every bank and in the shared meta-tile region too — see the
+caveat under *Banked tilesets* above; nothing checks it for you.
 
 ### SCREEN 3 (MULTICOLOR) — the mode with no colour clash
 
