@@ -536,3 +536,54 @@ describe('exporting a map whose meta mirror is stale', () => {
     expect(source).not.toContain('DrawPlacements')
   })
 })
+
+describe('exporting a map whose tileset is banked', () => {
+  /** A 2-tile sc2 tileset where bank 1 overrides tile 0 — `isBanked` reads true. */
+  function writeBankedTileset(root: string, relative: string): void {
+    const solid = (byte: number) => ({
+      pattern: new Array(8).fill(byte),
+      color: new Array(8).fill(mergeColorByte(15, 4))
+    })
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 2,
+      tiles: [solid(0x18), solid(0x3c)],
+      bankTiles: [[], [solid(0xff)], []]
+    })
+    doc.export = { ...defaultExport(relative), name: 'g_Hero', out: 'content/hero.h' }
+    mkdirSync(join(root, relative, '..'), { recursive: true })
+    writeFileSync(join(root, relative), serializeResource({ kind: 'tiles', doc }), 'utf-8')
+  }
+
+  function writeMap(root: string, height: number): void {
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(
+      join(root, 'res/level.map.json'),
+      JSON.stringify({
+        version: 1,
+        tileset: 'res/main.tiles.json',
+        width: 32,
+        height,
+        export: { name: 'g_LevelMap', format: 'c', out: 'content/level_map.h' }
+      })
+    )
+  }
+
+  it('fails the export when the map is not 24 rows tall', () => {
+    const root = scratch('banked-tall')
+    writeBankedTileset(root, 'res/main.tiles.json')
+    writeMap(root, 48)
+
+    const result = exportResourceFile(root, 'res/level.map.json')
+    expect(result.status).toBe('failed')
+    expect(result.message).toMatch(/24 rows/)
+  })
+
+  it('exports cleanly at exactly 24 rows, the mirror case', () => {
+    const root = scratch('banked-24')
+    writeBankedTileset(root, 'res/main.tiles.json')
+    writeMap(root, 24)
+
+    expect(exportResourceFile(root, 'res/level.map.json')).toMatchObject({ status: 'converted' })
+  })
+})

@@ -257,6 +257,17 @@ export function serializeResource(resource: ResourceDoc): string {
   return `${JSON.stringify(value, null, 2)}\n`
 }
 
+/**
+ * `case 'map'` always validates unbanked: whether a map's tileset gives its
+ * banks their own art can only be answered by opening that tileset file, and
+ * this module is dependency-free by design (see `CLAUDE.md`) — it cannot read
+ * one. `src/main/services/resources.ts`'s export path is the only caller that
+ * both reaches a map's validation and can open a file, so it calls
+ * `validateMap(doc, { banked })` directly instead of going through here. A
+ * future caller that routes map validation through this function instead will
+ * silently skip the 24-row check — pass the flag through `validateMap` there
+ * too if that ever needs to happen.
+ */
 export function validateResource(resource: ResourceDoc): string[] {
   switch (resource.kind) {
     case 'tiles':
