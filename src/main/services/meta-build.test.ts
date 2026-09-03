@@ -22,7 +22,7 @@ import { createBitmapTilesDoc, type BitmapTilesDoc } from '../../shared/msx/bitm
 import { createMetaTileDoc, type MetaTileDoc } from '../../shared/msx/meta-tile'
 import { paintBitmapMeta, paintMeta } from '../../shared/msx/meta-paint'
 import { defaultExport, serializeResource, type ResourceDoc } from '../../shared/msx/resource'
-import { normalizeTiles } from '../../shared/msx/tile'
+import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
 import { REAL_MSXGL, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
 import { buildScript } from './build'
 import { resolveNodeBinary, writeGeneratedConfig } from './project'
@@ -346,6 +346,116 @@ describe.runIf(runsBuilds)('the emitted bitmap placement C builds against real M
       expect(output).not.toMatch(/Undefined Global/i)
       expect(output).toMatch(/Success/)
       const rom = join(root, 'out', 'bmetatest.rom')
+      expect(existsSync(rom), `${rom} should exist`).toBe(true)
+      expect(statSync(rom).size).toBeGreaterThan(1024)
+    },
+    BUILD_TIMEOUT
+  )
+})
+
+/**
+ * A banked SCREEN 2 screen: each bank gets one distinctive solid tile of its
+ * own at index 0, and the map fills each third with it. Three different colours
+ * down the screen is a picture that is *only* right if each bank loaded its own
+ * art at its own offset — the failure this test exists for looks like a
+ * perfectly good build.
+ */
+function bankedFixture(): Record<string, ResourceDoc> {
+  // A fully-set pattern (every bit 1) paints the whole 8x8 cell in the
+  // foreground colour, so the picture is a flat colour band, not a texture —
+  // easy to read back from a screenshot without decoding pixel art.
+  const solid = (fg: number) => ({
+    pattern: new Array(8).fill(0xff),
+    color: new Array(8).fill(mergeColorByte(fg, 1))
+  })
+  const tiles = normalizeTiles({
+    mode: 'sc2',
+    count: 1,
+    // The common tile is never actually loaded: each bank overrides index 0,
+    // and `overrides === count` skips the (empty) common tail — see
+    // `bankLoadHelperC`. Its colour is irrelevant to the picture; it exists
+    // only so `count` has something to describe.
+    tiles: [solid(1)],
+    // Bank 0 (rows 0-7): medium red. Bank 1 (rows 8-15): light blue. Bank 2
+    // (rows 16-23): light yellow — three hues from the fixed MSX1 palette
+    // that read apart at a glance, in a screenshot as much as on hardware.
+    bankTiles: [[solid(8)], [solid(5)], [solid(11)]]
+  })
+
+  // `normalizeMap` fills every cell with 0 by default, and a plain 32x24 grid
+  // is exactly `SCREEN_ROWS` tall — the map's own banked-export requirement —
+  // so every row already reads tile 0 from whichever bank it belongs to.
+  const map = normalizeMap({ tileset: 'res/title.tiles.json', width: 32, height: 24 })
+
+  return {
+    'title.tiles': {
+      kind: 'tiles',
+      doc: {
+        ...tiles,
+        export: { ...defaultExport('res/title.tiles.json'), name: 'g_Title', out: 'content/title.h', helpers: true }
+      }
+    },
+    'screen.map': {
+      kind: 'map',
+      doc: {
+        ...map,
+        export: { ...defaultExport('res/screen.map.json'), name: 'g_Screen', out: 'content/screen.h', helpers: true }
+      }
+    }
+  }
+}
+
+const BANKED_MAIN = `#include "msxgl.h"
+#include "content/title.h"
+#include "content/screen.h"
+
+void main(void)
+{
+\tVDP_SetMode(VDP_MODE_GRAPHIC2);
+\tg_Title_Load();
+\tg_Screen_DrawLayer(g_Screen_Background, 0, 0);
+\twhile(1) { Halt(); }
+}
+`
+
+describe.runIf(runsBuilds)('the emitted banked-tileset C builds against real MSXgl', () => {
+  it(
+    'a banked SCREEN 2 tileset compiles, links, and draws three distinct bands',
+    () => {
+      const { output, root } = buildFixture({
+        name: 'bankedtest',
+        template: 'template',
+        machine: '1',
+        resources: bankedFixture(),
+        main: BANKED_MAIN
+      })
+      expect(output).not.toMatch(/\bError:/i)
+      // The failure this test exists for: `VDP_LoadBankPattern_GM2` only links
+      // when the `vdp` module reaches the build — see `writeGeneratedConfig`/
+      // `generatedSourceModules`, not the emitted C, if this ever fires.
+      expect(output).not.toMatch(/Undefined Global/i)
+      expect(output).toMatch(/Success/)
+      // A quiet build is not the same as a picture. Whether the three bands
+      // actually come out as three different colours is verified by booting
+      // the kept ROM in openMSX and reading back a screenshot — see the task
+      // report; no unit test can see a wrong bank offset. That boot stays
+      // manual (MSXDEVSTUDIO_KEEP_SCRATCH=1, then openMSX with
+      // `-script`/`screenshot -raw`, per the bitmap placement test above and
+      // CLAUDE.md), so it is not repeated here on every run.
+      //
+      // Timing note for whoever does that boot next: `after time N` in the
+      // openMSX script counts *emulated* MSX seconds, and on at least one
+      // dev machine the emulation ran roughly 15-20x slower than real time —
+      // `after time 12` took about 200 real seconds to fire, not ~12. A
+      // screenshot taken too early lands on the C-BIOS splash screen, which
+      // looks exactly like "the feature does not work" but means nothing
+      // more than "shot too early" — give the boot several real minutes
+      // (or use `after realtime N` instead, which counts wall-clock seconds
+      // directly) before treating a blank or wrong-looking picture as a
+      // finding. Confirmed working: three horizontal bands — red rows 0-7,
+      // blue rows 8-15, cream rows 16-23 — with the boundaries landing at
+      // exactly 8 and 16 rows down, pixel-precise.
+      const rom = join(root, 'out', 'bankedtest.rom')
       expect(existsSync(rom), `${rom} should exist`).toBe(true)
       expect(statSync(rom).size).toBeGreaterThan(1024)
     },
