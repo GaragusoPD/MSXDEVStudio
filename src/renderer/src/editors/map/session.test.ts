@@ -16,6 +16,7 @@ import {
   bankSheetOffset,
   doc,
   mapSession,
+  metaRowOffsets,
   pickerBankOffset,
   pickMeta,
   placeMetaAt,
@@ -320,5 +321,47 @@ describe('pickerBankOffset — which bank the picker paints from', () => {
   it('is 0 with no tileset loaded at all', () => {
     const session = { tileset: null, bank: 2 } as MapSession
     expect(pickerBankOffset(session)).toBe(0)
+  })
+})
+
+describe('metaRowOffsets — per-row offsets for a meta thumbnail (Defect B)', () => {
+  const solid = () => ({ pattern: new Array(8).fill(0xaa), color: new Array(8).fill(0xf1) })
+  // Bank lengths deliberately uneven, and a non-zero shared region — a
+  // uniform fixture would not have caught a transposed row/bank arithmetic.
+  const bankedTileset = normalizeTiles({
+    mode: 'sc2',
+    count: 4,
+    bankTiles: [[solid(), solid()], [], [solid(), solid(), solid(), solid(), solid()]],
+    sharedTiles: 6
+  })
+  const unbankedTileset = normalizeTiles({ mode: 'sc2', count: 4 })
+
+  it('resolves each row of a meta against the bank that row sits in, not the placement\'s own row', () => {
+    // Placed at row 6, height 4: rows 6,7 are still bank 0 (rows 0-7); rows
+    // 8,9 have crossed into bank 1 (rows 8-15) — a single offset for the
+    // whole thumbnail could not represent both.
+    const session = { tileset: bankedTileset, bank: 0 } as MapSession
+    expect(metaRowOffsets(session, 6, 4)).toEqual([0, 0, 256, 256])
+  })
+
+  it('is 0 for every row on an unbanked tileset', () => {
+    const session = { tileset: unbankedTileset, bank: 0 } as MapSession
+    expect(metaRowOffsets(session, 6, 4)).toEqual([0, 0, 0, 0])
+  })
+
+  it('wraps every screen (24 rows), matching bankSheetOffset', () => {
+    const session = { tileset: bankedTileset, bank: 0 } as MapSession
+    // Row 22-25 crosses back over the SCREEN_ROWS wrap into bank 0 again.
+    expect(metaRowOffsets(session, 22, 4)).toEqual([512, 512, 0, 0])
+  })
+
+  it('falls back to the picker\'s own bank when there is no placement to anchor to', () => {
+    const session = { tileset: bankedTileset, bank: 2 } as MapSession
+    expect(metaRowOffsets(session, null, 3)).toEqual([512, 512, 512])
+  })
+
+  it('is 0 for the picker fallback too when the tileset is unbanked', () => {
+    const session = { tileset: unbankedTileset, bank: 2 } as MapSession
+    expect(metaRowOffsets(session, null, 3)).toEqual([0, 0, 0])
   })
 })

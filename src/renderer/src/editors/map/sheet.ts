@@ -168,11 +168,26 @@ export function bitmapTilesetSheet(tileset: BitmapTilesDoc): Sheet {
  * costs nothing per palette and works the same over a pattern tileset, a
  * bitmap tileset or an atlas.
  *
+ * `rowOffsets[ty]` is added to every tile in meta row `ty` before it is
+ * looked up on `base` — one entry per row, not one for the whole thumbnail,
+ * because a placement can straddle a bank boundary (banks change every 8
+ * screen rows) and each row then belongs to a different third of a banked
+ * sheet. `map/session.ts`'s `metaRowOffsets` computes these; this function
+ * stays a dumb consumer of them so the bank arithmetic lives in one,
+ * vitest-reachable place. A row past the array (or the whole array omitted)
+ * offsets by 0 — bank 0, or an unbanked sheet, where a raw tile index is
+ * already the right cell.
+ *
  * Tile 0 is left untouched, so whatever is behind the meta shows through it.
  * That is the editor's half of the same rule the emitted C follows by skipping
  * the write.
  */
-export function metaThumbnail(base: Sheet, meta: MetaTileDoc, frame = 0): HTMLCanvasElement {
+export function metaThumbnail(
+  base: Sheet,
+  meta: MetaTileDoc,
+  frame = 0,
+  rowOffsets: readonly number[] = []
+): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
   canvas.width = base.cellW * meta.width
   canvas.height = base.cellH * meta.height
@@ -181,13 +196,15 @@ export function metaThumbnail(base: Sheet, meta: MetaTileDoc, frame = 0): HTMLCa
   if (!ctx || !tiles) return canvas
   ctx.imageSmoothingEnabled = false
   for (let ty = 0; ty < meta.height; ty++) {
+    const offset = rowOffsets[ty] ?? 0
     for (let tx = 0; tx < meta.width; tx++) {
       const tile = tiles[ty * meta.width + tx] ?? 0
       if (tile === 0) continue
+      const cell = tile + offset
       ctx.drawImage(
         base.canvas,
-        (tile % base.cols) * base.cellW,
-        Math.floor(tile / base.cols) * base.cellH,
+        (cell % base.cols) * base.cellW,
+        Math.floor(cell / base.cols) * base.cellH,
         base.cellW,
         base.cellH,
         tx * base.cellW,

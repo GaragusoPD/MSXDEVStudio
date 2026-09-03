@@ -11,18 +11,23 @@
  */
 import { computed } from 'vue'
 import { metaThumbnail } from './sheet'
-import { doc, pickMeta, sheet, type MapSession } from './session'
+import { doc, metaRowOffsets, pickMeta, sheet, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
 const metas = computed(() => [...props.session.metaDocs.entries()])
 
-/** Frame 0 as a data URL, composed from the tileset's own sheet. */
+/**
+ * Frame 0 as a data URL, composed from the tileset's own sheet. No placement
+ * to anchor to here — `baseRow: null` keeps this showing whichever bank the
+ * picker currently has selected (`metaRowOffsets`), the same bank
+ * `MapPicker`'s own tile grid shows.
+ */
 function thumbnail(path: string): string {
   const base = sheet(props.session)
   const meta = props.session.metaDocs.get(path)
   if (!base || !meta) return ''
-  return metaThumbnail(base, meta).toDataURL()
+  return metaThumbnail(base, meta, 0, metaRowOffsets(props.session, null, meta.height)).toDataURL()
 }
 
 function label(path: string): string {

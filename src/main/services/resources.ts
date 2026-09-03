@@ -17,7 +17,8 @@ import { defaultExport, isMetaKind, parseResource, renderResourceFiles,
   sourcePathFor, resourceKindOf, validateResource, type ResourceDoc } from '../../shared/msx/resource'
 import { metaRefFrom, validateMap, type MapDoc } from '../../shared/msx/map'
 import type { MetaTileDoc } from '../../shared/msx/meta-tile'
-import { isBanked } from '../../shared/msx/tile'
+import { isBanked, MAX_TILES, type TilesDoc } from '../../shared/msx/tile'
+import { swSpriteFamily } from '../../shared/msx/swsprite'
 
 /** `<msxgl>/tools/MSXtk/bin/MSXimg(.exe)` — MSXgl ships Linux and Windows builds. */
 export function msximgPath(msxglPath: string): string {
@@ -177,6 +178,80 @@ function mapValidateOptions(root: string, doc: MapDoc): { banked?: boolean } {
   }
 }
 
+/** Where software sprites in a pattern mode start borrowing the pattern table — `swsprite.ts:462`'s own `_FIRST_PATTERN`. */
+const SW_SPRITE_FIRST_PATTERN = 192
+
+/**
+ * The highest pattern index a tileset's art actually occupies: the common
+ * range, every bank's own overrides, and the shared (meta-tile) region, which
+ * is allocated downward from 255 and so always reaches it the instant any of
+ * it exists (see `TilesDoc.sharedTiles`). One expression covers all three
+ * sources a tileset can hold art in, rather than one branch per source.
+ */
+function tilesetHighestIndex(doc: TilesDoc): number {
+  return Math.max(
+    doc.count - 1,
+    ...doc.bankTiles.map((bank) => bank.length - 1),
+    doc.sharedTiles > 0 ? MAX_TILES - 1 : -1
+  )
+}
+
+/**
+ * The one cross-resource check neither half of the project can make on its
+ * own: `validateTiles` cannot see a `swsprites` resource, and
+ * `validateSwSprites` cannot see a tileset. `findResourceFiles` walks every
+ * resource, so this layer can see both.
+ *
+ * Software sprites in a pattern mode (sc1/sc2/sc4 — `swSpriteFamily`'s
+ * `'tiled'` branch) reserve pattern indices 192-255 at runtime
+ * (`swsprite.ts`'s own `_FIRST_PATTERN`), and `VDP_LoadPattern_GM2` writes
+ * that reservation into all three banks — verified in the engine
+ * (`vdp.c:2213`), not a bug in the emitter. A tileset whose art reaches that
+ * far — common range, a bank's own override, or the shared meta-tile region,
+ * which always does once `sharedTiles > 0` — has that art silently
+ * overwritten the moment a sprite loads. Not a regression this branch made:
+ * the same collision exists unbanked whenever a tileset's `count` alone
+ * passes 192, and this check catches that case too.
+ *
+ * A resource that will not parse contributes nothing here — its own export
+ * already reports why it cannot be read.
+ */
+export function swSpriteOverlapProblems(root: string): ConversionResult[] {
+  const tilesets: { relative: string; doc: TilesDoc; out: string }[] = []
+  let hasTiledSwSprites = false
+  for (const relative of findResourceFiles(root)) {
+    const abs = insideRoot(root, relative)
+    if (!abs) continue
+    try {
+      const resource = parseResource(relative, readFileSync(abs, 'utf-8'))
+      if (resource.kind === 'swsprites') {
+        if (swSpriteFamily(resource.doc.mode) === 'tiled') hasTiledSwSprites = true
+      } else if (resource.kind === 'tiles') {
+        tilesets.push({ relative, doc: resource.doc, out: resource.doc.export?.out ?? '' })
+      }
+    } catch {
+      // Unreadable — its own export step is what reports that.
+    }
+  }
+  if (!hasTiledSwSprites) return []
+
+  const problems: ConversionResult[] = []
+  for (const { relative, doc, out } of tilesets) {
+    const highest = tilesetHighestIndex(doc)
+    if (highest < SW_SPRITE_FIRST_PATTERN) continue
+    problems.push({
+      kind: 'resource',
+      input: relative,
+      out,
+      status: 'failed',
+      message:
+        `${relative} reaches pattern index ${highest}, but this project's software sprites reserve indices ` +
+        `${SW_SPRITE_FIRST_PATTERN}-255 at runtime — that art will be overwritten the moment a sprite loads.`
+    })
+  }
+  return problems
+}
+
 export function exportResourceFile(root: string, relative: string, options: ExportOptions = {}): ConversionResult {
   const sourceAbs = insideRoot(root, relative)
   const base: ConversionResult = { kind: 'resource', input: relative, out: '', status: 'failed' }
@@ -292,6 +367,7 @@ export async function exportAll(
   options: ExportOptions = {}
 ): Promise<ConversionResult[]> {
   const results = findResourceFiles(root).map((relative) => exportResourceFile(root, relative, options))
+  results.push(...swSpriteOverlapProblems(root))
   const msxglPath = options.msxglPath
   for (const rule of project.resources.imgRules) {
     if (!msxglPath) {

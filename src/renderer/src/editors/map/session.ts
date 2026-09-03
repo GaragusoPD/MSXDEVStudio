@@ -587,6 +587,33 @@ export function pickerBankOffset(session: MapSession): number {
   return session.tileset && isBanked(session.tileset) ? session.bank * MAX_TILES : 0
 }
 
+/**
+ * One `bankSheetOffset` per row of a meta-tile thumbnail, `height` entries
+ * long — what `sheet.ts`'s `metaThumbnail` adds to each of its rows before
+ * indexing the stacked sheet.
+ *
+ * A placement at map row `baseRow` spans rows `baseRow .. baseRow + height -
+ * 1`, and a meta taller than one bank-row band (8 screen rows) can straddle
+ * two or three banks — the cell at meta row `ty` belongs to the bank of map
+ * row `baseRow + ty`, not to whichever bank row `baseRow` itself is in. A
+ * single offset for the whole thumbnail was Defect B: it always read bank 0,
+ * which happened to be harmless only for as long as every meta cell held
+ * either tile 0 or a shared-region index (identical in every bank) — an
+ * assumption `findOrCreateTile` and `addTile`'s missing `isBanked` guard both
+ * make false in practice.
+ *
+ * `baseRow === null` is `MapMetaPicker`'s browsing grid, which has no
+ * placement to anchor to and should keep showing whichever bank the picker
+ * currently has selected — the same bank `MapPicker`'s own tile grid shows.
+ * `bankSheetOffset` already wraps every `SCREEN_ROWS` (Task 10's fix for the
+ * editor allowing a taller-than-one-screen banked map); calling it per row
+ * here inherits that wrap for free.
+ */
+export function metaRowOffsets(session: MapSession, baseRow: number | null, height: number): number[] {
+  if (baseRow === null) return new Array(height).fill(pickerBankOffset(session))
+  return Array.from({ length: height }, (_, ty) => bankSheetOffset(session, baseRow + ty))
+}
+
 // ── tool state ───────────────────────────────────────────────────────────
 
 export function setTool(session: MapSession, tool: MapTool): void {

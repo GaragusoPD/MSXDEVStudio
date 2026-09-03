@@ -26,6 +26,7 @@ import {
   doc,
   fillAt,
   finishDrag,
+  metaRowOffsets,
   movePlacementTo,
   paintDrag,
   pasteClipboard,
@@ -224,7 +225,7 @@ watchEffect(() => {
         const meta = ref && props.session.metaDocs.get(ref.path)
         if (!meta) continue
         ctx.drawImage(
-          metaThumbnail(cells, meta),
+          metaThumbnail(cells, meta, 0, metaRowOffsets(props.session, placement.y, meta.height)),
           placement.x * zoom,
           placement.y * zoom,
           ref.width * zoom,

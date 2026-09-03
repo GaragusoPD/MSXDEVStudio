@@ -8,6 +8,7 @@ import type { ImgRule, MsxProject } from '../../shared/msxproj'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS } from '../../shared/msx/sfx'
 import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
 import { defaultExport, serializeResource } from '../../shared/msx/resource'
+import { normalizeSwSprites, type SwMode } from '../../shared/msx/swsprite'
 import { BuildService, type BuildDeps } from './build-service'
 import { createProject, resolveNodeBinary, saveProject, writeGeneratedConfig } from './project'
 import {
@@ -18,7 +19,8 @@ import {
   msximgPath,
   runImgRule,
   summarize,
-  generatedSourceModules
+  generatedSourceModules,
+  swSpriteOverlapProblems
 } from './resources'
 
 // The same real MSXgl checkout the other suites use. Never referenced from
@@ -585,5 +587,107 @@ describe('exporting a map whose tileset is banked', () => {
     writeMap(root, 24)
 
     expect(exportResourceFile(root, 'res/level.map.json')).toMatchObject({ status: 'converted' })
+  })
+})
+
+/**
+ * Defect A: a software sprite in a pattern mode reserves pattern indices
+ * 192-255 at runtime (`swsprite.ts`'s own `_FIRST_PATTERN`), and
+ * `VDP_LoadPattern_GM2` writes that reservation into all three banks. A
+ * tileset whose art reaches that far — a bank's own override or the shared
+ * (meta-tile) region, which is allocated downward from 255 and so always
+ * does — has that art silently overwritten the instant a sprite loads. Never
+ * shown before this check: neither `validateTiles` nor `validateSwSprites`
+ * can see the other's file.
+ */
+describe('swSpriteOverlapProblems — software sprites vs. the shared/banked pattern range', () => {
+  /** A tiled-mode (sc1/sc2/sc4) swsprites resource — the family that actually reserves 192-255. */
+  function writeSwSprites(root: string, relative: string, mode: SwMode = 'sc2'): void {
+    const doc = normalizeSwSprites({ mode, sprites: [{ name: 'hero' }] })
+    mkdirSync(join(root, relative, '..'), { recursive: true })
+    writeFileSync(join(root, relative), serializeResource({ kind: 'swsprites', doc }), 'utf-8')
+  }
+
+  /**
+   * A banked tileset carrying meta-tile art: bank lengths deliberately
+   * uneven (2 / 0 / 5) and a non-zero shared region — a fixture uniform
+   * across banks would not have caught the collision this checks for.
+   */
+  function writeBankedTilesetWithMetas(root: string, relative: string): void {
+    const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(mergeColorByte(15, 4)) })
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: [solid(0x11), solid(0x22), solid(0x33), solid(0x44)],
+      bankTiles: [[solid(0x55), solid(0x66)], [], [solid(0x77), solid(0x88), solid(0x99), solid(0xaa), solid(0xbb)]],
+      sharedTiles: 6
+    })
+    doc.export = { ...defaultExport(relative), name: 'g_Hero', out: 'content/hero.h' }
+    mkdirSync(join(root, relative, '..'), { recursive: true })
+    writeFileSync(join(root, relative), serializeResource({ kind: 'tiles', doc }), 'utf-8')
+  }
+
+  it('reports a problem for sprites plus a banked tileset carrying metas — the shared region always reaches 255', () => {
+    const root = scratch('overlap-banked-metas')
+    writeBankedTilesetWithMetas(root, 'res/hero.tiles.json')
+    writeSwSprites(root, 'res/hero.swsprites.json')
+
+    const problems = swSpriteOverlapProblems(root)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toMatchObject({ kind: 'resource', input: 'res/hero.tiles.json', out: 'content/hero.h', status: 'failed' })
+    expect(problems[0].message).toContain('res/hero.tiles.json')
+    expect(problems[0].message).toContain('255')
+    expect(problems[0].message).toContain('192-255')
+  })
+
+  it('reports nothing for sprites plus a small, plain tileset', () => {
+    const root = scratch('overlap-plain')
+    writeTileset(root, 'res/hero.tiles.json') // 2 tiles, unbanked, no shared region
+    writeSwSprites(root, 'res/hero.swsprites.json')
+
+    expect(swSpriteOverlapProblems(root)).toEqual([])
+  })
+
+  it('reports nothing for a banked tileset with metas when the project has no swsprites resource', () => {
+    const root = scratch('overlap-no-sprites')
+    writeBankedTilesetWithMetas(root, 'res/hero.tiles.json')
+
+    expect(swSpriteOverlapProblems(root)).toEqual([])
+  })
+
+  it('reports the pre-existing unbanked case too: count alone past 192', () => {
+    const root = scratch('overlap-unbanked')
+    const doc = normalizeTiles({ mode: 'sc2', count: 200 })
+    doc.export = { ...defaultExport('res/hero.tiles.json'), name: 'g_Hero', out: 'content/hero.h' }
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(join(root, 'res/hero.tiles.json'), serializeResource({ kind: 'tiles', doc }), 'utf-8')
+    writeSwSprites(root, 'res/hero.swsprites.json')
+
+    const problems = swSpriteOverlapProblems(root)
+    expect(problems).toHaveLength(1)
+    expect(problems[0].message).toContain('199')
+  })
+
+  it('reports nothing when the only swsprites resource is not a pattern-mode (tiled) one', () => {
+    // sc5 sprites are blitted into VRAM, not written into the pattern table —
+    // `swSpriteFamily` never emits `_FIRST_PATTERN` for them, so there is no
+    // real collision to warn about.
+    const root = scratch('overlap-bitmap-sprites')
+    writeBankedTilesetWithMetas(root, 'res/hero.tiles.json')
+    writeSwSprites(root, 'res/hero.swsprites.json', 'sc5')
+
+    expect(swSpriteOverlapProblems(root)).toEqual([])
+  })
+
+  it('is wired into exportAll, so a real build sees it', async () => {
+    const root = scratch('overlap-exportall')
+    writeBankedTilesetWithMetas(root, 'res/hero.tiles.json')
+    writeSwSprites(root, 'res/hero.swsprites.json')
+
+    const results = await exportAll(root, fakeProject())
+    const overlap = results.find((result) => result.status === 'failed' && result.input === 'res/hero.tiles.json')
+    expect(overlap?.message).toContain('192-255')
+    // The tileset's own export still happens — this is a warning, not a block.
+    expect(results.some((result) => result.status === 'converted' && result.input === 'res/hero.tiles.json')).toBe(true)
   })
 })
