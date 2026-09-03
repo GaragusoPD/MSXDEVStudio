@@ -2,10 +2,10 @@
  * Painting a meta-tile in pixels, when a meta-tile owns no pixels.
  *
  * The meta editor shows a canvas; the document underneath holds tile indices.
- * This module is the bridge, and it works **copy-on-write**: a stroke never
- * edits a tile in place, it derives the tile the cell *would* now look like and
- * then finds or creates that tile in the bank. Two consequences make the whole
- * feature safe:
+ * This module is the bridge, and for a meta it works **copy-on-write**: a stroke
+ * never edits a tile in place, it derives the tile the cell *would* now look
+ * like and then finds or creates that tile in the bank. Two consequences make
+ * the whole feature safe:
  *
  * - Nothing that already pointed at a tile can be changed by painting a meta. A
  *   map drawn with tile 12 keeps tile 12; the meta moves to tile 87.
@@ -21,6 +21,15 @@
  * against a **scratch one-tile document** holding a copy of the cell's tile, so
  * the answer is the tile editor's answer, arrived at without touching the real
  * bank.
+ *
+ * Painting a *screen* wants the other half of the choice as well, so `paintGrid`
+ * takes `write`. Under `'edit'` the derived art is written back over the tile the
+ * cell already points at instead of being forked into a new one: nothing is
+ * allocated, a full tileset cannot refuse the stroke, and every other cell
+ * drawn with that tile changes too — which is what someone touching up a
+ * converted screen means by painting. The reversal data that costs is
+ * `PaintGridResult.tileEdits`. A meta never passes `write`, so nothing above
+ * changes for it.
  */
 
 import {
@@ -213,6 +222,25 @@ export interface PaintGrid {
   tiles: number[]
 }
 
+/**
+ * One tile's art as it was before an `edit` stroke overwrote it, and as the
+ * stroke left it.
+ *
+ * `after` is what makes the record checkable rather than merely reversible: an
+ * undo that finds art it did not write is looking at a tile something else has
+ * since changed, and putting `before` back there would destroy that other edit.
+ */
+export interface TileEdit {
+  index: number
+  /** Which table it lives in: a bank's overrides, or null for the common set. */
+  bank: number | null
+  before: TileEntry
+  /** The art this stroke left in the slot — its *final* art, when a stroke crossed several cells of one tile. */
+  after: TileEntry
+  /** sc1 only: the group colour byte, which is half the picture there. */
+  beforeGroup?: number
+}
+
 export interface PaintGridResult {
   grid: PaintGrid
   tiles: TilesDoc
@@ -224,6 +252,8 @@ export interface PaintGridResult {
   refused?: string
   /** The bank a full-bank refusal happened against, `null` for an unbanked (or shared-region) refusal. */
   refusedBank?: number | null
+  /** Tiles this stroke rewrote in place, one per slot touched. Always present; empty under `fork`. */
+  tileEdits: TileEdit[]
 }
 
 export interface PaintOptions {
@@ -233,11 +263,23 @@ export interface PaintOptions {
    * whose tiles must mean one picture in every bank.
    */
   bankOf?: (cellRow: number) => number
+  /**
+   * What a stroke does to the cell it lands on. `fork` (the default) derives the
+   * new art and repoints the cell at a found-or-created tile, leaving every
+   * other user of the old one alone. `edit` rewrites the tile the cell already
+   * points at, which allocates nothing, never runs out of bank — and changes
+   * that tile for every cell in every map that references it.
+   *
+   * A meta-tile must never pass `edit`: its whole safety argument is that
+   * painting one cannot disturb art it does not own.
+   */
+  write?: 'fork' | 'edit'
 }
 
 /**
  * Applies a stroke to a grid of tile references, resolving each touched cell
- * copy-on-write into `tiles`.
+ * into `tiles` — copy-on-write by default, in place under `options.write ===
+ * 'edit'`.
  *
  * `points` are in the grid's own **pixel** space — `(0,0)` is its top-left dot.
  * `grid.width`/`height` are in **cells**. Points outside are ignored, so a drag
@@ -265,11 +307,12 @@ export function paintGrid(
     if (list) list.push(point)
     else byCell.set(key, [point])
   }
-  if (!byCell.size) return { grid, tiles, added: [], dropped: 0 }
+  if (!byCell.size) return { grid, tiles, added: [], dropped: 0, tileEdits: [] }
 
   let nextTiles = tiles
   let nextCells: number[] | null = null
   const added: number[] = []
+  const tileEdits: TileEdit[] = []
   let dropped = 0
 
   for (const key of byCell.keys()) {
@@ -291,10 +334,77 @@ export function paintGrid(
     }
 
     const pair = nextTiles.mode === 'sc1' ? work.groupColors[0] : undefined
+    const entry = canonical(work)
+
+    // Reserved tile 0 is locked blank and `normalizeTiles` re-blanks it on load,
+    // so an in-place write there vanishes on the next open — and until then
+    // shows in every transparent cell of every map. Fork instead.
+    const editable = options.write === 'edit' && !(currentTile === 0 && nextTiles.reserveTile0)
+    if (editable) {
+      // An edit has to land where this row's bank actually READS. When the bank
+      // overrides the index, `tiles[index]` is art the bank never shows, so
+      // writing there would leave the stroke invisible exactly where it was
+      // drawn.
+      const inBank = bank !== null && !!nextTiles.bankTiles[bank]?.[currentTile]
+      const before = inBank ? nextTiles.bankTiles[bank!][currentTile] : nextTiles.tiles[currentTile]
+      // A cell pointing at a slot nothing fills has no art to rewrite; forking
+      // is the only honest thing left.
+      if (before) {
+        const sc1 = nextTiles.mode === 'sc1'
+        const groupNow = sc1 ? nextTiles.groupColors[currentTile >> SC1_SHIFT] : undefined
+        const groupAfter = sc1 ? work.groupColors[0] : undefined
+        // An idle repaint — the same colour over pixels that already hold it,
+        // or a stroke every point of which was dropped — hands back the SAME
+        // document, as the fork path below does. Otherwise a stroke that
+        // changed nothing still pushes an undo entry that visibly does nothing.
+        // Asked of the running document, because "changed nothing" means
+        // nothing beyond what this stroke has already written.
+        if (sameEntry(before, entry) && groupNow === groupAfter) continue
+
+        const at = inBank ? bank : null
+        const already = tileEdits.find((edit) => edit.index === currentTile && edit.bank === at)
+        // A stroke crossing two cells of the same tile writes it twice. The
+        // first `before` is the art the stroke found and must survive; `after`
+        // moves on to whatever the slot holds now.
+        if (already) already.after = entry
+        else {
+          tileEdits.push({
+            index: currentTile,
+            bank: at,
+            before,
+            after: entry,
+            // Off the doc the stroke *found*, not the running one: eight tiles
+            // share one sc1 group byte, so two cells in one group would
+            // otherwise record the first cell's new pair as the second's
+            // "before", and only an undo replayed back-to-front would land on
+            // the right colour.
+            ...(sc1 ? { beforeGroup: tiles.groupColors[currentTile >> SC1_SHIFT] } : {})
+          })
+        }
+
+        if (inBank) {
+          const banked = nextTiles.bankTiles[bank!].slice()
+          banked[currentTile] = entry
+          const bankTiles = nextTiles.bankTiles.slice()
+          bankTiles[bank!] = banked
+          nextTiles = { ...nextTiles, bankTiles }
+        } else {
+          const written = nextTiles.tiles.slice()
+          written[currentTile] = entry
+          // sc1 holds colour per group of eight tiles, not in the entry — a role
+          // stroke's recoloured pair is lost without this.
+          const groupColors = sc1 ? nextTiles.groupColors.slice() : nextTiles.groupColors
+          if (sc1) groupColors[currentTile >> SC1_SHIFT] = work.groupColors[0]
+          nextTiles = { ...nextTiles, tiles: written, groupColors }
+        }
+        continue // an edit changes pixels, never references
+      }
+    }
+
     const found =
       bank === null
-        ? findOrCreateTile(nextTiles, canonical(work), pair)
-        : findOrCreateBankTile(nextTiles, bank, canonical(work), pair)
+        ? findOrCreateTile(nextTiles, entry, pair)
+        : findOrCreateBankTile(nextTiles, bank, entry, pair)
     if (!found) {
       // A half-drawn stroke against a full bank is worse than no change at all.
       return {
@@ -302,6 +412,7 @@ export function paintGrid(
         tiles,
         added: [],
         dropped: 0,
+        tileEdits: [],
         refusedBank: bank,
         refused:
           bank === null
@@ -336,7 +447,8 @@ export function paintGrid(
     grid: nextCells ? { ...grid, tiles: nextCells } : grid,
     tiles: nextTiles,
     added,
-    dropped
+    dropped,
+    tileEdits
   }
 }
 

@@ -215,6 +215,162 @@ describe('paintGrid', () => {
   })
 })
 
+describe("paintGrid write: 'edit'", () => {
+  it("edit mode rewrites the cell's own tile and repoints nothing", () => {
+    const tiles = createTilesDoc('sc2', 4)
+    const grid = { width: 2, height: 1, tiles: [2, 2] }
+
+    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
+
+    expect(result.grid.tiles).toEqual([2, 2])
+    expect(result.tiles.tiles[2]).not.toEqual(tiles.tiles[2])
+    expect(result.added).toEqual([])
+    expect(result.tiles.count).toBe(tiles.count)
+    expect(result.tileEdits).toEqual([
+      { index: 2, bank: null, before: tiles.tiles[2], after: result.tiles.tiles[2] }
+    ])
+  })
+
+  it('edit mode never refuses on a full tileset, because it allocates nothing', () => {
+    const full = createTilesDoc('sc2', MAX_TILES)
+    const grid = { width: 1, height: 1, tiles: [5] }
+
+    const result = paintGrid(grid, full, [{ x: 0, y: 0 }], 7, undefined, { write: 'edit' })
+
+    expect(result.refused).toBeUndefined()
+    expect(result.tiles.tiles[5]).not.toEqual(full.tiles[5])
+  })
+
+  it('edit mode writes into the bank that shows the tile, not the common set', () => {
+    const solid = (byte: number) => ({
+      pattern: new Array(8).fill(byte),
+      color: new Array(8).fill(mergeColorByte(15, 4))
+    })
+    const tiles = normalizeTiles({
+      mode: 'sc2',
+      count: 1,
+      bankTiles: [[solid(0xff)], [solid(0x0f)], []],
+      sharedTiles: 0
+    })
+    const grid = { width: 32, height: 24, tiles: new Array(32 * 24).fill(0) }
+
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }], 0, 'bg', {
+      write: 'edit',
+      bankOf: (row) => row >> 3
+    })
+
+    expect(result.tiles.bankTiles[0][0].pattern[0]).toBe(0x7f)
+    expect(result.tiles.bankTiles[1][0]).toEqual(solid(0x0f)) // untouched
+    expect(result.tileEdits[0].bank).toBe(0)
+  })
+
+  it("edit mode writes the common tile when the row's own bank does not override it", () => {
+    const solid = (byte: number) => ({
+      pattern: new Array(8).fill(byte),
+      color: new Array(8).fill(mergeColorByte(15, 4))
+    })
+    // Uneven banks over a real shared region: bank 0 overrides tiles 0–2,
+    // bank 1 only tile 0, bank 2 nothing at all.
+    const tiles = normalizeTiles({
+      mode: 'sc2',
+      count: 3,
+      tiles: [solid(0x11), solid(0x22), solid(0xff)],
+      bankTiles: [[solid(0x44), solid(0x55), solid(0x66)], [solid(0x77)], []],
+      sharedTiles: 2
+    })
+    const grid = { width: 32, height: 24, tiles: new Array(32 * 24).fill(2) }
+
+    // Cell row 16 is bank 2's, and bank 2 shows the common tile 2 there.
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 16 * 8 }], 0, 'bg', {
+      write: 'edit',
+      bankOf: (row) => row >> 3
+    })
+
+    expect(result.tiles.tiles[2].pattern[0]).toBe(0x7f)
+    expect(result.tiles.bankTiles[0][2]).toEqual(solid(0x66)) // bank 0 keeps its own art
+    expect(result.tileEdits[0].bank).toBeNull()
+    expect(result.tiles.sharedTiles).toBe(2)
+    expect(result.tiles.bankTiles[2]).toEqual([])
+  })
+
+  it('edit mode forks instead of overwriting a reserved tile 0', () => {
+    const tiles = createTilesDoc('sc2', 4, true)
+    const grid = { width: 1, height: 1, tiles: [0] }
+
+    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
+
+    expect(result.tiles.tiles[0]).toEqual(tiles.tiles[0]) // still blank
+    expect(result.grid.tiles[0]).not.toBe(0) // forked instead
+    expect(result.tileEdits).toEqual([])
+  })
+
+  it('fork mode records no tileEdits', () => {
+    const tiles = createTilesDoc('sc2', 4)
+    const result = paintGrid({ width: 1, height: 1, tiles: [2] }, tiles, [{ x: 0, y: 0 }], 7)
+
+    expect(result.tileEdits).toEqual([])
+  })
+
+  it('sc1: an edit rewrites the group colour too, since that is half the picture', () => {
+    const tiles = normalizeTiles({ mode: 'sc1', count: 16, groupColors: [0x21, 0x54] })
+    const grid = { width: 1, height: 1, tiles: [9] }
+
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }], 7, 'fg', { write: 'edit' })
+
+    // Tile 9 is in group 1, so only group 1's pair moves.
+    expect(result.tiles.groupColors[1]).toBe(mergeColorByte(7, 4))
+    expect(result.tiles.groupColors[0]).toBe(0x21)
+    expect(result.tiles.tiles[9].pattern[0]).toBe(0x80)
+    expect(result.tileEdits[0].beforeGroup).toBe(0x54)
+  })
+
+  it('sc1: beforeGroup is the pair the stroke found, not the one the cell before it left', () => {
+    // Tiles 8 and 9 share group 1 — adjacent cells on a converted screen. The
+    // first cell's write moves the pair, so reading `beforeGroup` off the
+    // running document would record the *first write's* colour as the second
+    // tile's "before", and an undo replayed front-to-back would land on it.
+    const tiles = normalizeTiles({ mode: 'sc1', count: 16, groupColors: [0x21, 0x54] })
+    const grid = { width: 2, height: 1, tiles: [8, 9] }
+
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }, { x: 8, y: 0 }], 7, 'fg', { write: 'edit' })
+
+    expect(result.tileEdits).toHaveLength(2)
+    expect(result.tileEdits.map((edit) => edit.beforeGroup)).toEqual([0x54, 0x54])
+  })
+
+  it('records one edit per tile, holding the art from before and after the whole stroke', () => {
+    const tiles = createTilesDoc('sc2', 4)
+    const grid = { width: 2, height: 1, tiles: [2, 2] }
+
+    // Two cells, one tile. The second write must not overwrite the first's
+    // `before`, and `after` must be the art the tile ends the stroke with —
+    // a rebase guard comparing against a stale `after` refuses every
+    // multi-cell stroke.
+    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }, { x: 8, y: 3 }], 7, 'fg', { write: 'edit' })
+
+    expect(result.tileEdits).toHaveLength(1)
+    expect(result.tileEdits[0].before).toEqual({
+      pattern: new Array(8).fill(0),
+      color: new Array(8).fill(0xf1)
+    })
+    expect(result.tileEdits[0].after).toBe(result.tiles.tiles[2])
+    expect(result.tiles.tiles[2].pattern[1]).toBe(0x40)
+    expect(result.tiles.tiles[2].pattern[3]).toBe(0x80)
+  })
+
+  it('an idle edit repaint hands back the same document and records nothing', () => {
+    const tiles = createTilesDoc('sc2', 4)
+    const grid = { width: 1, height: 1, tiles: [2] }
+    const once = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
+
+    const twice = paintGrid(once.grid, once.tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
+
+    expect(twice.tiles).toBe(once.tiles)
+    expect(twice.grid).toBe(once.grid)
+    expect(twice.tileEdits).toEqual([])
+  })
+})
+
 describe('findOrCreateBankTile', () => {
   const solid = (byte: number) => ({
     pattern: new Array(8).fill(byte),
