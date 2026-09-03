@@ -27,6 +27,7 @@ import {
   tilePatternBytes,
   tilePixels,
   validateTiles,
+  type TileEntry,
   type TilesDoc
 } from './tile'
 
@@ -553,6 +554,8 @@ describe('pattern banks', () => {
 })
 
 describe('packBankedTiles — the importer\'s own three-bank path', () => {
+  const solid = (byte: number): TileEntry => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
+
   it('packs a full screen into three banks, bank-relative', () => {
     // 256x192 of three distinct horizontal bands: each third needs one tile, and
     // each gets index 0 in its own bank — the same byte, three pictures.
@@ -608,13 +611,16 @@ describe('packBankedTiles — the importer\'s own three-bank path', () => {
     expect(unplaced[0]).toBe(0)
   })
 
-  it('reserves the shared region: a bank tops out at MAX_TILES - sharedTiles, not MAX_TILES', () => {
-    // Simulates importing over a tileset that already backs 20 meta-tiles worth
-    // of shared art. The same fully-distinct top band from the previous test now
-    // has nowhere for its last 20 cells to go — proof the cap is load-bearing,
-    // not merely descriptive, and that a bank can never grow into the shared
-    // region reserved at the top of its 256 slots.
-    const { doc, unplaced } = packBankedTiles(fullyDistinctTopBand(), 256, 192, 'sc2', { sharedTiles: 20 })
+  it('carries an existing shared (meta-tile) region through unchanged, and caps every bank below it', () => {
+    // Simulates importing over a tileset that already backs 20 real meta-tile
+    // entries — not just a count, the art itself, each a distinct byte so a
+    // specific one can be checked for exact survival rather than mere
+    // presence. The same fully-distinct top band from the previous test now
+    // has nowhere for its last 20 cells to go, proving the cap is load-bearing
+    // and that a bank can never grow into the shared region reserved at the
+    // top of its 256 slots.
+    const shared = Array.from({ length: 20 }, (_, i) => solid(0x40 + i))
+    const { doc, unplaced } = packBankedTiles(fullyDistinctTopBand(), 256, 192, 'sc2', { shared })
     expect(doc.bankTiles[0]).toHaveLength(MAX_TILES - 20)
     expect(unplaced[0]).toBe(20)
     // Bands below are untouched by the top band's own art — an all-zero source,
@@ -622,6 +628,22 @@ describe('packBankedTiles — the importer\'s own three-bank path', () => {
     expect(doc.bankTiles[1]).toHaveLength(1)
     expect(doc.bankTiles[2]).toHaveLength(1)
     expect(doc.sharedTiles).toBe(20)
+    // sharedStart = 256 - 20 = 236, so hardware index 251 is shared[15] — the
+    // reviewer's own probe: real art at a shared index must come back exactly
+    // as given, not blanked by a doc this function never actually received.
+    expect(doc.tiles[251]).toEqual(shared[15])
+    expect(doc.tiles[236]).toEqual(shared[0])
+    expect(doc.tiles[255]).toEqual(shared[19])
+  })
+
+  it('with no existing shared region passed in, the returned doc has none to preserve', () => {
+    // The honest complement to the test above: called the way every caller
+    // today actually calls it (no `options` at all), there is no shared art
+    // to carry through, so the doc's shared region is simply absent —
+    // `sharedTiles` stays 0 and every bank's budget is the full MAX_TILES.
+    const { doc } = packBankedTiles(fullyDistinctTopBand(), 256, 192, 'sc2')
+    expect(doc.sharedTiles).toBe(0)
+    expect(doc.bankTiles[0]).toHaveLength(MAX_TILES)
   })
 
   it('keeps a partial fixture partial: dedup counts differ per band and stay independent', () => {

@@ -497,11 +497,17 @@ export interface BankedPackResult {
  * exactly 32 cols × 8 tile-rows = `MAX_TILES` cells, which is also a bank's
  * raw capacity, so with no shared reservation a band can never run out of
  * room — every distinct 8×8 pattern it could possibly contain still fits.
- * Overflow only becomes possible once `options.sharedTiles` (an existing
- * tileset's own meta-tile reservation, the same count `bankCapacityLeft`
- * reads) eats into that budget from the top: this function never grows a
- * bank past `MAX_TILES - sharedTiles`, so packing into a tileset that already
- * backs meta-tiles can never overwrite them — it just leaves that room alone.
+ * Overflow only becomes possible once `options.shared` (an existing
+ * tileset's own meta-tile region, the art itself — not just the count
+ * `bankCapacityLeft` reads) eats into that budget from the top: this
+ * function never grows a bank past `MAX_TILES - options.shared.length`, and
+ * every entry `options.shared` passes in is carried into the returned doc's
+ * `tiles` at its own hardware index, unchanged. So packing into a tileset
+ * that already backs meta-tiles genuinely can't overwrite them, but only
+ * when the caller hands those tiles in — this function has no other way to
+ * know they exist. Called with no `options` at all (every caller today),
+ * the returned doc's shared region is simply empty; there is nothing to
+ * preserve when nothing was given to preserve.
  *
  * `unplaced[b]` counts only genuinely new art with nowhere left to go; a cell
  * whose pattern repeats one this bank already placed keeps matching for free
@@ -523,11 +529,17 @@ export function packBankedTiles(
   width: number,
   height: number,
   mode: TileMode,
-  options: { sharedTiles?: number } = {}
+  options: { shared?: TileEntry[] } = {}
 ): BankedPackResult {
   const cols = Math.floor(width / TILE_SIZE)
   const bandRows = Math.floor(height / BANK_COUNT / TILE_SIZE)
-  const sharedTiles = Math.max(0, Math.min(MAX_TILES, options.sharedTiles ?? 0))
+  // `shared[i]` is the entry `sharedPatternBytes`/`sharedColorBytes` read at
+  // hardware index `sharedStart + i` on the doc it came from — the same
+  // ordering, so re-threading it below (`sharedStart + i` again) reproduces
+  // that doc's shared region byte-for-byte rather than merely its size.
+  const shared = options.shared ?? []
+  const sharedTiles = Math.min(MAX_TILES, shared.length)
+  const sharedStart = MAX_TILES - sharedTiles
   const budget = MAX_TILES - sharedTiles
 
   const bankTiles: TileEntry[][] = []
@@ -580,7 +592,16 @@ export function packBankedTiles(
   // 0). Nothing here has "common" art of its own to offer: a fresh import has
   // no existing tileset to fall back to, so there is nothing to put in the
   // common range beyond the minimum `normalizeTiles` already requires.
-  const doc = normalizeTiles({ mode, count: 1, bankTiles, sharedTiles })
+  //
+  // The shared region is different: whatever `options.shared` handed in is
+  // real art from a real caller, so it goes into `tiles` at its own hardware
+  // index (`normalizeTiles`'s shared-region decode loop reads exactly this
+  // range — see `TilesDoc.sharedTiles`) rather than being left for that loop
+  // to default to blank. An empty `shared` (every caller today) puts nothing
+  // here, and the loop below is a no-op.
+  const tiles: TileEntry[] = []
+  for (let i = 0; i < sharedTiles; i++) tiles[sharedStart + i] = shared[i]
+  const doc = normalizeTiles({ mode, count: 1, tiles, bankTiles, sharedTiles })
   return { doc, layout, lossyTiles, unplaced }
 }
 
