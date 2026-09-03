@@ -159,6 +159,114 @@ function scratch(doc: TilesDoc, tile: number): TilesDoc {
   }
 }
 
+/** A grid of tile references — a meta's frame, or a map layer's `data`. Sizes are in CELLS. */
+export interface PaintGrid {
+  width: number
+  height: number
+  tiles: number[]
+}
+
+export interface PaintGridResult {
+  grid: PaintGrid
+  tiles: TilesDoc
+  /** Indices appended by this stroke — what Compact would reclaim if it is undone. */
+  added: number[]
+  /** Points the hardware colour limit refused. Reported, never fatal. */
+  dropped: number
+  /** Set when nothing could be done at all; `grid` and `tiles` come back unchanged. */
+  refused?: string
+}
+
+/**
+ * Applies a stroke to a grid of tile references, resolving each touched cell
+ * copy-on-write into `tiles`.
+ *
+ * `points` are in the grid's own **pixel** space — `(0,0)` is its top-left dot.
+ * `grid.width`/`height` are in **cells**. Points outside are ignored, so a drag
+ * that leaves the canvas needs no clamping by the caller.
+ *
+ * `role` is which half of the row's colour pair the stroke owns — the mouse
+ * button, as in the tile editor. Without one, the second colour a row is asked
+ * for is dropped, which reads as an editor that stopped working.
+ */
+export function paintGrid(
+  grid: PaintGrid,
+  tiles: TilesDoc,
+  points: readonly Point[],
+  color: number,
+  role?: 'fg' | 'bg'
+): PaintGridResult {
+  const byCell = new Map<number, Point[]>()
+  for (const point of points) {
+    const cx = Math.floor(point.x / TILE_SIZE)
+    const cy = Math.floor(point.y / TILE_SIZE)
+    if (point.x < 0 || point.y < 0 || cx >= grid.width || cy >= grid.height) continue
+    const key = cy * grid.width + cx
+    const list = byCell.get(key)
+    if (list) list.push(point)
+    else byCell.set(key, [point])
+  }
+  if (!byCell.size) return { grid, tiles, added: [], dropped: 0 }
+
+  let nextTiles = tiles
+  let nextCells: number[] | null = null
+  const added: number[] = []
+  let dropped = 0
+
+  for (const key of byCell.keys()) {
+    const cellPoints = byCell.get(key)!
+    const currentTile = (nextCells ?? grid.tiles)[key] ?? 0
+    let work = scratch(nextTiles, currentTile)
+    for (const point of cellPoints) {
+      const result = paintPixel(work, 0, point.x % TILE_SIZE, point.y % TILE_SIZE, color, role)
+      // Only reachable without a role. With one, `paintPixel` recolours that
+      // role for the row and can never refuse — which is what makes "change
+      // colour and keep drawing" work at all under a two-colours-per-row rule.
+      if (!result.ok) {
+        dropped++
+        continue
+      }
+      work = result.doc
+    }
+
+    const pair = nextTiles.mode === 'sc1' ? work.groupColors[0] : undefined
+    const found = findOrCreateTile(nextTiles, canonical(work), pair)
+    if (!found) {
+      // A half-drawn stroke against a full bank is worse than no change at all.
+      return {
+        grid,
+        tiles,
+        added: [],
+        dropped: 0,
+        refused:
+          `The tileset is full — ${MAX_TILES} tiles is the hardware limit. ` +
+          'Run "Compact unused tiles", or free a tile in the tile editor.'
+      }
+    }
+    // Track newly created tiles for the Compact command. An unbanked allocation
+    // appends at `count`, so an index beyond the old count is new. A banked
+    // allocation takes from the shared top (count stays 256), so a new shared
+    // allocation is detected by `sharedTiles` growing.
+    if (found.index >= nextTiles.count || found.doc.sharedTiles > nextTiles.sharedTiles)
+      added.push(found.index)
+    nextTiles = found.doc
+    // Only clone once a cell actually moves. A stroke that resolves to the tile
+    // already there must return the SAME array, or every caller's
+    // reference-equal no-op check (and its undo stack) stops working.
+    if (found.index !== currentTile) {
+      if (!nextCells) nextCells = grid.tiles.slice()
+      nextCells[key] = found.index
+    }
+  }
+
+  return {
+    grid: nextCells ? { ...grid, tiles: nextCells } : grid,
+    tiles: nextTiles,
+    added,
+    dropped
+  }
+}
+
 /**
  * Applies a stroke to one frame of a meta.
  *
@@ -181,68 +289,26 @@ export function paintMeta(
   color: number,
   role?: 'fg' | 'bg'
 ): PaintMetaResult {
-  if (!meta.frames[frame]) return { meta, tiles, added: [], dropped: 0 }
+  const frameTiles = meta.frames[frame]
+  if (!frameTiles) return { meta, tiles, added: [], dropped: 0 }
 
-  // Grouped by cell so each tile is derived once, however many points hit it.
-  const byCell = new Map<number, Point[]>()
-  for (const point of points) {
-    const cx = Math.floor(point.x / TILE_SIZE)
-    const cy = Math.floor(point.y / TILE_SIZE)
-    if (point.x < 0 || point.y < 0 || cx >= meta.width || cy >= meta.height) continue
-    const key = cy * meta.width + cx
-    const list = byCell.get(key)
-    if (list) list.push(point)
-    else byCell.set(key, [point])
-  }
-  if (!byCell.size) return { meta, tiles, added: [], dropped: 0 }
+  const result = paintGrid(
+    { width: meta.width, height: meta.height, tiles: frameTiles.tiles },
+    tiles,
+    points,
+    color,
+    role
+  )
+  if (result.refused) return { meta, tiles, added: [], dropped: 0, refused: result.refused }
+  // Nothing moved: hand back the same meta so `pushHistory` no-ops, exactly as
+  // `setFrameTile` used to make it. `dropped` still travels — an all-dropped
+  // stroke reported its count before and must keep doing so.
+  if (result.grid.tiles === frameTiles.tiles)
+    return { meta, tiles: result.tiles, added: result.added, dropped: result.dropped }
 
-  let nextMeta = meta
-  let nextTiles = tiles
-  const added: number[] = []
-  let dropped = 0
-
-  for (const [key, cellPoints] of byCell) {
-    const cx = key % meta.width
-    const cy = Math.floor(key / meta.width)
-
-    let work = scratch(nextTiles, nextMeta.frames[frame].tiles[key] ?? 0)
-    for (const point of cellPoints) {
-      const result = paintPixel(work, 0, point.x % TILE_SIZE, point.y % TILE_SIZE, color, role)
-      // Only reachable without a role. With one, `paintPixel` recolours that
-      // role for the row and can never refuse — which is what makes "change
-      // colour and keep drawing" work at all under a two-colours-per-row rule.
-      if (!result.ok) {
-        dropped++
-        continue
-      }
-      work = result.doc
-    }
-
-    const pair = nextTiles.mode === 'sc1' ? work.groupColors[0] : undefined
-    const found = findOrCreateTile(nextTiles, canonical(work), pair)
-    if (!found) {
-      // A half-drawn meta against a full bank is worse than no change at all.
-      return {
-        meta,
-        tiles,
-        added: [],
-        dropped: 0,
-        refused:
-          `The tileset is full — ${MAX_TILES} tiles is the hardware limit. ` +
-          'Run "Compact unused tiles", or free a tile in the tile editor.'
-      }
-    }
-    // Track newly created tiles for the Compact command. An unbanked allocation
-    // appends at `count`, so an index beyond the old count is new. A banked
-    // allocation takes from the shared top (count stays 256), so a new shared
-    // allocation is detected by `sharedTiles` growing.
-    if (found.index >= nextTiles.count || found.doc.sharedTiles > nextTiles.sharedTiles)
-      added.push(found.index)
-    nextTiles = found.doc
-    nextMeta = setFrameTile(nextMeta, frame, cx, cy, found.index)
-  }
-
-  return { meta: nextMeta, tiles: nextTiles, added, dropped }
+  const frames = meta.frames.slice()
+  frames[frame] = { tiles: result.grid.tiles }
+  return { meta: { ...meta, frames }, tiles: result.tiles, added: result.added, dropped: result.dropped }
 }
 
 /**

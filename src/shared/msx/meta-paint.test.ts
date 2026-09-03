@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createMetaTileDoc, frameTileAt } from './meta-tile'
-import { findOrCreateTile, paintBitmapMeta, paintMeta, sprayPoints, usedTiles } from './meta-paint'
+import { findOrCreateTile, paintBitmapMeta, paintGrid, paintMeta, sprayPoints, usedTiles } from './meta-paint'
 import { normalizeBitmapTiles, tileImage, type BitmapTilesDoc } from './bitmap-tile'
-import { blankTileEntry, normalizeTiles, tilePixels, type TileEntry, type TilesDoc } from './tile'
+import { blankTileEntry, createTilesDoc, normalizeTiles, tilePixels, type TileEntry, type TilesDoc } from './tile'
 
 const bank = (over: Record<string, unknown> = {}): TilesDoc =>
   normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: true, ...over })
@@ -135,6 +135,53 @@ describe('paintMeta', () => {
     const result = paintMeta(two, bank(), 1, [{ x: 0, y: 0 }], 5)
     expect(frameTileAt(result.meta, 0, 0, 0)).toBe(0)
     expect(frameTileAt(result.meta, 1, 0, 0)).not.toBe(0)
+  })
+})
+
+describe('paintGrid', () => {
+  it('paints a dot into a plain grid and forks a tile for it', () => {
+    const tiles = createTilesDoc('sc2', 1)
+    const grid = { width: 2, height: 1, tiles: [0, 0] }
+
+    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7)
+
+    expect(result.grid.tiles[0]).not.toBe(0)
+    expect(result.grid.tiles[1]).toBe(0)
+    expect(result.added).toEqual([result.grid.tiles[0]])
+    expect(result.refused).toBeUndefined()
+  })
+
+  it('indexes by CELL, so a point in the second cell row uses the grid width as stride', () => {
+    const tiles = createTilesDoc('sc2', 1)
+    const grid = { width: 4, height: 4, tiles: new Array(16).fill(0) }
+
+    // Pixel (0, 8) is cell (0, 1) — index 4 with a stride of 4.
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 8 }], 7)
+
+    expect(result.grid.tiles[4]).not.toBe(0)
+    expect(result.grid.tiles[0]).toBe(0)
+  })
+
+  it('ignores points outside the grid, so a drag off-canvas needs no clamping', () => {
+    const tiles = createTilesDoc('sc2', 1)
+    const grid = { width: 1, height: 1, tiles: [0] }
+
+    const result = paintGrid(grid, tiles, [{ x: 99, y: 0 }, { x: -1, y: 0 }], 7)
+
+    expect(result.grid).toBe(grid)
+    expect(result.tiles).toBe(tiles)
+  })
+
+  it('returns the same grid by reference when a stroke resolves to the tiles already there', () => {
+    const tiles = createTilesDoc('sc2', 1)
+    const grid = { width: 1, height: 1, tiles: [0] }
+    const once = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7)
+
+    const twice = paintGrid(once.grid, once.tiles, [{ x: 1, y: 1 }], 7)
+
+    expect(twice.grid).toBe(once.grid)
+    expect(twice.tiles).toBe(once.tiles)
+    expect(twice.added).toEqual([])
   })
 })
 
