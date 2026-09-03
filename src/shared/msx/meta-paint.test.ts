@@ -322,6 +322,9 @@ describe("paintGrid write: 'edit'", () => {
     expect(result.tiles.groupColors[0]).toBe(0x21)
     expect(result.tiles.tiles[9].pattern[0]).toBe(0x80)
     expect(result.tileEdits[0].beforeGroup).toBe(0x54)
+    // One cell, so this is the record as *pushed* — the two-cell test below
+    // cannot see the push alone, because its second write sets the field again.
+    expect(result.tileEdits[0].afterGroup).toBe(mergeColorByte(7, 4))
   })
 
   it('sc1: beforeGroup is the pair the stroke found, not the one the cell before it left', () => {
@@ -336,6 +339,52 @@ describe("paintGrid write: 'edit'", () => {
 
     expect(result.tileEdits).toHaveLength(2)
     expect(result.tileEdits.map((edit) => edit.beforeGroup)).toEqual([0x54, 0x54])
+  })
+
+  it('sc1: afterGroup is the pair the stroke left, beside the pair it found', () => {
+    // Both cells hold tile 9, so they dedupe to one record: `beforeGroup` has
+    // to stay at the pre-stroke pair while `afterGroup` follows the writes.
+    const tiles = normalizeTiles({ mode: 'sc1', count: 16, groupColors: [0x21, 0x54] })
+    const grid = { width: 2, height: 1, tiles: [9, 9] }
+
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }, { x: 8, y: 1 }], 7, 'fg', { write: 'edit' })
+
+    expect(result.tileEdits).toHaveLength(1)
+    // Both cells really wrote — row 0 from the first, row 1 from the second —
+    // so the record went through the update-on-repeat path, not just the push.
+    expect(result.tiles.tiles[9].pattern.slice(0, 2)).toEqual([0x80, 0x80])
+    expect(result.tileEdits[0].after).toBe(result.tiles.tiles[9])
+    expect(result.tileEdits[0].beforeGroup).toBe(0x54)
+    expect(result.tileEdits[0].afterGroup).toBe(result.tiles.groupColors[1])
+    expect(result.tiles.groupColors[1]).toBe(mergeColorByte(7, 4))
+  })
+
+  it('edit mode forks when the cell points at a slot nothing fills', () => {
+    const solid = (byte: number) => ({
+      pattern: new Array(8).fill(byte),
+      color: new Array(8).fill(mergeColorByte(15, 4))
+    })
+    const tiles = normalizeTiles({
+      mode: 'sc2',
+      count: 3,
+      tiles: [solid(0x11), solid(0x22), solid(0x33)],
+      bankTiles: [[solid(0x44), solid(0x55), solid(0x66)], [solid(0x77)], []],
+      sharedTiles: 2
+    })
+    // Index 100 is past `count`, below the shared region and in no bank — the
+    // state a map is left in when the tiles it referenced were deleted. There
+    // is no art there to rewrite, so an edit has to fork like any other stroke.
+    const grid = { width: 32, height: 24, tiles: new Array(32 * 24).fill(100) }
+
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }], 7, 'fg', {
+      write: 'edit',
+      bankOf: (row) => row >> 3
+    })
+
+    expect(result.tiles.tiles[100]).toBeUndefined()
+    expect(result.grid.tiles[0]).toBe(3)
+    expect(result.added).toEqual([3])
+    expect(result.tileEdits).toEqual([])
   })
 
   it('records one edit per tile, holding the art from before and after the whole stroke', () => {

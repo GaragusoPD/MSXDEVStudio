@@ -237,8 +237,14 @@ export interface TileEdit {
   before: TileEntry
   /** The art this stroke left in the slot — its *final* art, when a stroke crossed several cells of one tile. */
   after: TileEntry
-  /** sc1 only: the group colour byte, which is half the picture there. */
+  /** sc1 only: the group colour byte the stroke found, which is half the picture there. */
   beforeGroup?: number
+  /**
+   * sc1 only: the group colour byte the stroke left. `after`'s other half — the
+   * pair lives outside `TileEntry`, so a guard comparing art alone cannot see
+   * that another editor has since recoloured the group, and would undo over it.
+   */
+  afterGroup?: number
 }
 
 export interface PaintGridResult {
@@ -364,21 +370,24 @@ export function paintGrid(
         const at = inBank ? bank : null
         const already = tileEdits.find((edit) => edit.index === currentTile && edit.bank === at)
         // A stroke crossing two cells of the same tile writes it twice. The
-        // first `before` is the art the stroke found and must survive; `after`
-        // moves on to whatever the slot holds now.
-        if (already) already.after = entry
-        else {
+        // `before` half is the art the stroke found and must survive; the
+        // `after` half moves on to whatever the slot holds now — the group
+        // byte included, since it is the other half of the same picture.
+        if (already) {
+          already.after = entry
+          if (sc1) already.afterGroup = groupAfter
+        } else {
           tileEdits.push({
             index: currentTile,
             bank: at,
             before,
             after: entry,
-            // Off the doc the stroke *found*, not the running one: eight tiles
-            // share one sc1 group byte, so two cells in one group would
-            // otherwise record the first cell's new pair as the second's
-            // "before", and only an undo replayed back-to-front would land on
-            // the right colour.
-            ...(sc1 ? { beforeGroup: tiles.groupColors[currentTile >> SC1_SHIFT] } : {})
+            // `beforeGroup` comes off the doc the stroke *found*, not the
+            // running one: eight tiles share one sc1 group byte, so two cells
+            // in one group would otherwise record the first cell's new pair as
+            // the second's "before", and only an undo replayed back-to-front
+            // would land on the right colour.
+            ...(sc1 ? { beforeGroup: tiles.groupColors[currentTile >> SC1_SHIFT], afterGroup: groupAfter } : {})
           })
         }
 
