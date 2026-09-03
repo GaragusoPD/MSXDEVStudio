@@ -427,7 +427,9 @@ export function paintGrid(
           bank === null
             ? `The tileset is full — ${MAX_TILES} tiles is the hardware limit. ` +
               'Run "Compact unused tiles", or free a tile in the tile editor.'
-            : `Bank ${bank} is full — ${MAX_TILES} tiles is the hardware limit for one bank. ` +
+            : // 1-based, like every bank label the user sees (`bankBudgetLabel`'s
+              // "bank 1:"): the sidebar shows the two side by side.
+              `Bank ${bank + 1} is full — ${MAX_TILES} tiles is the hardware limit for one bank. ` +
               'Free a tile, or paint on a row served by another bank.'
       }
     }

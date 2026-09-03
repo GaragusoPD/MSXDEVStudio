@@ -35,6 +35,7 @@ import {
   selectPlacementAt,
   setBaked,
   setMode,
+  setPaintColor,
   setPaintTool,
   setPaintWrite,
   undo,
@@ -434,8 +435,10 @@ describe('paint mode', () => {
 
   /**
    * Bank 0 has no slot left below the shared region (250 overrides + 6 shared
-   * = 256), and none of its tiles is what a stroke on tile 0 derives — a found
-   * tile would succeed even on a full bank. The other two banks have room.
+   * = 256). That only refuses a stroke whose result is not already there — a
+   * found tile succeeds on a full bank — and every override is white on rows
+   * 0-6, so a stroke there at colour 15 is a found no-op while any other
+   * colour recolours the row and needs a slot. The other two banks have room.
    */
   function fullBankedFixture() {
     const full = Array.from({ length: MAX_TILES - 6 }, (_, i) => distinct(i))
@@ -508,15 +511,31 @@ describe('paint mode', () => {
     const steps = session.history.past.length
     const tileset = session.tileset
 
+    // Pinned, not the default: at 15 this stroke would be a found no-op (see
+    // the fixture), and the test would pass without ever reaching a refusal.
+    setPaintColor(session, 1)
     beginPaint(session, 'fg')
     extendPaint(session, { x: 0, y: 0 }, { x: 0, y: 0 })
     endPaint(session)
 
     expect(doc(session)).toBe(before)
-    expect(session.status).toContain('Bank 0')
+    // 1-based, as `bankBudgetLabel` is — the two sit side by side in the sidebar.
+    expect(session.status).toContain('Bank 1 is full')
     // Nothing pushed, nothing published: a refusal is not an edit.
     expect(session.history.past.length).toBe(steps)
     expect(useTilesetStore().patternDoc(TILES)).toBe(tileset)
+  })
+
+  it('the first stroke on a fresh tileset is visible: the default colour is not the background', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    dab(session, 0, 0)
+
+    // A fresh tileset decodes as fg 15 on bg 1. Colour 1 would land the dot
+    // and change nothing on screen — while still minting a tile.
+    const { indices } = renderMapPixels(doc(session), session.tileset!, 0)
+    expect(indices[0]).not.toBe(indices[1])
+    expect(indices[0]).toBe(15)
   })
 
   it('a second stroke builds on the first: the session draws the tileset the stroke produced', async () => {

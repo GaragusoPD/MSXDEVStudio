@@ -244,7 +244,10 @@ export function mapSession(path: string): MapSession {
     preview: null,
     mode: 'tiles',
     paintTool: 'pencil',
-    paintColor: 1,
+    // 15, not 1: a fresh tileset's rows decode as fg 15 on bg 1, so colour 1
+    // is black on black — a first stroke that shows nothing and still mints a
+    // tile. The meta editor defaults to 15 for the same reason.
+    paintColor: 15,
     paintWrite: 'fork',
     brushRadius: 2,
     brushDensity: 8,
