@@ -917,3 +917,34 @@ describe('paint mode', () => {
     })
   })
 })
+
+describe('a file that appears under an open tab', () => {
+  it('a map whose file was missing when the tab opened loads it once it exists, and keeps paint mode', async () => {
+    // The trap, as met live: the app restores a tab for `res/title.map.json`,
+    // the file is gone, the session fails with ENOENT. "New tiled screen" then
+    // writes that path and calls `setMode('paint')` on the stale session.
+    // Nothing re-runs `load` for it but the watcher — which used to ignore a
+    // file being *created* — so it sat on its error, in paint mode, with no canvas.
+    const api = window.api as unknown as { invoke: (channel: string, args: { path: string }) => Promise<unknown> }
+    const read = api.invoke
+    api.invoke = async (channel, args) => {
+      if (channel === 'fs:read' && !(args.path in files)) throw new Error(`ENOENT: no such file or directory, open '${args.path}'`)
+      return read(channel, args)
+    }
+    delete files[MAP]
+    const session = await openMap()
+    expect(session.error).toContain('ENOENT')
+    expect(canPaint(session)).toBe(false)
+
+    setMode(session, 'paint')
+    files[MAP] = serializeResource({ kind: 'map', doc: normalizeMap({ tileset: TILES, width: 32, height: 24 }) })
+    for (const handler of pushed['fs:changed'] ?? []) handler({ type: 'add', path: MAP })
+    await new Promise((resolve) => setTimeout(resolve, 140))
+    for (let i = 0; i < 4; i++) await settled()
+
+    expect(session.error).toBeNull()
+    expect(doc(session).tileset).toBe(TILES)
+    expect(canPaint(session)).toBe(true)
+    expect(session.mode).toBe('paint')
+  })
+})

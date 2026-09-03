@@ -62,7 +62,13 @@ function subscribe(): void {
   if (subscribed) return
   subscribed = true
   window.api.on('fs:changed', (event: FsChangeEvent) => {
-    if (event.type !== 'change') return
+    // `add` as well as `change`: a file deleted and recreated under an open
+    // tab — a `git checkout` and back, an agent's rm-and-rewrite, "New tiled
+    // screen" naming a path the restored tab set still holds — is the same
+    // file coming back, and a session that failed to open it would otherwise
+    // sit on its error until the tab was closed by hand. The content
+    // comparison below already tells our own creates from anyone else's.
+    if (event.type !== 'change' && event.type !== 'add') return
     if (![...entries.values()].some((entry) => entry.path === event.path)) return
     // A write is rarely one event — an editor that truncates then writes
     // produces two, and a formatter can produce several. Read once, shortly

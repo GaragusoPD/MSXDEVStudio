@@ -59,6 +59,25 @@ describe('watchResourceFile', () => {
     expect(state.reloads).toBe(1)
   })
 
+  it('adopts a file that appears under an open tab — deleted and recreated, or restored before it existed', async () => {
+    delete files['res/a.json']
+    const { state } = session('DEFAULT FOR A FILE THAT WAS NOT THERE')
+    files['res/a.json'] = 'CREATED AFTER THE TAB OPENED'
+    for (const handler of pushed) handler({ type: 'add', path: 'res/a.json' })
+    await new Promise((resolve) => setTimeout(resolve, 140))
+    expect(state.held).toBe('CREATED AFTER THE TAB OPENED')
+    expect(state.reloads).toBe(1)
+  })
+
+  it('does not read on a delete — unlink is the explorer\'s business', async () => {
+    const { state } = session('ORIGINAL')
+    delete files['res/a.json']
+    for (const handler of pushed) handler({ type: 'unlink', path: 'res/a.json' })
+    await new Promise((resolve) => setTimeout(resolve, 140))
+    expect(state.reloads).toBe(0)
+    expect(state.held).toBe('ORIGINAL')
+  })
+
   it('ignores the app\'s own save coming back through the watcher', async () => {
     const { state } = session('ORIGINAL')
     // Exactly what this session would write: it was us.
