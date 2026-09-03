@@ -670,10 +670,34 @@ export function reorderTiles(doc: TilesDoc, from: number, to: number): { doc: Ti
 export function removeTile(doc: TilesDoc, index: number): { doc: TilesDoc; mapping: number[] } {
   const identity = doc.tiles.map((_, i) => i)
   if (doc.count <= 1 || !doc.tiles[index]) return { doc, mapping: identity }
+
+  // Shared tiles (on a banked tileset) live at MAX_TILES - sharedTiles down to
+  // MAX_TILES - 1. They must only be removed from the newest (lowest index) one,
+  // and only by decrementing sharedTiles — removing from anywhere else would
+  // renumber shared indices and break every map drawn with the tileset.
+  const sharedStart = MAX_TILES - doc.sharedTiles
+  if (index >= sharedStart) {
+    // Refuse to remove a shared tile unless it is the newest one.
+    if (index !== sharedStart) return { doc, mapping: identity }
+
+    // Removing the newest shared tile: decrement sharedTiles, do not renumber.
+    // The tile stays in the tiles array (at a now-unreachable index), and nothing
+    // else shifts.
+    const mapping = identity.map((i) => (i === index ? 0 : i))
+    return {
+      doc: {
+        ...doc,
+        sharedTiles: doc.sharedTiles - 1
+      },
+      mapping
+    }
+  }
+
+  // Common tiles (banked or unbanked): renumber as before. Remap *before*
+  // normalizing: normalizeTiles clamps block references against the new,
+  // smaller count, so an un-remapped reference to the last tile would be
+  // clamped to 0 instead of following the tile down a slot.
   const mapping = identity.map((i) => (i === index ? 0 : i > index ? i - 1 : i))
-  // Remap *before* normalizing: normalizeTiles clamps block references against
-  // the new, smaller count, so an un-remapped reference to the last tile would
-  // be clamped to 0 instead of following the tile down a slot.
   const remapped = applyTileMapping(doc, mapping)
   return {
     doc: normalizeTiles({

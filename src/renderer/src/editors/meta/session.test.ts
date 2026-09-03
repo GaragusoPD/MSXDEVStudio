@@ -23,6 +23,7 @@ import {
   metaSession,
   paint,
   pruneMetaSessions,
+  reclaimOrphans,
   reserveTile0,
   saveSession,
   setColor,
@@ -329,12 +330,14 @@ describe('a refused stroke is announced where the user is looking', () => {
 })
 
 describe('undo on a banked tileset tracks shared tiles for Compact', () => {
-  it('records shared tile additions to appended so Compact can find them', async () => {
+  it('Compact reclaims shared tiles and does not drop common tiles', async () => {
     // A banked tileset allocates shared tiles from the top (255 down), and they
-    // do not increment `count`. The old endStroke computed `appended` from count
-    // delta alone, so it saw nothing appended and marked tiles as invisible to
-    // Compact — a slow leak. The fix uses the paint result's `added` array so
-    // that Compact can identify which tiles this session created.
+    // do not increment `count`. The endStroke now tracks them via the paint
+    // result's `added` array. But removeTile did not understand shared tiles,
+    // so Compact would drop an unrelated common tile and leave sharedTiles
+    // unchanged — silently corrupting the tileset. The fix teaches removeTile
+    // to handle shared tiles: only the newest one can be removed, and it
+    // decrements sharedTiles rather than count.
     const banked = normalizeTiles({
       mode: 'sc2',
       count: 4,
@@ -347,16 +350,24 @@ describe('undo on a banked tileset tracks shared tiles for Compact', () => {
     await settled()
 
     paint(session, [{ x: 0, y: 0 }])
-    // The stroke added tile 255 (a shared tile), which should be recorded in
-    // appended even though count did not change. The old code would have
-    // computed `grew = 4 - 4 = 0` and appended nothing.
     expect(session.appended).toEqual([255])
     const afterPaint = useTilesetStore().patternDoc(TILES)!
+    expect(afterPaint.count).toBe(4)
     expect(afterPaint.sharedTiles).toBe(1)
 
     undo(session)
-    // After undo, the meta no longer references tile 255, so it is an orphan.
-    // It is still in appended (this session created it), and Compact can find it.
     expect(session.appended).toEqual([255])
+
+    // Compact should find tile 255 as an orphan and reclaim it.
+    const reclaimed = reclaimOrphans(session)
+    expect(reclaimed).toBe(1)
+
+    const afterCompact = useTilesetStore().patternDoc(TILES)!
+    // The shared tile was reclaimed: sharedTiles goes back to 0.
+    expect(afterCompact.sharedTiles).toBe(0)
+    // Crucially, the common tiles are untouched: count stays 4, no artwork lost.
+    expect(afterCompact.count).toBe(4)
+    // session.appended is cleared by publishReclaim.
+    expect(session.appended).toEqual([])
   })
 })
