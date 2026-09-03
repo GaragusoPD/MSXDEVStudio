@@ -159,16 +159,36 @@ export function tileSession(path: string): TileSession {
     strokeActive: false
   })
   sessions.set(path, session)
-  // Another editor — a meta-tile being painted — can append tiles to this same
-  // document. Adopt them as a new present rather than merging: redo would
-  // otherwise replay onto a bank that has moved on. Safe because painting only
-  // ever appends, so the two can never disagree about an existing tile.
+  // Another editor can change this same document: a meta-tile being painted
+  // appends tiles to it, and a map painted in edit mode rewrites a tile in
+  // place. Adopt the result as a new present rather than merging — redo would
+  // otherwise replay onto a bank that has moved on. That used to be loss-free
+  // because painting only ever appended, so the two could never disagree about
+  // an existing tile; an edit stroke made it not so. An undo here can now
+  // revert a map's stroke, visibly, as the step labelled below — and the map
+  // guards its own undo against what this tab does since (`map/session.ts`,
+  // `swapTileEdits`).
+  //
+  // What this tab must never do is stack a step on a *replacement*. A map's
+  // promotion to banked hands the store a whole new document, and one undo
+  // here would push the unbanked snapshot back under a map layer whose bytes
+  // are now bank-relative — wrong art, no error, on a document the user just
+  // agreed to change. A banked/unbanked flip is that replacement, so the
+  // history starts over from it instead.
   session.stopWatching = useTilesetStore().onExternalChange(path, path, (doc) => {
     // The store speaks both kinds; a `.tiles.json` session only ever hears
     // about its own, so the narrowing here is a fact of the path, not a guess.
     const pattern = doc as TilesDoc
+    const replaced = isBanked(session.doc) !== isBanked(pattern)
     session.doc = pattern
-    session.history = pushHistory(session.history, pattern, 'tiles added elsewhere')
+    if (replaced) {
+      session.history = initHistory(pattern)
+      session.status =
+        `The tileset was switched to ${isBanked(pattern) ? 'banked' : 'unbanked'} elsewhere — ` +
+        'undo history starts over from here.'
+      return
+    }
+    session.history = pushHistory(session.history, pattern, 'changed elsewhere')
   })
   void load(session)
   return session

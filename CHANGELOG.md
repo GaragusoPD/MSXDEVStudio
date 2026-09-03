@@ -7,6 +7,56 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Painting a tiled screen
+
+A SCREEN 1/2/4 screen — a tileset plus a map — can now be painted in pixels,
+not only stamped in cells: touching up an imported picture, editing part of
+a hand-built map, or drawing one from scratch. No new document type and no
+change to the export: a painted screen is still a `*.tiles.json` and a
+`*.map.json`, emitted exactly as before.
+
+#### Added
+
+- **Paint mode in the map editor.** A *Tiles | Paint* toggle switches the
+  map canvas to the tile editor's tools — pencil, line, rect, fill, spray —
+  at dot resolution, left button for the row's ink and right for its paper.
+  One drag is one undo step. Offered wherever the map draws from a pattern
+  tileset; bitmap maps keep the screen editor.
+- **Two ways to write, chosen per stroke.** *Fork tile* gives the stroke its
+  own tiles (found-or-created in the tileset, one per changed cell) and
+  leaves every other cell showing the old tile alone. *Edit tile* rewrites
+  the tile in place, costs nothing and never runs out of tiles.
+- **Bank-aware painting.** On a banked tileset a stroke reads from and
+  allocates into the bank its row is drawn in, never the shared meta-tile
+  region; a full bank refuses the whole stroke and names the bank. The
+  sidebar shows the same budget readout the tile editor does.
+- **New tiled screen…** (File menu, Resources panel) scaffolds a SCREEN 2
+  tileset with tile 0 reserved and a 32×24 map over it, and opens the map
+  ready to paint.
+- **Switch to banked, once, at the 256-tile ceiling.** When a fork stroke on
+  an unbanked 32×24 screen finds no slot left, the editor offers to repack
+  the screen into three banks of 256. It refuses — and says why — on a map
+  that is not 32×24, one with more than one layer, one that places
+  meta-tiles, or a SCREEN 1 tileset. Declining is remembered for the session.
+
+#### Two things worth knowing before you use them
+
+- **An *Edit tile* stroke changes that tile everywhere.** Every cell of
+  every map and meta-tile drawn with the tileset that references the tile
+  shows the new art — that is what makes "recolour every brick at once"
+  possible, and it is also why *Fork tile* exists. Undo is as wide-reaching
+  as the stroke was, and it is careful: a tile another editor has changed
+  since is left alone rather than overwritten, and the status line says how
+  many were skipped.
+- **Switching to banked renumbers the tileset.** Every tile gets a new
+  number, the tileset's named blocks and tile flags are cleared, and any
+  *other* map or meta-tile drawn with that tileset shows wrong art until it
+  is repainted — their files are not touched and nothing renumbers them for
+  you. The stroke that hit the limit is not kept; draw it again afterwards.
+  The prompt says all of this before you accept, and a tile-editor tab open
+  on the same tileset starts its undo history over at that point so it
+  cannot undo the switch out from under the map.
+
 ### SCREEN 2/4 tile banks
 
 SCREEN 2 and SCREEN 4 have three 256-tile pattern banks, not one — a tileset

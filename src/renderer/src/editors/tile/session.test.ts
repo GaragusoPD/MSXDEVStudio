@@ -30,6 +30,7 @@ import {
   setBank,
   setColor,
   tileSession,
+  canUndo,
   undo
 } from './session'
 import { useTilesetStore } from '../../stores/tilesetStore'
@@ -655,5 +656,43 @@ describe('setBank', () => {
     expect(session.bank).toBe(0)
     setBank(session, Number.NaN)
     expect(session.bank).toBe(0)
+  })
+})
+
+describe('a tileset replaced elsewhere', () => {
+  it('a promotion to banked starts the history over: no snapshot from before it can be pushed back', async () => {
+    // The map editor's promotion hands the store a whole new document, not
+    // this one plus some tiles. Adopting it as an undoable step would let one
+    // undo push the unbanked snapshot back under a bank-relative map.
+    const session = tileSession(PATH)
+    await settled()
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+    expect(canUndo(session.history)).toBe(true)
+
+    const banked = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[mark(1)], [mark(2)], [mark(3)]] })
+    useTilesetStore().set(PATH, banked, 'res/level.map.json')
+
+    expect(canUndo(session.history)).toBe(false)
+    expect(session.status).toContain('undo')
+    undo(session)
+    expect(useTilesetStore().patternDoc(PATH)).toBe(banked)
+    expect(session.doc).toBe(banked)
+  })
+
+  it('an ordinary change elsewhere is still one undoable step', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    const before = session.doc
+
+    const grown = normalizeTiles({ ...before, count: 9, tiles: [...before.tiles, mark(9)] })
+    useTilesetStore().set(PATH, grown, 'res/level.map.json')
+
+    expect(session.doc).toBe(grown)
+    expect(canUndo(session.history)).toBe(true)
+    undo(session)
+    expect(session.doc).toBe(before)
   })
 })

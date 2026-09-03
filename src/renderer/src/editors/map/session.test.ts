@@ -34,6 +34,7 @@ import {
   doc,
   endPaint,
   extendPaint,
+  finishDrag,
   mapSession,
   metaRowOffsets,
   paintBankOf,
@@ -63,6 +64,9 @@ import {
   undo,
   type MapSession
 } from './session'
+// The tile editor's session, for the two-tabs cases: the map rewrites or
+// replaces a tileset the tile tab holds an undo history over.
+import { pruneTileSessions, tileSession, undo as undoTile } from '../tile/session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
@@ -114,6 +118,9 @@ beforeEach(() => {
   }
   pushed = {}
   ;(globalThis as { window?: unknown }).window = {
+    // The reorder-replay confirm. Accepted: what these tests check is whether
+    // the replay is offered from the right log, not what declining does.
+    confirm: vi.fn(() => true),
     api: {
       on: vi.fn((channel: string, handler: (payload: unknown) => void) => {
         ;(pushed[channel] ??= []).push(handler)
@@ -130,6 +137,9 @@ beforeEach(() => {
   }
   useResourcesStore().entries = [{ path: META, kind: 'metatiles', out: null }]
   pruneMapSessions(new Set())
+  // Tile sessions are module-level too, and a survivor from an earlier test
+  // would be listening on that test's pinia, not this one's.
+  pruneTileSessions(new Set())
 })
 
 async function openMap(): Promise<ReturnType<typeof mapSession>> {
@@ -167,6 +177,38 @@ describe('the map shares its tileset with the store', () => {
     await saveSession(session)
 
     expect(JSON.parse(files[TILES]).count).toBe(5)
+  })
+})
+
+describe('reorders the map missed while it was closed', () => {
+  it("replays the store's live log, not the file's — an unsaved reorder in a tile tab reaches a map opened afterwards", async () => {
+    // Cells 0-2 hold tiles 1, 2, 3, so a renumbering shows.
+    const data = new Array(64).fill(0)
+    data[0] = 1
+    data[1] = 2
+    data[2] = 3
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 8, height: 8, layers: [{ name: 'background', data }] })
+
+    // The tileset is open in a tile tab, which moves tile 1 after tile 2 and
+    // has not saved: the document and the log are in the store, the file on
+    // disk still has neither. `session.tileset` is the store's document, so
+    // the map's cells must follow the store's log — read against the file's,
+    // cell 0 keeps pointing at index 1, which is now a different tile.
+    const store = useTilesetStore()
+    await store.load(TILES)
+    const live = store.patternDoc(TILES)!
+    const tiles = live.tiles.slice()
+    ;[tiles[1], tiles[2]] = [tiles[2], tiles[1]]
+    store.set(TILES, { ...live, tiles }, TILES)
+    const mapping = [0, 2, 1, 3]
+    const at = Date.now()
+    store.appendReorder(TILES, { path: TILES, mapping, at })
+
+    const session = await openMap()
+
+    const layer = doc(session).layers[0].data
+    expect(layer.slice(0, 3)).toEqual([2, 1, 3])
+    expect(session.tilesetReorderSeen).toBe(at)
   })
 })
 
@@ -1234,6 +1276,181 @@ describe('paint mode', () => {
       expect(session.promptPromote).toBe(false)
       expect(session.status).toContain(`${SCREEN_ROWS} rows`)
       expect(useTilesetStore().patternDoc(TILES)).toBe(tileset)
+    })
+
+    it('a tile tab open on the same tileset cannot undo past the promotion and push the unbanked document back', async () => {
+      // The tile editor adopts an outside change as a new history step. A
+      // promotion is not an append but a replacement: one undo in that tab
+      // would put the *unbanked* snapshot back into the store under a map
+      // layer whose bytes are now bank-relative — wrong art, no error, on a
+      // document the user just consented to change.
+      const tab = tileSession(TILES)
+      await settled()
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      useTilesetStore().set(TILES, fullTilesetFixture(), 'x')
+      setMode(session, 'paint')
+      strokeNeedingATile(session)
+      promoteToBanked(session)
+      const banked = useTilesetStore().patternDoc(TILES)!
+      expect(isBanked(banked)).toBe(true)
+
+      undoTile(tab)
+
+      expect(useTilesetStore().patternDoc(TILES)).toBe(banked)
+      expect(isBanked(tab.doc)).toBe(true)
+      expect(tab.status).toContain('undo')
+    })
+  })
+
+  describe('undo against a tileset another editor has changed since', () => {
+    /** What another editor leaves in a slot: recognisably not what this map painted. */
+    const theirs = (): TileEntry => ({ pattern: new Array(8).fill(0x5a), color: new Array(8).fill(0xf1) })
+
+    /** Rewrites one common tile from "some other editor", and returns the document the store now holds. */
+    function meddle(index: number, entry: TileEntry = theirs()) {
+      const store = useTilesetStore()
+      const current = store.patternDoc(TILES)!
+      const tiles = current.tiles.slice()
+      tiles[index] = entry
+      const next = { ...current, tiles }
+      store.set(TILES, next, 'some/other/editor')
+      return next
+    }
+
+    /** Puts tile 1 in cell (1, 0) — every cell of a fresh map holds tile 0, so an edit stroke there would rewrite tile 0. */
+    function stampTile1(session: MapSession): void {
+      pickTile(session, 1, [1], singleStamp(1))
+      paintDrag(session, [{ x: 1, y: 0 }])
+      finishDrag(session)
+    }
+
+    it('refuses to restore a tile someone else has changed since, and says so', async () => {
+      const session = await openMap()
+      stampTile1(session)
+      setMode(session, 'paint')
+      setPaintWrite(session, 'edit')
+      dab(session, 8, 0)
+      expect(session.tileset!.tiles[1].pattern[0]).toBe(0x80)
+
+      const meddled = meddle(1)
+
+      undo(session)
+
+      const store = useTilesetStore()
+      expect(store.patternDoc(TILES)!.tiles[1].pattern[0]).toBe(0x5a)   // not clobbered
+      // Nothing applied, nothing published: re-setting an identical document
+      // would dirty the tileset and push a step into every other tab on it.
+      expect(store.patternDoc(TILES)).toBe(meddled)
+      expect(session.status).toContain('changed')
+      // The map's own side of the step still moved.
+      expect(session.history.future).toHaveLength(1)
+    })
+
+    it('redo is guarded the same way: a tile changed after the undo is left alone', async () => {
+      const session = await openMap()
+      setMode(session, 'paint')
+      setPaintWrite(session, 'edit')
+      dab(session, 0, 0)
+      undo(session)
+      expect(session.tileset!.tiles[0].pattern[0]).toBe(0)
+
+      const meddled = meddle(0)
+
+      redo(session)
+
+      const store = useTilesetStore()
+      expect(store.patternDoc(TILES)!.tiles[0].pattern[0]).toBe(0x5a)
+      expect(store.patternDoc(TILES)).toBe(meddled)
+      expect(session.status).toContain('changed')
+    })
+
+    it('restores the tiles still as it left them, and drops only the changed one from the step', async () => {
+      const session = await openMap()
+      stampTile1(session)
+      setMode(session, 'paint')
+      setPaintWrite(session, 'edit')
+      // One pencil segment across the seam: row 0 of tile 0, first dot of tile 1.
+      beginPaint(session, 'fg')
+      extendPaint(session, { x: 0, y: 0 }, { x: 8, y: 0 })
+      endPaint(session)
+      expect(session.tileset!.tiles[0].pattern[0]).toBe(0xff)
+      expect(session.tileset!.tiles[1].pattern[0]).toBe(0x80)
+
+      meddle(1)
+      undo(session)
+
+      let tiles = useTilesetStore().patternDoc(TILES)!.tiles
+      expect(tiles[0].pattern[0]).toBe(0)       // restored
+      expect(tiles[1].pattern[0]).toBe(0x5a)    // left alone
+      expect(session.status).toContain('1 tile')
+
+      redo(session)
+      tiles = useTilesetStore().patternDoc(TILES)!.tiles
+      expect(tiles[0].pattern[0]).toBe(0xff)    // re-applied
+      // Still theirs: the skipped edit left the step, so redo does not try
+      // to write the map's art over it either.
+      expect(tiles[1].pattern[0]).toBe(0x5a)
+    })
+
+    it('a skipped edit leaves the step for good: redo does not write the pre-stroke art once the slot holds the painted art again', async () => {
+      const session = await openMap()
+      stampTile1(session)
+      setMode(session, 'paint')
+      setPaintWrite(session, 'edit')
+      dab(session, 8, 0)
+      const painted = session.tileset!.tiles[1]
+
+      meddle(1)
+      undo(session)                       // skipped: tile 1 is theirs
+      meddle(1, painted)                  // the other editor puts the painted art back (its own undo, say)
+
+      redo(session)
+
+      // Had the skipped entry stayed in the step as it was, redo would have
+      // found the slot equal to its `after` and written its `before` — the
+      // blank from before the stroke — over art nobody asked it to touch.
+      expect(useTilesetStore().patternDoc(TILES)!.tiles[1].pattern[0]).toBe(0x80)
+    })
+
+    it('in SCREEN 1 the group colour is half the picture: a group recoloured elsewhere is left alone too', async () => {
+      files[TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc1', count: 4 }) })
+      const session = await openMap()
+      setMode(session, 'paint')
+      setPaintWrite(session, 'edit')
+      // Colour 15 on a 0xf1 group: the pattern changes, the group byte does not.
+      dab(session, 0, 0)
+      expect(session.tileset!.tiles[0].pattern[0]).toBe(0x80)
+      expect(session.tileset!.groupColors[0]).toBe(0xf1)
+
+      // Another editor recolours the group and leaves the pattern exactly as painted.
+      const store = useTilesetStore()
+      const current = store.patternDoc(TILES)!
+      const groupColors = current.groupColors.slice()
+      groupColors[0] = 0x2a
+      const recoloured = { ...current, groupColors }
+      store.set(TILES, recoloured, 'some/other/editor')
+
+      undo(session)
+
+      expect(store.patternDoc(TILES)).toBe(recoloured)
+      expect(store.patternDoc(TILES)!.groupColors[0]).toBe(0x2a)
+      expect(store.patternDoc(TILES)!.tiles[0].pattern[0]).toBe(0x80)
+      expect(session.status).toContain('changed')
+    })
+
+    it('a clean undo still restores every tile and says nothing', async () => {
+      const session = await openMap()
+      stampTile1(session)
+      setMode(session, 'paint')
+      setPaintWrite(session, 'edit')
+      dab(session, 8, 0)
+      session.status = ''
+
+      undo(session)
+
+      expect(useTilesetStore().patternDoc(TILES)!.tiles[1].pattern[0]).toBe(0)
+      expect(session.status).toBe('')
     })
   })
 })

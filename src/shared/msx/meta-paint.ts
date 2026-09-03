@@ -72,7 +72,12 @@ export interface PaintMetaResult {
 /** `SC1_GROUP` is 8, so the group of tile `i` is `i >> 3`. */
 const SC1_SHIFT = 3
 
-const sameEntry = (a: TileEntry, b: TileEntry): boolean =>
+/**
+ * Byte-for-byte equality of two tiles' art. Exported for the map editor's
+ * undo, which uses it to ask whether a slot still holds what a stroke left
+ * there before restoring over it.
+ */
+export const sameEntry = (a: TileEntry, b: TileEntry): boolean =>
   a.pattern.every((byte, i) => byte === b.pattern[i]) && a.color.every((byte, i) => byte === b.color[i])
 
 /**

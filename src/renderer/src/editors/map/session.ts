@@ -47,12 +47,19 @@ import {
   packBankedTiles,
   TILE_SIZE,
   tilePixels,
+  type TileEntry,
   type TilesDoc
 } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
 import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
-import { paintGrid, sprayPoints, type PaintGridResult, type TileEdit } from '../../../../shared/msx/meta-paint'
+import {
+  paintGrid,
+  sameEntry,
+  sprayPoints,
+  type PaintGridResult,
+  type TileEdit
+} from '../../../../shared/msx/meta-paint'
 import { defaultExport, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { screenPixels } from '../../../../shared/msx/screen'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
@@ -91,8 +98,7 @@ import {
   fillPoints,
   onTilesReordered,
   toolPoints as pixelToolPoints,
-  type TileTool,
-  type TilesReorderEvent
+  type TileTool
 } from '../../../../shared/tile-editor'
 import { bankBudgetLabel } from '../tile/session'
 import { useResourcesStore } from '../../stores/resourcesStore'
@@ -483,7 +489,7 @@ async function loadFromPath(session: MapSession, path: string): Promise<void> {
     // the path, not a guess.
     session.tileset = next as TilesDoc
   })
-  await replayPersistedReorders(session, text)
+  await replayPersistedReorders(session)
 }
 
 /**
@@ -518,10 +524,20 @@ export async function reloadTileset(session: MapSession): Promise<void> {
   await loadTileset(session)
 }
 
-/** On open: fold in any tileset reorders this map missed while it wasn't open, behind one confirm dialog. */
-async function replayPersistedReorders(session: MapSession, tilesetText: string): Promise<void> {
-  const raw = JSON.parse(tilesetText) as { reorderLog?: TilesReorderEvent[] }
-  const log = Array.isArray(raw.reorderLog) ? raw.reorderLog : []
+/**
+ * On open: fold in any tileset reorders this map missed while it wasn't open,
+ * behind one confirm dialog.
+ *
+ * The store's log, not the file's. `session.tileset` is the store's live
+ * document, and a reorder made in a tile tab and not yet saved is in that
+ * document and in the store's log — and in neither the file's text nor its
+ * `reorderLog`. Read against the file, this map would renumber for every
+ * *saved* reorder and miss the unsaved one, leaving cells pointing at the old
+ * indices of a document that has already moved on. The meta editor reads the
+ * same log for the same reason.
+ */
+async function replayPersistedReorders(session: MapSession): Promise<void> {
+  const log = useTilesetStore().reorderLog(doc(session).tileset)
   const result = replayReorders(doc(session), log, session.tilesetReorderSeen)
   if (!result.applied) return
   const confirmed = window.confirm(
@@ -1353,45 +1369,75 @@ export function resize(session: MapSession, width: number, height: number): void
 // ── undo/redo ───────────────────────────────────────────────────────────
 
 /**
- * Puts back the tiles an `edit` stroke overwrote, and returns what was there —
- * so the caller can store the displaced art as the inverse of the step it just
- * moved. Without that swap, redo would write `before` a second time and the
- * painted pixels would be lost while history claims the step is applied.
+ * Puts back the tiles an `edit` stroke overwrote — or, on redo, the art it
+ * painted — and returns the displaced entries, so the caller can store them
+ * as the inverse of the step it just moved. Without that swap, redo would
+ * write `before` a second time and the painted pixels would be lost while
+ * history claims the step is applied.
+ *
+ * Guarded, because the tileset is shared and `edit` rewrites in place: a tile
+ * tab, a meta, or another map can have changed the same slot since this step
+ * was made. A slot that no longer holds what this step left there — `after`,
+ * and in sc1 `afterGroup` too, since the group byte is the other half of the
+ * picture and lives outside the entry — is left alone, dropped from the step
+ * so redo does not try it either, and counted into the status. The tileset
+ * store's premise that two editors "never disagree about an existing tile"
+ * held only while painting appended; this is what stands in for it now.
+ *
+ * Publishes only when something was applied: `store.set` compares by
+ * reference, so re-setting an identical document would dirty the tileset and
+ * push a step into every other tab on it.
  */
 function swapTileEdits(session: MapSession, edits: TileEdit[] | undefined): TileEdit[] | undefined {
   if (!edits?.length) return edits
   const store = useTilesetStore()
   const path = doc(session).tileset
   const tileset = store.patternDoc(path)
-  if (!tileset) return edits
+  // No document to write into: nothing applied, so nothing for redo either.
+  if (!tileset) return []
   const tiles = tileset.tiles.slice()
   const bankTiles = tileset.bankTiles.map((bank) => bank.slice())
   const groupColors = tileset.groupColors.slice()
-  const displaced: TileEdit[] = edits.map((edit) => {
-    const current = edit.bank === null ? tiles[edit.index] : bankTiles[edit.bank][edit.index]
-    if (edit.bank === null) tiles[edit.index] = edit.before
-    else bankTiles[edit.bank][edit.index] = edit.before
+  const displaced: TileEdit[] = []
+  let skipped = 0
+  for (const edit of edits) {
+    // `?.` on the bank: a `bank: n` edit can meet a tileset that has since
+    // lost its banks, and an empty slot is a slot that no longer holds ours.
+    const current: TileEntry | undefined = edit.bank === null ? tiles[edit.index] : bankTiles[edit.bank]?.[edit.index]
     // Off `tileset.groupColors` — the untouched snapshot — not the mutable
     // `groupColors` copy this loop is writing into: eight tiles share one sc1
     // group byte, so a second edit touching the same group would otherwise
     // read back the first edit's just-written value as its own "current",
     // and redo would leave the group on the wrong colour.
     const currentGroup = tileset.groupColors[edit.index >> 3]
+    const ours =
+      current !== undefined &&
+      sameEntry(current, edit.after) &&
+      (edit.afterGroup === undefined || currentGroup === edit.afterGroup)
+    if (!ours) {
+      skipped++
+      continue
+    }
+    if (edit.bank === null) tiles[edit.index] = edit.before
+    else bankTiles[edit.bank][edit.index] = edit.before
     if (edit.beforeGroup !== undefined) groupColors[edit.index >> 3] = edit.beforeGroup
-    return {
+    displaced.push({
       index: edit.index,
       bank: edit.bank,
       before: current,
       // `after` is what the slot holds once this swap has run — `edit.before`,
-      // since that's what was just written into it. `TileEdit.after` is
-      // required (it's what makes a record checkable, not just reversible),
-      // and the brief's own snippet omitted it — a real type error, not a
-      // style nit; see the report.
+      // since that's what was just written into it. It is what the next swap
+      // back checks against.
       after: edit.before,
       ...(edit.beforeGroup !== undefined ? { beforeGroup: currentGroup, afterGroup: edit.beforeGroup } : {})
-    }
-  })
-  publishTileset(session, { ...tileset, tiles, bankTiles, groupColors })
+    })
+  }
+  if (skipped) {
+    session.status =
+      `${skipped} tile${skipped === 1 ? '' : 's'} left as ${skipped === 1 ? 'it is' : 'they are'}: ` +
+      'changed elsewhere since this stroke.'
+  }
+  if (displaced.length) publishTileset(session, { ...tileset, tiles, bankTiles, groupColors })
   return displaced
 }
 

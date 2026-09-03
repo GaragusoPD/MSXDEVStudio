@@ -88,6 +88,105 @@ Existing tilesets are untouched: `bankTiles` is empty and `sharedTiles` is 0
 in every file written before banking existed, `isBanked` is false, and export
 keeps emitting exactly the tables it always did.
 
+### Painting a tiled screen
+
+A SCREEN 1/2/4 screen is a tileset plus a map, and the map editor can paint
+**pixels** onto it as well as stamp cells. Not a new document, not a second
+editor, not a change to the export: a painted screen is saved and emitted as
+tileset + map, byte for byte the same as a stamped one.
+
+**Tiles | Paint.** A toolbar toggle picks which tool set is live
+(`session.mode`, `setMode`). *Tiles* is the cell editor as before. *Paint* is
+the tile editor's own tools — pencil, line, rect, fill, spray — over the map
+canvas at dot resolution, left button painting the row's ink and right its
+paper. The toggle is offered only where there is a pattern tileset to paint
+into (`canPaint`): a map over a `.btiles.json` or a `.screen.json` has the
+screen editor, and a map that loses its pattern tileset drops back to *Tiles*
+by itself. One drag is one undo step, resolved once on release through
+`paintGrid` (`meta-paint.ts`, the core `paintMeta` is a wrapper over): the
+stroke's points are accumulated, then each touched cell's new 8×8 is derived
+against the tileset and written back.
+
+**Fork or edit — chosen per stroke, neither a safe default.** The *Write*
+toggle (`session.paintWrite`):
+
+- **Fork tile** derives the cell's new art, finds-or-creates that tile in the
+  tileset and repoints the one cell — copy-on-write, the meta editor's
+  behaviour. Costs a tile per changed cell and can run out; leaves every other
+  user of the old tile alone.
+- **Edit tile** rewrites the tile the cell already points at, in place. Costs
+  nothing and never runs out — and **changes that tile in every cell of every
+  map and meta-tile drawn with the tileset**, since they all reference it by
+  number. Two rules from elsewhere still hold: a reserved tile 0 is never
+  edited in place (it falls through to fork), and SCREEN 1's group colour byte
+  is written along with the pattern, because there colour lives per eight
+  tiles, not per row.
+
+**Bank-local read and allocation.** On a banked tileset every read of a cell's
+current art and every write go through the bank that row is drawn in
+(`paintBankOf` = `bankForRow`, wrapped by `SCREEN_ROWS` like
+`bankSheetOffset`): a stroke on row 9 derives from and lands in bank 1's own
+table, never in the shared region `findOrCreateTile` uses for meta-tiles — a
+shared slot costs a slot in all three banks, and a screen has no use for one.
+When the row's bank is full the whole stroke is refused, naming the bank;
+nothing is half-drawn and no shared budget is spent as a fallback.
+
+**Budget readout.** The sidebar shows `tiles: 137/256`, or per bank the same
+`bankBudgetLabel` line the tile editor shows, so the two editors never disagree
+about the arithmetic.
+
+**New tiled screen…** (File menu, Resources panel) scaffolds the pair —
+`res/name.tiles.json` (SCREEN 2, tile 0 reserved) and a 32×24
+`res/name.map.json` over it, both with their default export block — and opens
+the map in paint mode. It refuses a name either file already carries.
+
+**The 256-tile ceiling, and the one-time offer.** A fork stroke on an unbanked
+tileset that has no slot left is refused, and on a screen that could be
+banked the editor asks **once per session** whether to switch to three banks
+of 256 (`offerPromotion`, `PROMOTION_PROMPT`; declining is remembered). The
+offer is made only when `promotionBlocker` has nothing to say; otherwise the
+refusal carries the reason instead:
+
+- the map is not exactly **32×24** — `packBankedTiles` takes a 256×192 image,
+  and `validateMap` refuses a banked map that is not `SCREEN_ROWS` tall;
+- the map has **more than one layer** — only the active layer is repacked, so
+  the others would keep the old numbering;
+- the map **places meta-tiles** — a placement names tiles by number;
+- the tileset is **SCREEN 1** — one pattern table, nothing to bank
+  (`normalizeTiles` strips `bankTiles` from an sc1 file);
+- a full *bank* on an already-banked tileset is not something banking can
+  fix, so it never asks (`refusedBank`).
+
+Accepting (`promoteToBanked`) re-uses the importer rather than inventing a
+redistributor: the screen is rendered to a 256×192 bitmap and handed to
+`packBankedTiles`, exactly once. It renumbers every tile, so it **clears the
+tileset's named blocks and tile flags** (both name tiles by number, and
+`normalizeTiles` would clamp them against the new count anyway), drops the
+map's `metas`, resets the brush, clipboard and picker, and restarts the undo
+history — every earlier entry indexes a numbering that no longer exists. The
+stroke that hit the limit is discarded, not replayed; the user draws it again
+on a screen that now has room. **Any other map or meta-tile drawn with the
+tileset shows wrong art until it is repainted**: nothing emits a
+`TilesReorderEvent` for a promotion (there is no old→new mapping to emit),
+their files are untouched, and their old-numbering cells are simply drawn
+against bank art. The prompt says so before the user accepts.
+
+**What edit mode does to the shared tileset's undo.** The tileset store's
+rebase rule — adopt an outside change as a new present — was loss-free only
+while painting appended. Now that a stroke can rewrite a tile in place and a
+promotion can replace the document, each editor guards its own side:
+
+- The map's undo/redo restores a tile only if the slot still holds what that
+  step left there (`TileEdit.after`, and `afterGroup` in SCREEN 1); a slot
+  changed elsewhere since is left alone, dropped from the step so redo does
+  not try it either, and counted in the status line.
+- The tile editor starts its history over when the document flips between
+  banked and unbanked under it, rather than letting one undo push the old
+  unbanked snapshot back under a bank-relative map.
+- A map replays the tileset's reorder log **from the store**, not from the
+  file, because its tileset *is* the store's live document — an unsaved
+  reorder in a tile tab reaches a map opened afterwards.
+
 ## B. Screen editor (`*.screen.json` = import settings + retouch strokes, or a drawing)
 
 For screens 5, 6, 7, 8 (and 10/12 YJK as import-only), **and SCREEN 3**, whose
@@ -206,9 +305,11 @@ publishes none — there are no metas-within-a-set to renumber, and a map's own
 
 **The tileset store.** Painting a meta writes into another document, so the same
 `.tiles.json` cannot be a separate copy per editor. `renderer/stores/tilesetStore.ts`
-holds one per path, shared by the tile editor and every meta editor; undo stays
-per editor and rebases when the store changes underneath it, which is safe only
-because painting appends and never edits in place.
+holds one per path, shared by the tile editor, every meta editor and every map
+editor; undo stays per editor and rebases when the store changes underneath it.
+That was loss-free only while painting appended and never edited in place; the
+map editor's edit mode and its promotion to banked broke that, and each editor
+now guards its own restore — see *Painting a tiled screen* under A.
 
 Export: a meta emits one table of its frames end to end, plus `_META_W`/`_META_H`/
 `_CELLS`/`_FRAMES`/`_FLAGS`, and (helpers on) `_Draw(x, y, frame)` — written as

@@ -9,9 +9,15 @@
  *
  * Undo stays with the editors. Each keeps its own history of the snapshots *it*
  * made; when the store changes underneath one, it rebases — pushes the external
- * doc as its new present. That is safe precisely because painting only ever
- * *appends* tiles: two editors can disagree about which tiles exist, never
- * about what an existing tile looks like.
+ * doc as its new present. That was loss-free while painting only ever
+ * *appended* tiles: two editors could disagree about which tiles exist, never
+ * about what an existing tile looks like. The map editor's edit mode rewrites
+ * a tile in place, and its promotion to banked replaces the document
+ * wholesale, so it no longer is — and each editor guards its own side. The
+ * map's undo restores only slots that still hold what it painted
+ * (`map/session.ts`, `swapTileEdits`); the tile editor starts its history
+ * over across a banked/unbanked flip rather than let an undo push the old
+ * document back (`tile/session.ts`).
  *
  * Written in Pinia's **setup style**, unlike the option-style stores beside it.
  * The deviation is deliberate and confined to this file: the state is a keyed
