@@ -40,6 +40,7 @@ import { BANK_COUNT, isBanked, MAX_TILES, type TilesDoc } from '../../../../shar
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
 import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
+import type { TileEdit } from '../../../../shared/msx/meta-paint'
 import { defaultExport, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { screenPixels } from '../../../../shared/msx/screen'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
@@ -169,7 +170,7 @@ export function mapSession(path: string): MapSession {
   const session = shallowReactive<MapSession>({
     path,
     stopWatching: null,
-    history: createHistory(doc),
+    history: createHistory({ doc }),
     loading: true,
     error: null,
     dirty: false,
@@ -206,9 +207,9 @@ export function mapSession(path: string): MapSession {
   // edit and reloads over the user's work.
   session.stopWatching = watchResourceFile(path, {
     serialize: () => {
-      // `session.history.present`, not `doc(session)`: a local `doc` shadows the
-      // accessor in this scope, and the preview is not what a save writes anyway.
-      const content: SavedMap = { ...session.history.present }
+      // `session.history.present.doc`, not `doc(session)`: a local `doc` shadows
+      // the accessor in this scope, and the preview is not what a save writes anyway.
+      const content: SavedMap = { ...session.history.present.doc }
       if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
       return serializeResource({ kind: 'map', doc: content })
     },
@@ -235,7 +236,7 @@ export function pruneMapSessions(openPaths: Set<string>): void {
 }
 
 export function doc(session: MapSession): MapDoc {
-  return session.preview ?? session.history.present
+  return session.preview ?? session.history.present.doc
 }
 
 async function load(session: MapSession): Promise<void> {
@@ -249,7 +250,7 @@ async function load(session: MapSession): Promise<void> {
       raw = {}
     }
     const parsedDoc = normalizeMap(raw)
-    session.history = createHistory(parsedDoc)
+    session.history = createHistory({ doc: parsedDoc })
     session.tilesetReorderSeen = typeof (raw as SavedMap).tilesetReorderSeen === 'number' ? (raw as SavedMap).tilesetReorderSeen! : null
     session.error = null
     await loadTileset(session)
@@ -344,8 +345,10 @@ function refreshMetaRefs(session: MapSession): void {
     if (meta) next = addMetaRef(next, refFor(ref.path, meta))
   }
   // Silent: this is a correction, not an edit the user made, so it must not
-  // dirty the tab or land on the undo stack.
-  if (next !== current) session.history = { ...session.history, present: next }
+  // dirty the tab or land on the undo stack. The rewrap keeps the present
+  // step's own fields (`tileEdits` included) — `{ doc: next }` alone would
+  // silently drop them.
+  if (next !== current) session.history = { ...session.history, present: { ...session.history.present, doc: next } }
 }
 
 export async function reloadMetaDocs(session: MapSession): Promise<void> {
@@ -443,7 +446,7 @@ async function replayPersistedReorders(session: MapSession, tilesetText: string)
       `since this map was last opened. Renumber this map's tiles to match?`
   )
   if (!confirmed) return
-  session.history = createHistory(result.doc)
+  session.history = createHistory({ doc: result.doc })
   session.tilesetReorderSeen = result.seenAt
   markDirty(session)
 }
@@ -499,11 +502,17 @@ function markDirty(session: MapSession): void {
   useTabsStore().setDirty(session.path, true)
 }
 
-/** Every mutation goes through here: pushes one undo step and marks the tab dirty (no-op if nothing changed). */
-export function commit(session: MapSession, next: MapDoc): void {
-  const history = pushHistory(session.history, next)
-  if (history === session.history) return
-  session.history = history
+/**
+ * Every mutation goes through here: pushes one undo step and marks the tab
+ * dirty (no-op if nothing changed). `tileEdits` — Task 6 passes these — is the
+ * art an `edit` stroke overwrote to reach `next`, for `undo`/`redo` to swap
+ * back in.
+ */
+export function commit(session: MapSession, next: MapDoc, tileEdits?: TileEdit[]): void {
+  // `pushHistory` compares by reference and a fresh entry is never the present,
+  // so guard on the document — otherwise every no-op stroke pushes a step.
+  if (next === session.history.present.doc && !tileEdits?.length) return
+  session.history = pushHistory(session.history, tileEdits?.length ? { doc: next, tileEdits } : { doc: next })
   markDirty(session)
 }
 
@@ -703,7 +712,7 @@ export function pickBlock(session: MapSession, index: number): void {
 
 /** `points` come from `toolPoints`/`floodPoints` (`from`/`to` in grid cells). */
 export function paintDrag(session: MapSession, points: Point[]): void {
-  const current = session.preview ?? session.history.present
+  const current = session.preview ?? session.history.present.doc
   const layerIndex = session.activeLayer
   // Collected across the whole drag so the baked-record check runs once, on
   // release, rather than per pointer move.
@@ -725,7 +734,7 @@ export function finishDrag(session: MapSession): void {
   const painted = session.paintedPoints
   session.preview = null
   session.paintedPoints = []
-  if (!preview || preview === session.history.present) return
+  if (!preview || preview === session.history.present.doc) return
   // One commit, not two: dropping the stale records and the paint that made
   // them stale are the same edit as far as undo is concerned.
   const { doc: next, dropped } = withoutBakedAt(preview, session.activeLayer, painted)
@@ -820,19 +829,68 @@ export function resize(session: MapSession, width: number, height: number): void
 
 // ── undo/redo ───────────────────────────────────────────────────────────
 
+/**
+ * Puts back the tiles an `edit` stroke overwrote, and returns what was there —
+ * so the caller can store the displaced art as the inverse of the step it just
+ * moved. Without that swap, redo would write `before` a second time and the
+ * painted pixels would be lost while history claims the step is applied.
+ */
+function swapTileEdits(session: MapSession, edits: TileEdit[] | undefined): TileEdit[] | undefined {
+  if (!edits?.length) return edits
+  const store = useTilesetStore()
+  const path = doc(session).tileset
+  const tileset = store.patternDoc(path)
+  if (!tileset) return edits
+  const tiles = tileset.tiles.slice()
+  const bankTiles = tileset.bankTiles.map((bank) => bank.slice())
+  const groupColors = tileset.groupColors.slice()
+  const displaced: TileEdit[] = edits.map((edit) => {
+    const current = edit.bank === null ? tiles[edit.index] : bankTiles[edit.bank][edit.index]
+    if (edit.bank === null) tiles[edit.index] = edit.before
+    else bankTiles[edit.bank][edit.index] = edit.before
+    // Off `tileset.groupColors` — the untouched snapshot — not the mutable
+    // `groupColors` copy this loop is writing into: eight tiles share one sc1
+    // group byte, so a second edit touching the same group would otherwise
+    // read back the first edit's just-written value as its own "current",
+    // and redo would leave the group on the wrong colour.
+    const currentGroup = tileset.groupColors[edit.index >> 3]
+    if (edit.beforeGroup !== undefined) groupColors[edit.index >> 3] = edit.beforeGroup
+    return {
+      index: edit.index,
+      bank: edit.bank,
+      before: current,
+      // `after` is what the slot holds once this swap has run — `edit.before`,
+      // since that's what was just written into it. `TileEdit.after` is
+      // required (it's what makes a record checkable, not just reversible),
+      // and the brief's own snippet omitted it — a real type error, not a
+      // style nit; see the report.
+      after: edit.before,
+      ...(edit.beforeGroup !== undefined ? { beforeGroup: currentGroup, afterGroup: edit.beforeGroup } : {})
+    }
+  })
+  store.set(path, { ...tileset, tiles, bankTiles, groupColors }, session.path)
+  return displaced
+}
+
 export function undo(session: MapSession): void {
+  if (!canUndo(session.history)) return
+  const leaving = session.history.present
+  const displaced = swapTileEdits(session, leaving.tileEdits)
   const next = undoHistory(session.history)
-  if (next === session.history) return
-  session.history = next
+  session.history = displaced
+    ? { ...next, future: [{ ...leaving, tileEdits: displaced }, ...next.future.slice(1)] }
+    : next
   session.selection = null
   session.preview = null
   markDirty(session)
 }
 
 export function redo(session: MapSession): void {
+  if (!canRedo(session.history)) return
+  const entering = session.history.future[0]
+  const displaced = swapTileEdits(session, entering.tileEdits)
   const next = redoHistory(session.history)
-  if (next === session.history) return
-  session.history = next
+  session.history = displaced ? { ...next, present: { ...next.present, tileEdits: displaced } } : next
   session.selection = null
   session.preview = null
   markDirty(session)

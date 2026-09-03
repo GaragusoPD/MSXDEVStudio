@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeMap, mapLayerBytes, remapTiles, type MapDoc } from './msx/map'
+import { createMapDoc, normalizeMap, mapLayerBytes, remapTiles, type MapDoc } from './msx/map'
 import { mergeColorByte, normalizeTiles, reorderTiles, tilePixels, type TilesDoc } from './msx/tile'
 import {
   addLayer,
@@ -26,6 +26,7 @@ import {
   toggleLayerVisible,
   toolPoints,
   undo,
+  type MapEntry,
   type Stamp
 } from './map-editor'
 
@@ -215,6 +216,18 @@ describe('undo/redo', () => {
     let history = createHistory(start)
     history = pushHistory(history, start)
     expect(canUndo(history)).toBe(false)
+  })
+
+  it('a history entry can carry the tiles an edit stroke overwrote', () => {
+    const before = { pattern: new Array(8).fill(0x11), color: new Array(8).fill(0xf1) }
+    const base: MapEntry = { doc: createMapDoc('res/t.tiles.json') }
+    const history = pushHistory(createHistory(base), {
+      doc: base.doc,
+      tileEdits: [{ index: 4, bank: null, before, after: before }]
+    })
+
+    expect(history.present.tileEdits?.[0].before).toBe(before)
+    expect(undo(history).present.tileEdits).toBeUndefined()
   })
 })
 

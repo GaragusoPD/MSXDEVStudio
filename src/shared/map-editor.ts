@@ -15,6 +15,7 @@
  */
 
 import { cellIndex, getCell, remapTiles, type MapDoc, type MapLayer } from './msx/map'
+import type { TileEdit } from './msx/meta-paint'
 import { linePoints, rectPoints, type Point, type TilesReorderEvent } from './tile-editor'
 import type { History } from './history'
 
@@ -215,8 +216,19 @@ export function toggleLayerVisible(doc: MapDoc, index: number): MapDoc {
 
 // ── undo/redo ───────────────────────────────────────────────────────────────
 
+/**
+ * One undo step: the map, plus the tiles an `edit` stroke overwrote to get
+ * here. Absent on every step that only moved cell references — a `fork` stroke
+ * appends and never destroys art, so it needs no inverse (its orphans are
+ * Compact's job, exactly as in the meta editor).
+ */
+export interface MapEntry {
+  doc: MapDoc
+  tileEdits?: TileEdit[]
+}
+
 /** The shared past/present/future stack, over this editor's document. */
-export type MapHistory = History<MapDoc>
+export type MapHistory = History<MapEntry>
 export { createHistory, pushHistory, undo, redo, canUndo, canRedo } from './history'
 
 // ── the Spec 08 reorder-replay seam ──────────────────────────────────────────
