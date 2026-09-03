@@ -11,6 +11,7 @@ import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import {
   declinePromotion,
   paintBudgetLabel,
+  PROMOTION_PROMPT,
   promoteToBanked,
   setPaintColor,
   setPaintWrite,
@@ -96,10 +97,7 @@ const budget = computed(() => paintBudgetLabel(props.session))
     >
       <h3>Out of tiles</h3>
       <p class="hint">
-        This screen is out of tiles. Switch to banked (three banks of 256)? This renumbers every
-        tile in the tileset, so any other map or meta-tile using it will be rewritten, and its named
-        blocks and tile flags are cleared. The stroke that hit the limit is not kept — draw it again
-        afterwards.
+        {{ PROMOTION_PROMPT }}
       </p>
       <div class="write">
         <button

@@ -1087,9 +1087,10 @@ function publishTileset(session: MapSession, next: TilesDoc): void {
  *
  * Branches on `refusedBank`, never on the message: only a whole-*tileset*
  * refusal (`null`) can be solved by banking. A full *bank* is the ceiling of a
- * screen that is banked already, and telling that user their map "needs 24
- * rows" would be advice that cannot help. The refusal message `endPaint` set
- * stays in place for that case.
+ * screen that is banked already; run through the blocker it would come back
+ * as "already banked" — an answer about promotion in place of the one that
+ * names the bank. The refusal message `endPaint` set stays in place for that
+ * case.
  *
  * The triggering stroke is discarded, not replayed: promotion renumbers every
  * tile, so its cell indices are stale by the time it completes. The user
@@ -1152,6 +1153,19 @@ export function promotionBlocker(session: MapSession): string | null {
 export function canPromoteToBanked(session: MapSession): boolean {
   return promotionBlocker(session) === null
 }
+
+/**
+ * What the offer says. Here rather than in the `.vue` because it makes claims
+ * about behaviour, and claims are tested: nothing emits a reorder event for a
+ * promotion, so no other file is touched — an open map keeps its old cell
+ * indices and draws them against the new banks, which is wrong art, not a
+ * rewrite.
+ */
+export const PROMOTION_PROMPT =
+  `This screen is out of tiles. Switch to banked (three banks of ${MAX_TILES})? ` +
+  'This renumbers every tile in the tileset: any other map or meta-tile drawn with it will show ' +
+  'wrong art until it is repainted, and the tileset\'s named blocks and tile flags are cleared. ' +
+  'The stroke that hit the limit is not kept — draw it again afterwards.'
 
 /** The user said no. Once per session: the next refused stroke does not re-ask. */
 export function declinePromotion(session: MapSession): void {
@@ -1236,8 +1250,9 @@ export function promoteToBanked(session: MapSession): void {
   session.history = createHistory({ doc: { ...current, layers, metas: [] } })
   session.selection = null
   markDirty(session)
-  // Everything else on the session that names a tile by number, reset the way
-  // `setTileset` resets it: the brush and clipboard would stamp old indices as
+  // Everything else on the session that names a tile by number. No precedent
+  // covers these (`setTileset` clears only metas and placements); they stand
+  // on the defect itself: the brush and clipboard would stamp old indices as
   // bank art on the next click, `brushBlock` indexes a `blocks` that is now
   // empty, and the picker's highlight points at art that moved.
   session.brush = singleStamp(0)

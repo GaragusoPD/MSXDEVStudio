@@ -45,6 +45,7 @@ import {
   pickTile,
   placeMetaAt,
   promoteToBanked,
+  PROMOTION_PROMPT,
   promotionBlocker,
   pruneMapSessions,
   redo,
@@ -1188,19 +1189,34 @@ describe('paint mode', () => {
     })
 
     it('a full bank on a banked screen is not something banking can fix', async () => {
-      // Taller than a screen, so a promotion refusal *would* fire if the
-      // decision were made on anything but `refusedBank`: the user would be
-      // told their already-banked map "needs 24 rows".
+      // 32×24, so everything but the banking itself qualifies. Without the
+      // `refusedBank` guard this refusal would run through the blocker, whose
+      // first answer for a banked tileset is "already banked" — a message about
+      // promotion in place of the one that names the bank. (The size check sits
+      // *after* `isBanked`, so a banked map can never be told it "needs 24 rows".)
       const session = await openMap()
-      resize(session, 32, 40)
+      resize(session, 32, SCREEN_ROWS)
       useTilesetStore().set(TILES, fullBankedFixture(), 'x')
       setMode(session, 'paint')
 
       strokeNeedingATile(session)
 
       expect(session.status).toContain('Bank 1 is full')
-      expect(session.status).not.toContain(`${SCREEN_ROWS} rows`)
+      expect(session.status).not.toContain('out of tiles')
       expect(session.promptPromote).toBeFalsy()
+    })
+
+    it('the prompt says what promotion does to other files: wrong art, not a rewrite', () => {
+      // Nothing emits a reorder event for a promotion, so no other file
+      // changes — an open map keeps its old cell indices and draws them
+      // against the new banks. "Rewritten" promised the opposite.
+      expect(PROMOTION_PROMPT).toContain('wrong art')
+      expect(PROMOTION_PROMPT).toContain('repainted')
+      expect(PROMOTION_PROMPT).not.toContain('rewritten')
+      // The rest of what the user is agreeing to.
+      expect(PROMOTION_PROMPT).toContain('meta-tile')
+      expect(PROMOTION_PROMPT).toContain('blocks and tile flags are cleared')
+      expect(PROMOTION_PROMPT).toContain('draw it again')
     })
 
     it('accepting after the map stopped qualifying refuses rather than repacking', async () => {
