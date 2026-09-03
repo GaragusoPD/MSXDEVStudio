@@ -42,12 +42,15 @@ instead of a map.
   byte for byte the same as a stamped one. This feature emits no new C.
 - **Not the importer.** The importer seeds a screen; it never edits one. Using
   it as the edit loop would re-derive the whole bank per stroke, renumbering
-  every tile and invalidating every other map on that tileset.
+  every tile and invalidating every other map on that tileset. Banked promotion
+  below does call `packBankedTiles` — but exactly once, at a moment the user
+  chose, which is the opposite of an edit loop.
 
 ## The core: `paintGrid`
 
-`paintMeta` touches its meta in exactly four places — `frames[frame]`, `width`,
-`height`, reading `tiles[key]`, and `setFrameTile`. That is a grid interface,
+`paintMeta` touches its meta in exactly four ways — it reads `width` and
+`height`, reads the current tile at `frames[frame].tiles[key]`, and writes
+through `setFrameTile`. That is a grid interface,
 and `MapLayer.data` over `MapDoc.width`/`height` satisfies it identically.
 
 Extract the core; keep `paintMeta` as a wrapper over it.
@@ -59,7 +62,7 @@ paintGrid(
   points: readonly Point[],
   color: number,
   role?: 'fg' | 'bg',
-  options?: { write: 'fork' | 'edit'; bankOf?: (row: number) => number }
+  options?: { write: 'fork' | 'edit'; bankOf?: (cellRow: number) => number }
 ): { grid; tiles; added: number[]; dropped: number; refused?: string }
 ```
 
@@ -90,8 +93,11 @@ one index means one picture in every bank. Meta-tiles need that: it is what lets
 A screen does not. Painting row 3 needs art in bank 0 only, and a shared slot
 costs a slot in *all three* banks — the scarcest resource on the tileset. So
 painting gets a **second allocator** beside the existing one, searching and
-allocating in `bankTiles[bank]` for the row's own bank (`bankForRow`, already in
-`map.ts`). `findOrCreateTile` is not changed.
+allocating in `bankTiles[bank]` for the row's own bank. `bankOf` takes the
+**cell** row (`Math.floor(point.y / TILE_SIZE)`), not the pixel row — the map
+editor passes `bankForRow` (already in `map.ts`), wrapped by `SCREEN_ROWS` the
+way `bankSheetOffset` is, so a taller-than-24-row map in progress cannot index
+a bank that does not exist. `findOrCreateTile` is not changed.
 
 When the row's bank is full, the stroke is **refused, naming the bank** —
 matching `paintMeta`'s existing whole-stroke refusal, and never silently
@@ -186,6 +192,10 @@ Two limits fall out, both stated rather than worked around:
   prompt must say so. This is the one moment renumbering is legal — precisely
   because the tileset is still unbanked. Once banked, Task 9's rule forbids it.
 
+**The triggering stroke is discarded, not replayed.** Promotion renumbers every
+tile, so the stroke's own cell indices are stale by the time it completes; asking
+the user to draw it again on a screen that now has room is honest, and re-applying
+it against a repacked tileset is a correctness problem for one saved gesture.
 Declining leaves painting refused, as it is today.
 
 ## SCREEN 1
