@@ -875,6 +875,80 @@ export function tileHelperC(doc: TilesDoc, name: string): HelperC {
   }
 }
 
+/**
+ * The ready-made C that puts a banked tileset where SCREEN 2/4 expects it:
+ * each bank's own overrides, the common set's tail from that bank's own
+ * offset — a different slice per bank, since each shows the common set from
+ * wherever its own overrides stop — and the shared (meta-tile) region once
+ * per bank, because a meta's index has to mean the same picture everywhere.
+ *
+ * Only ever built for a banked doc (`isBanked` — see the `resourceCode`
+ * caller): an unbanked tileset keeps the single `VDP_LoadPattern_GM2`/
+ * `VDP_LoadColor_GM2` call it always emitted, untouched.
+ */
+export function bankLoadHelperC(doc: TilesDoc, name: string): HelperC {
+  const prefix = name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()
+  const signature = `void ${name}_Load(void)`
+  const body: string[] = [
+    "\t// Each bank shows the common set above its own overrides, so each loads a",
+    '\t// different slice of it — one shared slice for all three would draw the',
+    '\t// wrong art in every bank that overrides less than its neighbours.'
+  ]
+  for (let bank = 0; bank < BANK_COUNT; bank++) {
+    const overrides = doc.bankTiles[bank]?.length ?? 0
+    // A bank's own overrides can reach or pass `doc.count` (a fresh tileset
+    // has count 1 but nothing caps how far a bank grows into it — see
+    // `bankCapacityLeft`), leaving no common tail above them at all. Skip the
+    // tail load in that case rather than emit it with a zero-or-negative
+    // count: `VDP_LoadBankPattern_GM2`'s count is a `u8` where **0 means
+    // 256**, so `TILES - overrides` landing on 0 would load 256 tiles of
+    // whatever follows the table in ROM over the bank, shared region included.
+    if (overrides < doc.count) {
+      // A bank with no overrides shows the common set in full, from offset 0 —
+      // written without the "+ 0 * 8" / "- 0" a uniform formula would leave in,
+      // since that bank has nothing to skip.
+      const patternSrc = overrides > 0 ? `${name}_Patterns + ${overrides} * 8` : `${name}_Patterns`
+      const colorSrc = overrides > 0 ? `${name}_Colors + ${overrides} * 8` : `${name}_Colors`
+      const tailCount = overrides > 0 ? `${prefix}_TILES - ${overrides}` : `${prefix}_TILES`
+      body.push(
+        `\tVDP_LoadBankPattern_GM2(${patternSrc}, ${tailCount}, ${bank}, ${overrides});`,
+        `\tVDP_LoadBankColor_GM2(${colorSrc}, ${tailCount}, ${bank}, ${overrides});`
+      )
+    }
+    // A bank with no overrides of its own has no `_Bank<n>_...` table to load.
+    if (overrides > 0) {
+      body.push(
+        `\tVDP_LoadBankPattern_GM2(${name}_Bank${bank}_Patterns, ${prefix}_BANK${bank}_TILES, ${bank}, 0);`,
+        `\tVDP_LoadBankColor_GM2(${name}_Bank${bank}_Colors, ${prefix}_BANK${bank}_TILES, ${bank}, 0);`
+      )
+    }
+  }
+  if (doc.sharedTiles > 0) {
+    const sharedStart = MAX_TILES - doc.sharedTiles
+    body.push(
+      '',
+      "\t// The shared (meta-tile) region means one picture in every bank — it is",
+      "\t// never a bank's own table, so it loads into all three at the same offset."
+    )
+    for (let bank = 0; bank < BANK_COUNT; bank++) {
+      body.push(
+        `\tVDP_LoadBankPattern_GM2(${name}_Shared_Patterns, ${prefix}_SHARED_TILES, ${bank}, ${sharedStart});`,
+        `\tVDP_LoadBankColor_GM2(${name}_Shared_Colors, ${prefix}_SHARED_TILES, ${bank}, ${sharedStart});`
+      )
+    }
+  }
+  return {
+    header: [
+      '',
+      `// Loads all three SCREEN 2/4 banks of ${name}. Call this instead of`,
+      '// VDP_LoadPattern_GM2/VDP_LoadColor_GM2 — this tileset shows different art',
+      '// above index 0 in each bank, so one plain load call cannot serve it.',
+      `${signature};`
+    ],
+    source: ['', signature, '{', ...body, '}']
+  }
+}
+
 export function validateTiles(doc: TilesDoc): string[] {
   const problems: string[] = []
   if (doc.version !== 1) problems.push(`Unsupported version ${doc.version}`)
@@ -970,5 +1044,46 @@ export function tileColorBytes(doc: TilesDoc): Uint8Array {
   const out = new Uint8Array(doc.count * TILE_SIZE)
   // See `tilePatternBytes`: bounded to `count` for the same reason.
   for (let index = 0; index < doc.count; index++) out.set(doc.tiles[index].color, index * TILE_SIZE)
+  return out
+}
+
+/** One bank's own patterns — its overrides only, from index 0 up. */
+export function bankPatternBytes(doc: TilesDoc, bank: number): Uint8Array {
+  const tiles = doc.bankTiles[bank] ?? []
+  const out = new Uint8Array(tiles.length * TILE_SIZE)
+  tiles.forEach((tile, index) => out.set(tile.pattern, index * TILE_SIZE))
+  return out
+}
+
+/** One bank's own colors. sc1 never banks, so this is sc2/sc4 shaped throughout. */
+export function bankColorBytes(doc: TilesDoc, bank: number): Uint8Array {
+  const tiles = doc.bankTiles[bank] ?? []
+  const out = new Uint8Array(tiles.length * TILE_SIZE)
+  tiles.forEach((tile, index) => out.set(tile.color, index * TILE_SIZE))
+  return out
+}
+
+/**
+ * The shared region's own bytes — the meta-tile art every bank must show at
+ * the same hardware index (see `TilesDoc.sharedTiles`). Never a bank's own
+ * table: `bankTileAt` never lets a bank override this range, so it is one
+ * copy of the bytes, loaded into all three banks at the same offset.
+ *
+ * `tilePatternBytes` deliberately stops at `count` and never reaches this
+ * range (see its own comment) — this is the "banked export's own job" that
+ * comment defers to.
+ */
+export function sharedPatternBytes(doc: TilesDoc): Uint8Array {
+  const out = new Uint8Array(doc.sharedTiles * TILE_SIZE)
+  const start = MAX_TILES - doc.sharedTiles
+  for (let i = 0; i < doc.sharedTiles; i++) out.set(doc.tiles[start + i].pattern, i * TILE_SIZE)
+  return out
+}
+
+/** The shared region's colors — see `sharedPatternBytes`. */
+export function sharedColorBytes(doc: TilesDoc): Uint8Array {
+  const out = new Uint8Array(doc.sharedTiles * TILE_SIZE)
+  const start = MAX_TILES - doc.sharedTiles
+  for (let i = 0; i < doc.sharedTiles; i++) out.set(doc.tiles[start + i].color, i * TILE_SIZE)
   return out
 }

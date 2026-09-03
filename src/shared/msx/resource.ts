@@ -84,9 +84,15 @@ import {
   type SpritesDoc
 } from './sprite'
 import {
+  bankColorBytes,
+  bankLoadHelperC,
+  bankPatternBytes,
   blockBytes,
   blockPlacements,
+  isBanked,
   normalizeTiles,
+  sharedColorBytes,
+  sharedPatternBytes,
   tileColorBytes,
   tileHelperC,
   tilePatternBytes,
@@ -323,6 +329,26 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
         { suffix: '_Patterns', bytes: tilePatternBytes(doc), art: true, comment: 'Patterns Table' },
         { suffix: '_Colors', bytes: tileColorBytes(doc), comment: 'Colors Table' }
       ]
+      // A bank that overrides nothing needs no table: it shows the common set
+      // in full, which is already emitted above.
+      doc.bankTiles.forEach((bank, index) => {
+        if (!bank.length) return
+        tables.push(
+          { suffix: `_Bank${index}_Patterns`, bytes: bankPatternBytes(doc, index), art: true, comment: `Bank ${index} Patterns` },
+          { suffix: `_Bank${index}_Colors`, bytes: bankColorBytes(doc, index), comment: `Bank ${index} Colors` }
+        )
+      })
+      // The shared (meta-tile) region is never a bank's own table — see
+      // `sharedPatternBytes` — and `tilePatternBytes`/`tileColorBytes` above
+      // stop at `count`, well below it on any real banked tileset. Without
+      // this, the art a map's meta-tiles actually point at never reaches the
+      // header at all.
+      if (doc.sharedTiles > 0) {
+        tables.push(
+          { suffix: '_Shared_Patterns', bytes: sharedPatternBytes(doc), art: true, comment: 'Shared (meta-tile) Patterns — one picture in every bank' },
+          { suffix: '_Shared_Colors', bytes: sharedColorBytes(doc), comment: 'Shared (meta-tile) Colors' }
+        )
+      }
       if (doc.palette) {
         tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
       }
@@ -843,14 +869,29 @@ function resourceConstants(
   }
   if (isMetaKind(resource.kind)) return metaConstants(resource.doc as MetaTileDoc, name)
   if (resource.kind === 'tiles') {
-    return blockPlacements(resource.doc).flatMap((placement) => {
-      const id = `${prefix}_${defineName(placement.name)}`
-      return [
-        `#define ${id}_BASE ${placement.base}`,
-        `#define ${id}_W ${placement.width}`,
-        `#define ${id}_H ${placement.height}`
-      ]
-    })
+    const { doc } = resource
+    // Only a banked tileset needs its own tile counts — an unbanked one keeps
+    // exactly the constants it emitted before banking existed (see
+    // `bankLoadHelperC`'s callers), since `_TILES`/`_BANK<n>_TILES` exist to
+    // feed that helper's VDP_LoadBankPattern_GM2 calls and nothing else reads them.
+    const bankDefines = isBanked(doc)
+      ? [
+          `#define ${prefix}_TILES ${doc.count}`,
+          ...doc.bankTiles.flatMap((bank, index) => (bank.length ? [`#define ${prefix}_BANK${index}_TILES ${bank.length}`] : [])),
+          ...(doc.sharedTiles > 0 ? [`#define ${prefix}_SHARED_TILES ${doc.sharedTiles}`] : [])
+        ]
+      : []
+    return [
+      ...bankDefines,
+      ...blockPlacements(doc).flatMap((placement) => {
+        const id = `${prefix}_${defineName(placement.name)}`
+        return [
+          `#define ${id}_BASE ${placement.base}`,
+          `#define ${id}_W ${placement.width}`,
+          `#define ${id}_H ${placement.height}`
+        ]
+      })
+    ]
   }
   if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
   return spritePlacements(resource.doc).flatMap((placement) => {
@@ -914,7 +955,15 @@ function resourceCode(
   // No emptiness guard, unlike a tileset's blocks: a meta always has a frame,
   // so there is always something to draw.
   if (isMetaKind(resource.kind)) return metaHelperC(resource.doc as MetaTileDoc, name)
-  if (resource.kind === 'tiles') return resource.doc.blocks.length ? tileHelperC(resource.doc, name) : NO_CODE
+  if (resource.kind === 'tiles') {
+    const { doc } = resource
+    const blocks = doc.blocks.length ? tileHelperC(doc, name) : NO_CODE
+    // Only a banked tileset needs `_Load`: an unbanked one has no per-bank
+    // slicing to do, so game code keeps calling VDP_LoadPattern_GM2/
+    // VDP_LoadColor_GM2 directly, exactly as it does today (see agent-guide.ts).
+    const load = isBanked(doc) ? bankLoadHelperC(doc, name) : NO_CODE
+    return joinHelpers(blocks, load)
+  }
   // Unlike pattern tiles, this is worth emitting with no blocks at all: the
   // upload and the single-tile blit are the whole reason a bitmap tileset can
   // be drawn without the game knowing how the sheet is laid out.

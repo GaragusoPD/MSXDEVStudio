@@ -35,7 +35,7 @@ import { decodeAyfxBank, normalizeSfx, SFX_PRESETS, type SfxDoc } from './sfx'
 import { createSpritesDoc } from './sprite'
 import { addLayer, setCharacterGrid } from '../sprite-editor'
 import { createBlock } from '../tile-editor'
-import { createTilesDoc, mergeColorByte, normalizeTiles } from './tile'
+import { createTilesDoc, mergeColorByte, normalizeTiles, type TileEntry, type TilesDoc } from './tile'
 
 /**
  * Both halves of a C export as one string. Most assertions here care that a
@@ -1141,5 +1141,108 @@ describe('resourceKindOf', () => {
     expect(resourceKindOf('res/tree.meta-tiles.json')).toBe('metatiles')
     expect(resourceKindOf('res/rock.meta-btiles.json')).toBe('metabtiles')
     expect(resourceKindOf('res/main.tiles.json')).toBe('tiles')
+  })
+})
+
+describe('exporting a banked tileset', () => {
+  const solid = (byte: number): TileEntry => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
+
+  const banked = (): TilesDoc =>
+    normalizeTiles({
+      mode: 'sc2',
+      count: 256,
+      bankTiles: [new Array(4).fill(solid(1)), new Array(6).fill(solid(2)), []],
+      sharedTiles: 3,
+      export: { name: 'g_Title', format: 'c', out: 'content/title.h', helpers: true }
+    })
+
+  // Local shadow of the module-level `rendered`, same pattern the screen tests
+  // below use: every fixture in this block already carries its own `export`
+  // block, so there is nothing to vary by passing sourceName/block separately.
+  function rendered(resource: ResourceDoc): string {
+    const files = renderResourceFiles(resource, 'res/title.tiles.json', resource.doc.export!)
+    return `${files.header ?? ''}\n${files.source ?? ''}`
+  }
+
+  it('emits a table and a count per bank, plus the common set', () => {
+    const header = rendered({ kind: 'tiles', doc: banked() })
+    expect(header).toContain('#define G_TITLE_BANK0_TILES 4')
+    expect(header).toContain('#define G_TITLE_BANK1_TILES 6')
+    expect(header).toContain('g_Title_Bank0_Patterns')
+    expect(header).toContain('g_Title_Bank1_Colors')
+    // Bank 2 overrides nothing, so it gets no table of its own.
+    expect(header).not.toContain('g_Title_Bank2_Patterns')
+  })
+
+  it('each bank loads the common tail from its own offset', () => {
+    const header = rendered({ kind: 'tiles', doc: banked() })
+    // Bank 0 overrides 0..3, so it still shows the common set from 4 up; bank 1
+    // from 6. Loading the same slice into both would draw the wrong art.
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_Title_Patterns + 4 * 8, G_TITLE_TILES - 4, 0, 4)')
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_Title_Patterns + 6 * 8, G_TITLE_TILES - 6, 1, 6)')
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_Title_Bank0_Patterns, G_TITLE_BANK0_TILES, 0, 0)')
+  })
+
+  it('an unbanked tileset exports exactly what it exports today', () => {
+    // The feature's promise, asserted rather than assumed.
+    const doc = normalizeTiles({ mode: 'sc2', count: 4, export: { name: 'g_T', format: 'c', out: 'content/t.h', helpers: true } })
+    const header = rendered({ kind: 'tiles', doc })
+    expect(header).not.toContain('Bank')
+    expect(header).not.toContain('LoadBankPattern')
+  })
+
+  it('the shared (meta-tile) region reaches every bank, not just when count already covers it', () => {
+    // `banked()` above uses count:256, which already spans the whole array —
+    // `tilePatternBytes` (bounded to `count`) happens to include the shared
+    // tail there too, masking the exact gap Task 2's review found: on a
+    // realistic tileset `count` sits well below the shared reservation, so
+    // the common table never reaches it and the meta-tile art needs its own
+    // path into every bank's VRAM.
+    const rawTiles: unknown[] = new Array(4).fill(solid(1))
+    rawTiles[253] = solid(0xaa)
+    rawTiles[254] = solid(0xbb)
+    rawTiles[255] = solid(0xcc)
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: rawTiles,
+      bankTiles: [[solid(2)], [], []],
+      sharedTiles: 3,
+      export: { name: 'g_Title', format: 'c', out: 'content/title.h', helpers: true }
+    })
+    const header = rendered({ kind: 'tiles', doc })
+    expect(header).toContain('#define G_TITLE_SHARED_TILES 3')
+    expect(header).toContain('g_Title_Shared_Patterns')
+    expect(header).toContain('g_Title_Shared_Colors')
+    // Loaded into every bank — including bank 2, which overrides nothing of
+    // its own — at the shared region's real hardware offset (253).
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_Title_Shared_Patterns, G_TITLE_SHARED_TILES, 0, 253)')
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_Title_Shared_Patterns, G_TITLE_SHARED_TILES, 1, 253)')
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_Title_Shared_Patterns, G_TITLE_SHARED_TILES, 2, 253)')
+  })
+
+  it("omits a bank's common-tail load once its own overrides reach or pass count", () => {
+    // Nothing ties a bank's size to `count` — a fresh tileset starts at
+    // count 1, and a bank can still grow well past that (see
+    // `bankCapacityLeft`). A naive `TILES - overrides` would then hit 0 or
+    // go negative, and VDP_LoadBankPattern_GM2's count is a `u8` where **0
+    // means 256** — loading 256 tiles out of an 8-byte table over the bank,
+    // shared region included.
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 1,
+      bankTiles: [[solid(1), solid(2), solid(3)], [], []],
+      export: { name: 'g_T', format: 'c', out: 'content/t.h', helpers: true }
+    })
+    const header = rendered({ kind: 'tiles', doc })
+    // Bank 0's own table still loads in full...
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_T_Bank0_Patterns, G_T_BANK0_TILES, 0, 0)')
+    // ...but nothing tries to load a common tail that doesn't exist for it.
+    expect(header).not.toContain('G_T_TILES - 3')
+    expect(header).not.toContain('g_T_Patterns + 3 * 8')
+    // Banks 1 and 2 have no overrides of their own (0 < count), so they still
+    // load the one common tile that exists.
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_T_Patterns, G_T_TILES, 1, 0)')
+    expect(header).toContain('VDP_LoadBankPattern_GM2(g_T_Patterns, G_T_TILES, 2, 0)')
   })
 })

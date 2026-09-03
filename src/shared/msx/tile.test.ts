@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   BANK_COUNT,
   bankCapacityLeft,
+  bankColorBytes,
+  bankPatternBytes,
   bankTileAt,
   blankTileEntry,
   colorByteAt,
@@ -14,6 +16,8 @@ import {
   regroupAfterTile0Shift,
   reorderTiles,
   rowColorViolations,
+  sharedColorBytes,
+  sharedPatternBytes,
   splitColorByte,
   swapRowColors,
   tileColorBytes,
@@ -502,5 +506,27 @@ describe('pattern banks', () => {
     rawTiles[255] = solid(0xaa)
     const doc = normalizeTiles({ mode: 'sc2', count: 4, tiles: rawTiles, sharedTiles: 1 })
     expect(validateTiles(doc)).toEqual([])
+  })
+
+  it('bankPatternBytes/bankColorBytes are just that bank\'s own overrides, from index 0', () => {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: [solid(0x11), solid(0x22), solid(0x33), solid(0x44)],
+      bankTiles: [[solid(0xaa), solid(0xbb)], [], []]
+    })
+    expect(bankPatternBytes(doc, 0)).toEqual(Uint8Array.from([...new Array(8).fill(0xaa), ...new Array(8).fill(0xbb)]))
+    expect(bankColorBytes(doc, 0)).toEqual(Uint8Array.from(new Array(16).fill(0xf1)))
+    // A bank with no overrides has no bytes of its own — the common set covers it.
+    expect(bankPatternBytes(doc, 1)).toHaveLength(0)
+  })
+
+  it('sharedPatternBytes/sharedColorBytes read the top of the array, not the bottom', () => {
+    const rawTiles: unknown[] = [solid(1), solid(2)]
+    rawTiles[254] = solid(0xaa)
+    rawTiles[255] = solid(0xbb)
+    const doc = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, sharedTiles: 2 })
+    expect(sharedPatternBytes(doc)).toEqual(Uint8Array.from([...new Array(8).fill(0xaa), ...new Array(8).fill(0xbb)]))
+    expect(sharedColorBytes(doc)).toEqual(Uint8Array.from(new Array(16).fill(0xf1)))
   })
 })
