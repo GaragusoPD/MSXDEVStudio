@@ -75,6 +75,7 @@ import {
 import { onTilesReordered, type TilesReorderEvent } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
+import { useTilesetStore } from '../../stores/tilesetStore'
 import { watchResourceFile } from '../external-changes'
 
 /** `.map.json` carries the reorder-seen marker as an extra key `normalizeMap` ignores (see module header). */
@@ -89,6 +90,13 @@ export interface MapSession {
   error: string | null
   dirty: boolean
 
+  /**
+   * Drops this session's subscription to the shared tileset (`useTilesetStore`).
+   * Re-established every time `loadFromPath` loads a `.tiles.json` — the path it
+   * points at moves with `setTileset`, unlike the map's own file. Null whenever
+   * the map has no pattern tileset loaded (a bitmap tileset, an atlas, or none).
+   */
+  stopWatchingTileset: (() => void) | null
   tileset: TilesDoc | null
   /** Set when the map draws from a `.btiles.json` — the bitmap tileset proper. */
   bitmapTileset: BitmapTilesDoc | null
@@ -165,6 +173,7 @@ export function mapSession(path: string): MapSession {
     loading: true,
     error: null,
     dirty: false,
+    stopWatchingTileset: null,
     tileset: null,
     bitmapTileset: null,
     atlas: null,
@@ -212,7 +221,17 @@ export function mapSession(path: string): MapSession {
 
 /** Drops sessions for tabs that were closed. Called by the tab component when the tab set changes. */
 export function pruneMapSessions(openPaths: Set<string>): void {
-  for (const path of [...sessions.keys()]) if (!openPaths.has(path)) sessions.delete(path)
+  for (const path of [...sessions.keys()]) {
+    if (openPaths.has(path)) continue
+    const session = sessions.get(path)
+    session?.stopWatchingTileset?.()
+    // Whatever this session's own tileset reference last resolved to — a
+    // no-op release if it was never the store's (a bitmap tileset, an atlas,
+    // or none), since `release` on an untracked path is harmless.
+    const tilesetPath = session ? doc(session).tileset : null
+    if (tilesetPath) useTilesetStore().release(tilesetPath)
+    sessions.delete(path)
+  }
 }
 
 export function doc(session: MapSession): MapDoc {
@@ -271,6 +290,8 @@ async function loadTileset(session: MapSession): Promise<void> {
 }
 
 function clearTileset(session: MapSession): void {
+  session.stopWatchingTileset?.()
+  session.stopWatchingTileset = null
   session.tileset = null
   session.bitmapTileset = null
   session.atlas = null
@@ -334,6 +355,11 @@ export async function reloadMetaDocs(session: MapSession): Promise<void> {
 async function loadFromPath(session: MapSession, path: string): Promise<void> {
   const text = await window.api.invoke('fs:read', { path })
   const parsed = parseResource(path, text)
+  // Whichever kind this turns out to be, any subscription from a *previous*
+  // tileset (this map may have pointed somewhere else a moment ago, via
+  // `setTileset`) is stale the instant we're loading a new one.
+  session.stopWatchingTileset?.()
+  session.stopWatchingTileset = null
   if (parsed.kind === 'screen') {
     session.tileset = null
     session.bitmapTileset = null
@@ -352,10 +378,25 @@ async function loadFromPath(session: MapSession, path: string): Promise<void> {
     return
   }
   if (parsed.kind !== 'tiles') throw new Error(`${path} is not a tileset`)
-  session.tileset = parsed.doc
+  // Through the shared store, not the bare parse above: a `.tiles.json` open
+  // in a tile tab, another map, or a meta being painted is one document, and
+  // `sheet.ts` caches its rendered sheet on that document's *identity* — a
+  // private copy here would leave the canvas drawing art that no longer
+  // exists the moment anything else writes to it.
+  await useTilesetStore().load(path)
+  session.tileset = useTilesetStore().patternDoc(path)
   session.bitmapTileset = null
   session.atlas = null
   session.tilesetError = null
+  // Another editor can change this same document from here on. Adopt it:
+  // replacing `session.tileset` wholesale, never mutating it, for the same
+  // identity-caching reason as above.
+  session.stopWatchingTileset = useTilesetStore().onExternalChange(path, session.path, (next) => {
+    // The store speaks both kinds; a resource this file already confirmed is
+    // `'tiles'` only ever hears about its own, so the narrowing is a fact of
+    // the path, not a guess.
+    session.tileset = next as TilesDoc
+  })
   await replayPersistedReorders(session, text)
 }
 
@@ -441,6 +482,13 @@ export async function saveSession(session: MapSession): Promise<void> {
   const content: SavedMap = { ...doc(session) }
   if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
   await window.api.invoke('fs:write', { path: session.path, content: serializeResource({ kind: 'map', doc: content }) })
+  // The pair is saved together: a map pointing at tiles the tileset hasn't
+  // flushed yet would be pointing at art nobody wrote to disk. `store.save`,
+  // not a manual write — it's what actually clears the dirty flag and it
+  // carries the reorder log along (`meta/session.ts:361-362` is the same call).
+  const tilesetPath = doc(session).tileset
+  const store = useTilesetStore()
+  if (tilesetPath && store.isDirty(tilesetPath)) await store.save(tilesetPath)
   session.dirty = false
   useTabsStore().setDirty(session.path, false)
   session.status = 'Saved'

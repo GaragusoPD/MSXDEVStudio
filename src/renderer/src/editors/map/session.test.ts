@@ -21,12 +21,14 @@ import {
   pickMeta,
   placeMetaAt,
   pruneMapSessions,
+  saveSession,
   selectPlacementAt,
   setBaked,
   undo,
   type MapSession
 } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
+import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
 
 const MAP = 'res/level.map.json'
@@ -99,6 +101,38 @@ async function openMap(): Promise<ReturnType<typeof mapSession>> {
   for (let i = 0; i < 4; i++) await settled()
   return session
 }
+
+describe('the map shares its tileset with the store', () => {
+  it('adopts a tileset change made by another editor', async () => {
+    const session = await openMap()
+    const store = useTilesetStore()
+    const before = session.tileset!
+
+    const grown = normalizeTiles({ mode: 'sc2', count: 5 })
+    store.set(TILES, grown, 'some/other/editor.tiles.json')
+
+    expect(session.tileset).not.toBe(before)
+    expect(session.tileset!.count).toBe(5)
+  })
+
+  it('does not treat merely opening the map as an edit to the tileset', async () => {
+    await openMap()
+    // Loading a tileset that already matches disk must not dirty it — a spare
+    // `set()` on load would mark every tileset a map merely opens as having
+    // unsaved changes, badging tabs that were never touched.
+    expect(useTilesetStore().isDirty(TILES)).toBe(false)
+  })
+
+  it('saves the tileset alongside the map when the tileset is dirty', async () => {
+    const session = await openMap()
+    const store = useTilesetStore()
+    store.set(TILES, normalizeTiles({ mode: 'sc2', count: 5 }), session.path)
+
+    await saveSession(session)
+
+    expect(JSON.parse(files[TILES]).count).toBe(5)
+  })
+})
 
 describe('the symbol a placed meta is externed under', () => {
   it("is the meta's own export name, not one guessed from the file", async () => {
