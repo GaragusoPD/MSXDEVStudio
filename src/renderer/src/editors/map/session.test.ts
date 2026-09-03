@@ -9,6 +9,7 @@
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createBitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import { MAX_TILES, normalizeTiles, TILE_SIZE, type TileEntry } from '../../../../shared/msx/tile'
@@ -16,6 +17,7 @@ import { normalizeMap } from '../../../../shared/msx/map'
 import {
   bankSheetOffset,
   beginPaint,
+  canPaint,
   doc,
   endPaint,
   extendPaint,
@@ -709,5 +711,68 @@ describe('paint mode', () => {
     expect(paintBudgetLabel(session)).toBe(
       'bank 1: 2 + 6 shared = 8 / 256   bank 2: 0 + 6 shared = 6 / 256   bank 3: 5 + 6 shared = 11 / 256'
     )
+  })
+
+  it('a line fed pencil-style — each segment starting where the last ended — is still drawn from the drag origin', async () => {
+    // The paint layer advances `from` on every move for every tool, so a line
+    // must anchor on the session's own origin, not on whatever `from` the latest
+    // segment carried. The existing "final line" test feeds keep-origin style,
+    // where `from` *is* the origin on every call and cannot tell the two apart.
+    const session = await openMap()
+    setMode(session, 'paint')
+    setPaintTool(session, 'line')
+    beginPaint(session, 'fg')
+    extendPaint(session, { x: 0, y: 0 }, { x: 15, y: 0 })
+    extendPaint(session, { x: 15, y: 0 }, { x: 15, y: 15 })
+    endPaint(session)
+
+    // One diagonal from (0,0) to (15,15): its ends and its middle, and not the
+    // horizontal first segment (cell (1,0)) that anchoring on `from` would keep.
+    expect(cell(session, 0, 0)).not.toBe(0)
+    expect(cell(session, 1, 1)).not.toBe(0)
+    expect(cell(session, 1, 0)).toBe(0)
+  })
+
+  describe('canPaint — whether there is a pattern tileset to paint into', () => {
+    const BTILES = 'res/world.btiles.json'
+
+    it('is true for a map over a pattern tileset', async () => {
+      expect(canPaint(await openMap())).toBe(true)
+    })
+
+    it('is false over a bitmap tileset, where a stroke would be dropped silently', async () => {
+      files[BTILES] = serializeResource({ kind: 'btiles', doc: createBitmapTilesDoc() })
+      files[MAP] = JSON.stringify({
+        version: 1,
+        tileset: BTILES,
+        width: 8,
+        height: 8,
+        cell: { width: 16, height: 16, cols: 16 }
+      })
+      const session = await openMap()
+      // The fixture loaded as what it claims to be — not as a load error, which
+      // would also leave `tileset` null and pass this test for the wrong reason.
+      expect(session.bitmapTileset).not.toBeNull()
+      expect(session.tilesetError).toBeNull()
+
+      expect(canPaint(session)).toBe(false)
+
+      // What the predicate exists to keep the user away from: a stroke that
+      // changes nothing and leaves no trace, beside a budget that reads as nothing.
+      setMode(session, 'paint')
+      const before = doc(session)
+      const steps = session.history.past.length
+      dab(session, 0, 0)
+      expect(doc(session)).toBe(before)
+      expect(session.history.past.length).toBe(steps)
+      expect(paintBudgetLabel(session)).toBe('')
+    })
+
+    it('is false with no tileset set at all', async () => {
+      files[MAP] = JSON.stringify({ version: 1, width: 8, height: 8 })
+      const session = await openMap()
+      expect(session.tileset).toBeNull()
+      expect(canPaint(session)).toBe(false)
+    })
   })
 })

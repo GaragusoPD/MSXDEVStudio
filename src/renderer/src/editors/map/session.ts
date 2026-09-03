@@ -822,6 +822,24 @@ export function setMode(session: MapSession, mode: 'tiles' | 'paint'): void {
   session.mode = mode
 }
 
+/**
+ * Whether paint mode has anything to paint into.
+ *
+ * A stroke resolves into a pattern tileset. A map over a `.btiles.json` or a
+ * `.screen.json` has none — `session.tileset` is null there, `endPaint` drops
+ * the stroke without a word and `paintBudgetLabel` reads `''`. Those maps have
+ * the screen editor. The `cell` check is the same fact read from the map's own
+ * side: a map with cell geometry exports down the bitmap path whatever file it
+ * happens to point at, so painting patterns into it would be painting art the
+ * exporter never reads.
+ *
+ * The one predicate the paint layer and the mode toggle both ask, so they can
+ * never disagree about which maps offer paint mode.
+ */
+export function canPaint(session: MapSession): boolean {
+  return session.tileset !== null && doc(session).cell === null
+}
+
 export function setPaintTool(session: MapSession, tool: TileTool): void {
   session.paintTool = tool
 }

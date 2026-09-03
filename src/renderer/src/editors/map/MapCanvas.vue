@@ -9,6 +9,10 @@
  * folded into the running preview), while 'rect' only shows a ghost outline
  * during the drag and applies the full shape once, on pointer-up — recomputing
  * a rect from a stale mid-drag preview would double-paint the overlap.
+ *
+ * Paint mode is a second input path with its own component, `MapPaintLayer`,
+ * mounted over the canvas only while it is live. The cell handlers below step
+ * aside whenever the mode is not `'tiles'`, so the two can never both fire.
  */
 import { computed, ref, watchEffect } from 'vue'
 import { SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
@@ -16,8 +20,10 @@ import { MODES } from '../../../../shared/msx/modes'
 import { type Point } from '../../../../shared/map-editor'
 import { rectPoints } from '../../../../shared/tile-editor'
 import { metaThumbnail } from './sheet'
+import MapPaintLayer from './MapPaintLayer.vue'
 import {
   bankSheetOffset,
+  canPaint,
   clearSelection,
   copySelection,
   deleteSelection,
@@ -80,6 +86,7 @@ function cellAt(event: PointerEvent): Point {
 }
 
 function onDown(event: PointerEvent): void {
+  if (props.session.mode !== 'tiles') return
   const cell = cellAt(event)
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
   if (event.shiftKey) {
@@ -116,6 +123,7 @@ function onDown(event: PointerEvent): void {
 }
 
 function onMove(event: PointerEvent): void {
+  if (props.session.mode !== 'tiles') return
   const cell = cellAt(event)
   if (selecting && selectAnchor) {
     setSelection(props.session, selectAnchor, cell)
@@ -135,6 +143,7 @@ function onMove(event: PointerEvent): void {
 }
 
 function onUp(): void {
+  if (props.session.mode !== 'tiles') return
   if (draggingPlacement) {
     draggingPlacement = false
     grab = null
@@ -306,6 +315,15 @@ watchEffect(() => {
         @pointermove="onMove"
         @pointerup="onUp"
         @pointercancel="onUp"
+      />
+      <!--
+        Only while there is a pattern tileset to paint into: on a bitmap map a
+        stroke would resolve into nothing (see `canPaint`), and the mode toggle
+        asks the same predicate, so the two agree about which maps offer it.
+      -->
+      <MapPaintLayer
+        v-if="session.mode === 'paint' && canPaint(session)"
+        :session="session"
       />
     </div>
   </div>
