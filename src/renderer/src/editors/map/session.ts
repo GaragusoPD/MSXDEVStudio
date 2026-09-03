@@ -1231,9 +1231,22 @@ export function promoteToBanked(session: MapSession): void {
   const layers = current.layers.map((entry, i) => (i === session.activeLayer ? { ...entry, data } : entry))
 
   publishTileset(session, merged)
-  session.history = createHistory({ doc: { ...current, layers } })
+  // `metas: []` as `setTileset` does: a meta picked but not yet placed (the
+  // blocker only refuses placements) names tiles by the old numbering.
+  session.history = createHistory({ doc: { ...current, layers, metas: [] } })
   session.selection = null
   markDirty(session)
+  // Everything else on the session that names a tile by number, reset the way
+  // `setTileset` resets it: the brush and clipboard would stamp old indices as
+  // bank art on the next click, `brushBlock` indexes a `blocks` that is now
+  // empty, and the picker's highlight points at art that moved.
+  session.brush = singleStamp(0)
+  session.brushBlock = null
+  session.brushMeta = null
+  session.clipboard = null
+  session.pickerActive = 0
+  session.pickerSelection = [0]
+  session.selectedPlacement = null
 
   const counts = merged.bankTiles.map((bank) => bank.length).join('/')
   const short = unplaced.reduce((sum, count) => sum + count, 0)

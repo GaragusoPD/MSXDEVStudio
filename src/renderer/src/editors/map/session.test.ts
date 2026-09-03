@@ -42,6 +42,7 @@ import {
   paintPointAt,
   pickerBankOffset,
   pickMeta,
+  pickTile,
   placeMetaAt,
   promoteToBanked,
   promotionBlocker,
@@ -1112,6 +1113,29 @@ describe('paint mode', () => {
       expect(useTilesetStore().isDirty(TILES)).toBe(true)
       expect(session.promptPromote).toBe(false)
       expect(session.status).toContain('banked')
+    })
+
+    it('promotion drops every session reference that named a tile by number', async () => {
+      // The brush and clipboard would stamp old indices as bank art on the
+      // next click; a picked-but-unplaced meta names old tiles too, and the
+      // blocker only refuses *placements*. `setTileset` is the precedent.
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      pickTile(session, 2, [1, 2], { width: 2, height: 1, tiles: [1, 2] })
+      session.clipboard = { width: 1, height: 1, tiles: [3] }
+      pickMeta(session, META)
+      expect(session.brushMeta).toBe(META)
+      expect(doc(session).metas).toHaveLength(1)
+
+      promoteToBanked(session)
+
+      expect(isBanked(useTilesetStore().patternDoc(TILES)!)).toBe(true)
+      expect(session.brush).toEqual(singleStamp(0))
+      expect(session.clipboard).toBeNull()
+      expect(session.brushBlock).toBeNull()
+      expect(session.brushMeta).toBeNull()
+      expect(session.pickerSelection).toEqual([0])
+      expect(doc(session).metas).toEqual([])
     })
 
     it('refuses promotion on a taller map and says why', async () => {
