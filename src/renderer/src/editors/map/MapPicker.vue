@@ -12,7 +12,7 @@ import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { singleStamp, stampFromMarquee } from '../../../../shared/map-editor'
 import { fitColumns } from '../../../../shared/tile-editor'
 import { BANK_COUNT, isBanked, MAX_TILES } from '../../../../shared/msx/tile'
-import { setBank, tilesetBlocks, pickBlock, pickTile, sheet, type MapSession } from './session'
+import { pickerBankOffset, setBank, tilesetBlocks, pickBlock, pickTile, sheet, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
@@ -119,12 +119,9 @@ watchEffect(() => {
 
   // The pane's column count is measured, not the sheet's own, so each cell is
   // placed rather than the sheet blitted in rows — the two grids differ.
-  //
-  // `session.bank * MAX_TILES` is the stacked sheet's offset for whichever
-  // bank the tabs below have selected — 0 on an unbanked tileset, where the
-  // bank never changes, so this is added unconditionally rather than branched.
+  const offset = pickerBankOffset(props.session)
   for (let index = 0; index < count.value; index++) {
-    const cell = index + props.session.bank * MAX_TILES
+    const cell = index + offset
     context.drawImage(
       source.canvas,
       (cell % source.cols) * source.cellW,

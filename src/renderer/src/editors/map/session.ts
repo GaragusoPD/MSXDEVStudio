@@ -572,6 +572,21 @@ export function bankSheetOffset(session: MapSession, row: number): number {
   return session.tileset && isBanked(session.tileset) ? bankForRow(row % SCREEN_ROWS) * MAX_TILES : 0
 }
 
+/**
+ * The stacked sheet's offset for whichever bank `MapPicker.vue` currently
+ * shows: `session.bank * MAX_TILES` when the tileset is banked, `0`
+ * otherwise. `session.bank` is session state, not tileset state — it does
+ * not reset itself when `setTileset`/`reloadTileset` swaps in an unbanked
+ * tileset (or one that lost its last override), so the `isBanked` guard has
+ * to live here rather than being assumed away: without it, a stale non-zero
+ * `bank` left over from a banked tileset would offset the picker's draw loop
+ * past the end of the new, small unbanked sheet, and every cell would
+ * silently draw nothing — the same failure this task exists to close.
+ */
+export function pickerBankOffset(session: MapSession): number {
+  return session.tileset && isBanked(session.tileset) ? session.bank * MAX_TILES : 0
+}
+
 // ── tool state ───────────────────────────────────────────────────────────
 
 export function setTool(session: MapSession, tool: MapTool): void {

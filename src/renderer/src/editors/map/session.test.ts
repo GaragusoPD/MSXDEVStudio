@@ -16,6 +16,7 @@ import {
   bankSheetOffset,
   doc,
   mapSession,
+  pickerBankOffset,
   pickMeta,
   placeMetaAt,
   pruneMapSessions,
@@ -295,5 +296,29 @@ describe('bankSheetOffset — which row reads which pattern bank', () => {
   it('is 0 with no tileset loaded at all', () => {
     const session = { tileset: null } as MapSession
     expect(bankSheetOffset(session, 8)).toBe(0)
+  })
+})
+
+describe('pickerBankOffset — which bank the picker paints from', () => {
+  const solid = () => ({ pattern: new Array(8).fill(0xaa), color: new Array(8).fill(0xf1) })
+  const bankedTileset = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[solid()], [], []] })
+  const unbankedTileset = normalizeTiles({ mode: 'sc2', count: 1 })
+
+  it('is session.bank * MAX_TILES on a banked tileset', () => {
+    const session = { tileset: bankedTileset, bank: 2 } as MapSession
+    expect(pickerBankOffset(session)).toBe(512)
+  })
+
+  it('is 0 on an unbanked tileset even with a stale non-zero bank left over from a banked one', () => {
+    // `bank` is session state, not tileset state — `setTileset`/`reloadTileset`
+    // don't reset it, so this is the case that used to offset the picker's
+    // draw loop past the end of a small unbanked sheet and draw nothing.
+    const session = { tileset: unbankedTileset, bank: 2 } as MapSession
+    expect(pickerBankOffset(session)).toBe(0)
+  })
+
+  it('is 0 with no tileset loaded at all', () => {
+    const session = { tileset: null, bank: 2 } as MapSession
+    expect(pickerBankOffset(session)).toBe(0)
   })
 })
