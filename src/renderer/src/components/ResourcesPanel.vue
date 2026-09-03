@@ -166,6 +166,13 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
           <Icon name="add" />
           New resource…
         </button>
+        <button
+          type="button"
+          title="Create a tileset and a 32×24 map over it, and open the map ready to paint"
+          @click="resourcesStore.newScreenVisible = true"
+        >
+          New tiled screen…
+        </button>
       </div>
 
       <div class="actions">

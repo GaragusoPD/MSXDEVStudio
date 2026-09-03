@@ -22,6 +22,12 @@ The file is created in the project's **`res/`** folder and its editor opens.
 Click any listed resource to reopen it later — or open the file from the
 Explorer.
 
+**New tiled screen…** (File menu, or the Resources panel) makes the pair a
+SCREEN 2 picture is drawn as — `res/name.tiles.json` with tile 0 reserved
+blank, and a 32×24 `res/name.map.json` over it — and opens the map in paint
+mode, so the first thing you do is draw. It refuses a name either file already
+carries rather than overwriting.
+
 `res/` is where new resources go so the project root doesn't fill up with a
 tileset, its maps, its sprite sheets and their sources. Nothing requires it:
 the project is walked recursively, so a resource anywhere in it is still found,

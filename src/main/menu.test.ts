@@ -18,6 +18,7 @@ describe('menuTemplate', () => {
     expect(sent).toContain('file.save')
     expect(sent).toContain('file.saveAll')
     expect(sent).toContain('file.newGame')
+    expect(sent).toContain('file.newTiledScreen')
     // Answered in the main process, not the renderer — see `EXTERNAL_DOCS` in index.ts.
     expect(sent).toContain('help.msxgl')
     expect(sent).toContain('help.msx2Handbook')

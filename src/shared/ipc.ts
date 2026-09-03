@@ -458,6 +458,7 @@ export interface IpcEvents {
 export type MenuCommand =
   | 'file.newProject'
   | 'file.newGame'
+  | 'file.newTiledScreen'
   | 'file.openProject'
   | 'file.save'
   | 'file.saveAll'

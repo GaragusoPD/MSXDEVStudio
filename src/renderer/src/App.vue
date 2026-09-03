@@ -6,6 +6,7 @@ import { useBuildStore } from './stores/buildStore'
 import { useExamplesStore } from './stores/examplesStore'
 import { useGitStore } from './stores/gitStore'
 import { useProjectStore } from './stores/projectStore'
+import { useResourcesStore } from './stores/resourcesStore'
 import { useToolchainStore } from './stores/toolchainStore'
 import ActivityBar from './components/ActivityBar.vue'
 import SidePanel from './components/SidePanel.vue'
@@ -15,6 +16,7 @@ import GitBranchPicker from './components/GitBranchPicker.vue'
 import LicenseGate from './components/LicenseGate.vue'
 import NewGameDialog from './components/NewGameDialog.vue'
 import NewProjectDialog from './components/NewProjectDialog.vue'
+import NewTiledScreenDialog from './components/NewTiledScreenDialog.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import StatusBar from './components/StatusBar.vue'
 import Splitter from './components/Splitter.vue'
@@ -24,6 +26,7 @@ const buildStore = useBuildStore()
 const examplesStore = useExamplesStore()
 const gitStore = useGitStore()
 const projectStore = useProjectStore()
+const resourcesStore = useResourcesStore()
 const toolchainStore = useToolchainStore()
 
 const workbenchColumns = computed(() =>
@@ -133,6 +136,7 @@ onUnmounted(() => {
       <StatusBar />
       <NewProjectDialog v-if="projectStore.wizardVisible || examplesStore.forkSource" />
       <NewGameDialog v-if="projectStore.gameWizardVisible" />
+      <NewTiledScreenDialog v-if="resourcesStore.newScreenVisible" />
       <PreferencesDialog
         v-if="appStore.preferencesVisible"
         @close="appStore.preferencesVisible = false"

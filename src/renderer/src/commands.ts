@@ -13,15 +13,18 @@
 
 import { DOCS_DEMOS, DOCS_INDEX, DOCS_TUTORIALS } from '../../shared/docs'
 import type { MenuCommand } from '../../shared/ipc'
+import { RESOURCE_DIR } from '../../shared/msx/resource'
 import { getEditorFor } from './editors/registry'
 import { disposeModel, saveModel, triggerMonaco } from './editors/monaco-models'
 import { openDocs } from './editors/docs/session'
+import { mapSession, setMode } from './editors/map/session'
 import { newTerminalId } from './editors/terminal/session'
 import { router } from './router'
 import { useAppStore } from './stores/appStore'
 import { useBuildStore } from './stores/buildStore'
 import { useOutputStore } from './stores/outputStore'
 import { useProjectStore } from './stores/projectStore'
+import { useResourcesStore } from './stores/resourcesStore'
 import { useTabsStore, type EditorTab } from './stores/tabsStore'
 
 /**
@@ -98,6 +101,29 @@ export function openTerminalTab(): void {
   })
 }
 
+/**
+ * Creates a tiled screen — a tileset and a one-screen map — and opens the map
+ * straight into paint mode. The store writes the pair; this is the glue that
+ * cannot live there, because the map session imports the resources store.
+ *
+ * The tab is opened *before* the session is created: `pruneMapSessions` drops
+ * any session whose path is not an open tab, so the other order can lose the
+ * mode. And `setMode('paint')` is called while the map is still loading — the
+ * session keeps it, and only leaves paint mode if the tileset turns out to be
+ * unpaintable once it has landed.
+ *
+ * The name is free text from the dialog; it is reduced to a file stem here, so
+ * "Title Screen!" becomes `res/TitleScreen`. Throws (a name that exists, a
+ * write that fails) for the dialog to show beside the field.
+ */
+export async function createTiledScreen(name: string): Promise<void> {
+  const base = name.replace(/[^A-Za-z0-9_-]/g, '')
+  if (!base) return
+  const { map } = await useResourcesStore().newTiledScreen(`${RESOURCE_DIR}/${base}`)
+  useTabsStore().openFile(map, map.split('/').pop() ?? map)
+  setMode(mapSession(map), 'paint')
+}
+
 /** Ctrl+` — shows the bottom panel's terminal, or collapses the panel if it is already there. */
 export function toggleTerminal(): void {
   const appStore = useAppStore()
@@ -132,6 +158,10 @@ export function runMenuCommand(command: MenuCommand): void {
       break
     case 'file.newGame':
       projectStore.newGame()
+      break
+    case 'file.newTiledScreen':
+      // Needs a project to write into; without one the item is inert, as Project Settings is.
+      if (projectStore.open) useResourcesStore().newScreenVisible = true
       break
     case 'file.openProject':
       void projectStore.openProject()
