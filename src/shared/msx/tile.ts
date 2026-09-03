@@ -466,6 +466,124 @@ export function packTiles(
   return { doc, layout, lossyTiles }
 }
 
+export interface BankedPackResult {
+  doc: TilesDoc
+  /**
+   * Bank-relative tile index per source cell, row-major over the whole
+   * `width/8 × height/8` grid. It only reads as one flat row-major array
+   * because each band's cells are appended in the same order the grid's rows
+   * already put them in — band 0 is tile-rows 0..7, band 1 is 8..15, band 2 is
+   * 16..23, so concatenating "band 0's rows, then band 1's, then band 2's" is
+   * indistinguishable from reading the 24-row grid straight through.
+   */
+  layout: number[]
+  /**
+   * Tiles across all three banks whose rows had to drop colors, numbered
+   * `bank * MAX_TILES + index` so an entry from one bank can never collide
+   * with one from another — nothing today reads more than `.length`, but a
+   * bank-relative index alone would be ambiguous the moment something does.
+   */
+  lossyTiles: number[]
+  /** Cells bank `b`'s own budget could not place — see `packBankedTiles`. */
+  unplaced: number[]
+}
+
+/**
+ * SCREEN 2/4's importer path for a full 256×192 screen. The picture is cut
+ * into `BANK_COUNT` eight-tile-row bands — rows 0-7, 8-15, 16-23, matching the
+ * three hardware pattern banks a real SCREEN 2/4 has — and each band dedups
+ * *within its own bank*, from index 0 up, with the same `tileFromPixels` +
+ * `pattern|color` dedup key `packTiles` already uses. A 256×192 band is
+ * exactly 32 cols × 8 tile-rows = `MAX_TILES` cells, which is also a bank's
+ * raw capacity, so with no shared reservation a band can never run out of
+ * room — every distinct 8×8 pattern it could possibly contain still fits.
+ * Overflow only becomes possible once `options.sharedTiles` (an existing
+ * tileset's own meta-tile reservation, the same count `bankCapacityLeft`
+ * reads) eats into that budget from the top: this function never grows a
+ * bank past `MAX_TILES - sharedTiles`, so packing into a tileset that already
+ * backs meta-tiles can never overwrite them — it just leaves that room alone.
+ *
+ * `unplaced[b]` counts only genuinely new art with nowhere left to go; a cell
+ * whose pattern repeats one this bank already placed keeps matching for free
+ * even after the *new*-tile budget fills, since that costs no room. A cell
+ * that cannot be placed still gets an entry in `layout` (tile 0, the bank's
+ * own first tile) rather than being dropped: unlike `packTiles`'s single
+ * bank, where a shortfall only ever trails the very end of the image, a gap
+ * here would misalign every cell that follows once the next band's cells are
+ * appended after it — bands are appended positionally, not each into a fresh
+ * array, so `layout` must stay exactly `cols × rows` long.
+ *
+ * Only ever called for sc2/sc4 at exactly 256×192 (the caller's own gate —
+ * see `ImportImageDialog.vue`): sc1 has one pattern table, not three, so
+ * there is no bank for this to fill, and any other size doesn't divide into
+ * three whole eight-tile-row bands.
+ */
+export function packBankedTiles(
+  indices: ArrayLike<number>,
+  width: number,
+  height: number,
+  mode: TileMode,
+  options: { sharedTiles?: number } = {}
+): BankedPackResult {
+  const cols = Math.floor(width / TILE_SIZE)
+  const bandRows = Math.floor(height / BANK_COUNT / TILE_SIZE)
+  const sharedTiles = Math.max(0, Math.min(MAX_TILES, options.sharedTiles ?? 0))
+  const budget = MAX_TILES - sharedTiles
+
+  const bankTiles: TileEntry[][] = []
+  const layout: number[] = []
+  const lossyTiles: number[] = []
+  const unplaced: number[] = []
+
+  for (let bank = 0; bank < BANK_COUNT; bank++) {
+    const tiles: TileEntry[] = []
+    const seen = new Map<string, number>()
+    const rowOffset = bank * bandRows
+    let missed = 0
+
+    for (let ty = 0; ty < bandRows; ty++) {
+      const absRow = rowOffset + ty
+      for (let tx = 0; tx < cols; tx++) {
+        const pixels = new Uint8Array(TILE_SIZE * TILE_SIZE)
+        for (let y = 0; y < TILE_SIZE; y++) {
+          for (let x = 0; x < TILE_SIZE; x++) {
+            pixels[y * TILE_SIZE + x] = indices[(absRow * TILE_SIZE + y) * width + tx * TILE_SIZE + x] ?? 0
+          }
+        }
+        const { pattern, color, lossyRows } = tileFromPixels(pixels)
+        const key = `${pattern.join(',')}|${color.join(',')}`
+        const existing = seen.get(key)
+        if (existing !== undefined) {
+          layout.push(existing)
+          continue
+        }
+        if (tiles.length >= budget) {
+          // Genuinely new art, but this bank's budget is spent — placed as
+          // tile 0 (see the function comment) and counted, not dropped.
+          layout.push(0)
+          missed++
+          continue
+        }
+        const index = tiles.length
+        seen.set(key, index)
+        tiles.push({ pattern, color })
+        layout.push(index)
+        if (lossyRows.length) lossyTiles.push(bank * MAX_TILES + index)
+      }
+    }
+    bankTiles.push(tiles)
+    unplaced.push(missed)
+  }
+
+  // `count: 1` — a single blank common tile, never referenced by `layout`
+  // (every cell is bank-relative and every bank starts its own numbering at
+  // 0). Nothing here has "common" art of its own to offer: a fresh import has
+  // no existing tileset to fall back to, so there is nothing to put in the
+  // common range beyond the minimum `normalizeTiles` already requires.
+  const doc = normalizeTiles({ mode, count: 1, bankTiles, sharedTiles })
+  return { doc, layout, lossyTiles, unplaced }
+}
+
 /**
  * Fixes up `groupColors` after prepending exactly one blank tile at index 0
  * (`reserveTile0`'s migration, and the tile editor's own import into a bank

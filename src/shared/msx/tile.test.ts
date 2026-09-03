@@ -9,8 +9,10 @@ import {
   colorByteAt,
   createTilesDoc,
   isBanked,
+  MAX_TILES,
   mergeColorByte,
   normalizeTiles,
+  packBankedTiles,
   packTiles,
   paintPixel,
   regroupAfterTile0Shift,
@@ -547,5 +549,114 @@ describe('pattern banks', () => {
     // `sharedTiles` — it never entered `doc.tiles` in the first place, the
     // same as any other index past `count` on an unbanked tileset.
     expect(doc.tiles).toHaveLength(2)
+  })
+})
+
+describe('packBankedTiles — the importer\'s own three-bank path', () => {
+  it('packs a full screen into three banks, bank-relative', () => {
+    // 256x192 of three distinct horizontal bands: each third needs one tile, and
+    // each gets index 0 in its own bank — the same byte, three pictures.
+    const indices = new Uint8Array(256 * 192)
+    for (let y = 0; y < 192; y++) indices.fill(y < 64 ? 1 : y < 128 ? 2 : 3, y * 256, y * 256 + 256)
+    const { doc, layout, unplaced } = packBankedTiles(indices, 256, 192, 'sc2')
+    expect(doc.bankTiles.map((b) => b.length)).toEqual([1, 1, 1])
+    expect(layout.every((index) => index === 0)).toBe(true)
+    expect(unplaced).toEqual([0, 0, 0])
+  })
+
+  it('reports per bank when a third will not fit, because the budget is per bank', () => {
+    // Every cell of the top third distinct: 32*8 = 256 cells, and the bank holds
+    // 256 — so it just fits; 257 would not. Bands below stay unaffected.
+    const indices = new Uint8Array(256 * 192)
+    for (let i = 0; i < 256 * 64; i++) indices[i] = i % 15
+    const { unplaced } = packBankedTiles(indices, 256, 192, 'sc2')
+    expect(unplaced[1]).toBe(0)
+    expect(unplaced[2]).toBe(0)
+  })
+
+  /**
+   * A top band whose 256 cells (32 cols × 8 tile-rows) are genuinely all
+   * distinct — unlike the `i % 15` fixture the brief's own Step 1 test uses,
+   * which (its comment's claim notwithstanding) only produces 15 distinct
+   * tiles: a solid-color 8×8 tile collapses to one of a handful of patterns
+   * regardless of which of the 16 palette indices fills it, since
+   * `tileFromPixels` derives the pattern from *which pixels differ from the
+   * row's background*, not from the color value itself. Genuine variety needs
+   * the *bit pattern* to differ per tile, not just the color — so each tile's
+   * own row 0 encodes its linear index `p` (0..255) as 8 bits, two fixed
+   * colors marking 1/0, and the other seven rows stay blank (untouched
+   * zeros), contributing the same constant suffix to every tile's dedup key
+   * without threatening the uniqueness row 0 alone already guarantees.
+   */
+  function fullyDistinctTopBand(): Uint8Array {
+    const indices = new Uint8Array(256 * 192)
+    for (let p = 0; p < 256; p++) {
+      const tx = p % 32
+      const ty = Math.floor(p / 32)
+      const rowStart = ty * 8 * 256 + tx * 8
+      for (let x = 0; x < 8; x++) indices[rowStart + x] = (p >> (7 - x)) & 1 ? 5 : 3
+    }
+    return indices
+  }
+
+  it('a full band with no shared reservation always fits — a band has exactly as many cells as a bank has room', () => {
+    // 32 cols * 8 tile-rows = 256 cells, exactly MAX_TILES: with sharedTiles at
+    // its default of 0, a full band can never overflow, no matter how varied its
+    // art is.
+    const { doc, unplaced } = packBankedTiles(fullyDistinctTopBand(), 256, 192, 'sc2')
+    expect(doc.bankTiles[0]).toHaveLength(256)
+    expect(unplaced[0]).toBe(0)
+  })
+
+  it('reserves the shared region: a bank tops out at MAX_TILES - sharedTiles, not MAX_TILES', () => {
+    // Simulates importing over a tileset that already backs 20 meta-tiles worth
+    // of shared art. The same fully-distinct top band from the previous test now
+    // has nowhere for its last 20 cells to go — proof the cap is load-bearing,
+    // not merely descriptive, and that a bank can never grow into the shared
+    // region reserved at the top of its 256 slots.
+    const { doc, unplaced } = packBankedTiles(fullyDistinctTopBand(), 256, 192, 'sc2', { sharedTiles: 20 })
+    expect(doc.bankTiles[0]).toHaveLength(MAX_TILES - 20)
+    expect(unplaced[0]).toBe(20)
+    // Bands below are untouched by the top band's own art — an all-zero source,
+    // one tile each — but the shared cap still applies to every bank equally.
+    expect(doc.bankTiles[1]).toHaveLength(1)
+    expect(doc.bankTiles[2]).toHaveLength(1)
+    expect(doc.sharedTiles).toBe(20)
+  })
+
+  it('keeps a partial fixture partial: dedup counts differ per band and stay independent', () => {
+    // A sparse fixture, not a dense one: each band gets a handful of distinct
+    // 8x8 tiles (not 256, not 1), and a different count per band — the shape a
+    // real screenshot actually has, and the shape that would catch a bug where
+    // one bank's dedup map bled into another's.
+    const width = 256
+    const height = 192
+    const cols = width / 8
+    const indices = new Uint8Array(width * height)
+    for (let band = 0; band < 3; band++) {
+      // Band `band` gets `band + 2` distinct solid-color tiles, striped by
+      // column so most of the band re-matches a tile already seen — exercising
+      // the dedup path, not just first-sight placement.
+      const distinct = band + 2
+      for (let ty = 0; ty < 8; ty++) {
+        for (let tx = 0; tx < cols; tx++) {
+          const value = (tx % distinct) + 1
+          const absTileRow = band * 8 + ty
+          for (let y = 0; y < 8; y++) {
+            for (let x = 0; x < 8; x++) {
+              indices[(absTileRow * 8 + y) * width + tx * 8 + x] = value
+            }
+          }
+        }
+      }
+    }
+    const { doc, layout, unplaced } = packBankedTiles(indices, width, height, 'sc2')
+    expect(doc.bankTiles.map((b) => b.length)).toEqual([2, 3, 4])
+    expect(unplaced).toEqual([0, 0, 0])
+    expect(layout).toHaveLength(cols * 24)
+    // Bank 0's first tile-row cycles two colors over its 32 columns: 0,1,0,1,…
+    expect(layout.slice(0, 4)).toEqual([0, 1, 0, 1])
+    expect(isBanked(doc)).toBe(true)
+    expect(validateTiles(doc)).toEqual([])
   })
 })

@@ -7,7 +7,7 @@
 import { computed, ref, watch } from 'vue'
 import { BITMAP_MODES, MODES, TILE_MODES, isTileMode, type ScreenMode } from '../../../shared/msx/modes'
 import { mapFromLayout } from '../../../shared/msx/map'
-import { packTiles, TILE_SIZE } from '../../../shared/msx/tile'
+import { MAX_TILES, packBankedTiles, packTiles, TILE_SIZE } from '../../../shared/msx/tile'
 import { RESOURCE_DIR, defaultExport, serializeResource } from '../../../shared/msx/resource'
 import { useImageImport, type ImportResult } from '../composables/useImageImport'
 import { useProjectStore } from '../stores/projectStore'
@@ -96,13 +96,17 @@ async function saveTileset(): Promise<void> {
       }
     }
 
-    const { doc, layout, lossyTiles } = packTiles(
-      result.indices,
-      result.width,
-      result.height,
-      importer.options.mode,
-      { dedup: true }
-    )
+    // SCREEN 2/4 has three pattern banks of 256 tiles, not one — a full
+    // 256×192 screen can use up to 768 distinct tiles across them. Anything
+    // smaller (or sc1, which has one pattern table) has no third bank to
+    // fill, so it keeps going down `packTiles`'s single-bank path unchanged.
+    const useBanks =
+      (importer.options.mode === 'sc2' || importer.options.mode === 'sc4') &&
+      result.width === 256 &&
+      result.height === 192
+    const { doc, layout, lossyTiles, unplaced } = useBanks
+      ? packBankedTiles(result.indices, result.width, result.height, importer.options.mode)
+      : { ...packTiles(result.indices, result.width, result.height, importer.options.mode, { dedup: true }), unplaced: [] as number[] }
     doc.export = defaultExport(path)
     // `fs:write` doesn't create parent folders, and a project whose res/ was
     // never made (or was deleted) hasn't got one. mkdir is idempotent.
@@ -117,11 +121,26 @@ async function saveTileset(): Promise<void> {
     map.export = defaultExport(mapPath)
     await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
 
-    const short = cols * rows - layout.length
-    saved.value =
-      `${path} — ${doc.count} tiles${lossyTiles.length ? `, ${lossyTiles.length} lossy` : ''}; ` +
-      `${mapPath} — ${cols}×${rows}` +
-      (short > 0 ? `, ${short} cells unplaced (the bank filled at 256 tiles)` : '')
+    if (useBanks) {
+      // Per bank, not one combined count: the budget is per bank, so "bank 1
+      // is full" is the honest message, not a single number that hides which
+      // third overflowed.
+      const bankReport = unplaced
+        .map((count, bank) => (count > 0 ? `bank ${bank}: ${count} cells unplaced (that third's ${MAX_TILES} tiles are full)` : null))
+        .filter((line): line is string => line !== null)
+        .join('; ')
+      const bankCounts = doc.bankTiles.map((bank) => bank.length).join('/')
+      saved.value =
+        `${path} — banks ${bankCounts} tiles${lossyTiles.length ? `, ${lossyTiles.length} lossy` : ''}; ` +
+        `${mapPath} — ${cols}×${rows}` +
+        (bankReport ? `; ${bankReport}` : '')
+    } else {
+      const short = cols * rows - layout.length
+      saved.value =
+        `${path} — ${doc.count} tiles${lossyTiles.length ? `, ${lossyTiles.length} lossy` : ''}; ` +
+        `${mapPath} — ${cols}×${rows}` +
+        (short > 0 ? `, ${short} cells unplaced (the bank filled at 256 tiles)` : '')
+    }
     await resourcesStore.refresh()
   } catch (error) {
     saved.value = `Failed: ${String(error)}`
