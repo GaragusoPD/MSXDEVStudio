@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addMetaRef,
+  bankForRow,
   MAX_MAP_METAS,
   mapFromLayout,
   metaSlotOf,
@@ -257,5 +258,27 @@ describe('mapFromLayout — an imported image keeps its arrangement', () => {
     // than as undefined.
     const doc = mapFromLayout('art/hero.tiles.json', [7, 8], 2, 2)
     expect(doc.layers[0].data).toEqual([7, 8, 0, 0])
+  })
+})
+
+describe('banked tilesets need a screen-height map', () => {
+  it('a row picks its bank, eight rows to each', () => {
+    expect([0, 7, 8, 15, 16, 23].map(bankForRow)).toEqual([0, 0, 1, 1, 2, 2])
+  })
+
+  it('refuses a map that is not 24 rows tall', () => {
+    // Row 24 has no bank, so a taller map would export art into the wrong third.
+    const doc = normalizeMap({ tileset: 'res/t.tiles.json', width: 32, height: 48 })
+    expect(validateMap(doc, { banked: true }).join(' ')).toMatch(/24 rows/)
+  })
+
+  it('allows any width, because banks are chosen by row', () => {
+    const doc = normalizeMap({ tileset: 'res/t.tiles.json', width: 128, height: 24 })
+    expect(validateMap(doc, { banked: true })).toEqual([])
+  })
+
+  it('says nothing about height when the tileset is not banked', () => {
+    const doc = normalizeMap({ tileset: 'res/t.tiles.json', width: 32, height: 48 })
+    expect(validateMap(doc).join(' ')).not.toMatch(/24 rows/)
   })
 })

@@ -162,6 +162,15 @@ export function isSc3NameTable(doc: MapDoc): boolean {
   return doc.cell?.sc3 === true && doc.cell.width === 2 && doc.cell.height === 2
 }
 
+/**
+ * Which pattern bank a screen row reads from. SCREEN 2/4 splits its 768
+ * patterns into three banks of 256, one per eight rows, so a name-table byte
+ * means different art depending on how far down the screen it sits.
+ */
+export function bankForRow(row: number): number {
+  return row >> 3
+}
+
 /** One screen's worth of cells — the outline overlay the map editor draws. */
 export const SCREEN_COLS = 32
 export const SCREEN_ROWS = 24
@@ -332,7 +341,7 @@ export function remapTiles(doc: MapDoc, mapping: readonly number[]): MapDoc {
   return { ...doc, layers }
 }
 
-export function validateMap(doc: MapDoc): string[] {
+export function validateMap(doc: MapDoc, options: { banked?: boolean } = {}): string[] {
   const problems: string[] = []
   if (doc.version !== 1) problems.push(`Unsupported version ${doc.version}`)
   if (!doc.tileset) problems.push('No tileset referenced')
@@ -362,6 +371,16 @@ export function validateMap(doc: MapDoc): string[] {
     problems.push(
       'Meta-tiles cannot be placed on this SCREEN 3 map — it blits its cells, and an MSX1 has no ' +
         'command engine. Use a 2×2 tileset so the map draws through the name table instead.'
+    )
+  }
+
+  // Banks are chosen by screen row, so a wide map scrolls horizontally without
+  // trouble — but row 24 has no bank, and exporting one would put art in the
+  // wrong third with nothing to show for it but a wrong picture.
+  if (options.banked && doc.height !== SCREEN_ROWS) {
+    problems.push(
+      `A banked tileset needs a map exactly ${SCREEN_ROWS} rows tall — this one is ${doc.height}. ` +
+        'Width is free: banks are picked by row, so horizontal scrolling is fine.'
     )
   }
 

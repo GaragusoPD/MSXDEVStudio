@@ -15,8 +15,9 @@ import { isIgnoredName, resolveRelativePath } from '../../shared/fs-safety'
 import type { ImgRule, MsxProject } from '../../shared/msxproj'
 import { defaultExport, isMetaKind, parseResource, renderResourceFiles,
   sourcePathFor, resourceKindOf, validateResource, type ResourceDoc } from '../../shared/msx/resource'
-import { metaRefFrom } from '../../shared/msx/map'
+import { metaRefFrom, validateMap, type MapDoc } from '../../shared/msx/map'
 import type { MetaTileDoc } from '../../shared/msx/meta-tile'
+import { isBanked } from '../../shared/msx/tile'
 
 /** `<msxgl>/tools/MSXtk/bin/MSXimg(.exe)` — MSXgl ships Linux and Windows builds. */
 export function msximgPath(msxglPath: string): string {
@@ -154,6 +155,28 @@ function refreshMapMetas(root: string, resource: ResourceDoc): void {
   }
 }
 
+/**
+ * Whether a map's tileset gives its three SCREEN 2/4 banks their own art —
+ * `validateMap`'s only opinion that `shared/` cannot form on its own, since it
+ * takes a `MapDoc` and a banked tileset lives in a different file. Read fresh
+ * for the same reason `refreshMapMetas` is: a build never opens the tileset
+ * editor, only this layer can.
+ *
+ * A tileset that cannot be read passes nothing rather than a failure — a
+ * missing tileset is already `validateMap`'s own "No tileset referenced", and
+ * a second message for the same problem helps nobody.
+ */
+function mapValidateOptions(root: string, doc: MapDoc): { banked?: boolean } {
+  const abs = insideRoot(root, doc.tileset)
+  if (!abs || !existsSync(abs)) return {}
+  try {
+    const parsed = parseResource(doc.tileset, readFileSync(abs, 'utf-8'))
+    return parsed.kind === 'tiles' ? { banked: isBanked(parsed.doc) } : {}
+  } catch {
+    return {}
+  }
+}
+
 export function exportResourceFile(root: string, relative: string, options: ExportOptions = {}): ConversionResult {
   const sourceAbs = insideRoot(root, relative)
   const base: ConversionResult = { kind: 'resource', input: relative, out: '', status: 'failed' }
@@ -178,7 +201,10 @@ export function exportResourceFile(root: string, relative: string, options: Expo
     // against the meta as it is now.
     refreshMapMetas(root, resource)
 
-    const problems = validateResource(resource)
+    const problems =
+      resource.kind === 'map'
+        ? validateMap(resource.doc, mapValidateOptions(root, resource.doc))
+        : validateResource(resource)
     if (problems.length) return { ...base, out: block.out, message: problems.join('; ') }
 
     const files = renderResourceFiles(resource, relative, block)
