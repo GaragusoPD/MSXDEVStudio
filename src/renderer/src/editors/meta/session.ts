@@ -780,39 +780,53 @@ export function reclaimOrphans(session: MetaSession): number {
   const store = useTilesetStore()
   const orphans = orphansOf(session)
   if (!orphans.length) return 0
-  // Highest first, so each removal leaves the lower indices alone and the
-  // mappings compose in one pass.
-  const descending = [...orphans].sort((a, b) => b - a)
 
   if (session.kind === 'metabtiles') {
     const tileset = store.bitmapDoc(session.tilesetPath)
     if (!tileset) return 0
+    // Bitmap tilesets do not bank, so all orphans are common and sort descending.
+    const descending = [...orphans].sort((a, b) => b - a)
     let next = tileset
     let mapping = Array.from({ length: tileset.count }, (_, i) => i)
+    let reclaimed = 0
     for (const tile of descending) {
       const step = removeBitmapTile(next, tile)
       if (step.doc === next) continue
       next = step.doc
       mapping = mapping.map((index) => step.remap[index] ?? 0)
+      reclaimed++
     }
     if (next === tileset) return 0
     publishReclaim(session, next, mapping)
-    return orphans.length
+    return reclaimed
   }
 
   const tileset = store.patternDoc(session.tilesetPath)
   if (!tileset) return 0
+
+  // Pattern tilesets may be banked. Shared tiles and common tiles grow in
+  // opposite directions, so must be removed in opposite orders to avoid
+  // renumbering. Shared tiles live at MAX_TILES - sharedTiles down to 255
+  // (growing downward); their newest is the lowest index. Common tiles live
+  // at 0 to count-1 (growing upward); their newest is the highest index.
+  const sharedStart = MAX_TILES - tileset.sharedTiles
+  const shared = orphans.filter((tile) => tile >= sharedStart).sort((a, b) => a - b)
+  const common = orphans.filter((tile) => tile < sharedStart).sort((a, b) => b - a)
+  const toRemove = [...shared, ...common]
+
   let next = tileset
   let mapping = tileset.tiles.map((_, i) => i)
-  for (const tile of descending) {
+  let reclaimed = 0
+  for (const tile of toRemove) {
     const step = removeTile(next, tile)
     if (step.doc === next) continue
     next = step.doc
     mapping = mapping.map((index) => step.mapping[index] ?? 0)
+    reclaimed++
   }
   if (next === tileset) return 0
   publishReclaim(session, next, mapping)
-  return orphans.length
+  return reclaimed
 }
 
 function publishReclaim(session: MetaSession, next: TilesDoc | BitmapTilesDoc, mapping: number[]): void {

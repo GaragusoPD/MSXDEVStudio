@@ -14,7 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMetaTileDoc, frameTileAt } from '../../../../shared/msx/meta-tile'
 import { serializeResource } from '../../../../shared/msx/resource'
-import { colorByteAt, mergeColorByte, normalizeTiles, splitColorByte } from '../../../../shared/msx/tile'
+import { bankCapacityLeft, colorByteAt, mergeColorByte, normalizeTiles, splitColorByte } from '../../../../shared/msx/tile'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import {
   beginStroke,
@@ -368,6 +368,56 @@ describe('undo on a banked tileset tracks shared tiles for Compact', () => {
     // Crucially, the common tiles are untouched: count stays 4, no artwork lost.
     expect(afterCompact.count).toBe(4)
     // session.appended is cleared by publishReclaim.
+    expect(session.appended).toEqual([])
+  })
+
+  it('reclaims multiple shared orphans in the correct order (newest first)', async () => {
+    // The critical bug: reclaimOrphans sorted all orphans descending, which is
+    // correct for common tiles (highest index = newest) but inverted for shared
+    // tiles (lowest index = newest, since they grow downward). Painting two
+    // cells, undoing both, then compacting would silently leak one tile.
+    const banked = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      reserveTile0: true,
+      bankTiles: [[{ pattern: Array(8).fill(0), color: Array(8).fill(0x21) }], [], []]
+    })
+    files[TILES] = serializeResource({ kind: 'tiles', doc: banked })
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    // Paint two distinct cells with different patterns to create two shared tiles.
+    paint(session, [{ x: 0, y: 0 }])
+    expect(session.appended).toEqual([255])
+    paint(session, [{ x: 8, y: 1 }], 'fg')
+    // Second paint creates a different tile, so appended grows.
+    expect(session.appended).toEqual([255, 254])
+
+    const afterPaint = useTilesetStore().patternDoc(TILES)!
+    expect(afterPaint.sharedTiles).toBe(2)
+    const bank0Capacity = bankCapacityLeft(afterPaint, 0)
+    const bank1Capacity = bankCapacityLeft(afterPaint, 1)
+    const bank2Capacity = bankCapacityLeft(afterPaint, 2)
+
+    // Undo both strokes.
+    undo(session)
+    undo(session)
+    expect(session.appended).toEqual([255, 254])
+
+    // Compact: the old bug would try to remove 255 first (wrong order for shared),
+    // removeTile would refuse (not the newest), and then remove only 254, leaving
+    // 255 leaked. The fix removes newest-first: 254 then 255.
+    const reclaimed = reclaimOrphans(session)
+    expect(reclaimed).toBe(2)
+
+    const afterCompact = useTilesetStore().patternDoc(TILES)!
+    expect(afterCompact.sharedTiles).toBe(0)
+    expect(afterCompact.count).toBe(4)
+    // Bank capacity fully restored.
+    expect(bankCapacityLeft(afterCompact, 0)).toBe(bank0Capacity + 2)
+    expect(bankCapacityLeft(afterCompact, 1)).toBe(bank1Capacity + 2)
+    expect(bankCapacityLeft(afterCompact, 2)).toBe(bank2Capacity + 2)
     expect(session.appended).toEqual([])
   })
 })
