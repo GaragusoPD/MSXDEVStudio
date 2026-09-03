@@ -36,11 +36,19 @@ import {
   type MapDoc
 } from '../../../../shared/msx/map'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
-import { BANK_COUNT, isBanked, MAX_TILES, type TilesDoc } from '../../../../shared/msx/tile'
+import {
+  BANK_COUNT,
+  bankTilePixels,
+  isBanked,
+  MAX_TILES,
+  TILE_SIZE,
+  tilePixels,
+  type TilesDoc
+} from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
 import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
-import type { TileEdit } from '../../../../shared/msx/meta-paint'
+import { paintGrid, sprayPoints, type PaintGridResult, type TileEdit } from '../../../../shared/msx/meta-paint'
 import { defaultExport, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { screenPixels } from '../../../../shared/msx/screen'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
@@ -73,7 +81,16 @@ import {
   type Rect,
   type Stamp
 } from '../../../../shared/map-editor'
-import { onTilesReordered, type TilesReorderEvent } from '../../../../shared/tile-editor'
+// `toolPoints` under an alias: `map-editor` exports a cell-space one of the
+// same name (imported above), and the two take different arguments.
+import {
+  fillPoints,
+  onTilesReordered,
+  toolPoints as pixelToolPoints,
+  type TileTool,
+  type TilesReorderEvent
+} from '../../../../shared/tile-editor'
+import { bankBudgetLabel } from '../tile/session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
@@ -159,6 +176,31 @@ export interface MapSession {
    * session so both the canvas and picker can react to it.
    */
   preview: MapDoc | null
+
+  /**
+   * Which tool set is live — the cell tools above, or the pixel tools below.
+   * UI state, not a history step, like `bank`.
+   */
+  mode: 'tiles' | 'paint'
+  paintTool: TileTool
+  paintColor: number
+  /** Per stroke, because neither is a safe default: see the spec's write-mode table. */
+  paintWrite: 'fork' | 'edit'
+  /** Spray radius in dots, and its Bayer threshold (0–16) — `sprayPoints`' own units. */
+  brushRadius: number
+  brushDensity: number
+  /** Accumulated across a drag; resolved into the tileset once, on release. */
+  paintPoints: Point[]
+  /**
+   * Where the drag started. A line or a rect is drawn from here to the latest
+   * sample whatever `from` that segment carried, so a caller feeding
+   * pencil-style segments still gets one line, not the last piece of one.
+   */
+  paintOrigin: Point | null
+  paintRole: 'fg' | 'bg'
+  paintActive: boolean
+  /** Set once the user declines promotion, so the offer is made once per session. */
+  promotionDeclined: boolean
 }
 
 const sessions = new Map<string, MapSession>()
@@ -199,7 +241,18 @@ export function mapSession(path: string): MapSession {
     screenOutline: true,
     selection: null,
     status: '',
-    preview: null
+    preview: null,
+    mode: 'tiles',
+    paintTool: 'pencil',
+    paintColor: 1,
+    paintWrite: 'fork',
+    brushRadius: 2,
+    brushDensity: 8,
+    paintPoints: [],
+    paintOrigin: null,
+    paintRole: 'fg',
+    paintActive: false,
+    promotionDeclined: false
   })
   sessions.set(path, session)
   // `serialize` must produce byte-for-byte what `saveSession` writes, sibling
@@ -760,6 +813,225 @@ export function dragPoints(tool: 'stamp' | 'erase' | 'rect', from: Point, to: Po
   return toolPoints(tool, from, to, filled)
 }
 
+// ── painting pixels: paint mode ──────────────────────────────────────────
+
+export function setMode(session: MapSession, mode: 'tiles' | 'paint'): void {
+  session.mode = mode
+}
+
+export function setPaintTool(session: MapSession, tool: TileTool): void {
+  session.paintTool = tool
+}
+
+export function setPaintColor(session: MapSession, color: number): void {
+  session.paintColor = color
+}
+
+export function setPaintWrite(session: MapSession, write: 'fork' | 'edit'): void {
+  session.paintWrite = write
+}
+
+/**
+ * The screen as it currently looks, one byte per dot — what `fill` floods
+ * against and what promotion repacks.
+ *
+ * Bank-aware: a cell in rows 8-15 draws from bank 1, so a common-set read would
+ * flood against art the screen is not showing.
+ */
+export function renderMapPixels(
+  map: MapDoc,
+  tiles: TilesDoc,
+  layerIndex: number
+): { width: number; height: number; indices: Uint8Array } {
+  const width = map.width * TILE_SIZE
+  const height = map.height * TILE_SIZE
+  const indices = new Uint8Array(width * height)
+  const layer = map.layers[layerIndex]
+  if (!layer) return { width, height, indices }
+  const banked = isBanked(tiles)
+  for (let cy = 0; cy < map.height; cy++) {
+    const bank = banked ? bankForRow(cy % SCREEN_ROWS) : 0
+    for (let cx = 0; cx < map.width; cx++) {
+      const tile = layer.data[cy * map.width + cx] ?? 0
+      const pixels = banked ? bankTilePixels(tiles, bank, tile) : tilePixels(tiles, tile)
+      for (let y = 0; y < TILE_SIZE; y++) {
+        indices.set(pixels.subarray(y * TILE_SIZE, (y + 1) * TILE_SIZE), (cy * TILE_SIZE + y) * width + cx * TILE_SIZE)
+      }
+    }
+  }
+  return { width, height, indices }
+}
+
+/**
+ * Canvas offset to a dot. `session.zoom` is pixels per CELL (`MapCanvas.vue`
+ * sizes its stage by it), so a dot is that over `TILE_SIZE`. Not clamped: a
+ * captured drag can leave the canvas, and `paintGrid` drops what falls
+ * outside. Lives here, not in the `.vue`, because only this layer is tested.
+ */
+export function paintPointAt(session: MapSession, offsetX: number, offsetY: number): Point {
+  return {
+    x: Math.floor((offsetX * TILE_SIZE) / session.zoom),
+    y: Math.floor((offsetY * TILE_SIZE) / session.zoom)
+  }
+}
+
+/**
+ * Which bank a cell row is drawn in, or null when the tileset is not banked.
+ * Wrapped by `SCREEN_ROWS` for the same reason `bankSheetOffset` is: a taller
+ * map is editable in progress even though `validateMap` refuses it at export.
+ * The wrap is also what keeps the answer in `0..BANK_COUNT - 1` without a
+ * clamp — `paintGrid` only ever asks about rows inside the grid.
+ */
+export function paintBankOf(session: MapSession): ((cellRow: number) => number) | null {
+  const tileset = session.tileset
+  if (!tileset || !isBanked(tileset)) return null
+  return (cellRow) => bankForRow(cellRow % SCREEN_ROWS)
+}
+
+export function beginPaint(session: MapSession, role: 'fg' | 'bg'): void {
+  session.paintRole = role
+  session.paintPoints = []
+  session.paintOrigin = null
+  session.paintActive = true
+}
+
+/**
+ * Takes one drag segment, `from` the previous pointer sample `to` the current
+ * one. Resolution happens once, in `endPaint`.
+ *
+ * A pencil or spray is the path the pointer took, so its segments accumulate.
+ * A line, a rect or a fill is a shape between where the drag started and
+ * where the pointer is now, so the latest sample *replaces* what came before
+ * — accumulating those would bake every intermediate shape into the tileset,
+ * which is the failure this whole stroke model exists to avoid.
+ *
+ * Reassigned rather than pushed: the session is `shallowReactive`, so a
+ * preview watching the array only notices a new one.
+ */
+export function extendPaint(session: MapSession, from: Point, to: Point): void {
+  if (!session.paintActive) return
+  session.paintOrigin ??= from
+  const points = pointsFor(session, from, to)
+  session.paintPoints =
+    session.paintTool === 'pencil' || session.paintTool === 'spray' ? [...session.paintPoints, ...points] : points
+}
+
+function pointsFor(session: MapSession, from: Point, to: Point): Point[] {
+  if (session.paintTool === 'spray') return sprayPoints(to, session.brushRadius, session.brushDensity)
+  if (session.paintTool === 'fill') {
+    const tileset = session.tileset
+    if (!tileset) return []
+    // The whole picture, not `fillPoints`' default 8×8: the user drew one
+    // shape across cell seams, and a flood has to cross them too.
+    const { width, height, indices } = renderMapPixels(doc(session), tileset, session.activeLayer)
+    return fillPoints(indices, to, width, height)
+  }
+  const origin = session.paintTool === 'pencil' ? from : (session.paintOrigin ?? from)
+  return pixelToolPoints(session.paintTool, origin, to, [], session.filledRect)
+}
+
+/**
+ * Resolves the whole drag into the tileset as one undo step.
+ *
+ * The grid handed to `paintGrid` is in CELLS — `paintGrid` divides the pixel
+ * points by `TILE_SIZE` itself. A pixel width here makes the row stride wrong
+ * and writes past the layer, and a single-cell stroke passes either way.
+ */
+export function endPaint(session: MapSession): void {
+  if (!session.paintActive) return
+  session.paintActive = false
+  const points = session.paintPoints
+  session.paintPoints = []
+  session.paintOrigin = null
+  const tileset = session.tileset
+  const current = doc(session)
+  const layer = current.layers[session.activeLayer]
+  if (!tileset || !layer || !points.length) return
+
+  const result = paintGrid(
+    { width: current.width, height: current.height, tiles: layer.data },
+    tileset,
+    points,
+    session.paintColor,
+    session.paintRole,
+    { write: session.paintWrite, bankOf: paintBankOf(session) ?? undefined }
+  )
+  if (result.refused) {
+    session.status = result.refused
+    offerPromotion(session, result)
+    return
+  }
+
+  // `paintGrid` hands back the same arrays when a stroke changed nothing — the
+  // same colour over pixels that already hold it. `{ ...current, layers }` is
+  // always a fresh object, so the identity guard in `commit` cannot see that
+  // by itself, and every idle repaint would push a step that undoes nothing.
+  const cellsMoved = result.grid.tiles !== layer.data
+  let next = current
+  let droppedBaked = 0
+  if (cellsMoved) {
+    const layers = current.layers.slice()
+    layers[session.activeLayer] = { ...layer, data: result.grid.tiles }
+    // A fork repoints cells, and a cell repointed inside a baked meta makes
+    // its receipt a lie — exactly as a stamped cell does (`finishDrag`). An
+    // `edit` moves no reference, so there is nothing to drop there.
+    const moved = changedCells(layer.data, result.grid.tiles, current.width)
+    ;({ doc: next, dropped: droppedBaked } = withoutBakedAt({ ...current, layers }, session.activeLayer, moved))
+  }
+  if (result.tiles !== tileset) publishTileset(session, result.tiles)
+  if (cellsMoved || result.tileEdits.length) commit(session, next, result.tileEdits)
+
+  if (droppedBaked) {
+    session.selectedPlacement = null
+    session.status = `Painted over ${droppedBaked} baked meta-tile${droppedBaked === 1 ? '' : 's'} — their placement records were dropped.`
+  } else {
+    session.status = result.dropped
+      ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`
+      : ''
+  }
+}
+
+/** The cells whose reference a stroke moved, as grid points. */
+function changedCells(before: readonly number[], after: readonly number[], width: number): Point[] {
+  const points: Point[] = []
+  for (let i = 0; i < after.length; i++) {
+    if (after[i] !== before[i]) points.push({ x: i % width, y: Math.floor(i / width) })
+  }
+  return points
+}
+
+/**
+ * Publishes a tileset this session changed, and adopts it. `store.set` skips
+ * the writer's own listener — the one `loadFromPath` registered under
+ * `session.path` — so without the assignment the session would keep drawing,
+ * and resolving the next stroke against, a document the store no longer holds.
+ */
+function publishTileset(session: MapSession, next: TilesDoc): void {
+  useTilesetStore().set(doc(session).tileset, next, session.path)
+  session.tileset = next
+}
+
+/**
+ * Task 10 fills this in: on an unbanked tileset that just hit 256 tiles, offer
+ * to repack the screen into three banks. Until then the refusal message is all
+ * the user gets — this is the guard that body starts with, and nothing after it.
+ */
+function offerPromotion(session: MapSession, result: PaintGridResult): void {
+  if (result.refusedBank !== null || session.promotionDeclined) return
+}
+
+/**
+ * The tile budget, phrased as the tile editor phrases it (`bankBudgetLabel`
+ * is 1-based: "bank 1: 3 + 2 shared = 5 / 256"), so the two editors never
+ * disagree about the arithmetic.
+ */
+export function paintBudgetLabel(session: MapSession): string {
+  const tileset = session.tileset
+  if (!tileset) return ''
+  if (!isBanked(tileset)) return `tiles: ${tileset.count}/${MAX_TILES}`
+  return tileset.bankTiles.map((_, bank) => bankBudgetLabel(tileset, bank)).join('   ')
+}
+
 // ── selection / clipboard ───────────────────────────────────────────────
 
 export function setSelection(session: MapSession, a: Point, b: Point): void {
@@ -868,7 +1140,7 @@ function swapTileEdits(session: MapSession, edits: TileEdit[] | undefined): Tile
       ...(edit.beforeGroup !== undefined ? { beforeGroup: currentGroup, afterGroup: edit.beforeGroup } : {})
     }
   })
-  store.set(path, { ...tileset, tiles, bankTiles, groupColors }, session.path)
+  publishTileset(session, { ...tileset, tiles, bankTiles, groupColors })
   return displaced
 }
 

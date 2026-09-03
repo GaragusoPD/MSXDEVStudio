@@ -11,19 +11,32 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
-import { normalizeTiles } from '../../../../shared/msx/tile'
+import { MAX_TILES, normalizeTiles, TILE_SIZE, type TileEntry } from '../../../../shared/msx/tile'
+import { normalizeMap } from '../../../../shared/msx/map'
 import {
   bankSheetOffset,
+  beginPaint,
   doc,
+  endPaint,
+  extendPaint,
   mapSession,
   metaRowOffsets,
+  paintBankOf,
+  paintBudgetLabel,
+  paintPointAt,
   pickerBankOffset,
   pickMeta,
   placeMetaAt,
   pruneMapSessions,
+  redo,
+  renderMapPixels,
+  resize,
   saveSession,
   selectPlacementAt,
   setBaked,
+  setMode,
+  setPaintTool,
+  setPaintWrite,
   undo,
   type MapSession
 } from './session'
@@ -397,5 +410,285 @@ describe('metaRowOffsets — per-row offsets for a meta thumbnail (Defect B)', (
   it('is 0 for the picker fallback too when the tileset is unbanked', () => {
     const session = { tileset: unbankedTileset, bank: 2 } as MapSession
     expect(metaRowOffsets(session, null, 3)).toEqual([0, 0, 0])
+  })
+})
+
+describe('paint mode', () => {
+  /** A tile that is all foreground except row 7, which carries `n` so tiles stay distinct. */
+  const distinct = (n: number): TileEntry => ({
+    pattern: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, n & 0xff],
+    color: new Array(8).fill(0xf1)
+  })
+  const solid = (): TileEntry => distinct(0xff)
+  const blank = (): TileEntry => ({ pattern: new Array(8).fill(0), color: new Array(8).fill(0xf1) })
+
+  /** Uneven bank lengths and a non-zero shared region: a uniform fixture cannot catch transposed arithmetic. */
+  function bankedFixture() {
+    return normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      bankTiles: [[solid(), solid()], [], [solid(), solid(), solid(), solid(), solid()]],
+      sharedTiles: 6
+    })
+  }
+
+  /**
+   * Bank 0 has no slot left below the shared region (250 overrides + 6 shared
+   * = 256), and none of its tiles is what a stroke on tile 0 derives — a found
+   * tile would succeed even on a full bank. The other two banks have room.
+   */
+  function fullBankedFixture() {
+    const full = Array.from({ length: MAX_TILES - 6 }, (_, i) => distinct(i))
+    return normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      bankTiles: [full, [solid()], [solid(), solid(), solid()]],
+      sharedTiles: 6
+    })
+  }
+
+  const cell = (session: MapSession, x: number, y: number): number =>
+    doc(session).layers[session.activeLayer].data[y * doc(session).width + x]
+
+  /** One click: begin, one segment, release. */
+  function dab(session: MapSession, x: number, y: number, role: 'fg' | 'bg' = 'fg'): void {
+    beginPaint(session, role)
+    extendPaint(session, { x, y }, { x, y })
+    endPaint(session)
+  }
+
+  it('starts in tiles mode, so an existing map behaves exactly as before', async () => {
+    expect((await openMap()).mode).toBe('tiles')
+  })
+
+  it('paints into the cell the pixel falls in, using the grid width as stride', async () => {
+    const session = await openMap()          // 8x8 map
+    setMode(session, 'paint')
+    beginPaint(session, 'fg')
+    // Pixel (0, 8) is cell (0, 1) — data index 8 on an 8-wide map.
+    extendPaint(session, { x: 0, y: 8 }, { x: 0, y: 8 })
+    endPaint(session)
+
+    const layer = doc(session).layers[session.activeLayer]
+    expect(layer.data[8]).not.toBe(0)
+    expect(layer.data[0]).toBe(0)
+  })
+
+  it('a drag is one undo step, not one per sample', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    const before = session.history.past.length
+
+    beginPaint(session, 'fg')
+    extendPaint(session, { x: 0, y: 0 }, { x: 1, y: 0 })
+    extendPaint(session, { x: 1, y: 0 }, { x: 2, y: 0 })
+    extendPaint(session, { x: 2, y: 0 }, { x: 3, y: 0 })
+    endPaint(session)
+
+    expect(session.history.past.length).toBe(before + 1)
+  })
+
+  it('paintBankOf is null unbanked and wraps by SCREEN_ROWS when banked', async () => {
+    const session = await openMap()
+    expect(paintBankOf(session)).toBeNull()
+
+    useTilesetStore().set(TILES, bankedFixture(), 'x')
+    const bankOf = paintBankOf(session)!
+    expect(bankOf(0)).toBe(0)
+    expect(bankOf(9)).toBe(1)
+    expect(bankOf(17)).toBe(2)
+    expect(bankOf(25)).toBe(0)   // taller-than-a-screen map, still editable
+  })
+
+  it('a refused stroke changes nothing and names the bank', async () => {
+    const session = await openMap()
+    useTilesetStore().set(TILES, fullBankedFixture(), 'x')
+    setMode(session, 'paint')
+    const before = doc(session)
+    const steps = session.history.past.length
+    const tileset = session.tileset
+
+    beginPaint(session, 'fg')
+    extendPaint(session, { x: 0, y: 0 }, { x: 0, y: 0 })
+    endPaint(session)
+
+    expect(doc(session)).toBe(before)
+    expect(session.status).toContain('Bank 0')
+    // Nothing pushed, nothing published: a refusal is not an edit.
+    expect(session.history.past.length).toBe(steps)
+    expect(useTilesetStore().patternDoc(TILES)).toBe(tileset)
+  })
+
+  it('a second stroke builds on the first: the session draws the tileset the stroke produced', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    dab(session, 0, 0)
+    dab(session, 1, 0)
+
+    // The store skips the writer's own listener, so the session has to adopt
+    // its own result — otherwise stroke two resolves against a tileset that
+    // never saw stroke one, and overwrites it.
+    expect(session.tileset).toBe(useTilesetStore().patternDoc(TILES))
+    const tile = cell(session, 0, 0)
+    expect(tile).not.toBe(0)
+    expect(session.tileset!.tiles[tile].pattern[0]).toBe(0xc0)
+  })
+
+  it('an idle repaint — the same colour over the same pixel — pushes no undo step', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    dab(session, 0, 0)
+    const steps = session.history.past.length
+    const tiles = session.tileset
+
+    dab(session, 0, 0)
+
+    expect(session.history.past.length).toBe(steps)
+    expect(session.tileset).toBe(tiles)
+  })
+
+  it('fill floods the whole picture, not the 8x8 cell fillPoints defaults to', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    setPaintTool(session, 'fill')
+    dab(session, 0, 0)
+
+    const layer = doc(session).layers[session.activeLayer]
+    expect(layer.data.every((tile) => tile !== 0)).toBe(true)
+    // One shape, one tile: sixty-four cells of the same solid.
+    expect(new Set(layer.data).size).toBe(1)
+  })
+
+  it('a line drag is its final line, not every intermediate one', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    setPaintTool(session, 'line')
+    beginPaint(session, 'fg')
+    // The pointer swings from a horizontal line into a vertical one before release.
+    extendPaint(session, { x: 0, y: 0 }, { x: 15, y: 0 })
+    extendPaint(session, { x: 0, y: 0 }, { x: 0, y: 15 })
+    endPaint(session)
+
+    expect(cell(session, 0, 1)).not.toBe(0)
+    expect(cell(session, 1, 0)).toBe(0)
+  })
+
+  it('a pencil drag keeps every segment', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    beginPaint(session, 'fg')
+    extendPaint(session, { x: 0, y: 0 }, { x: 15, y: 0 })
+    extendPaint(session, { x: 15, y: 0 }, { x: 15, y: 15 })
+    endPaint(session)
+
+    expect(cell(session, 0, 0)).not.toBe(0)
+    expect(cell(session, 1, 0)).not.toBe(0)
+    expect(cell(session, 1, 1)).not.toBe(0)
+  })
+
+  it('an edit stroke rewrites the tile in place, and undo/redo swap the art the canvas draws', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    setPaintWrite(session, 'edit')
+    dab(session, 0, 0)
+
+    // Nothing minted, nothing repointed: tile 0 itself changed.
+    expect(cell(session, 0, 0)).toBe(0)
+    expect(session.tileset!.count).toBe(4)
+    expect(session.tileset!.tiles[0].pattern[0]).toBe(0x80)
+
+    undo(session)
+    expect(session.tileset).toBe(useTilesetStore().patternDoc(TILES))
+    expect(session.tileset!.tiles[0].pattern[0]).toBe(0)
+
+    redo(session)
+    expect(session.tileset).toBe(useTilesetStore().patternDoc(TILES))
+    expect(session.tileset!.tiles[0].pattern[0]).toBe(0x80)
+  })
+
+  it('undo of a fork stroke restores the cell', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    dab(session, 0, 0)
+    expect(cell(session, 0, 0)).not.toBe(0)
+    undo(session)
+    expect(cell(session, 0, 0)).toBe(0)
+  })
+
+  it('paints a banked screen into the bank that row is drawn in', async () => {
+    const session = await openMap()
+    useTilesetStore().set(TILES, bankedFixture(), 'x')
+    setMode(session, 'paint')
+    // 8 wide, 24 tall: exactly one screen, so row 9 is bank 1.
+    resize(session, 8, 24)
+    dab(session, 0, 9 * TILE_SIZE)
+
+    const tile = cell(session, 0, 9)
+    expect(tile).not.toBe(0)
+    const tileset = session.tileset!
+    expect(tileset.bankTiles[1][tile]).toBeDefined()
+    expect(tileset.bankTiles[0][tile]).toBeUndefined()
+  })
+
+  it('painting inside a baked meta drops its receipt, as cell painting does', async () => {
+    const session = await openMap()
+    pickMeta(session, META)
+    placeMetaAt(session, 2, 2)
+    setBaked(session, true)
+    expect(doc(session).layers[0].placements).toHaveLength(1)
+
+    setMode(session, 'paint')
+    dab(session, 2 * TILE_SIZE, 2 * TILE_SIZE)
+
+    expect(doc(session).layers[0].placements).toHaveLength(0)
+    expect(session.status).toContain('baked')
+  })
+
+  describe('renderMapPixels', () => {
+    it('reads each row from its own bank, so a fill floods what the screen shows', () => {
+      // Common tile 1 is blank; bank 1 overrides it with a solid. Same byte,
+      // different art on row 8.
+      const tiles = normalizeTiles({
+        mode: 'sc2',
+        count: 4,
+        bankTiles: [[], [blank(), solid()], [solid(), solid(), solid()]],
+        sharedTiles: 2
+      })
+      const data = new Array(9).fill(0)
+      data[0] = 1
+      data[8] = 1
+      const map = normalizeMap({ tileset: TILES, width: 1, height: 9, layers: [{ data }] })
+
+      const { width, height, indices } = renderMapPixels(map, tiles, 0)
+      expect(width).toBe(TILE_SIZE)
+      expect(height).toBe(9 * TILE_SIZE)
+      expect(indices[0]).toBe(1)                     // row 0: common tile 1, background only
+      expect(indices[8 * TILE_SIZE * width]).toBe(15) // row 8: bank 1's solid
+    })
+
+    it('is all zero for a layer that does not exist', () => {
+      const map = normalizeMap({ tileset: TILES, width: 2, height: 2 })
+      const { indices } = renderMapPixels(map, normalizeTiles({ mode: 'sc2', count: 1 }), 3)
+      expect(indices.length).toBe(4 * TILE_SIZE * TILE_SIZE)
+      expect(indices.every((value) => value === 0)).toBe(true)
+    })
+  })
+
+  it('paintPointAt turns a canvas offset into a dot at the session zoom (pixels per cell)', async () => {
+    const session = await openMap()
+    session.zoom = 16 // one dot is two canvas pixels
+    expect(paintPointAt(session, 5, 17)).toEqual({ x: 2, y: 8 })
+    expect(paintPointAt(session, 0, 0)).toEqual({ x: 0, y: 0 })
+    // A captured drag can leave the canvas; paintGrid drops what falls outside.
+    expect(paintPointAt(session, -1, -3)).toEqual({ x: -1, y: -2 })
+  })
+
+  it('paintBudgetLabel phrases the budget the way the tile editor does', async () => {
+    const session = await openMap()
+    expect(paintBudgetLabel(session)).toBe(`tiles: 4/${MAX_TILES}`)
+    useTilesetStore().set(TILES, bankedFixture(), 'x')
+    expect(paintBudgetLabel(session)).toBe(
+      'bank 1: 2 + 6 shared = 8 / 256   bank 2: 0 + 6 shared = 6 / 256   bank 3: 5 + 6 shared = 11 / 256'
+    )
   })
 })
