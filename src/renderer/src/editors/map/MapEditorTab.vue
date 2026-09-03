@@ -87,6 +87,11 @@ function onKeydown(event: KeyboardEvent): void {
   // Typing a filename in a side panel is not an editor shortcut.
   if (isTypingTarget(event)) return
   const active = session.value
+  // The cell shortcuts follow their buttons: Copy/Paste/Delete are hidden in
+  // paint mode, so the keys sit out too — a hidden control with a live
+  // shortcut is an asymmetry nobody can explain from the screen. Undo/redo
+  // stay, as their buttons do.
+  const cells = active.mode === 'tiles'
   if (event.ctrlKey) {
     const key = event.key.toLowerCase()
     // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.
@@ -96,12 +101,12 @@ function onKeydown(event: KeyboardEvent): void {
     } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
       event.preventDefault()
       redo(active)
-    } else if (key === 'c') {
+    } else if (key === 'c' && cells) {
       copySelection(active)
-    } else if (key === 'v') {
+    } else if (key === 'v' && cells) {
       pasteClipboard(active)
     }
-  } else if (event.key === 'Delete' || event.key === 'Backspace') {
+  } else if ((event.key === 'Delete' || event.key === 'Backspace') && cells) {
     deleteSelection(active)
   }
 }

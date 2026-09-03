@@ -335,6 +335,7 @@ async function loadTileset(session: MapSession): Promise<void> {
   if (!tilesetPath) {
     clearTileset(session)
     session.tilesetError = 'No tileset set — pick one below.'
+    leavePaintIfUnpaintable(session)
     return
   }
   try {
@@ -343,15 +344,22 @@ async function loadTileset(session: MapSession): Promise<void> {
     clearTileset(session)
     session.tilesetError = `Couldn't load tileset ${tilesetPath}: ${String(error)}`
   }
-  // Paint mode needs a pattern tileset, and this is the one place the map can
-  // lose one — switched to a `.btiles.json`, or a load that failed. Left in
-  // paint mode it is a dead canvas: the paint overlay is gated on `canPaint`,
-  // the cell handlers step aside for any mode but `'tiles'`, and the toggle
-  // that would bring the user back is hidden for the same reason. Conditional,
-  // so a reload or a swap to another pattern tileset keeps the mode the user
-  // chose.
-  if (session.mode === 'paint' && !canPaint(session)) session.mode = 'tiles'
+  leavePaintIfUnpaintable(session)
   await loadMetaDocs(session)
+}
+
+/**
+ * Paint mode needs a pattern tileset, and `loadTileset` is the one place the
+ * map can lose one — switched to a `.btiles.json`, cleared to "— choose —", or
+ * a load that failed. Left in paint mode it is a dead canvas: the paint overlay
+ * is gated on `canPaint`, the cell handlers step aside for any mode but
+ * `'tiles'`, and the toggle that would bring the user back is hidden for the
+ * same reason. Called on *every* exit of `loadTileset`, the early one included.
+ * Conditional, so a reload or a swap to another pattern tileset keeps the mode
+ * the user chose.
+ */
+function leavePaintIfUnpaintable(session: MapSession): void {
+  if (session.mode === 'paint' && !canPaint(session)) session.mode = 'tiles'
 }
 
 function clearTileset(session: MapSession): void {

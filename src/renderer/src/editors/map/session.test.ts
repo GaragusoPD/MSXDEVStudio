@@ -878,6 +878,21 @@ describe('paint mode', () => {
       expect(session.mode).toBe('tiles')
     })
 
+    it('falls back to tiles mode when the tileset reference is cleared', async () => {
+      // The side panel's "— choose —" option, or an outside edit that drops
+      // `tileset` from the file: `loadTileset` leaves by its early exit, and
+      // that exit has to reset too.
+      const session = await openMap()
+      setMode(session, 'paint')
+
+      await setTileset(session, '')
+
+      expect(session.tileset).toBeNull()
+      expect(session.tilesetError).toContain('No tileset set')
+      expect(canPaint(session)).toBe(false)
+      expect(session.mode).toBe('tiles')
+    })
+
     it('stays in paint mode across a reload or a swap to another pattern tileset', async () => {
       files[OTHER] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 6 }) })
       const session = await openMap()

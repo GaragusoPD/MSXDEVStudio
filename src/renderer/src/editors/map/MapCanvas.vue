@@ -182,6 +182,10 @@ watch(
 )
 
 function onKeydown(event: KeyboardEvent): void {
+  // Cell shortcuts, like the cell pointer handlers above: they sit out in paint
+  // mode, where the toolbar hides their buttons (`MapEditorTab.vue` guards its
+  // window-level copies the same way).
+  if (props.session.mode !== 'tiles') return
   if (!event.ctrlKey) {
     if ((event.key === 'Delete' || event.key === 'Backspace') && props.session.selectedPlacement !== null) {
       deleteSelectedPlacement(props.session)
