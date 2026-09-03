@@ -184,9 +184,15 @@ export function normalizeTiles(raw: unknown): TilesDoc {
   // so the first stroke against it was refused as "the tileset is full".
   const count = Math.max(1, Math.min(MAX_TILES, Number(input.count) || rawTiles.length || 1))
   const perRowColor = mode !== 'sc1'
+  // sc1's pattern table is one bank of 256 — there is nowhere for a shared,
+  // grow-from-255 reservation to live, so the field is clamped the same way
+  // `rawBanks` below clamps `bankTiles`. Without this, a doc converted from a
+  // banked sc2/sc4 to sc1 would carry a stale nonzero `sharedTiles` forward
+  // with no bank data left to justify it.
+  const sharedTiles = mode === 'sc1' ? 0 : Math.max(0, Math.min(MAX_TILES, Number(input.sharedTiles) || 0))
+  const sharedStart = MAX_TILES - sharedTiles
 
-  const tiles: TileEntry[] = []
-  for (let i = 0; i < count; i++) {
+  const decodeEntry = (i: number): TileEntry => {
     const entry = (rawTiles[i] ?? {}) as Partial<TileEntry>
     const pattern = zeros(TILE_SIZE)
     const color = perRowColor ? zeros(TILE_SIZE) : []
@@ -196,11 +202,30 @@ export function normalizeTiles(raw: unknown): TilesDoc {
       // is the useful default and matches what the editor shows for a fresh bank.
       if (perRowColor) color[y] = entry.color?.[y] === undefined ? 0xf1 : byte(entry.color[y])
     }
-    tiles.push({ pattern, color })
+    return { pattern, color }
   }
 
+  const tiles: TileEntry[] = []
+  for (let i = 0; i < count; i++) tiles.push(decodeEntry(i))
+  // Meta-tiles allocate shared slots at MAX_TILES - sharedTiles .. MAX_TILES - 1,
+  // far above `count` (see `TilesDoc.sharedTiles`) — `findOrCreateTile` writes
+  // them straight into `doc.tiles` without going through this function. Every
+  // *other* caller (a file load, the export mirror-refresh, a mode conversion,
+  // `removeTile`'s own re-normalize) does funnel back through here, so without
+  // this second pass the loop above — bounded to `count` — would silently drop
+  // the entire shared region on every one of them. That is the corruption
+  // three rounds of `removeTile` fixes kept rediscovering one caller at a time:
+  // the producer never knew the shared region existed. Rebuilt at each tile's
+  // own hardware index, so a meta's reference never renumbers. When `count`
+  // already reaches into this range (an accounting-only fixture, not a state
+  // any editor produces) the two passes just decode the same bytes twice.
+  for (let i = sharedStart; i < MAX_TILES; i++) tiles[i] = decodeEntry(i)
+
   // Enforced here rather than at the call sites, so a hand-edited file cannot
-  // present artwork in tile 0 while also claiming the flag.
+  // present artwork in tile 0 while also claiming the flag. Ordered after the
+  // shared-region rebuild above so it always wins: a degenerate `sharedTiles
+  // === MAX_TILES` doc has `sharedStart === 0`, and rebuilding tile 0 as a
+  // shared entry must not un-blank it.
   const reserveTile0 = input.reserveTile0 === true
   if (reserveTile0 && tiles[0]) tiles[0] = blankTileEntry(mode)
 
@@ -236,7 +261,6 @@ export function normalizeTiles(raw: unknown): TilesDoc {
       return { pattern, color }
     })
   })
-  const sharedTiles = Math.max(0, Math.min(MAX_TILES, Number(input.sharedTiles) || 0))
 
   return {
     version: 1,
@@ -642,6 +666,12 @@ export function swapRowColors(doc: TilesDoc, tileIndex: number, y: number): Tile
  * old-index → new-index mapping Spec 10 replays over maps that reference it.
  */
 export function reorderTiles(doc: TilesDoc, from: number, to: number): { doc: TilesDoc; mapping: number[] } {
+  // A shared tile's index must never move — every meta that references it
+  // means that index specifically, the same invariant `removeTile` refuses to
+  // break. There is no reorder UI over the shared region yet (the tile grid
+  // only shows 0..count-1), but nothing else stops a caller from asking.
+  const sharedStart = MAX_TILES - doc.sharedTiles
+  if (from >= sharedStart || to >= sharedStart) return { doc, mapping: doc.tiles.map((_, i) => i) }
   const tiles = doc.tiles.slice()
   const [moved] = tiles.splice(from, 1)
   tiles.splice(to, 0, moved)
@@ -697,13 +727,29 @@ export function removeTile(doc: TilesDoc, index: number): { doc: TilesDoc; mappi
   // normalizing: normalizeTiles clamps block references against the new,
   // smaller count, so an un-remapped reference to the last tile would be
   // clamped to 0 instead of following the tile down a slot.
-  const mapping = identity.map((i) => (i === index ? 0 : i > index ? i - 1 : i))
+  //
+  // The shared region sits at sharedStart..255 in this same sparse `tiles`
+  // array, far above `count`, but it is real, live art a meta may be the only
+  // reference to. A whole-array `.filter` here — the bug this function exists
+  // to fix — compacts those entries down into the gap this removal opens, and
+  // normalizeTiles's count-bounded rebuild loop then discards them outright:
+  // removing one ordinary tile destroyed every shared tile, including ones
+  // this removal never touched. So both the index shift and `mapping` below
+  // are bounded to `[0, commonEnd)` — the common range this removal can
+  // actually affect — leaving the shared region, and any reference to it,
+  // exactly where they were.
+  const commonEnd = Math.min(doc.count, sharedStart)
+  const mapping = identity.map((i) => (i === index ? 0 : i > index && i < commonEnd ? i - 1 : i))
   const remapped = applyTileMapping(doc, mapping)
+  const tiles: TileEntry[] = []
+  for (let i = 0; i < index; i++) tiles[i] = doc.tiles[i]
+  for (let i = index; i < commonEnd - 1; i++) tiles[i] = doc.tiles[i + 1]
+  for (let i = sharedStart; i < MAX_TILES; i++) tiles[i] = doc.tiles[i]
   return {
     doc: normalizeTiles({
       ...remapped,
       count: doc.count - 1,
-      tiles: doc.tiles.filter((_, i) => i !== index),
+      tiles,
       flags: doc.flags.filter((_, i) => i !== index),
       // sc1 colours belong to positions, so the tail slides up a slot with the tiles.
       groupColors: doc.groupColors
@@ -731,6 +777,15 @@ function applyTileMapping(doc: TilesDoc, mapping: readonly number[]): TilesDoc {
  */
 export function tileModeConversionLossy(doc: TilesDoc, mode: TileMode): boolean {
   if (doc.mode === mode || mode !== 'sc1') return false
+  // sc1 has one pattern table, not three — a banked tileset (or one still
+  // holding shared meta slots) has no sc1 equivalent at all: every bank
+  // override and the whole shared reservation would simply vanish. That is
+  // real loss on its own, reported the same way a colour-per-row loss is,
+  // and it sidesteps the group-base lookup below: index - (index % SC1_GROUP)
+  // for a shared tile at (say) 255 lands on 248, which is a hole whenever
+  // `count` is small — real art has never lived at a "group" that far past
+  // the common range.
+  if (isBanked(doc) || doc.sharedTiles > 0) return true
   return doc.tiles.some((tile, index) => {
     const first = tile.color[0]
     // Differs down the tile, or differs from the tile that will own the group.
@@ -825,7 +880,10 @@ export function validateTiles(doc: TilesDoc): string[] {
   if (doc.version !== 1) problems.push(`Unsupported version ${doc.version}`)
   if (!isTileMode(doc.mode)) problems.push(`Unknown mode "${doc.mode}"`)
   if (doc.count < 1 || doc.count > MAX_TILES) problems.push(`count ${doc.count} outside 1..${MAX_TILES}`)
-  if (doc.tiles.length !== doc.count) problems.push(`count ${doc.count} but ${doc.tiles.length} tiles`)
+  // On a banked doc `tiles` also holds the shared region far above `count`
+  // (see `TilesDoc.sharedTiles`), so its `.length` legitimately runs past
+  // `count` — only *fewer* entries than claimed is an actual problem.
+  if (doc.tiles.length < doc.count) problems.push(`count ${doc.count} but only ${doc.tiles.length} tiles`)
 
   const inRange = (values: number[]): boolean =>
     values.every((value) => Number.isInteger(value) && value >= 0 && value <= 0xff)
@@ -896,7 +954,13 @@ export function rowColorViolations(
 
 export function tilePatternBytes(doc: TilesDoc): Uint8Array {
   const out = new Uint8Array(doc.count * TILE_SIZE)
-  doc.tiles.forEach((tile, index) => out.set(tile.pattern, index * TILE_SIZE))
+  // A bounded loop, not `.forEach`: on a banked doc `tiles` also holds the
+  // shared region far past `count` (see `TilesDoc.sharedTiles`), and
+  // `.forEach` walks every populated index, not just the common range this
+  // table exports — `.set` at a shared tile's own offset then throws, since
+  // `out` is sized for `count` tiles only. The shared/per-bank tables are a
+  // banked export's own job, not this one's.
+  for (let index = 0; index < doc.count; index++) out.set(doc.tiles[index].pattern, index * TILE_SIZE)
   return out
 }
 
@@ -904,6 +968,7 @@ export function tilePatternBytes(doc: TilesDoc): Uint8Array {
 export function tileColorBytes(doc: TilesDoc): Uint8Array {
   if (doc.mode === 'sc1') return Uint8Array.from(doc.groupColors)
   const out = new Uint8Array(doc.count * TILE_SIZE)
-  doc.tiles.forEach((tile, index) => out.set(tile.color, index * TILE_SIZE))
+  // See `tilePatternBytes`: bounded to `count` for the same reason.
+  for (let index = 0; index < doc.count; index++) out.set(doc.tiles[index].color, index * TILE_SIZE)
   return out
 }

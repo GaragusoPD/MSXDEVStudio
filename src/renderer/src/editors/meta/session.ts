@@ -474,7 +474,22 @@ export function reserveTile0(session: MetaSession): void {
   const store = useTilesetStore()
   const tileset = store.patternDoc(session.tilesetPath)
   if (!tileset || tileset.reserveTile0) return
-  if (tileset.count >= MAX_TILES || tileset.tiles.length >= MAX_TILES) {
+  // A shared tile's index must never move — every meta that references it
+  // means that index specifically — but the shift below moves *everything* up
+  // by one, and the shared region has nowhere to go: it already sits at the
+  // top of the hardware's own 256-tile space. Refused here on purpose, not by
+  // the accident `tiles.length >= MAX_TILES` used to be below: once any
+  // shared tile has ever existed, `.length` reaches 256 regardless of
+  // `count`, so the old check happened to catch this case too, for the wrong
+  // reason — and would also wrongly refuse a mostly-empty banked tileset that
+  // has never held one.
+  if (tileset.sharedTiles > 0) {
+    session.status =
+      'This tileset has shared meta-tile slots at the top of the bank, which a tile-0 shift ' +
+      'cannot renumber without breaking every meta that references them.'
+    return
+  }
+  if (tileset.count >= MAX_TILES) {
     session.status = 'The tileset is full, so tile 0 cannot be shifted out of the way. Free a tile first.'
     return
   }

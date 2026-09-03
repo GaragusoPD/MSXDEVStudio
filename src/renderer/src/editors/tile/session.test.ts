@@ -15,6 +15,7 @@ import type { MapDoc } from '../../../../shared/msx/map'
 import { colorByteAt, normalizeTiles, splitColorByte, type TileEntry } from '../../../../shared/msx/tile'
 import { onTilesReordered, type TilesReorderEvent } from '../../../../shared/tile-editor'
 import {
+  addTile,
   beginStroke,
   deleteTile,
   deleteTiles,
@@ -158,6 +159,24 @@ describe('deleting a selection', () => {
 
     deleteTile(session, 0)
     expect(marks(session)).toEqual([1, 2, 3, 4, 5, 6, 7])
+  })
+})
+
+describe('addTile', () => {
+  it('refuses to grow count into the shared reservation, even with MAX_TILES room to spare', async () => {
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      // 250 common tiles, 6 reserved for meta-tiles: 256 total, none free —
+      // but well under MAX_TILES on its own, which is what the old
+      // `count >= MAX_TILES` check alone would have missed.
+      doc: normalizeTiles({ mode: 'sc2', count: 250, sharedTiles: 6 })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    addTile(session)
+
+    expect(session.doc.count).toBe(250)
   })
 })
 
@@ -308,5 +327,59 @@ describe('importImage', () => {
     // to lose — the point of the test.
     expect(written.groupColors[2]).toBe(written.groupColors[1])
     expect(session.status).not.toMatch(/lost the color pair/)
+  })
+
+  it('preserves a live shared tile through a merge, and appends within the reservation', async () => {
+    // The shared region sits far above `count` in this same sparse `tiles`
+    // array a merge appends into. Before this fix, `offset` read
+    // `session.doc.tiles.length` — 256 once any shared tile has ever
+    // existed, regardless of `count` — so a merge on a banked doc silently
+    // discarded everything it imported; and even with the right offset, the
+    // merged array normalizeTiles's shared-region rebuild reads from needed
+    // the shared tile's bytes reattached, or that rebuild finds nothing there
+    // and blanks a meta's live art while `sharedTiles` still claims it.
+    const live: TileEntry = { pattern: new Array(8).fill(0x99), color: new Array(8).fill(0xf1) }
+    const rawTiles: unknown[] = Array.from({ length: 8 }, (_, i) => ({
+      pattern: [i, 0, 0, 0, 0, 0, 0, 0],
+      color: new Array(8).fill(0xf1)
+    }))
+    rawTiles[255] = live
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 8, tiles: rawTiles, sharedTiles: 1 })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    await importImage(session, picture(2), 'merge', false)
+
+    const written = useTilesetStore().patternDoc(PATH)!
+    expect(written.count).toBe(10) // the 8 existing common tiles plus 2 imported
+    expect(written.sharedTiles).toBe(1) // a merge never touches the reservation
+    expect(written.tiles[255]).toEqual(live)
+    // The pre-existing common tiles rode along unchanged, at their own indices.
+    expect(written.tiles.slice(0, 8).map((tile) => tile.pattern[0])).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+  })
+
+  it('preserves a live shared tile through a replace, too', async () => {
+    const live: TileEntry = { pattern: new Array(8).fill(0x99), color: new Array(8).fill(0xf1) }
+    const rawTiles: unknown[] = Array.from({ length: 8 }, (_, i) => ({
+      pattern: [i, 0, 0, 0, 0, 0, 0, 0],
+      color: new Array(8).fill(0xf1)
+    }))
+    rawTiles[255] = live
+    files[PATH] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 8, tiles: rawTiles, sharedTiles: 1 })
+    })
+    const session = tileSession(PATH)
+    await settled()
+
+    await importImage(session, picture(2), 'replace', false)
+
+    const written = useTilesetStore().patternDoc(PATH)!
+    expect(written.count).toBe(2) // replace throws away the old common tiles...
+    expect(written.sharedTiles).toBe(1) // ...but not a meta's shared art
+    expect(written.tiles[255]).toEqual(live)
   })
 })

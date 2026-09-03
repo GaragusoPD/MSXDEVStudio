@@ -249,6 +249,32 @@ describe('reserving tile 0 on a tileset that already holds art', () => {
     expect(session.status).toMatch(/full/i)
   })
 
+  it('refuses on a tileset with shared meta-tile slots, deliberately rather than by accident', async () => {
+    // The shift below moves every index up by one, and the shared region has
+    // nowhere to go — it already sits at the top of the hardware's own
+    // 256-tile space. The old guard (`tiles.length >= MAX_TILES`) happened to
+    // catch this too, but for the wrong reason: once any shared tile has ever
+    // existed, `.length` reaches 256 regardless of how empty `count` still
+    // is, so it would also wrongly refuse a mostly-empty banked tileset with
+    // no shared tile in play at all — this test is on the boundary that tells
+    // the two apart.
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: false, sharedTiles: 1 })
+    })
+    const session = metaSession(META)
+    await settled()
+    await settled()
+    const before = useTilesetStore().patternDoc(TILES)!
+
+    reserveTile0(session)
+
+    const after = useTilesetStore().patternDoc(TILES)!
+    expect(after).toBe(before)
+    expect(after.reserveTile0).toBe(false)
+    expect(session.status).toMatch(/shared/i)
+  })
+
   it('blanks the new tile 0 and moves the art to tile 1', async () => {
     // Tile 0 as real, load-bearing art is the case this whole flag exists for:
     // `demo_msx1/res/tiles.tiles.json` draws its tile 0 274 times.
@@ -418,6 +444,65 @@ describe('undo on a banked tileset tracks shared tiles for Compact', () => {
     expect(bankCapacityLeft(afterCompact, 0)).toBe(bank0Capacity + 2)
     expect(bankCapacityLeft(afterCompact, 1)).toBe(bank1Capacity + 2)
     expect(bankCapacityLeft(afterCompact, 2)).toBe(bank2Capacity + 2)
+    expect(session.appended).toEqual([])
+  })
+
+  it('reclaims orphans in both regions in one pass, and never touches a live shared tile that belongs to no reclaim', async () => {
+    // The shape neither round 1-3's fixes nor their tests exercised: a single
+    // session with an orphan on *each* side of the sparse array, reclaimed
+    // together — plus a shared tile this session never created and never
+    // orphaned, standing in for a meta in some other, unrelated session. The
+    // round-3 review found `removeTile`'s common branch would compact that
+    // survivor into the gap its own removal opened and lose it, even though
+    // this reclaim never asked to touch it.
+    files[TILES] = tilesFile(true) // unbanked: count 4, reserveTile0
+
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    // First stroke, while still unbanked: mints an ordinary common tile.
+    paint(session, [{ x: 0, y: 0 }])
+    expect(session.appended).toEqual([4])
+    undo(session) // orphaned, but the tile itself is left behind (append-only)
+
+    // Now the tileset gets banked out from under this session — exactly what
+    // a second editor tab (or a later banking pass) can do — and already
+    // carries one *live* shared tile at 255 that belongs to no session here.
+    const live = { pattern: new Array(8).fill(0x99), color: new Array(8).fill(0xf1) }
+    const beforeBanking = useTilesetStore().patternDoc(TILES)!
+    const rawTiles: unknown[] = beforeBanking.tiles.slice()
+    rawTiles[255] = live
+    useTilesetStore().set(
+      TILES,
+      normalizeTiles({
+        ...beforeBanking,
+        tiles: rawTiles,
+        bankTiles: [[{ pattern: Array(8).fill(0), color: Array(8).fill(0x21) }], [], []],
+        sharedTiles: 1
+      }),
+      'test'
+    )
+
+    // Second stroke, now banked: a different local pixel so it cannot dedup
+    // against tile 4's pattern, mints a shared tile at 254 (255 is taken).
+    paint(session, [{ x: 9, y: 9 }])
+    expect(session.appended).toEqual([4, 254])
+    undo(session) // orphaned too, same append-only leave-behind
+
+    // Both of this session's tiles — one common, one shared — are now orphans,
+    // and neither the pre-existing common tiles nor the other session's
+    // shared tile at 255 are referenced by `appended` at all.
+    const reclaimed = reclaimOrphans(session)
+    expect(reclaimed).toBe(2)
+
+    const after = useTilesetStore().patternDoc(TILES)!
+    expect(after.count).toBe(4) // the common orphan's removal, and nothing else, dropped
+    expect(after.sharedTiles).toBe(1) // only this session's shared orphan left; the other survives
+    // The live shared tile: same position, same bytes — never compacted,
+    // never renumbered, never blanked by the common removal that ran in the
+    // same reclaim.
+    expect(after.tiles[255]).toEqual(live)
     expect(session.appended).toEqual([])
   })
 })

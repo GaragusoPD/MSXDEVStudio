@@ -458,4 +458,49 @@ describe('pattern banks', () => {
     expect(doc.bankTiles).toEqual([[], [], []])
     expect(isBanked(doc)).toBe(false)
   })
+
+  it('sc1 also clamps a stale sharedTiles carried over from a banked sc2/sc4 file', () => {
+    const doc = normalizeTiles({ mode: 'sc1', count: 8, sharedTiles: 3 })
+    expect(doc.sharedTiles).toBe(0)
+  })
+
+  it('survives a save/reload round trip — the single most load-bearing test this feature has', () => {
+    // The shared region lives at MAX_TILES - sharedTiles .. 255, far above
+    // `count`. Before this fix, `normalizeTiles`'s rebuild loop only ever
+    // reached `count`, so this exact round trip — the ordinary path every
+    // file takes through `tilesetStore.load()` and every export's
+    // mirror-refresh in `resources.ts` — silently dropped the entire shared
+    // region on the very first reload, no editing required.
+    const doc = normalizeTiles({ mode: 'sc2', count: 4, bankTiles: [[solid(1)], [], []], sharedTiles: 0 })
+    const painted = { ...doc, tiles: doc.tiles.slice(), sharedTiles: 1 }
+    painted.tiles[255] = solid(0xaa)
+
+    const reloaded = normalizeTiles(JSON.parse(JSON.stringify(painted)))
+    expect(reloaded.sharedTiles).toBe(1)
+    expect(reloaded.tiles[255]).toBeDefined()
+    expect(reloaded.tiles[255].pattern).toEqual(new Array(8).fill(0xaa))
+    // The common region the reload also has to get right, unchanged.
+    expect(reloaded.count).toBe(4)
+    expect(reloaded.tiles[0].pattern).toEqual(new Array(8).fill(0))
+  })
+
+  it('does not crash exporting a bank whose tiles array reaches past count into the shared region', () => {
+    // `tilePatternBytes`/`tileColorBytes` used to walk the sparse array with
+    // `.forEach`, which visits every populated index — including the shared
+    // ones far past `count` — and `.set()` at that offset threw, because the
+    // output buffer is sized for `count` tiles only.
+    const rawTiles: unknown[] = [solid(1), solid(2), solid(3), solid(4)]
+    rawTiles[255] = solid(0xaa)
+    const doc = normalizeTiles({ mode: 'sc2', count: 4, tiles: rawTiles, sharedTiles: 1 })
+    expect(() => tilePatternBytes(doc)).not.toThrow()
+    expect(() => tileColorBytes(doc)).not.toThrow()
+    expect(tilePatternBytes(doc)).toHaveLength(4 * 8)
+  })
+
+  it('validateTiles does not flag a banked tiles array for reaching past count', () => {
+    const rawTiles: unknown[] = [solid(1), solid(2), solid(3), solid(4)]
+    rawTiles[255] = solid(0xaa)
+    const doc = normalizeTiles({ mode: 'sc2', count: 4, tiles: rawTiles, sharedTiles: 1 })
+    expect(validateTiles(doc)).toEqual([])
+  })
 })

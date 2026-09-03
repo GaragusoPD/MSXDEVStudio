@@ -402,7 +402,10 @@ export function createBlock(doc: TilesDoc, name: string, width: number, height: 
   const w = clampBlock(width)
   const h = clampBlock(height)
   const start = doc.mode === 'sc1' ? Math.ceil(doc.count / SC1_GROUP) * SC1_GROUP : doc.count
-  if (start + w * h > MAX_TILES) return doc
+  // A block's tiles are common — growing `count` up into the shared
+  // reservation would give a block cell and a meta's shared art the same
+  // hardware index, so repainting the block would silently repaint the meta.
+  if (start + w * h > MAX_TILES - doc.sharedTiles) return doc
   const grown = normalizeTiles({ ...doc, count: start + w * h })
   const block: TileBlock = { name, width: w, height: h, tiles: Array.from({ length: w * h }, (_, i) => start + i) }
   return { ...grown, blocks: [...grown.blocks, block] }

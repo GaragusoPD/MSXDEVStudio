@@ -615,6 +615,14 @@ describe('multi-tile blocks', () => {
     expect(createBlock(full, 'huge', 4, 4)).toBe(full)
   })
 
+  it('refuses a block that would grow count into the shared reservation', () => {
+    // Plenty of raw MAX_TILES room (250 + 4 = 254 < 256), but the top 6 slots
+    // are reserved for meta-tiles — a block landing on one would give a
+    // common cell and a meta's shared art the same hardware index.
+    const doc = normalizeTiles({ mode: 'sc2', count: 250, sharedTiles: 6 })
+    expect(createBlock(doc, 'huge', 2, 2)).toBe(doc)
+  })
+
   it('clamps the grid and names an existing rectangle of tiles', () => {
     const doc = blockFromTiles(createTilesDoc('sc2', 8), 'reused', MAX_BLOCK + 5, 2, [0, 1, 2, 3])
     expect(doc.blocks[0].width).toBe(MAX_BLOCK)
@@ -725,6 +733,39 @@ describe('delete and mode conversion', () => {
     expect(removeTile(solo, 0).doc).toBe(solo)
   })
 
+  it('leaves a live shared tile untouched — storage and mapping — when a common tile is removed', () => {
+    // Round 3 fixed reclaimOrphans's sort order; the review that followed it
+    // found this one level down: removeTile's own common branch filtered the
+    // *whole* sparse `tiles` array, compacting the shared entry at 255 into
+    // the gap the removal opened, where normalizeTiles's count-bounded
+    // rebuild then silently discarded it — even though this removal has
+    // nothing to do with it. `sharedTiles: 1` here stands in for a meta in
+    // another, unrelated session; this removal must never know it exists.
+    const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
+    const rawTiles: unknown[] = [solid(1), solid(2), solid(3), solid(4), solid(5), solid(6)]
+    rawTiles[255] = solid(0xaa)
+    const doc = normalizeTiles({ mode: 'sc2', count: 6, tiles: rawTiles, sharedTiles: 1 })
+
+    const { doc: next, mapping } = removeTile(doc, 3) // removes the common tile holding solid(4)
+
+    expect(next.count).toBe(5)
+    expect(next.sharedTiles).toBe(1) // this removal never touched the reservation
+    expect(next.tiles[255].pattern).toEqual(new Array(8).fill(0xaa)) // the shared tile's art survives
+    expect(mapping[255]).toBe(255) // and its index is never renumbered — the Spec 10 replay must leave it alone
+    expect(next.tiles.slice(0, 5).map((tile) => tile.pattern[0])).toEqual([1, 2, 3, 5, 6])
+    expect(validateTiles(next)).toEqual([])
+  })
+
+  it('refuses to reorder a shared index — its position is fixed, not draggable', () => {
+    const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
+    const rawTiles: unknown[] = [solid(1), solid(2)]
+    rawTiles[255] = solid(0xaa)
+    const doc = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, sharedTiles: 1 })
+    const { doc: next, mapping } = reorderTiles(doc, 255, 0)
+    expect(next).toBe(doc)
+    expect(mapping[255]).toBe(255)
+  })
+
   it('spreads sc1 group colours over rows going to sc2, keeping patterns', () => {
     let doc = createTilesDoc('sc1', 16)
     doc = { ...doc, groupColors: [mergeColorByte(7, 1), mergeColorByte(2, 3)] }
@@ -755,6 +796,23 @@ describe('delete and mode conversion', () => {
     const doc = createTilesDoc('sc2', 16) // uniform white-on-black
     expect(tileModeConversionLossy(doc, 'sc1')).toBe(false)
     expect(tileModeConversionLossy(doc, 'sc4')).toBe(false)
+  })
+
+  it('reports loss instead of crashing when a doc with shared tiles targets sc1', () => {
+    // sc1 has one pattern table, not three — a shared reservation (or a bank
+    // override) has no sc1 equivalent at all, so this must be lossy. Before
+    // the fix it crashed instead: the group-base lookup for a shared tile at
+    // 255 with a small `count` reads a hole (248 is nowhere near any real
+    // group), and `.color[0]` on that hole threw.
+    const solid = (byte: number) => ({ pattern: new Array(8).fill(byte), color: new Array(8).fill(0xf1) })
+    const rawTiles: unknown[] = [solid(1), solid(2)]
+    rawTiles[255] = solid(0xaa)
+    const shared = normalizeTiles({ mode: 'sc2', count: 2, tiles: rawTiles, sharedTiles: 1 })
+    expect(() => tileModeConversionLossy(shared, 'sc1')).not.toThrow()
+    expect(tileModeConversionLossy(shared, 'sc1')).toBe(true)
+
+    const banked = normalizeTiles({ mode: 'sc2', count: 2, bankTiles: [[solid(9)], [], []] })
+    expect(tileModeConversionLossy(banked, 'sc1')).toBe(true)
   })
 
   it('sc2 ↔ sc4 differ only by the palette', () => {

@@ -234,19 +234,37 @@ export async function importImage(
   const keepsTile0 = mode === 'replace' && session.doc.reserveTile0
   // Read before `commit`, from the pre-import tile count: once commit lands,
   // `session.doc.tiles` is the post-merge count and every index below would be
-  // offset by the wrong amount.
-  const offset = mode === 'replace' ? (keepsTile0 ? 1 : 0) : session.doc.tiles.length
-  const tiles =
+  // offset by the wrong amount. `count`, not `.tiles.length` — on a banked
+  // doc the array's length also covers the shared region far past `count`
+  // (see `TilesDoc.sharedTiles`), which a merge must not treat as occupied
+  // common space to append after.
+  const offset = mode === 'replace' ? (keepsTile0 ? 1 : 0) : session.doc.count
+  // How much common room is left once the shared reservation at the top is
+  // honored — the ceiling both branches below clamp against, in place of the
+  // bare `MAX_TILES` a banked doc would let spill into it.
+  const commonCeiling = MAX_TILES - session.doc.sharedTiles
+  const commonTiles = (
     mode === 'replace'
       ? keepsTile0
         ? [blankTileEntry(session.doc.mode), ...packed.doc.tiles]
         : packed.doc.tiles
-      : [...session.doc.tiles, ...packed.doc.tiles].slice(0, MAX_TILES)
+      : [...session.doc.tiles.slice(0, session.doc.count), ...packed.doc.tiles]
+  ).slice(0, commonCeiling)
+  // The shared region sits at its own hardware index far above `count` in
+  // this same sparse `tiles` array (see `TilesDoc.sharedTiles`) — an import
+  // never touches it either way. `commonTiles` above only ever spans the
+  // common range, so the shared tail has to be reattached at its own index
+  // before `normalizeTiles` runs: otherwise its shared-region rebuild would
+  // find nothing there and blank a meta's live art while `sharedTiles` still
+  // claims it. A no-op for an unbanked doc, where `sharedTiles` is 0 and the
+  // loop never runs.
+  const tiles = commonTiles.slice()
+  for (let i = commonCeiling; i < MAX_TILES; i++) tiles[i] = session.doc.tiles[i]
   const doc = normalizeTiles({
     ...session.doc,
     // sc4 can adopt the converter's optimized palette; MSX1 modes keep the fixed one.
     palette: session.doc.mode === 'sc4' ? (result.palette ?? session.doc.palette) : null,
-    count: tiles.length,
+    count: commonTiles.length,
     tiles,
     groupColors: mode === 'replace' ? packed.doc.groupColors : session.doc.groupColors
   })
@@ -580,7 +598,9 @@ export function setPalette(session: TileSession, index: number, grb: number): vo
 }
 
 export function addTile(session: TileSession): void {
-  if (session.doc.count >= MAX_TILES) return
+  // Same reservation `createBlock` respects: a new common tile must not land
+  // on an index the shared region already owns.
+  if (session.doc.count >= MAX_TILES - session.doc.sharedTiles) return
   commit(session, normalizeTiles({ ...session.doc, count: session.doc.count + 1 }), 'add tile')
   select(session, session.doc.count - 1)
 }
