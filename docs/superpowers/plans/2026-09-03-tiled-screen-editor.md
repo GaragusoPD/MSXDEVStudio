@@ -4,25 +4,136 @@
 
 **Goal:** Paint pixels directly on a SCREEN 1/2/4 map — touch up an imported screen, edit part of a hand-built map, or draw one from scratch.
 
-**Architecture:** Extract `meta-paint.ts`'s stroke core as `paintGrid` over a plain `{width, height, tiles}` grid, which `MapLayer.data` already satisfies. `paintMeta` becomes a wrapper, so the meta editor is provably unchanged. Painting joins the map editor as a mode beside stamping; a second allocator puts forked tiles in the row's own bank instead of the shared region.
+**Architecture:** Extract `meta-paint.ts`'s stroke core as `paintGrid` over a plain `{width, height, tiles}` grid of **cell** references, which `MapLayer.data` already satisfies. `paintMeta` becomes a wrapper, so the meta editor is provably unchanged. Painting joins the map editor as a mode beside stamping; a second allocator reads and writes the row's own bank instead of the shared region.
 
 **Tech Stack:** TypeScript, Vue 3, Pinia, Vitest. No new dependencies.
 
 **Spec:** `docs/superpowers/specs/2026-09-03-tiled-screen-editor-design.md`
 
+**Plan revision:** rewritten after an adversarial review found 7 Critical defects in the first draft. Where a step below looks unnecessarily emphatic, it is guarding a specific bug that review caught.
+
 ## Global Constraints
 
-- **Branch:** `feat/tiled-screen-editor`, off `main` at `21f4b6e`.
-- **`findOrCreateTile` must not change behaviour.** Meta-tiles depend on its shared-region allocation: one index means one picture in every bank, which is what lets `_DrawPlacements` stay bank-unaware. Bank-local allocation is a *second* function beside it.
+- **Branch:** `feat/tiled-screen-editor`. Base: `e457deb` (`git merge-base main HEAD`).
+- **`grid.width`/`grid.height` are in CELLS, never pixels.** `paintGrid` computes `cx = Math.floor(point.x / TILE_SIZE)` and compares it to `grid.width`, then indexes `tiles[cy * grid.width + cx]`. `points` are in pixels; the grid is in cells. Passing a pixel width makes the row stride wrong and writes past the array — it is the single easiest mistake here and a same-cell test cannot catch it.
+- **`findOrCreateTile` must not change behaviour.** Meta-tiles depend on its shared-region allocation: one index means one picture in every bank, which is what lets `_DrawPlacements` stay bank-unaware. Bank-local work is a *second* function beside it.
+- **Every read of a cell's current art goes through `bankTileAt`** when a bank is in play. `doc.tiles[index]` is the common set; on a banked tileset `count` is often 1 and the art lives in `bankTiles[b]`, so a direct read returns `undefined` and silently destroys the picture under the stroke.
 - **The gate is `npm run check`** (lint + typecheck). Every task ends green.
-- **Do NOT run the real-MSXgl compile tests.** This machine HAS a checkout at `~/Applications/MSXgl`, so they do **not** auto-skip. Exclude them explicitly: append `-t '^(?!.*generated headers compile into a ROM).+$'` to any vitest run that would reach `src/main/services/resources.test.ts`.
-- **Vitest covers `src/shared/`, `src/main/`, `renderer/src/stores`, and `renderer/src/editors/*/session.ts`.** `.vue` files and `sheet.ts` are NOT covered — no logic may live there. Every offset and hit test is computed in `session.ts`.
-- **Fixtures must not be uniform.** Banked fixtures use banks at *different* lengths with a non-zero `sharedTiles`. Four defects on the banking branch survived review because fixtures were dense.
-- `TILE_SIZE` is 8, `MAX_TILES` is 256, `BANK_COUNT` is 3, `SCREEN_ROWS` is 24 — all from `src/shared/msx/tile.ts` and `src/shared/msx/map.ts`.
+- **Do NOT run the real-MSXgl compile tests.** This machine HAS a checkout at `~/Applications/MSXgl`, so they do **not** auto-skip. Exclude them: append `-t '^(?!.*generated headers compile into a ROM).+$'` to any vitest run reaching `src/main/services/resources.test.ts`.
+- **Vitest covers `src/shared/`, `src/main/`, `renderer/src/stores`, and `renderer/src/editors/*/session.ts`.** `.vue` files and `sheet.ts` are NOT covered — no logic may live there, including hit tests and geometry.
+- **A test that passes whether or not the code is right is worse than no test.** Before committing, break the line you just wrote, confirm the new test fails, and put it back.
+- **Fixtures must not be uniform.** Banked fixtures use banks at *different* lengths with a non-zero `sharedTiles`, and real art in the shared region (`normalizeTiles` leaves it blank by default, so a blank probe matches everything).
+- `TILE_SIZE` = 8, `MAX_TILES` = 256, `BANK_COUNT` = 3, `SCREEN_ROWS` = 24.
+- The map session's test helper is **`openMap()`** (`session.test.ts:97`) and its fixture map is **8×8** with a 4-tile `sc2` tileset. There is no `openTestSession`. The resize function is **`resize`**.
 
 ---
 
-### Task 1: `paintGrid` — extract the core, prove `paintMeta` unchanged
+### Task 1: the map editor joins the tileset store
+
+**Files:**
+- Modify: `src/renderer/src/editors/map/session.ts`
+- Test: `src/renderer/src/editors/map/session.test.ts`
+
+**Interfaces:**
+- Consumes: `useTilesetStore()` — `patternDoc(path)`, `set(path, doc, source)`, `onExternalChange(path, source, fn)`, `release(path)`.
+- Produces: `session.tileset` staying in sync with the store. Tasks 6 and 10 write through the store and rely on this.
+
+**Why this is first.** `grep useTilesetStore src/renderer/src/editors/map/` returns nothing today: the map `fs:read`s its tileset into `session.tileset` and keeps a private copy. That is harmless while the map only *reads* tiles, and fatal the moment it writes them — a second stroke would derive from the pre-stroke document and overwrite the store with a doc missing the first stroke's tiles, `sheet.ts:50` caches on the document's identity so the canvas would never repaint, and `saveSession` writes only the map so painted tiles would never reach disk. Build this before any painting exists.
+
+The tile editor already does exactly this at `tile/session.ts:166`; copy its shape.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+it('adopts a tileset change made by another editor', async () => {
+  const session = await openMap()
+  const store = useTilesetStore()
+  const before = session.tileset!
+
+  const grown = normalizeTiles({ mode: 'sc2', count: 5 })
+  store.set(TILES, grown, 'some/other/editor.tiles.json')
+
+  expect(session.tileset).not.toBe(before)
+  expect(session.tileset!.count).toBe(5)
+})
+
+it('saves the tileset alongside the map when the tileset is dirty', async () => {
+  const session = await openMap()
+  const store = useTilesetStore()
+  store.set(TILES, normalizeTiles({ mode: 'sc2', count: 5 }), session.path)
+
+  await saveSession(session)
+
+  expect(JSON.parse(files[TILES]).count).toBe(5)
+})
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npx vitest run src/renderer/src/editors/map/session.test.ts -t 'another editor'`
+Expected: FAIL — nothing updates `session.tileset`.
+
+- [ ] **Step 3: Load through the store and subscribe**
+
+In `loadTileset`, after parsing a `'tiles'` resource, replace the bare assignment with a store write plus a read-back, then subscribe once at session creation (beside the existing `stopWatching` wiring):
+
+```ts
+  useTilesetStore().set(path, parsed.doc, session.path)
+  session.tileset = useTilesetStore().patternDoc(path)
+```
+
+```ts
+  // Another editor — the tile editor, or a meta being painted — can change this
+  // same document. Adopt it: `sheet.ts` caches on the document's identity, so a
+  // private copy would leave the canvas showing art that no longer exists.
+  session.stopWatchingTileset = useTilesetStore().onExternalChange(
+    tilesetPath,
+    session.path,
+    (next) => {
+      session.tileset = next as TilesDoc
+    }
+  )
+```
+
+Add `stopWatchingTileset: (() => void) | null` to `MapSession`, call it before re-subscribing on a tileset change, and call it plus `release(tilesetPath)` in `pruneMapSessions`.
+
+- [ ] **Step 4: Save the pair**
+
+In `saveSession`, after writing the map, write the tileset when the store says it is dirty — `meta/session.ts:361-362` is the precedent:
+
+```ts
+  const tilesetPath = doc(session).tileset
+  const store = useTilesetStore()
+  if (tilesetPath && store.isDirty(tilesetPath)) {
+    const tiles = store.patternDoc(tilesetPath)
+    if (tiles) {
+      await window.api.invoke('fs:write', {
+        path: tilesetPath,
+        content: serializeResource({ kind: 'tiles', doc: tiles })
+      })
+      store.set(tilesetPath, tiles, session.path)   // clears the dirty flag
+    }
+  }
+```
+
+Check `tilesetStore.set`'s dirty-clearing convention and follow it rather than the line above if they differ.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `npx vitest run src/renderer/src/editors/map src/renderer/src/stores`
+Expected: PASS, including every pre-existing map test — this task must change no behaviour a test already pins.
+
+- [ ] **Step 6: Commit**
+
+```bash
+npm run check
+git add src/renderer/src/editors/map/session.ts src/renderer/src/editors/map/session.test.ts
+git commit -m "fix(map): the map editor shares one tileset document with every other editor"
+```
+
+---
+
+### Task 2: `paintGrid` — extract the core, prove `paintMeta` unchanged
 
 **Files:**
 - Modify: `src/shared/msx/meta-paint.ts`
@@ -30,18 +141,11 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `PaintGrid` (`{ width: number; height: number; tiles: number[] }`), `PaintGridResult`, and `paintGrid(grid, tiles, points, color, role?, options?)`. Task 2 adds `options.write`; Task 3 adds `options.bankOf`; Task 5 calls it.
-
-`paintMeta` today reads `meta.width`/`meta.height`, reads the current tile at `meta.frames[frame].tiles[key]`, and writes through `setFrameTile`. That is a grid interface. Extract it verbatim — no behaviour change in this task.
+- Produces: `PaintGrid` (`{ width: number; height: number; tiles: number[] }`, **cells**), `PaintGridResult`, `paintGrid(grid, tiles, points, color, role?)`. Tasks 3–4 add options; Task 6 calls it.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// src/shared/msx/meta-paint.test.ts
-import { describe, expect, it } from 'vitest'
-import { createTilesDoc } from './tile'
-import { paintGrid } from './meta-paint'
-
 describe('paintGrid', () => {
   it('paints a dot into a plain grid and forks a tile for it', () => {
     const tiles = createTilesDoc('sc2', 1)
@@ -49,11 +153,21 @@ describe('paintGrid', () => {
 
     const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7)
 
-    // The painted cell repoints; its neighbour does not.
     expect(result.grid.tiles[0]).not.toBe(0)
     expect(result.grid.tiles[1]).toBe(0)
     expect(result.added).toEqual([result.grid.tiles[0]])
     expect(result.refused).toBeUndefined()
+  })
+
+  it('indexes by CELL, so a point in the second cell row uses the grid width as stride', () => {
+    const tiles = createTilesDoc('sc2', 1)
+    const grid = { width: 4, height: 4, tiles: new Array(16).fill(0) }
+
+    // Pixel (0, 8) is cell (0, 1) — index 4 with a stride of 4.
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 8 }], 7)
+
+    expect(result.grid.tiles[4]).not.toBe(0)
+    expect(result.grid.tiles[0]).toBe(0)
   })
 
   it('ignores points outside the grid, so a drag off-canvas needs no clamping', () => {
@@ -65,20 +179,32 @@ describe('paintGrid', () => {
     expect(result.grid).toBe(grid)
     expect(result.tiles).toBe(tiles)
   })
+
+  it('returns the same grid by reference when a stroke resolves to the tiles already there', () => {
+    const tiles = createTilesDoc('sc2', 1)
+    const grid = { width: 1, height: 1, tiles: [0] }
+    const once = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7)
+
+    const twice = paintGrid(once.grid, once.tiles, [{ x: 1, y: 1 }], 7)
+
+    expect(twice.grid).toBe(once.grid)
+    expect(twice.tiles).toBe(once.tiles)
+    expect(twice.added).toEqual([])
+  })
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+The fourth test is load-bearing. `setFrameTile` returns its input unchanged when the tile is already there, so the original `paintMeta` returned `meta` **by reference** for an idle re-stroke and `pushHistory` (reference-equal) no-op'd. Allocating a new array unconditionally would make the meta editor push an undo step for a click that changed nothing.
+
+- [ ] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run src/shared/msx/meta-paint.test.ts -t 'paintGrid'`
-Expected: FAIL — `paintGrid` is not exported from `./meta-paint`.
+Expected: FAIL — `paintGrid` is not exported.
 
 - [ ] **Step 3: Extract the core**
 
-In `src/shared/msx/meta-paint.ts`, add above `paintMeta`:
-
 ```ts
-/** A grid of tile references: a meta's frame, or a map layer's `data`. */
+/** A grid of tile references — a meta's frame, or a map layer's `data`. Sizes are in CELLS. */
 export interface PaintGrid {
   width: number
   height: number
@@ -100,13 +226,12 @@ export interface PaintGridResult {
  * Applies a stroke to a grid of tile references, resolving each touched cell
  * copy-on-write into `tiles`.
  *
- * Points are in the grid's own pixel space — `(0,0)` is its top-left dot, not
- * the tile's. Points outside it are ignored, so a drag that leaves the canvas
- * needs no clamping by the caller.
+ * `points` are in the grid's own **pixel** space — `(0,0)` is its top-left dot.
+ * `grid.width`/`height` are in **cells**. Points outside are ignored, so a drag
+ * that leaves the canvas needs no clamping by the caller.
  *
  * `role` is which half of the row's colour pair the stroke owns — the mouse
- * button, as in the tile editor. sc2/sc4 hold two colours per 8×1 row and sc1
- * two per group of eight tiles: without a role the second colour a row is asked
+ * button, as in the tile editor. Without one, the second colour a row is asked
  * for is dropped, which reads as an editor that stopped working.
  */
 export function paintGrid(
@@ -116,7 +241,6 @@ export function paintGrid(
   color: number,
   role?: 'fg' | 'bg'
 ): PaintGridResult {
-  // Grouped by cell so each tile is derived once, however many points hit it.
   const byCell = new Map<number, Point[]>()
   for (const point of points) {
     const cx = Math.floor(point.x / TILE_SIZE)
@@ -134,12 +258,12 @@ export function paintGrid(
   const added: number[] = []
   let dropped = 0
 
-  for (const [key, cellPoints] of byCell) {
-    let work = scratch(nextTiles, (nextCells ?? grid.tiles)[key] ?? 0)
+  for (const key of byCell.keys()) {
+    const cellPoints = byCell.get(key)!
+    const currentTile = (nextCells ?? grid.tiles)[key] ?? 0
+    let work = scratch(nextTiles, currentTile)
     for (const point of cellPoints) {
       const result = paintPixel(work, 0, point.x % TILE_SIZE, point.y % TILE_SIZE, color, role)
-      // Only reachable without a role. With one, `paintPixel` recolours that
-      // role for the row and can never refuse.
       if (!result.ok) {
         dropped++
         continue
@@ -150,7 +274,6 @@ export function paintGrid(
     const pair = nextTiles.mode === 'sc1' ? work.groupColors[0] : undefined
     const found = findOrCreateTile(nextTiles, canonical(work), pair)
     if (!found) {
-      // A half-drawn stroke against a full bank is worse than no change at all.
       return {
         grid,
         tiles,
@@ -161,14 +284,16 @@ export function paintGrid(
           'Run "Compact unused tiles", or free a tile in the tile editor.'
       }
     }
-    // An unbanked allocation appends at `count`, so an index beyond the old
-    // count is new. A banked allocation takes from the shared top (count stays
-    // 256), so it is detected by `sharedTiles` growing.
     if (found.index >= nextTiles.count || found.doc.sharedTiles > nextTiles.sharedTiles)
       added.push(found.index)
     nextTiles = found.doc
-    if (!nextCells) nextCells = grid.tiles.slice()
-    nextCells[key] = found.index
+    // Only clone once a cell actually moves. A stroke that resolves to the tile
+    // already there must return the SAME array, or every caller's
+    // reference-equal no-op check (and its undo stack) stops working.
+    if (found.index !== currentTile) {
+      if (!nextCells) nextCells = grid.tiles.slice()
+      nextCells[key] = found.index
+    }
   }
 
   return {
@@ -182,7 +307,7 @@ export function paintGrid(
 
 - [ ] **Step 4: Rewrite `paintMeta` as a wrapper**
 
-Replace `paintMeta`'s body (keep its exported signature and doc comment exactly as they are) with:
+Keep its exported signature and doc comment exactly; replace the body:
 
 ```ts
   const frameTiles = meta.frames[frame]
@@ -196,19 +321,21 @@ Replace `paintMeta`'s body (keep its exported signature and doc comment exactly 
     role
   )
   if (result.refused) return { meta, tiles, added: [], dropped: 0, refused: result.refused }
-  if (result.grid.tiles === frameTiles.tiles) return { meta, tiles, added: [], dropped: 0 }
+  // Nothing moved: hand back the same meta so `pushHistory` no-ops, exactly as
+  // `setFrameTile` used to make it. `dropped` still travels — an all-dropped
+  // stroke reported its count before and must keep doing so.
+  if (result.grid.tiles === frameTiles.tiles)
+    return { meta, tiles: result.tiles, added: result.added, dropped: result.dropped }
 
   const frames = meta.frames.slice()
   frames[frame] = { tiles: result.grid.tiles }
   return { meta: { ...meta, frames }, tiles: result.tiles, added: result.added, dropped: result.dropped }
 ```
 
-`setFrameTile` is no longer called from `paintMeta`; leave the function itself alone — `meta/session.ts` uses it elsewhere.
-
-- [ ] **Step 5: Run the full meta-paint suite — this is the refactor proof**
+- [ ] **Step 5: Run the full suite — this is the refactor proof**
 
 Run: `npx vitest run src/shared/msx/meta-paint.test.ts src/renderer/src/editors/meta`
-Expected: PASS, with **no test file edited except the two `paintGrid` cases added in Step 1**. Every pre-existing `paintMeta` assertion passing unchanged is what proves the extraction is behaviour-preserving. If any pre-existing test needs editing, stop and report — the extraction is wrong.
+Expected: PASS with **no pre-existing test edited**. If one needs editing, stop and report: the extraction is wrong.
 
 - [ ] **Step 6: Commit**
 
@@ -220,185 +347,69 @@ git commit -m "refactor(paint): paintMeta is a wrapper over a grid-shaped core"
 
 ---
 
-### Task 2: `write: 'edit'` — rewrite a tile in place
+### Task 3: bank-aware reads and a bank-local allocator
 
 **Files:**
 - Modify: `src/shared/msx/meta-paint.ts`
 - Test: `src/shared/msx/meta-paint.test.ts`
 
 **Interfaces:**
-- Consumes: `paintGrid`, `PaintGridResult` (Task 1).
-- Produces: `PaintOptions` (`{ write?: 'fork' | 'edit' }`) as `paintGrid`'s 6th parameter, and `PaintGridResult.tileEdits: { index: number; before: TileEntry }[]`. Task 4 stores `tileEdits`; Task 5 passes `write`.
+- Consumes: `paintGrid` (Task 2).
+- Produces: `findOrCreateBankTile(doc, bank, entry, pair?)`, `PaintOptions.bankOf?: (cellRow: number) => number`, `PaintGridResult.refusedBank?: number | null`. Tasks 4 and 6 use them.
 
-`'fork'` (the default) is Task 1's behaviour. `'edit'` writes the derived entry back at the cell's *current* index: no allocation, works on a full tileset, and changes that tile for every cell and every map using it.
+**Two separate bugs this task exists to prevent**, both found in review:
 
-- [ ] **Step 1: Write the failing test**
+1. `scratch(doc, tile)` reads `doc.tiles[tile]` — the **common** set. On a banked tileset `count` is often 1 and the art is in `bankTiles[b]`, so that read is `undefined`, the scratch comes back blank, and one dot destroys the imported picture under the stroke. Reads must go through `bankTileAt`.
+2. Appending at `bankTiles[bank].length` **shadows common tiles**. A bank shorter than `count` (`bankTiles[2] = []` with `count` 1) would append at index 0, so with `reserveTile0` every empty cell in the bottom third shows the first stroke's art.
 
-```ts
-  it("edit mode rewrites the cell's own tile and repoints nothing", () => {
-    const tiles = createTilesDoc('sc2', 4)
-    const grid = { width: 2, height: 1, tiles: [2, 2] }
-
-    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
-
-    // Both cells still point at tile 2 — and both now show the new art.
-    expect(result.grid.tiles).toEqual([2, 2])
-    expect(result.tiles.tiles[2]).not.toEqual(tiles.tiles[2])
-    expect(result.added).toEqual([])
-    expect(result.tiles.count).toBe(tiles.count)
-  })
-
-  it('edit mode records the entry it overwrote, so undo can restore it', () => {
-    const tiles = createTilesDoc('sc2', 4)
-    const grid = { width: 1, height: 1, tiles: [2] }
-
-    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
-
-    expect(result.tileEdits).toHaveLength(1)
-    expect(result.tileEdits[0].index).toBe(2)
-    expect(result.tileEdits[0].before).toEqual(tiles.tiles[2])
-  })
-
-  it('edit mode never refuses on a full tileset, because it allocates nothing', () => {
-    const full = createTilesDoc('sc2', MAX_TILES)
-    const grid = { width: 1, height: 1, tiles: [5] }
-
-    const result = paintGrid(grid, full, [{ x: 0, y: 0 }], 7, undefined, { write: 'edit' })
-
-    expect(result.refused).toBeUndefined()
-    expect(result.tiles.tiles[5]).not.toEqual(full.tiles[5])
-  })
-
-  it('fork mode records no tileEdits', () => {
-    const tiles = createTilesDoc('sc2', 4)
-    const grid = { width: 1, height: 1, tiles: [2] }
-
-    const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }], 7)
-
-    expect(result.tileEdits).toEqual([])
-  })
-```
-
-Add `MAX_TILES` to the existing `./tile` import in the test file.
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `npx vitest run src/shared/msx/meta-paint.test.ts -t 'edit mode'`
-Expected: FAIL — `paintGrid` takes no 6th argument and `PaintGridResult` has no `tileEdits`.
-
-- [ ] **Step 3: Implement**
-
-Add to `meta-paint.ts`:
-
-```ts
-/** One tile's pixels as they were before an `edit` stroke overwrote them. */
-export interface TileEdit {
-  index: number
-  before: TileEntry
-}
-
-export interface PaintOptions {
-  /**
-   * `fork` (default) derives the new art and find-or-creates it, repointing
-   * only this cell — copy-on-write, and what a meta must always do.
-   *
-   * `edit` rewrites the tile at the cell's current index. It allocates nothing
-   * and cannot refuse, and it changes that tile for **every** cell and every
-   * map that uses it. `tileEdits` carries the inverse so undo can restore it.
-   */
-  write?: 'fork' | 'edit'
-}
-```
-
-Add `tileEdits: TileEdit[]` to `PaintGridResult` (non-optional; `[]` in every return).
-
-In `paintGrid`, take `options: PaintOptions = {}` as the 6th parameter and add `const tileEdits: TileEdit[] = []` beside `added`. Replace the `findOrCreateTile` block with:
-
-```ts
-    const entry = canonical(work)
-    if (options.write === 'edit') {
-      const index = (nextCells ?? grid.tiles)[key] ?? 0
-      const before = nextTiles.tiles[index]
-      // A cell pointing past the end of the bank has nothing to rewrite;
-      // falling through to fork is the only honest thing left.
-      if (before) {
-        if (!tileEdits.some((edit) => edit.index === index)) tileEdits.push({ index, before })
-        const written = nextTiles.tiles.slice()
-        written[index] = entry
-        nextTiles = { ...nextTiles, tiles: written }
-        continue
-      }
-    }
-
-    const pair = nextTiles.mode === 'sc1' ? work.groupColors[0] : undefined
-    const found = findOrCreateTile(nextTiles, entry, pair)
-```
-
-Return `tileEdits` from every exit, and `[]` from the refusal and early-return paths.
-
-Note the `continue` skips the cell-repointing tail, which is correct: an `edit` stroke changes pixels, never references.
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `npx vitest run src/shared/msx/meta-paint.test.ts src/renderer/src/editors/meta`
-Expected: PASS. `paintMeta` still passes unchanged — it never sets `write`, so it always forks.
-
-- [ ] **Step 5: Commit**
-
-```bash
-npm run check
-git add src/shared/msx/meta-paint.ts src/shared/msx/meta-paint.test.ts
-git commit -m "feat(paint): an edit stroke rewrites the tile instead of forking one"
-```
-
----
-
-### Task 3: bank-local allocation
-
-**Files:**
-- Modify: `src/shared/msx/meta-paint.ts`
-- Test: `src/shared/msx/meta-paint.test.ts`
-
-**Interfaces:**
-- Consumes: `paintGrid`, `PaintOptions` (Tasks 1–2).
-- Produces: `findOrCreateBankTile(doc, bank, entry, pair?)` returning `{ doc: TilesDoc; index: number } | null`, and `PaintOptions.bankOf?: (cellRow: number) => number`. Task 5 passes `bankOf`.
-
-`findOrCreateTile` allocates into the **shared** region on a banked tileset, so one index means one picture in every bank. Meta-tiles need that. A screen does not: painting row 3 needs art in bank 0 only, and a shared slot costs a slot in all three banks. **Do not change `findOrCreateTile`.**
-
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
 ```ts
 describe('findOrCreateBankTile', () => {
-  /** Banks at different lengths and a real shared region — a uniform fixture proves nothing. */
+  const solid = (byte: number) => ({
+    pattern: new Array(8).fill(byte),
+    color: new Array(8).fill(mergeColorByte(15, 4))
+  })
+
+  /** Uneven banks, a real shared region with real art, and count > 0. */
   function banked(): TilesDoc {
-    const solid = (byte: number) => ({
-      pattern: new Array(8).fill(byte),
-      color: new Array(8).fill(mergeColorByte(15, 4))
-    })
-    return normalizeTiles({
+    const doc = normalizeTiles({
       mode: 'sc2',
       count: 2,
       tiles: [solid(0x11), solid(0x22)],
       bankTiles: [[solid(0x33), solid(0x44), solid(0x55)], [solid(0x66)], []],
       sharedTiles: 2
     })
+    // normalizeTiles leaves the shared region blank; blank matches everything,
+    // so give it art or the "finds the shared region" test proves nothing.
+    const tiles = doc.tiles.slice()
+    tiles[MAX_TILES - 2] = solid(0xaa)
+    tiles[MAX_TILES - 1] = solid(0xbb)
+    return { ...doc, tiles }
   }
+
+  it('appends above the common range, never shadowing a common tile', () => {
+    const doc = banked()
+    // Bank 2 has NO overrides and count is 2 — appending at 0 would shadow
+    // common tiles 0 and 1 for every cell in the bottom third of the screen.
+    const found = findOrCreateBankTile(doc, 2, solid(0x7e))
+
+    expect(found!.index).toBe(2)
+    expect(bankTileAt(found!.doc, 2, 0)).toEqual(bankTileAt(doc, 2, 0))
+    expect(bankTileAt(found!.doc, 2, 1)).toEqual(bankTileAt(doc, 2, 1))
+  })
 
   it('appends into the named bank and leaves the other two alone', () => {
     const doc = banked()
-    const entry = { pattern: new Array(8).fill(0x7e), color: new Array(8).fill(mergeColorByte(15, 4)) }
+    const found = findOrCreateBankTile(doc, 0, solid(0x7e))
 
-    const found = findOrCreateBankTile(doc, 0, entry)
-
-    expect(found).not.toBeNull()
-    expect(found!.index).toBe(3)                       // bank 0 held 3 entries
-    expect(found!.doc.bankTiles[0]).toHaveLength(4)
-    expect(found!.doc.bankTiles[1]).toHaveLength(1)    // untouched
-    expect(found!.doc.bankTiles[2]).toHaveLength(0)    // untouched
-    expect(found!.doc.sharedTiles).toBe(2)             // shared budget not spent
+    expect(found!.index).toBe(3)
+    expect(found!.doc.bankTiles[1]).toHaveLength(1)
+    expect(found!.doc.bankTiles[2]).toHaveLength(0)
+    expect(found!.doc.sharedTiles).toBe(2)
   })
 
-  it('reuses an identical tile already in that bank rather than appending', () => {
+  it('reuses an identical tile already in that bank', () => {
     const doc = banked()
     const found = findOrCreateBankTile(doc, 0, doc.bankTiles[0][1])
 
@@ -408,36 +419,51 @@ describe('findOrCreateBankTile', () => {
 
   it('finds the shared region too, since every bank shows it', () => {
     const doc = banked()
-    const sharedIndex = MAX_TILES - doc.sharedTiles
-    const found = findOrCreateBankTile(doc, 1, doc.tiles[sharedIndex])
+    const found = findOrCreateBankTile(doc, 1, doc.tiles[MAX_TILES - 1])
 
-    expect(found!.index).toBe(sharedIndex)
+    expect(found!.index).toBe(MAX_TILES - 1)
     expect(found!.doc).toBe(doc)
   })
 
-  it('returns null when that bank is full, without touching the others', () => {
-    const solid = (byte: number) => ({
-      pattern: new Array(8).fill(byte),
-      color: new Array(8).fill(mergeColorByte(15, 4))
-    })
+  it('returns null when the bank has no room below the shared region', () => {
     const doc = normalizeTiles({
       mode: 'sc2',
       count: 1,
       bankTiles: [Array.from({ length: MAX_TILES - 2 }, (_, i) => solid(i & 0xff)), [], []],
       sharedTiles: 2
     })
-    const entry = { pattern: new Array(8).fill(0x7e), color: new Array(8).fill(mergeColorByte(15, 4)) }
+    // A probe that is NOT in the fill: solid(0x7e) collides with fill entry 126.
+    const probe = { pattern: [1, 2, 3, 4, 5, 6, 7, 8], color: new Array(8).fill(mergeColorByte(15, 4)) }
 
-    expect(findOrCreateBankTile(doc, 0, entry)).toBeNull()
+    expect(findOrCreateBankTile(doc, 0, probe)).toBeNull()
   })
+})
+
+it("paintGrid with bankOf derives from the bank's art, not the common set", () => {
+  const solid = (byte: number) => ({
+    pattern: new Array(8).fill(byte),
+    color: new Array(8).fill(mergeColorByte(15, 4))
+  })
+  // The shape a real import produces: count 1, art only in the banks.
+  const tiles = normalizeTiles({
+    mode: 'sc2',
+    count: 1,
+    bankTiles: [[solid(0xff)], [solid(0x0f)], []],
+    sharedTiles: 0
+  })
+  const grid = { width: 32, height: 24, tiles: new Array(32 * 24).fill(0) }
+
+  const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }], 0, 'bg', { bankOf: (row) => row >> 3 })
+
+  // Derived from bank 0's solid(0xff) with one dot cleared — NOT from a blank.
+  const painted = bankTileAt(result.tiles, 0, result.grid.tiles[0])
+  expect(painted.pattern[0]).toBe(0x7f)
 })
 ```
 
-Import `normalizeTiles`, `mergeColorByte`, `MAX_TILES` from `./tile` in the test file.
+- [ ] **Step 2: Run to verify they fail**
 
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `npx vitest run src/shared/msx/meta-paint.test.ts -t 'findOrCreateBankTile'`
+Run: `npx vitest run src/shared/msx/meta-paint.test.ts -t 'BankTile'`
 Expected: FAIL — not exported.
 
 - [ ] **Step 3: Implement the allocator**
@@ -453,10 +479,7 @@ Expected: FAIL — not exported.
  * its row's bank only, so paying a slot in all three banks for it wastes the
  * scarcest resource the tileset has.
  *
- * The search still reaches the shared region: those tiles show in this bank
- * too, so reusing one is free and correct.
- *
- * Null means that bank is full. `bankCapacityLeft` is the ceiling, not policy.
+ * Null means the bank has no room below the shared region.
  */
 export function findOrCreateBankTile(
   doc: TilesDoc,
@@ -465,22 +488,26 @@ export function findOrCreateBankTile(
   pair?: number
 ): { doc: TilesDoc; index: number } | null {
   const sc1 = doc.mode === 'sc1'
+  const sharedStart = MAX_TILES - doc.sharedTiles
+  const own = doc.bankTiles[bank] ?? []
   for (let i = 0; i < MAX_TILES; i++) {
-    const candidate = bankTileAt(doc, bank, i)
-    if (!sameEntry(candidate, entry)) continue
+    // Only a slot something actually fills is a real match — `bankTileAt`
+    // answers `blankTileEntry` for every slot past the bank, the common range
+    // and the shared region, and a blank probe would match all of them.
+    if (!own[i] && i >= doc.count && i < sharedStart) continue
+    if (!sameEntry(bankTileAt(doc, bank, i), entry)) continue
     if (sc1 && doc.groupColors[i >> SC1_SHIFT] !== pair) continue
-    // Only a slot the bank or the common set actually fills is a real match —
-    // `bankTileAt` answers `blankTileEntry` for everything past both.
-    const own = doc.bankTiles[bank]?.[i]
-    if (!own && i >= doc.count && i < MAX_TILES - doc.sharedTiles) continue
     return { doc, index: i }
   }
 
-  if (bankCapacityLeft(doc, bank) <= 0) return null
-  const index = doc.bankTiles[bank]?.length ?? 0
-  const grown = (doc.bankTiles[bank] ?? []).slice()
-  // Slots below `index` that the bank did not have are seeded from what that
-  // bank already showed, so nothing the user is not looking at changes.
+  // Never below `count`: a bank override at a common index shadows that common
+  // tile for every cell in this bank's rows — including a reserved tile 0.
+  const index = Math.max(own.length, doc.count)
+  if (index >= sharedStart) return null
+
+  const grown = own.slice()
+  // Slots the bank did not have are seeded from what it already showed, so
+  // nothing the user is not looking at changes appearance.
   for (let i = grown.length; i < index; i++) grown[i] = bankTileAt(doc, bank, i)
   grown[index] = { pattern: entry.pattern.slice(), color: entry.color.slice() }
   const bankTiles = doc.bankTiles.slice()
@@ -489,55 +516,134 @@ export function findOrCreateBankTile(
 }
 ```
 
-Import `bankTileAt` and `bankCapacityLeft` from `./tile`.
+Import `bankTileAt` from `./tile`.
 
-- [ ] **Step 4: Wire `bankOf` into `paintGrid`**
+- [ ] **Step 4: Make reads bank-aware and wire `bankOf`**
 
-Add to `PaintOptions`:
+Give `scratch` an optional bank:
 
 ```ts
+/** A one-tile document holding a copy of `tile` as `bank` sees it, for `paintPixel` to work on. */
+function scratch(doc: TilesDoc, tile: number, bank: number | null): TilesDoc {
+  const entry = bank === null ? (doc.tiles[tile] ?? blankTileEntry(doc.mode)) : bankTileAt(doc, bank, tile)
+  ...
+}
+```
+
+`groupColors: doc.mode === 'sc1' ? [colorByteAt(doc, tile, 0)] : []` stays as it is — sc1 never banks.
+
+Add:
+
+```ts
+export interface PaintOptions {
   /**
-   * Which bank a cell row is drawn in — `bankForRow`, wrapped by `SCREEN_ROWS`
-   * by the caller. Takes the **cell** row (`point.y / TILE_SIZE`), not the pixel
-   * row. Omitted for a meta, whose tiles must mean one picture in every bank.
+   * Which bank a cell row is drawn in — the **cell** row
+   * (`Math.floor(point.y / TILE_SIZE)`), not the pixel row. Omitted for a meta,
+   * whose tiles must mean one picture in every bank.
    */
   bankOf?: (cellRow: number) => number
+}
 ```
 
-In `paintGrid`'s fork path, replace the `findOrCreateTile` call with:
+In `paintGrid`, take `options: PaintOptions = {}`, and inside the cell loop:
 
 ```ts
+    const cy = Math.floor(key / grid.width)
     const bank = options.bankOf && isBanked(nextTiles) ? options.bankOf(cy) : null
+    let work = scratch(nextTiles, currentTile, bank)
+```
+
+and replace the allocation:
+
+```ts
     const found =
       bank === null
-        ? findOrCreateTile(nextTiles, entry, pair)
-        : findOrCreateBankTile(nextTiles, bank, entry, pair)
-```
-
-`cy` is already computed for the key; keep it in the map value or recompute it as `Math.floor(key / grid.width)`. Make the refusal message name the bank when one was used:
-
-```ts
+        ? findOrCreateTile(nextTiles, canonical(work), pair)
+        : findOrCreateBankTile(nextTiles, bank, canonical(work), pair)
+    if (!found) {
+      return {
+        grid,
+        tiles,
+        added: [],
+        dropped: 0,
+        refusedBank: bank,
         refused:
           bank === null
             ? `The tileset is full — ${MAX_TILES} tiles is the hardware limit. ` +
               'Run "Compact unused tiles", or free a tile in the tile editor.'
             : `Bank ${bank} is full — ${MAX_TILES} tiles is the hardware limit for one bank. ` +
               'Free a tile, or paint on a row served by another bank.'
+      }
+    }
 ```
 
-The `added` detection must also cover a bank append, which grows neither `count` nor `sharedTiles`:
+`refusedBank` is a field on `PaintGridResult` (`bank: number | null`) so callers branch on structure, not on matching the message text.
+
+`added` detection must cover a bank append, which grows neither `count` nor `sharedTiles`:
 
 ```ts
-    const grew = bank === null
-      ? found.index >= nextTiles.count || found.doc.sharedTiles > nextTiles.sharedTiles
-      : (found.doc.bankTiles[bank]?.length ?? 0) > (nextTiles.bankTiles[bank]?.length ?? 0)
+    const grew =
+      bank === null
+        ? found.index >= nextTiles.count || found.doc.sharedTiles > nextTiles.sharedTiles
+        : (found.doc.bankTiles[bank]?.length ?? 0) > (nextTiles.bankTiles[bank]?.length ?? 0)
     if (grew) added.push(found.index)
 ```
 
-- [ ] **Step 5: Test the wiring**
+- [ ] **Step 5: Run tests, then break the code to prove they bite**
+
+Run: `npx vitest run src/shared/msx/meta-paint.test.ts src/renderer/src/editors/meta` → PASS.
+
+Then temporarily change `Math.max(own.length, doc.count)` to `own.length`, rerun, and confirm the shadowing test fails. Put it back. Do the same for `scratch`'s bank read against the derivation test.
+
+- [ ] **Step 6: Commit**
+
+```bash
+npm run check
+git add src/shared/msx/meta-paint.ts src/shared/msx/meta-paint.test.ts
+git commit -m "feat(paint): read and allocate in the row's own bank"
+```
+
+---
+
+### Task 4: `write: 'edit'` — rewrite a tile in place
+
+**Files:**
+- Modify: `src/shared/msx/meta-paint.ts`
+- Test: `src/shared/msx/meta-paint.test.ts`
+
+**Interfaces:**
+- Consumes: `paintGrid`, `PaintOptions`, `findOrCreateBankTile` (Tasks 2–3).
+- Produces: `PaintOptions.write?: 'fork' | 'edit'`, `TileEdit` (`{ index: number; bank: number | null; before: TileEntry; beforeGroup?: number }`), `PaintGridResult.tileEdits: TileEdit[]`. Tasks 5–6 store and reverse them.
+
+- [ ] **Step 1: Write the failing tests**
 
 ```ts
-  it('paintGrid with bankOf allocates into the row that was painted', () => {
+  it("edit mode rewrites the cell's own tile and repoints nothing", () => {
+    const tiles = createTilesDoc('sc2', 4)
+    const grid = { width: 2, height: 1, tiles: [2, 2] }
+
+    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
+
+    expect(result.grid.tiles).toEqual([2, 2])
+    expect(result.tiles.tiles[2]).not.toEqual(tiles.tiles[2])
+    expect(result.added).toEqual([])
+    expect(result.tiles.count).toBe(tiles.count)
+    expect(result.tileEdits).toEqual([
+      { index: 2, bank: null, before: tiles.tiles[2] }
+    ])
+  })
+
+  it('edit mode never refuses on a full tileset, because it allocates nothing', () => {
+    const full = createTilesDoc('sc2', MAX_TILES)
+    const grid = { width: 1, height: 1, tiles: [5] }
+
+    const result = paintGrid(grid, full, [{ x: 0, y: 0 }], 7, undefined, { write: 'edit' })
+
+    expect(result.refused).toBeUndefined()
+    expect(result.tiles.tiles[5]).not.toEqual(full.tiles[5])
+  })
+
+  it('edit mode writes into the bank that shows the tile, not the common set', () => {
     const solid = (byte: number) => ({
       pattern: new Array(8).fill(byte),
       color: new Array(8).fill(mergeColorByte(15, 4))
@@ -545,99 +651,186 @@ The `added` detection must also cover a bank append, which grows neither `count`
     const tiles = normalizeTiles({
       mode: 'sc2',
       count: 1,
-      bankTiles: [[solid(0x11)], [solid(0x22), solid(0x33)], []],
-      sharedTiles: 1
+      bankTiles: [[solid(0xff)], [solid(0x0f)], []],
+      sharedTiles: 0
     })
-    // A 32-wide grid; cell row 9 is bank 1.
     const grid = { width: 32, height: 24, tiles: new Array(32 * 24).fill(0) }
 
-    const result = paintGrid(grid, tiles, [{ x: 0, y: 9 * 8 }], 7, undefined, {
+    const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }], 0, 'bg', {
+      write: 'edit',
       bankOf: (row) => row >> 3
     })
 
-    expect(result.tiles.bankTiles[1]).toHaveLength(3)   // grew
-    expect(result.tiles.bankTiles[0]).toHaveLength(1)   // untouched
-    expect(result.tiles.sharedTiles).toBe(1)            // shared budget not spent
-    expect(result.grid.tiles[9 * 32]).toBe(2)           // bank-local index
+    expect(result.tiles.bankTiles[0][0].pattern[0]).toBe(0x7f)
+    expect(result.tiles.bankTiles[1][0]).toEqual(solid(0x0f))   // untouched
+    expect(result.tileEdits[0].bank).toBe(0)
   })
 
-  it('without bankOf a banked tileset still allocates shared, as a meta needs', () => {
-    const solid = (byte: number) => ({
-      pattern: new Array(8).fill(byte),
-      color: new Array(8).fill(mergeColorByte(15, 4))
-    })
-    const tiles = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[solid(0x11)], [], []], sharedTiles: 1 })
+  it('edit mode forks instead of overwriting a reserved tile 0', () => {
+    const tiles = createTilesDoc('sc2', 4, true)
     const grid = { width: 1, height: 1, tiles: [0] }
 
-    const result = paintGrid(grid, tiles, [{ x: 0, y: 0 }], 7)
+    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
 
-    expect(result.tiles.sharedTiles).toBe(2)
-    expect(result.tiles.bankTiles[0]).toHaveLength(1)
+    expect(result.tiles.tiles[0]).toEqual(tiles.tiles[0])   // still blank
+    expect(result.grid.tiles[0]).not.toBe(0)                // forked instead
+    expect(result.tileEdits).toEqual([])
+  })
+
+  it('fork mode records no tileEdits', () => {
+    const tiles = createTilesDoc('sc2', 4)
+    const result = paintGrid({ width: 1, height: 1, tiles: [2] }, tiles, [{ x: 0, y: 0 }], 7)
+
+    expect(result.tileEdits).toEqual([])
   })
 ```
 
-Run: `npx vitest run src/shared/msx/meta-paint.test.ts src/renderer/src/editors/meta`
-Expected: PASS.
+- [ ] **Step 2: Run to verify they fail**
 
-- [ ] **Step 6: Commit**
+Run: `npx vitest run src/shared/msx/meta-paint.test.ts -t 'edit mode'`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement**
+
+```ts
+/** One tile's art as it was before an `edit` stroke overwrote it. */
+export interface TileEdit {
+  index: number
+  /** Which table it lives in: a bank's overrides, or null for the common set. */
+  bank: number | null
+  before: TileEntry
+  /** sc1 only: the group colour byte, which is half the picture there. */
+  beforeGroup?: number
+}
+```
+
+Add `write?: 'fork' | 'edit'` to `PaintOptions` and `tileEdits: TileEdit[]` to `PaintGridResult` (always present, `[]` when empty, including on every early return and the refusal).
+
+In the cell loop, before the allocation:
+
+```ts
+    const entry = canonical(work)
+    // Reserved tile 0 is locked blank and `normalizeTiles` re-blanks it on load,
+    // so an in-place write there vanishes on the next open — and until then
+    // shows in every transparent cell of every map. Fork instead.
+    const editable = options.write === 'edit' && !(currentTile === 0 && nextTiles.reserveTile0)
+    if (editable) {
+      const inBank = bank !== null && !!nextTiles.bankTiles[bank]?.[currentTile]
+      const before = inBank ? nextTiles.bankTiles[bank!][currentTile] : nextTiles.tiles[currentTile]
+      // A cell pointing at a slot nothing fills has no art to rewrite; forking
+      // is the only honest thing left.
+      if (before) {
+        const at = inBank ? bank : null
+        if (!tileEdits.some((edit) => edit.index === currentTile && edit.bank === at)) {
+          tileEdits.push({
+            index: currentTile,
+            bank: at,
+            before,
+            ...(nextTiles.mode === 'sc1' ? { beforeGroup: nextTiles.groupColors[currentTile >> SC1_SHIFT] } : {})
+          })
+        }
+        if (inBank) {
+          const banked = nextTiles.bankTiles[bank!].slice()
+          banked[currentTile] = entry
+          const bankTiles = nextTiles.bankTiles.slice()
+          bankTiles[bank!] = banked
+          nextTiles = { ...nextTiles, bankTiles }
+        } else {
+          const written = nextTiles.tiles.slice()
+          written[currentTile] = entry
+          // sc1 holds colour per group of eight tiles, not in the entry — a role
+          // stroke's recoloured pair is lost without this.
+          const groupColors =
+            nextTiles.mode === 'sc1' ? nextTiles.groupColors.slice() : nextTiles.groupColors
+          if (nextTiles.mode === 'sc1') groupColors[currentTile >> SC1_SHIFT] = work.groupColors[0]
+          nextTiles = { ...nextTiles, tiles: written, groupColors }
+        }
+        continue   // an edit changes pixels, never references
+      }
+    }
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/shared/msx/meta-paint.test.ts src/renderer/src/editors/meta`
+Expected: PASS. `paintMeta` never sets `write`, so it always forks and is unaffected.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 npm run check
 git add src/shared/msx/meta-paint.ts src/shared/msx/meta-paint.test.ts
-git commit -m "feat(paint): a screen's stroke allocates in its own row's bank"
+git commit -m "feat(paint): an edit stroke rewrites the tile instead of forking one"
 ```
 
 ---
 
-### Task 4: map history carries the inverse of an edit stroke
+### Task 5: map history carries the inverse, and redo can undo the undo
 
 **Files:**
 - Modify: `src/shared/map-editor.ts`, `src/renderer/src/editors/map/session.ts`
-- Test: `src/shared/map-editor.test.ts`
+- Test: `src/shared/map-editor.test.ts`, `src/renderer/src/editors/map/session.test.ts`
 
 **Interfaces:**
-- Consumes: `TileEdit` (Task 2).
-- Produces: `MapEntry` (`{ doc: MapDoc; tileEdits?: TileEdit[] }`), `MapHistory = History<MapEntry>`, and `commit(session, next, tileEdits?)`. Task 5 passes `tileEdits`.
+- Consumes: `TileEdit` (Task 4).
+- Produces: `MapEntry` (`{ doc: MapDoc; tileEdits?: TileEdit[] }`), `MapHistory = History<MapEntry>`, `commit(session, next, tileEdits?)`. Task 6 passes `tileEdits`.
 
-`History<T>` is already generic, so this instantiates it with a richer `T` rather than adding a history module. A `fork` stroke records nothing new — copy-on-write only appends, so undo can leak art but never lose it. An `edit` stroke changes pixels and may not touch the grid at all, so without the inverse its undo would do nothing and the change would be permanent.
+**The redo trap.** `TileEdit` holds only `before`. If undo simply writes `before` back, the painted art exists nowhere and redo cannot restore it — it would write `before` a second time and the paint would be gone while history claims the step is applied. **Undo must swap:** capture the entries it is about to displace, write `before` in, and store the captured (painted) entries as the `before` of the entry it moved into the future. Redo performs the identical swap in the other direction. One function serves both.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
 ```ts
 // src/shared/map-editor.test.ts
-import { createHistory, pushHistory, undo } from './history'
-import type { MapEntry } from './map-editor'
-
 it('a history entry can carry the tiles an edit stroke overwrote', () => {
   const before = { pattern: new Array(8).fill(0x11), color: new Array(8).fill(0xf1) }
   const base: MapEntry = { doc: createMapDoc('res/t.tiles.json') }
   const history = pushHistory(createHistory(base), {
     doc: base.doc,
-    tileEdits: [{ index: 4, before }]
+    tileEdits: [{ index: 4, bank: null, before }]
   })
 
-  expect(history.present.tileEdits).toEqual([{ index: 4, before }])
+  expect(history.present.tileEdits?.[0].before).toBe(before)
   expect(undo(history).present.tileEdits).toBeUndefined()
 })
 ```
 
-Import `createMapDoc` from `./msx/map`.
+```ts
+// src/renderer/src/editors/map/session.test.ts
+it('undo restores the pixels an edit stroke overwrote, and redo puts them back', async () => {
+  const session = await openMap()
+  setMode(session, 'paint')
+  setPaintWrite(session, 'edit')
+  const store = useTilesetStore()
+  const original = store.patternDoc(TILES)!.tiles[1]
 
-- [ ] **Step 2: Run test to verify it fails**
+  beginPaint(session, 'fg')
+  extendPaint(session, { x: 8, y: 0 }, { x: 8, y: 0 })
+  endPaint(session)
+  const painted = store.patternDoc(TILES)!.tiles[1]
+  expect(painted).not.toEqual(original)
 
-Run: `npx vitest run src/shared/map-editor.test.ts -t 'edit stroke overwrote'`
-Expected: FAIL — `MapEntry` is not exported.
+  undo(session)
+  expect(store.patternDoc(TILES)!.tiles[1]).toEqual(original)
+
+  redo(session)
+  expect(store.patternDoc(TILES)!.tiles[1]).toEqual(painted)
+})
+```
+
+The fixture map's layer starts filled with 0 and its tileset has 4 tiles; paint at pixel x 8 so the cell is 1, not the reserved 0. Adjust the index if the fixture differs — read `session.test.ts:72` first.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Expected: FAIL — `MapEntry` is not exported; the paint functions do not exist yet (Task 6 adds them, so this session test is expected to stay red until Task 6 — note that in the commit and keep it skipped with `it.todo` if the task boundary matters).
 
 - [ ] **Step 3: Change the history's element type**
-
-In `src/shared/map-editor.ts`, replace `export type MapHistory = History<MapDoc>` with:
 
 ```ts
 /**
  * One undo step: the map, plus the tiles an `edit` stroke overwrote to get
- * here. `tileEdits` is absent on every step that only moved cell references —
- * a `fork` stroke appends to the bank and never destroys art, so it needs no
- * inverse (its orphans are Compact's job, exactly as in the meta editor).
+ * here. Absent on every step that only moved cell references — a `fork` stroke
+ * appends and never destroys art, so it needs no inverse (its orphans are
+ * Compact's job, exactly as in the meta editor).
  */
 export interface MapEntry {
   doc: MapDoc
@@ -649,9 +842,7 @@ export type MapHistory = History<MapEntry>
 
 Import `type TileEdit` from `./msx/meta-paint`.
 
-- [ ] **Step 4: Follow the type through `map/session.ts`**
-
-Every `session.history.present` now yields a `MapEntry`. Change:
+- [ ] **Step 4: Follow the type through the session**
 
 ```ts
 export function doc(session: MapSession): MapDoc {
@@ -659,117 +850,171 @@ export function doc(session: MapSession): MapDoc {
 }
 
 export function commit(session: MapSession, next: MapDoc, tileEdits?: TileEdit[]): void {
-  const entry: MapEntry = tileEdits?.length ? { doc: next, tileEdits } : { doc: next }
-  // `pushHistory` compares by reference, and a fresh object is never the
-  // present — so guard on the document itself, or every no-op stroke would
-  // push an undo step.
+  // `pushHistory` compares by reference and a fresh entry is never the present,
+  // so guard on the document — otherwise every no-op stroke pushes a step.
   if (next === session.history.present.doc && !tileEdits?.length) return
-  session.history = pushHistory(session.history, entry)
+  session.history = pushHistory(session.history, tileEdits?.length ? { doc: next, tileEdits } : { doc: next })
   markDirty(session)
 }
 ```
 
-Initialise the history with `createHistory({ doc })` wherever it is created. Run `npm run typecheck:web` and fix each error it points at — they are all this one change.
+Initialise with `createHistory({ doc })`. Run `npm run typecheck:web` and fix every error it points at — `session.ts` around lines 202, 219, 233, 327, 405, 656, 680 all read `history.present`. In `refreshMetaRefs` the forced rewrap must be `{ ...present, doc: next }`, **not** `{ doc: next }`, or a meta refresh silently drops the present step's `tileEdits`.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Swap on undo and redo — modify the existing functions in place**
 
-Run: `npx vitest run src/shared/map-editor.test.ts src/renderer/src/editors/map src/renderer/src/stores`
-Expected: PASS.
+The real callers are `MapEditorTab.vue:164/172` and the menu; they call `undo`/`redo`. **Do not add `undoSession`/`redoSession`** — a new name leaves Ctrl+Z not restoring tile edits while the session test passes.
 
-- [ ] **Step 6: Commit**
+```ts
+/**
+ * Puts back the tiles an `edit` stroke overwrote, and returns what was there —
+ * so the caller can store the displaced art as the inverse of the step it just
+ * moved. Without that swap, redo would write `before` a second time and the
+ * painted pixels would be lost while history claims the step is applied.
+ */
+function swapTileEdits(session: MapSession, edits: TileEdit[] | undefined): TileEdit[] | undefined {
+  if (!edits?.length) return edits
+  const store = useTilesetStore()
+  const path = doc(session).tileset
+  const tileset = store.patternDoc(path)
+  if (!tileset) return edits
+  const tiles = tileset.tiles.slice()
+  const bankTiles = tileset.bankTiles.map((bank) => bank.slice())
+  const groupColors = tileset.groupColors.slice()
+  const displaced: TileEdit[] = edits.map((edit) => {
+    const current =
+      edit.bank === null ? tiles[edit.index] : bankTiles[edit.bank][edit.index]
+    if (edit.bank === null) tiles[edit.index] = edit.before
+    else bankTiles[edit.bank][edit.index] = edit.before
+    const currentGroup = groupColors[edit.index >> 3]
+    if (edit.beforeGroup !== undefined) groupColors[edit.index >> 3] = edit.beforeGroup
+    return {
+      index: edit.index,
+      bank: edit.bank,
+      before: current,
+      ...(edit.beforeGroup !== undefined ? { beforeGroup: currentGroup } : {})
+    }
+  })
+  store.set(path, { ...tileset, tiles, bankTiles, groupColors }, session.path)
+  return displaced
+}
+```
+
+In `undo`, the step being *left* is the one to reverse; store the displaced art on the entry that moves into the future:
+
+```ts
+export function undo(session: MapSession): void {
+  if (!canUndo(session.history)) return
+  const leaving = session.history.present
+  const displaced = swapTileEdits(session, leaving.tileEdits)
+  const next = undoHistory(session.history)
+  session.history = displaced
+    ? { ...next, future: [{ ...leaving, tileEdits: displaced }, ...next.future.slice(1)] }
+    : next
+  session.selection = null
+  session.preview = null
+  markDirty(session)
+}
+```
+
+`redo` is symmetric: swap the entering entry's `tileEdits` and write the displaced art back onto that entry as it becomes the present. Keep both functions' existing `selection`/`preview` resets.
+
+- [ ] **Step 6: Run tests, then commit**
 
 ```bash
+npx vitest run src/shared/map-editor.test.ts src/renderer/src/editors/map src/renderer/src/stores
 npm run check
-git add src/shared/map-editor.ts src/shared/map-editor.test.ts src/renderer/src/editors/map/session.ts
+git add src/shared/map-editor.ts src/shared/map-editor.test.ts src/renderer/src/editors/map
 git commit -m "refactor(map): an undo step is a document plus what it overwrote"
 ```
 
 ---
 
-### Task 5: paint mode in the map session
+### Task 6: paint mode in the map session
 
 **Files:**
 - Modify: `src/renderer/src/editors/map/session.ts`
 - Test: `src/renderer/src/editors/map/session.test.ts`
 
 **Interfaces:**
-- Consumes: `paintGrid`, `PaintOptions` (Tasks 1–3); `commit(session, next, tileEdits?)` (Task 4); `bankSheetOffset` (already present).
-- Produces: `session.mode`, `session.paintTool`, `session.paintColor`, `session.paintWrite`; `setMode`, `setPaintTool`, `setPaintColor`, `setPaintWrite`, `paintStroke(session, from, to, role)`, `paintBankOf(session)`, `paintBudgetLabel(session)`. Tasks 6–7 call these.
+- Consumes: `paintGrid`, `PaintOptions` (Tasks 2–4); `commit(session, next, tileEdits?)` (Task 5); `useTilesetStore` (Task 1).
+- Produces: `session.mode`, `paintTool`, `paintColor`, `paintWrite`, `brushRadius`, `brushDensity`; `setMode`, `setPaintTool`, `setPaintColor`, `setPaintWrite`; `beginPaint`, `extendPaint`, `endPaint`; `paintBankOf`, `paintPointAt`, `paintBudgetLabel`, `renderMapPixels`. Tasks 7–8 call these; Task 10 uses `renderMapPixels`.
 
-This is the layer vitest actually covers, so all of it lives here and none of it in a `.vue`.
+**Three traps this task exists to avoid**, all found in review:
+
+1. **The grid is in cells.** `{ width: current.width, height: current.height, tiles: layer.data }` — never `* TILE_SIZE`.
+2. **One stroke is one resolution.** Resolving per pointer move bakes every intermediate line into the tileset and mints a tile per pencil sample. Accumulate and resolve once on release, re-deriving from the committed document each time — `meta/session.ts:579-690` is the precedent, and the map already does the same for cell tools (`paintDrag`/`finishDrag`).
+3. **`toolPoints` is ambiguous.** `map-editor.ts` exports a 4-arg `toolPoints` and `tile-editor.ts` a 5-arg one; `session.ts:67` already imports the map one. Import the tile-editor one under an alias (`toolPoints as pixelToolPoints`) or `npm run check` fails on the clash. `fillPoints` needs real pixels and bounds, and `spray` is a separate call.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-// src/renderer/src/editors/map/session.test.ts
 describe('paint mode', () => {
-  it('starts in tiles mode, so an existing map behaves exactly as before', () => {
-    const session = openTestSession()   // the file's existing helper
-    expect(session.mode).toBe('tiles')
+  it('starts in tiles mode, so an existing map behaves exactly as before', async () => {
+    expect((await openMap()).mode).toBe('tiles')
   })
 
-  it('a fork stroke repoints one cell and leaves its neighbour alone', () => {
-    const session = openTestSession()
+  it('paints into the cell the pixel falls in, using the grid width as stride', async () => {
+    const session = await openMap()          // 8x8 map
     setMode(session, 'paint')
-    setPaintWrite(session, 'fork')
-
-    paintStroke(session, { x: 1, y: 1 }, { x: 1, y: 1 }, 'fg')
+    beginPaint(session, 'fg')
+    // Pixel (0, 8) is cell (0, 1) — data index 8 on an 8-wide map.
+    extendPaint(session, { x: 0, y: 8 }, { x: 0, y: 8 })
+    endPaint(session)
 
     const layer = doc(session).layers[session.activeLayer]
-    expect(layer.data[0]).not.toBe(0)
-    expect(layer.data[1]).toBe(0)
+    expect(layer.data[8]).not.toBe(0)
+    expect(layer.data[0]).toBe(0)
   })
 
-  it('an edit stroke records the inverse in history, so undo restores the pixels', () => {
-    const session = openTestSession()
+  it('a drag is one undo step, not one per sample', async () => {
+    const session = await openMap()
     setMode(session, 'paint')
-    setPaintWrite(session, 'edit')
-    const store = useTilesetStore()
-    const beforeArt = store.patternDoc(doc(session).tileset)!.tiles[0]
+    const before = session.history.past.length
 
-    paintStroke(session, { x: 1, y: 1 }, { x: 1, y: 1 }, 'fg')
-    expect(store.patternDoc(doc(session).tileset)!.tiles[0]).not.toEqual(beforeArt)
+    beginPaint(session, 'fg')
+    extendPaint(session, { x: 0, y: 0 }, { x: 1, y: 0 })
+    extendPaint(session, { x: 1, y: 0 }, { x: 2, y: 0 })
+    extendPaint(session, { x: 2, y: 0 }, { x: 3, y: 0 })
+    endPaint(session)
 
-    undoSession(session)
-    expect(store.patternDoc(doc(session).tileset)!.tiles[0]).toEqual(beforeArt)
+    expect(session.history.past.length).toBe(before + 1)
   })
 
-  it('paintBankOf is null unbanked, and wraps by SCREEN_ROWS when banked', () => {
-    const session = openTestSession()
+  it('paintBankOf is null unbanked and wraps by SCREEN_ROWS when banked', async () => {
+    const session = await openMap()
     expect(paintBankOf(session)).toBeNull()
 
-    setBankedTileset(session)          // helper: three uneven banks, sharedTiles 2
+    useTilesetStore().set(TILES, bankedFixture(), 'x')
     const bankOf = paintBankOf(session)!
     expect(bankOf(0)).toBe(0)
     expect(bankOf(9)).toBe(1)
     expect(bankOf(17)).toBe(2)
-    // A taller-than-one-screen map is editable even though export refuses it.
-    expect(bankOf(25)).toBe(0)
+    expect(bankOf(25)).toBe(0)   // taller-than-a-screen map, still editable
   })
 
-  it('a refused stroke changes nothing and says why', () => {
-    const session = openTestSession()
-    fillTilesetToCapacity(session)     // helper: count = MAX_TILES
+  it('a refused stroke changes nothing and names the bank', async () => {
+    const session = await openMap()
+    useTilesetStore().set(TILES, fullBankedFixture(), 'x')
     setMode(session, 'paint')
-    setPaintWrite(session, 'fork')
     const before = doc(session)
 
-    paintStroke(session, { x: 1, y: 1 }, { x: 1, y: 1 }, 'fg')
+    beginPaint(session, 'fg')
+    extendPaint(session, { x: 0, y: 0 }, { x: 0, y: 0 })
+    endPaint(session)
 
     expect(doc(session)).toBe(before)
-    expect(session.status).toContain('full')
+    expect(session.status).toContain('Bank 0')
   })
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+Write `bankedFixture()` and `fullBankedFixture()` in the test file with **uneven** bank lengths and a non-zero `sharedTiles`.
 
-Run: `npx vitest run src/renderer/src/editors/map/session.test.ts -t 'paint mode'`
+- [ ] **Step 2: Run to verify they fail**
+
 Expected: FAIL — none of these exports exist.
 
-- [ ] **Step 3: Add the session state**
-
-To `MapSession`:
+- [ ] **Step 3: Session state**
 
 ```ts
   /** Which tool set is live. UI state, not a history step — like `session.bank` in the tile editor. */
@@ -778,45 +1023,123 @@ To `MapSession`:
   paintColor: number
   /** Per-stroke, because neither is a safe default: see the spec's write-mode table. */
   paintWrite: 'fork' | 'edit'
+  brushRadius: number
+  brushDensity: number
+  /** Accumulated across a drag; resolved into the tileset once, on release. */
+  paintPoints: Point[]
+  paintRole: 'fg' | 'bg'
+  paintActive: boolean
+  /** Set once the user declines promotion, so the offer is made once per session. */
+  promotionDeclined: boolean
 ```
 
-Initialise to `'tiles'`, `'pencil'`, `1`, `'fork'`. Add the four plain setters.
+Defaults: `'tiles'`, `'pencil'`, `1`, `'fork'`, `2`, `50`, `[]`, `'fg'`, `false`, `false`. Add the four plain setters.
 
-- [ ] **Step 4: Implement the stroke**
+- [ ] **Step 4: The pixel renderer and the hit test**
 
 ```ts
 /**
- * Which bank a cell row is drawn in, or null when the tileset is not banked.
+ * The screen as it currently looks, one byte per dot — what `fill` floods
+ * against and what promotion repacks.
  *
- * Wrapped by `SCREEN_ROWS` for the same reason `bankSheetOffset` is: a map
- * taller than one screen is editable in progress even though `validateMap`
- * refuses it at export, and an unwrapped row would index a bank that does not
- * exist.
+ * Bank-aware: a cell in rows 8-15 draws from bank 1, so a common-set read would
+ * flood against art the screen is not showing.
+ */
+export function renderMapPixels(
+  map: MapDoc,
+  tiles: TilesDoc,
+  layerIndex: number
+): { width: number; height: number; indices: Uint8Array } {
+  const width = map.width * TILE_SIZE
+  const height = map.height * TILE_SIZE
+  const indices = new Uint8Array(width * height)
+  const layer = map.layers[layerIndex]
+  if (!layer) return { width, height, indices }
+  const banked = isBanked(tiles)
+  for (let cy = 0; cy < map.height; cy++) {
+    const bank = banked ? bankForRow(cy % SCREEN_ROWS) : 0
+    for (let cx = 0; cx < map.width; cx++) {
+      const tile = layer.data[cy * map.width + cx] ?? 0
+      const pixels = banked ? bankTilePixels(tiles, bank, tile) : tilePixels(tiles, tile)
+      for (let y = 0; y < TILE_SIZE; y++)
+        for (let x = 0; x < TILE_SIZE; x++)
+          indices[(cy * TILE_SIZE + y) * width + cx * TILE_SIZE + x] = pixels[y * TILE_SIZE + x]
+    }
+  }
+  return { width, height, indices }
+}
+
+/** Canvas offset to a dot. Lives here, not in the `.vue`, because only this layer is tested. */
+export function paintPointAt(session: MapSession, offsetX: number, offsetY: number, zoom: number): Point {
+  // `zoom` is pixels per CELL (MapCanvas.vue), so a dot is that over TILE_SIZE.
+  const dot = zoom / TILE_SIZE
+  return { x: Math.floor(offsetX / dot), y: Math.floor(offsetY / dot) }
+}
+
+/**
+ * Which bank a cell row is drawn in, or null when the tileset is not banked.
+ * Wrapped by `SCREEN_ROWS` for the same reason `bankSheetOffset` is: a taller
+ * map is editable in progress even though `validateMap` refuses it at export.
  */
 export function paintBankOf(session: MapSession): ((cellRow: number) => number) | null {
   const tileset = session.tileset
   if (!tileset || !isBanked(tileset)) return null
-  return (cellRow: number) => bankForRow(cellRow % SCREEN_ROWS)
+  return (cellRow) => bankForRow(cellRow % SCREEN_ROWS)
+}
+```
+
+- [ ] **Step 5: The stroke**
+
+```ts
+export function beginPaint(session: MapSession, role: 'fg' | 'bg'): void {
+  session.paintRole = role
+  session.paintPoints = []
+  session.paintActive = true
 }
 
-/** Applies one paint stroke to the active layer, resolving it into the tileset. */
-export function paintStroke(session: MapSession, from: Point, to: Point, role: 'fg' | 'bg'): void {
+/** Accumulates one drag segment. Resolution happens once, in `endPaint`. */
+export function extendPaint(session: MapSession, from: Point, to: Point): void {
+  if (!session.paintActive) return
+  session.paintPoints.push(...pointsFor(session, from, to))
+}
+
+function pointsFor(session: MapSession, from: Point, to: Point): Point[] {
+  if (session.paintTool === 'spray') return sprayPoints(to, session.brushRadius, session.brushDensity)
+  if (session.paintTool === 'fill') {
+    const tileset = session.tileset
+    if (!tileset) return []
+    const { width, height, indices } = renderMapPixels(doc(session), tileset, session.activeLayer)
+    return fillPoints(indices, to, width, height)
+  }
+  return pixelToolPoints(session.paintTool, from, to, [], session.filledRect)
+}
+```
+
+Read `fillPoints`' real signature in `tile-editor.ts:90` and pass whatever bounds it takes — the default is an 8×8 tile, which would flood only the origin cell.
+
+```ts
+/** Resolves the whole drag into the tileset as one undo step. */
+export function endPaint(session: MapSession): void {
+  if (!session.paintActive) return
+  session.paintActive = false
+  const points = session.paintPoints
+  session.paintPoints = []
   const tileset = session.tileset
   const current = doc(session)
   const layer = current.layers[session.activeLayer]
-  if (!tileset || !layer) return
+  if (!tileset || !layer || !points.length) return
 
-  const points = toolPoints(session.paintTool, from, to, [], session.filledRect)
   const result = paintGrid(
-    { width: current.width * TILE_SIZE, height: current.height * TILE_SIZE, tiles: layer.data },
+    { width: current.width, height: current.height, tiles: layer.data },
     tileset,
     points,
     session.paintColor,
-    role,
+    session.paintRole,
     { write: session.paintWrite, bankOf: paintBankOf(session) ?? undefined }
   )
   if (result.refused) {
     session.status = result.refused
+    offerPromotion(session, result)     // Task 10 defines this; a no-op stub until then
     return
   }
 
@@ -830,94 +1153,61 @@ export function paintStroke(session: MapSession, from: Point, to: Point, role: '
 }
 ```
 
-`paintGrid`'s grid is in **pixels** (`width * TILE_SIZE`), while `layer.data` is indexed in **cells** — that is exactly the meta's own relationship between its pixel space and `frames[frame].tiles`, and `paintGrid` already divides by `TILE_SIZE` to get the cell. Passing `current.width` here instead would silently paint into the wrong cells; the Task 3 wiring test is what catches it.
-
-- [ ] **Step 5: Undo restores the pixels**
-
-In the map session's `undo`, before applying the history step:
-
-```ts
-export function undoSession(session: MapSession): void {
-  if (!canUndo(session.history)) return
-  // The step being left behind is the one whose pixel writes must be reversed.
-  const leaving = session.history.present
-  session.history = undo(session.history)
-  restoreTileEdits(session, leaving.tileEdits)
-  markDirty(session)
-}
-
-/** Puts back the tiles an `edit` stroke overwrote — for every map using them, as the stroke was. */
-function restoreTileEdits(session: MapSession, edits: TileEdit[] | undefined): void {
-  if (!edits?.length) return
-  const store = useTilesetStore()
-  const path = doc(session).tileset
-  const tileset = store.patternDoc(path)
-  if (!tileset) return
-  const tiles = tileset.tiles.slice()
-  for (const edit of edits) tiles[edit.index] = edit.before
-  store.set(path, { ...tileset, tiles }, session.path)
-}
-```
-
-Redo re-applies by painting forward: on redo, capture the *current* entries at those indices as the new inverse and write the redone step's art back. Implement `redoSession` symmetrically, swapping which entry is captured.
-
 - [ ] **Step 6: The budget readout**
 
+Reuse the tile editor's `bankBudgetLabel` (`tile/session.ts:460`) rather than reimplementing it, so both editors phrase the budget identically — it is 1-based ("bank 1: 3 + 2 shared = 5 / 256"). Export it from there if it is not already exported.
+
 ```ts
-/** `tiles: 137/256`, or the per-bank form when banked. Reuses the tile editor's label. */
 export function paintBudgetLabel(session: MapSession): string {
   const tileset = session.tileset
   if (!tileset) return ''
   if (!isBanked(tileset)) return `tiles: ${tileset.count}/${MAX_TILES}`
-  return tileset.bankTiles
-    .map((bank, index) => `bank ${index}: ${bank.length + tileset.sharedTiles}/${MAX_TILES}`)
-    .join('   ')
+  return tileset.bankTiles.map((_, bank) => bankBudgetLabel(tileset, bank)).join('   ')
 }
 ```
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [ ] **Step 7: Run tests, then break the stride to prove they bite**
 
-Run: `npx vitest run src/renderer/src/editors/map src/renderer/src/stores src/shared`
-Expected: PASS.
+Run: `npx vitest run src/renderer/src/editors/map src/renderer/src/stores src/shared` → PASS.
+Then change `width: current.width` to `width: current.width * TILE_SIZE`, rerun, and confirm the "uses the grid width as stride" test fails. Put it back.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 npm run check
 git add src/renderer/src/editors/map/session.ts src/renderer/src/editors/map/session.test.ts
-git commit -m "feat(map): a paint mode that resolves strokes into the tileset"
+git commit -m "feat(map): a paint mode that resolves one stroke into the tileset once"
 ```
 
 ---
 
-### Task 6: the canvas paint path, in its own component
+### Task 7: the canvas paint path, in its own component
 
 **Files:**
 - Create: `src/renderer/src/editors/map/MapPaintLayer.vue`
 - Modify: `src/renderer/src/editors/map/MapCanvas.vue`
 
 **Interfaces:**
-- Consumes: `paintStroke`, `session.mode`, `session.paintTool` (Task 5).
+- Consumes: `beginPaint`, `extendPaint`, `endPaint`, `paintPointAt` (Task 6).
 - Produces: nothing other tasks depend on.
 
-`MapCanvas.vue` is already the largest file in this directory and this adds a second input path. Split rather than grow — and per the Global Constraints no logic may live in either file, because vitest does not cover them.
+**No geometry in this file.** `paintPointAt` does the conversion and is tested; this component passes `offsetX`, `offsetY` and the canvas's `zoom` and does nothing else with numbers.
 
 - [ ] **Step 1: Create `MapPaintLayer.vue`**
 
-A component taking `session` as its only prop, rendering a transparent overlay over the canvas that:
-- converts a pointer event to a **dot**: `{ x: Math.floor(offsetX / zoom * TILE_SIZE / cellPx), y: ... }` using the same zoom the canvas already exposes — compute the divisor once and pass it in as a prop rather than deriving geometry twice;
-- tracks a drag as `from`/`to` and calls `paintStroke(session, from, to, role)` on move and on release, with `role` = `'bg'` when `event.button === 2` or `event.buttons & 2`, else `'fg'` — the same convention as the tile editor;
-- calls `event.preventDefault()` on `contextmenu` so a right-drag paints instead of opening a menu.
-
-It renders nothing itself; the canvas redraws from the session as it already does.
+Props: `session`, `zoom`. It renders a transparent overlay sized to the canvas and:
+- on `pointerdown`, calls `beginPaint(session, event.button === 2 ? 'bg' : 'fg')` and records `paintPointAt(session, event.offsetX, event.offsetY, zoom)` as `from`;
+- on `pointermove` while down, computes `to` the same way, calls `extendPaint(session, from, to)`, then sets `from = to`;
+- on `pointerup` / `pointerleave`, calls `endPaint(session)`;
+- on `contextmenu`, calls `event.preventDefault()` so a right-drag paints instead of opening a menu.
 
 - [ ] **Step 2: Mount it conditionally**
 
-In `MapCanvas.vue`, render `<MapPaintLayer v-if="session.mode === 'paint'" :session="session" :zoom="zoom" />` over the existing canvas, and guard the existing cell-level pointer handlers with `v-if="session.mode === 'tiles'"` (or an early `return` when `session.mode !== 'tiles'`) so the two input paths can never both fire.
+In `MapCanvas.vue`: `<MapPaintLayer v-if="session.mode === 'paint'" :session="session" :zoom="zoom" />` over the canvas, and make the existing cell-level pointer handlers return early when `session.mode !== 'tiles'`, so the two input paths can never both fire.
 
 - [ ] **Step 3: Verify by hand**
 
-Run `npm run dev`. Open a map, switch to Paint, draw with the left button and confirm the canvas updates; draw with the right button and confirm it paints the background role and no context menu appears; switch back to Tiles and confirm stamping still works.
+`npm run dev`: draw with the left button and confirm the canvas updates; right-drag and confirm it paints the background role with no context menu; switch to Tiles and confirm stamping still works.
 
 - [ ] **Step 4: Commit**
 
@@ -929,72 +1219,76 @@ git commit -m "feat(map): the paint path is its own component over the canvas"
 
 ---
 
-### Task 7: the paint sidebar
+### Task 8: the paint sidebar and the mode toggle
 
 **Files:**
 - Create: `src/renderer/src/editors/map/MapPaintPanel.vue`
-- Modify: `src/renderer/src/editors/map/MapSidePanel.vue`, `src/renderer/src/editors/map/MapToolbar.vue` (or wherever `MapTool` buttons live — find it with `grep -rln "setTool" src/renderer/src/editors/map`)
+- Modify: `src/renderer/src/editors/map/MapEditorTab.vue` (the `TOOLS` list is at `:39-44` — there is **no** `MapToolbar.vue`), `src/renderer/src/editors/map/MapSidePanel.vue`
 
 **Interfaces:**
-- Consumes: `setMode`, `setPaintTool`, `setPaintColor`, `setPaintWrite`, `paintBudgetLabel` (Task 5).
-- Produces: nothing other tasks depend on.
+- Consumes: `setMode`, `setPaintTool`, `setPaintColor`, `setPaintWrite`, `paintBudgetLabel` (Task 6).
+- Produces: nothing.
 
 - [ ] **Step 1: The mode toggle**
 
-Two buttons — **Tiles** / **Paint** — bound to `setMode`, in the existing toolbar beside the tool buttons. When `mode === 'paint'`, show the `TileTool` buttons (`pencil`, `line`, `rect`, `fill`, `spray`) instead of the `MapTool` ones, reusing the tile editor's icons and labels so the two editors read the same.
+Two buttons — **Tiles** / **Paint** — bound to `setMode`, beside the existing `TOOLS` list in `MapEditorTab.vue`. When `mode === 'paint'`, show the `TileTool` buttons (`pencil`, `line`, `rect`, `fill`, `spray`) instead of the `MapTool` ones, reusing the tile editor's icons and labels.
+
+**Hide the toggle entirely when the map is bitmap-mode** (`doc(session).cell` is set, or `session.tileset` is null): those maps have the screen editor, and paint mode would silently do nothing.
 
 - [ ] **Step 2: `MapPaintPanel.vue`**
 
 Shown in the side panel only when `mode === 'paint'`:
-- the palette, bound to `setPaintColor`, built from the tileset's palette exactly as the tile editor's does;
-- a **Write** control with two options, `Fork tile` / `Edit tile`, bound to `setPaintWrite`, with the Edit option's title attribute reading: *"Rewrites this tile everywhere it is used, in this map and any other map on this tileset."*;
+- the palette bound to `setPaintColor`, built from the tileset's palette as the tile editor's does;
+- a **Write** control, `Fork tile` / `Edit tile`, bound to `setPaintWrite`, with the Edit option titled: *"Rewrites this tile everywhere it is used, in this map and any other map on this tileset."*;
 - `paintBudgetLabel(session)` as a plain readout.
 
 - [ ] **Step 3: Verify by hand**
 
-`npm run dev`: switch to Paint, confirm the palette, the write toggle and the budget readout appear and that the budget number rises as fork strokes create tiles and stays put on edit strokes.
+`npm run dev`: confirm the palette, write toggle and budget appear; the budget rises on fork strokes and stays put on edit strokes; the Paint toggle is absent on a bitmap map.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 npm run check
-git add src/renderer/src/editors/map/MapPaintPanel.vue src/renderer/src/editors/map/MapSidePanel.vue src/renderer/src/editors/map/MapToolbar.vue
+git add src/renderer/src/editors/map/MapPaintPanel.vue src/renderer/src/editors/map/MapEditorTab.vue src/renderer/src/editors/map/MapSidePanel.vue
 git commit -m "feat(map): a paint sidebar with the palette, the write toggle and the budget"
 ```
 
 ---
 
-### Task 8: New tiled screen
+### Task 9: New tiled screen
 
 **Files:**
-- Modify: `src/renderer/src/commands.ts`, `src/main/menu.ts`, and the store that creates resources (find it: `grep -rln "createTilesDoc\|createMapDoc" src/renderer/src/stores`)
-- Test: the store's own test file
+- Modify: `src/renderer/src/stores/resourcesStore.ts`, `src/shared/ipc.ts`, `src/main/menu.ts`, `src/renderer/src/commands.ts`
+- Test: `src/renderer/src/stores/resourcesStore.test.ts` (create if absent)
 
 **Interfaces:**
-- Consumes: `createTilesDoc`, `createMapDoc`.
-- Produces: a `MenuCommand` value `'new-tiled-screen'`.
+- Consumes: `createTilesDoc`, `createMapDoc`, `serializeResource`.
+- Produces: `newTiledScreen(base)` and the `MenuCommand` value.
 
-A tiled screen is a tileset plus a map — this command scaffolds the pair and opens the map, so "draw one from scratch" needs no new document type.
+Creation today lives in `ResourcesPanel.vue:96-114`, which vitest does not cover. Put `newTiledScreen` in `resourcesStore.ts` so it is testable, and have the panel call it.
+
+**`serializeResource` writes the document FLAT** (`resource.ts:261-264`) — there is no `.doc` wrapper in the JSON. A test doing `JSON.parse(text).doc` gets `undefined` and every assertion silently passes against a default-normalised document.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-it('new tiled screen writes a tileset and a 32x24 map that references it', async () => {
+it('writes a tileset and a 32x24 map that references it', async () => {
   const created = await newTiledScreen('res/title')
 
-  expect(created.tileset).toBe('res/title.tiles.json')
-  expect(created.map).toBe('res/title.map.json')
-  const map = normalizeMap(JSON.parse(written('res/title.map.json')).doc)
+  expect(created).toEqual({ tileset: 'res/title.tiles.json', map: 'res/title.map.json' })
+
+  const map = normalizeMap(JSON.parse(files['res/title.map.json']))
   expect(map.width).toBe(32)
   expect(map.height).toBe(SCREEN_ROWS)
   expect(map.tileset).toBe('res/title.tiles.json')
-  // Tile 0 is reserved so an unpainted cell is blank rather than art.
-  const tiles = normalizeTiles(JSON.parse(written('res/title.tiles.json')).doc)
+
+  const tiles = normalizeTiles(JSON.parse(files['res/title.tiles.json']))
   expect(tiles.reserveTile0).toBe(true)
 })
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [ ] **Step 2: Run to verify it fails**
 
 Expected: FAIL — `newTiledScreen` is not defined.
 
@@ -1007,89 +1301,104 @@ Expected: FAIL — `newTiledScreen` is not defined.
  * happens to land at index 0.
  */
 export async function newTiledScreen(base: string): Promise<{ tileset: string; map: string }> {
-  const tilesetPath = `${base}.tiles.json`
-  const mapPath = `${base}.map.json`
-  const tiles = createTilesDoc('sc2', 1, true)
-  const map = createMapDoc(tilesetPath, 32, SCREEN_ROWS)
+  const tileset = `${base}.tiles.json`
+  const map = `${base}.map.json`
   await window.api.invoke('fs:write', {
-    path: tilesetPath,
-    content: serializeResource({ kind: 'tiles', doc: tiles })
+    path: tileset,
+    content: serializeResource({ kind: 'tiles', doc: createTilesDoc('sc2', 1, true) })
   })
   await window.api.invoke('fs:write', {
-    path: mapPath,
-    content: serializeResource({ kind: 'map', doc: map })
+    path: map,
+    content: serializeResource({ kind: 'map', doc: createMapDoc(tileset, 32, SCREEN_ROWS) })
   })
-  return { tileset: tilesetPath, map: mapPath }
+  return { tileset, map }
 }
 ```
 
 - [ ] **Step 4: Wire the menu**
 
-Add `'new-tiled-screen'` to the `MenuCommand` union in `src/shared/ipc.ts`, an item under File → New in `src/main/menu.ts`, and a case in `src/renderer/src/commands.ts` that prompts for a name, calls `newTiledScreen`, opens the map tab and calls `setMode(session, 'paint')`.
+Add `'file.newTiledScreen'` to the `MenuCommand` union in `src/shared/ipc.ts` (follow the existing dotted convention at `:458-488`), an item under File → New in `src/main/menu.ts`, and a case in `src/renderer/src/commands.ts` that prompts for a name, calls `newTiledScreen`, opens the map tab and calls `setMode(session, 'paint')`.
 
-- [ ] **Step 5: Run tests, then verify by hand**
-
-Run the store's test file, then `npm run dev` and use File → New → Tiled screen.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Run tests, verify by hand, commit**
 
 ```bash
+npx vitest run src/renderer/src/stores
 npm run check
-git add -A src/renderer/src/stores src/renderer/src/commands.ts src/main/menu.ts src/shared/ipc.ts
+git add -A src/renderer/src/stores src/renderer/src/commands.ts src/main/menu.ts src/shared/ipc.ts src/renderer/src/components
 git commit -m "feat: New tiled screen scaffolds a tileset and a map, ready to paint"
 ```
 
 ---
 
-### Task 9: promotion to banked at the 256-tile ceiling
+### Task 10: promotion to banked at the 256-tile ceiling
 
 **Files:**
 - Modify: `src/renderer/src/editors/map/session.ts`, `src/renderer/src/editors/map/MapPaintPanel.vue`
 - Test: `src/renderer/src/editors/map/session.test.ts`
 
 **Interfaces:**
-- Consumes: `packBankedTiles` (`src/shared/msx/tile.ts`), `paintStroke` (Task 5), `screenPixelsFromMap` — if no such renderer exists, write one in `src/shared/msx/map.ts` as `renderMapPixels(doc, tiles, layerIndex): { width, height, indices: Uint8Array }`, looping cells and copying `tilePixels`.
-- Produces: `canPromoteToBanked(session)`, `promoteToBanked(session)`.
+- Consumes: `packBankedTiles`, `renderMapPixels` (Task 6), `PaintGridResult.refusedBank` (Task 3).
+- Produces: `canPromoteToBanked(session)`, `promoteToBanked(session)`, `offerPromotion(session, result)`.
 
-Promotion **re-uses the importer** rather than inventing a redistributor: the screen is already fully described by tileset + map, so render it and hand it to `packBankedTiles`, which is tested and ROM-verified.
+**`packBankedTiles` returns a fresh document** (`tile.ts:663`): `reserveTile0`, `flags`, `blocks`, `export`, `palette` and `mode` are **not** carried over unless re-threaded. Losing `export` alone breaks the build for that tileset.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-it('offers promotion only for a 32x24 map, because packBankedTiles needs 256x192', () => {
-  const session = openTestSession()
-  expect(canPromoteToBanked(session)).toBe(true)
-
-  resizeSession(session, 32, 40)
+it('offers promotion only for a 32x24 map', async () => {
+  const session = await openMap()          // fixture is 8x8
   expect(canPromoteToBanked(session)).toBe(false)
+
+  resize(session, 32, SCREEN_ROWS)
+  expect(canPromoteToBanked(session)).toBe(true)
 })
 
-it('promotion re-derives banks and leaves the map showing the same picture', () => {
-  const session = openTestSession()
-  fillTilesetToCapacity(session)
-  const before = renderMapPixels(doc(session), session.tileset!, 0)
+it('promotion keeps the tileset fields packBankedTiles does not carry', async () => {
+  const session = await openMap()
+  resize(session, 32, SCREEN_ROWS)
+  const before = useTilesetStore().patternDoc(TILES)!
 
   promoteToBanked(session)
 
-  expect(isBanked(session.tileset!)).toBe(true)
-  expect(renderMapPixels(doc(session), session.tileset!, 0)).toEqual(before)
+  const after = useTilesetStore().patternDoc(TILES)!
+  expect(isBanked(after)).toBe(true)
+  expect(after.export).toEqual(before.export)
+  expect(after.reserveTile0).toBe(before.reserveTile0)
+  expect(after.palette).toEqual(before.palette)
 })
 
-it('refuses promotion on a taller map and says why', () => {
-  const session = openTestSession()
-  resizeSession(session, 32, 40)
-  fillTilesetToCapacity(session)
+it('promotion leaves the screen showing the same picture', async () => {
+  const session = await openMap()
+  resize(session, 32, SCREEN_ROWS)
+  const tileset = useTilesetStore().patternDoc(TILES)!
+  const before = renderMapPixels(doc(session), tileset, 0)
+
+  promoteToBanked(session)
+
+  const after = renderMapPixels(doc(session), useTilesetStore().patternDoc(TILES)!, 0)
+  expect(after.indices).toEqual(before.indices)
+})
+
+it('refuses promotion on a taller map and says why', async () => {
+  const session = await openMap()
+  resize(session, 32, 40)
+  useTilesetStore().set(TILES, fullTilesetFixture(), 'x')
   setMode(session, 'paint')
 
-  paintStroke(session, { x: 1, y: 1 }, { x: 1, y: 1 }, 'fg')
+  beginPaint(session, 'fg')
+  extendPaint(session, { x: 0, y: 0 }, { x: 0, y: 0 })
+  endPaint(session)
 
-  expect(session.status).toContain('24 rows')
+  expect(session.status).toContain(`${SCREEN_ROWS} rows`)
+  expect(session.promptPromote).toBeFalsy()
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+The third test is the one that catches a non-bank-aware renderer, so it must run **after** promotion has made the tileset banked.
 
-Expected: FAIL — `canPromoteToBanked` is not defined.
+- [ ] **Step 2: Run to verify they fail**
+
+Expected: FAIL — not defined.
 
 - [ ] **Step 3: Implement**
 
@@ -1100,71 +1409,140 @@ Expected: FAIL — `canPromoteToBanked` is not defined.
  */
 export function canPromoteToBanked(session: MapSession): boolean {
   const current = doc(session)
-  return current.width === 32 && current.height === SCREEN_ROWS && !!session.tileset && !isBanked(session.tileset)
+  return (
+    current.width === 32 &&
+    current.height === SCREEN_ROWS &&
+    !!session.tileset &&
+    !isBanked(session.tileset)
+  )
 }
-
-/**
- * Renders the screen as it stands and repacks it into three banks.
- *
- * This is the one moment renumbering a tileset is legal — it is still
- * unbanked, so Task 9 of the banking branch does not forbid it. It renumbers
- * every tile, so **every other map on this tileset is rewritten**; the caller
- * must have said so before getting here.
- */
-export function promoteToBanked(session: MapSession): void { /* render, packBankedTiles, write both docs through the stores */ }
 ```
 
-In `paintStroke`, when `result.refused` names the whole-tileset limit and `canPromoteToBanked(session)` is true, set `session.promptPromote = true` instead of only setting status; when it is false because the map is not 24 rows, set the status to name that: `` `This screen is out of tiles. Switching to banked needs a map exactly ${SCREEN_ROWS} rows tall — this one is ${current.height}.` ``
+`promoteToBanked` renders the screen with `renderMapPixels`, hands the indices to `packBankedTiles`, and writes both documents — **re-threading every field the packer drops**:
+
+```ts
+  const packed = packBankedTiles(/* pixels, per its real signature */)
+  const merged: TilesDoc = {
+    ...packed.doc,
+    mode: tileset.mode,
+    palette: tileset.palette,
+    reserveTile0: tileset.reserveTile0,
+    flags: tileset.flags,
+    blocks: tileset.blocks,
+    export: tileset.export
+  }
+```
+
+Read `packBankedTiles`' real signature and `BankedPackResult` shape before writing this; the layout it returns is the new map layer.
+
+**Only the active layer is repacked.** A second layer's indices are stale after renumbering, so refuse promotion when the map has more than one tile layer, with a status saying so — this is a different case from the "other maps" warning and neither covers it.
+
+In `endPaint`'s refusal branch:
+
+```ts
+function offerPromotion(session: MapSession, result: PaintGridResult): void {
+  // Only a whole-tileset refusal can be solved by banking; a full BANK cannot.
+  if (result.refusedBank !== null || session.promotionDeclined) return
+  const current = doc(session)
+  if (canPromoteToBanked(session)) {
+    session.promptPromote = true
+    return
+  }
+  if (current.height !== SCREEN_ROWS)
+    session.status =
+      `This screen is out of tiles. Switching to banked needs a map exactly ${SCREEN_ROWS} rows tall — this one is ${current.height}.`
+}
+```
+
+`refusedBank` is why Task 3 returns it as a field: matching the message text would break the moment the wording changes.
 
 **The triggering stroke is discarded, not replayed** — promotion renumbers, so its cell indices are stale by the time it completes.
 
 - [ ] **Step 4: The prompt**
 
-In `MapPaintPanel.vue`, when `session.promptPromote`, show a confirm reading: *"This screen is out of tiles. Switch to banked (three banks of 256)? This renumbers every tile in the tileset, so any other map using it will be rewritten."* Accept calls `promoteToBanked`; decline clears the flag.
+In `MapPaintPanel.vue`, when `session.promptPromote`: *"This screen is out of tiles. Switch to banked (three banks of 256)? This renumbers every tile in the tileset, so any other map using it will be rewritten."* Accept calls `promoteToBanked`; decline sets `session.promotionDeclined = true` and clears the flag, so the offer is made once per session rather than on every refused stroke.
 
-- [ ] **Step 5: Run tests, then commit**
+- [ ] **Step 5: Run tests and commit**
 
 ```bash
 npx vitest run src/renderer/src/editors/map src/shared/msx
 npm run check
-git add -A src/renderer/src/editors/map src/shared/msx/map.ts src/shared/msx/map.test.ts
+git add -A src/renderer/src/editors/map
 git commit -m "feat(map): offer to switch a full screen to banked, once"
 ```
 
 ---
 
-### Task 10: the docs
+### Task 11: rebase, and the docs
 
 **Files:**
-- Modify: `specs/10-map-screen-editors.md`, `CHANGELOG.md`
+- Modify: `src/renderer/src/editors/map/session.ts`, `src/renderer/src/editors/tile/session.ts` (comment only), `specs/10-map-screen-editors.md`, `CHANGELOG.md`
+- Test: `src/renderer/src/editors/map/session.test.ts`
 
-**Interfaces:** none.
+**Interfaces:** none produced.
 
-`src/main/services/agent-guide.ts` needs **nothing**: the emitted C, the generated file names and the way a resource is used from C are all unchanged by this feature. State that in the commit message rather than leaving a reader to wonder — CLAUDE.md makes the guide a deliverable whenever any of those change, so "no change needed" is a conclusion, not an omission.
+**The invariant `edit` mode breaks.** `tile/session.ts:160-165` adopts external tileset changes as a new present *"because painting only ever appends, so the two can never disagree about an existing tile."* An `edit` stroke makes that false: it changes an existing tile, so a tile editor open on the same file can undo to a snapshot that silently reverts the map's stroke, and the map can restore a `before` over art someone else changed since.
 
-- [ ] **Step 1: spec 10**
+- [ ] **Step 1: Write the failing test**
 
-Add a "Painting a tiled screen" section: the Tiles/Paint mode toggle, the `fork`/`edit` write modes and that `edit` reaches every map on the tileset, bank-local allocation for banked screens, the budget readout, New tiled screen, and the one-time promotion offer with its 32×24 requirement.
+```ts
+it('refuses to restore a tile someone else has changed since', async () => {
+  const session = await openMap()
+  setMode(session, 'paint')
+  setPaintWrite(session, 'edit')
+  beginPaint(session, 'fg')
+  extendPaint(session, { x: 8, y: 0 }, { x: 8, y: 0 })
+  endPaint(session)
 
-- [ ] **Step 2: CHANGELOG**
+  // Another editor rewrites the same tile.
+  const store = useTilesetStore()
+  const meddled = store.patternDoc(TILES)!
+  const tiles = meddled.tiles.slice()
+  tiles[1] = { pattern: new Array(8).fill(0x5a), color: new Array(8).fill(0xf1) }
+  store.set(TILES, { ...meddled, tiles }, 'some/other/editor')
 
-Under `[Unreleased]`, describing the capability and naming the two things a user can be surprised by: an `edit` stroke changes every map using that tile, and promotion renumbers the tileset.
+  undo(session)
 
-- [ ] **Step 3: Verify and commit**
+  expect(store.patternDoc(TILES)!.tiles[1].pattern[0]).toBe(0x5a)   // not clobbered
+  expect(session.status).toContain('changed')
+})
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Expected: FAIL — undo restores blindly.
+
+- [ ] **Step 3: Guard the restore**
+
+In `swapTileEdits`, skip any edit whose current entry no longer equals the art this session painted, and set a status naming how many were skipped. That needs the painted entry, so record it on `TileEdit` as `after: TileEntry` in Task 4's push (add the field there and thread it) — or compare against the entry the swap is about to displace and skip when it differs from what this history step wrote.
+
+- [ ] **Step 4: Correct the tile editor's comment**
+
+`tile/session.ts:160-165` states the append-only justification as fact. Amend it: painting a *map* in edit mode can change an existing tile, so adoption is no longer loss-free, and the map guards its own restore.
+
+- [ ] **Step 5: specs/10 and CHANGELOG**
+
+Add a "Painting a tiled screen" section to `specs/10-map-screen-editors.md`: the Tiles/Paint toggle, `fork` vs `edit` and that `edit` reaches every map on the tileset, bank-local read and allocation, the budget readout, New tiled screen, and the one-time promotion offer with its 32×24 and single-layer requirements.
+
+`CHANGELOG.md` under `[Unreleased]`, naming the two things a user can be surprised by: an `edit` stroke changes every map using that tile, and promotion renumbers the tileset.
+
+**`agent-guide.ts` needs nothing** — the emitted C, the generated file names and the way a resource is used from C are all unchanged. Say so in the commit message: per CLAUDE.md the guide is a deliverable whenever any of those change, so "no change needed" is a conclusion, not an omission.
+
+- [ ] **Step 6: Run the full suite and commit**
 
 ```bash
-npx vitest run src/main/services/agent-guide.test.ts src/main/services/agent-guide-meta.test.ts
+npx vitest run src/shared src/renderer -t '^(?!.*generated headers compile into a ROM).+$'
 npm run check
-git add specs/10-map-screen-editors.md CHANGELOG.md
-git commit -m "docs: painting a tiled screen, in spec 10 and the changelog"
+git add -A src/renderer/src/editors specs/10-map-screen-editors.md CHANGELOG.md
+git commit -m "fix(paint): an edit stroke no longer clobbers a tile someone else changed"
 ```
 
 ---
 
 ## Self-Review
 
-**Spec coverage:** `paintGrid` core → Task 1; `write` modes → Task 2; `bankOf` and the second allocator → Task 3; undo carrying the inverse → Tasks 4–5; the editor surface → Tasks 6–7; creation from scratch → Task 8; the 256 ceiling and promotion → Task 9; deliverables beyond the code → Task 10. The spec's "SCREEN 1 needs no special handling" is covered by the existing `pair` plumbing that Tasks 1–3 carry through unchanged, and is asserted nowhere because there is nothing new to assert.
+**Spec coverage:** the store prerequisite → Task 1; `paintGrid` core → Task 2; bank-aware reads and the second allocator → Task 3; `write` modes with the tile-0 and sc1 guards → Task 4; undo carrying the inverse, with the redo swap → Task 5; the stroke model, budget and hit test → Task 6; the editor surface → Tasks 7–8; creation from scratch → Task 9; the 256 ceiling and promotion → Task 10; rebase and the docs → Task 11. The spec's "SCREEN 1 needs no special handling" is carried by the existing `pair` plumbing plus Task 4's `beforeGroup`.
 
-**Placeholders:** Task 9's `promoteToBanked` body is a one-line description rather than code, because it depends on whether `renderMapPixels` already exists — the task says to write it if not and gives its signature. Tasks 6 and 7 describe `.vue` markup in prose; both name every function they call and every prop they pass, and neither may contain logic per the Global Constraints.
+**Placeholders:** `promoteToBanked`'s body (Task 10 Step 3) and `fillPoints`' bounds (Task 6 Step 5) both say to read a real signature first rather than guessing it, because both were guessed wrong in the previous draft. Tasks 7–8 describe `.vue` markup in prose and name every function they call; neither may contain logic.
 
-**Type consistency:** `PaintGrid`/`PaintGridResult`/`PaintOptions`/`TileEdit` are defined in Tasks 1–3 and used unchanged in 4–5. `MapEntry`/`MapHistory` are defined in Task 4 and consumed in 5 and 9. `paintBankOf` returns `((cellRow: number) => number) | null` and is adapted to `PaintOptions.bankOf`'s optional with `?? undefined` at the one call site.
+**Type consistency:** `PaintGrid`/`PaintGridResult`/`PaintOptions`/`TileEdit`/`refusedBank` are defined in Tasks 2–4 and used unchanged in 5–6 and 10. `MapEntry`/`MapHistory` are defined in Task 5 and consumed in 6 and 10. `paintBankOf` returns `((cellRow: number) => number) | null`, adapted to `PaintOptions.bankOf`'s optional with `?? undefined` at its one call site. Task 11 adds `after` to `TileEdit`, which Task 4 must therefore emit — noted in Task 11 Step 3 rather than left to collide.
