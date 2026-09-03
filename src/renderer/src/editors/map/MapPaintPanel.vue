@@ -8,7 +8,14 @@
  */
 import { computed } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
-import { paintBudgetLabel, setPaintColor, setPaintWrite, type MapSession } from './session'
+import {
+  declinePromotion,
+  paintBudgetLabel,
+  promoteToBanked,
+  setPaintColor,
+  setPaintWrite,
+  type MapSession
+} from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
@@ -80,6 +87,35 @@ const budget = computed(() => paintBudgetLabel(props.session))
       <p class="budget">
         {{ budget }}
       </p>
+    </section>
+
+    <!-- Raised once by a refused stroke (`offerPromotion`); either button clears it. -->
+    <section
+      v-if="session.promptPromote"
+      class="promote"
+    >
+      <h3>Out of tiles</h3>
+      <p class="hint">
+        This screen is out of tiles. Switch to banked (three banks of 256)? This renumbers every
+        tile in the tileset, so any other map or meta-tile using it will be rewritten, and its named
+        blocks and tile flags are cleared. The stroke that hit the limit is not kept — draw it again
+        afterwards.
+      </p>
+      <div class="write">
+        <button
+          type="button"
+          class="accept"
+          @click="promoteToBanked(session)"
+        >
+          Switch to banked
+        </button>
+        <button
+          type="button"
+          @click="declinePromotion(session)"
+        >
+          Not now
+        </button>
+      </div>
     </section>
   </div>
 </template>
@@ -161,5 +197,21 @@ section {
   font-family: var(--font-mono, monospace);
   font-size: 11px;
   white-space: pre-wrap;
+}
+
+.promote {
+  padding: 6px;
+  border: 1px solid var(--color-accent);
+  border-radius: 3px;
+}
+
+.promote .hint {
+  color: var(--color-text);
+}
+
+.write button.accept {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
 }
 </style>

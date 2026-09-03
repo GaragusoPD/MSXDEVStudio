@@ -12,13 +12,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createBitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
-import { MAX_TILES, normalizeTiles, TILE_SIZE, type TileEntry } from '../../../../shared/msx/tile'
-import { normalizeMap } from '../../../../shared/msx/map'
+import {
+  blankTileEntry,
+  isBanked,
+  MAX_TILES,
+  normalizeTiles,
+  TILE_SIZE,
+  type TileEntry
+} from '../../../../shared/msx/tile'
+import { normalizeMap, SCREEN_ROWS } from '../../../../shared/msx/map'
 import { singleStamp } from '../../../../shared/map-editor'
 import {
+  addLayer,
   bankSheetOffset,
   beginPaint,
   canPaint,
+  canPromoteToBanked,
+  canUndo,
+  commit,
+  declinePromotion,
   doc,
   endPaint,
   extendPaint,
@@ -31,6 +43,8 @@ import {
   pickerBankOffset,
   pickMeta,
   placeMetaAt,
+  promoteToBanked,
+  promotionBlocker,
   pruneMapSessions,
   redo,
   reloadTileset,
@@ -914,6 +928,272 @@ describe('paint mode', () => {
       for (let i = 0; i < 4; i++) await settled()
       expect(canPaint(session)).toBe(true)
       expect(session.mode).toBe('paint')
+    })
+  })
+
+  describe('promotion to banked at the 256-tile ceiling', () => {
+    /** An unbanked tileset with no slot left: 256 tiles, every one distinct. */
+    function fullTilesetFixture(mode: 'sc2' | 'sc1' = 'sc2') {
+      return normalizeTiles({
+        mode,
+        count: MAX_TILES,
+        tiles: Array.from({ length: MAX_TILES }, (_, i) => distinct(i))
+      })
+    }
+
+    /**
+     * A stroke that needs a slot. Colour 1, not the default 15: `distinct`'s
+     * rows 0-6 are already white, so a white dot on (0, 0) is a found no-op
+     * and never reaches the refusal at all.
+     */
+    function strokeNeedingATile(session: MapSession, x = 0, y = 0): void {
+      setPaintColor(session, 1)
+      dab(session, x, y)
+    }
+
+    it('offers promotion only for a 32x24 map', async () => {
+      const session = await openMap()          // fixture is 8x8
+      expect(canPromoteToBanked(session)).toBe(false)
+
+      resize(session, 32, SCREEN_ROWS)
+      expect(canPromoteToBanked(session)).toBe(true)
+
+      // Exactly 32 wide too: 8×8 already fails on height, so it cannot tell.
+      resize(session, 40, SCREEN_ROWS)
+      expect(canPromoteToBanked(session)).toBe(false)
+    })
+
+    it('a refused stroke on a 32x24 screen raises the offer, and keeps the refusal on screen', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      useTilesetStore().set(TILES, fullTilesetFixture(), 'x')
+      setMode(session, 'paint')
+      const before = doc(session)
+
+      strokeNeedingATile(session)
+
+      expect(session.promptPromote).toBe(true)
+      expect(session.status).toContain('full')
+      // The triggering stroke is discarded: nothing changed, nothing to replay.
+      expect(doc(session)).toBe(before)
+    })
+
+    it('declining is remembered: the next refused stroke does not ask again', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      useTilesetStore().set(TILES, fullTilesetFixture(), 'x')
+      setMode(session, 'paint')
+      strokeNeedingATile(session)
+      expect(session.promptPromote).toBe(true)
+
+      declinePromotion(session)
+      expect(session.promptPromote).toBe(false)
+      expect(session.promotionDeclined).toBe(true)
+
+      strokeNeedingATile(session, 8, 0)
+      expect(session.promptPromote).toBe(false)
+      expect(session.status).toContain('full')
+    })
+
+    it('promotion keeps the tileset fields packBankedTiles does not carry', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      // Every field the packer drops set to something a default would not
+      // equal — the file fixture's `export` is null, and null equals null
+      // whether or not it was carried.
+      useTilesetStore().set(
+        TILES,
+        normalizeTiles({
+          mode: 'sc4',
+          count: 4,
+          reserveTile0: true,
+          palette: Array.from({ length: 16 }, (_, i) => i * 4 + 1),
+          export: defaultExport(TILES),
+          flags: [0, 1, 2, 3],
+          blocks: [{ name: 'door', width: 1, height: 2, tiles: [1, 2] }]
+        }),
+        'x'
+      )
+      const before = useTilesetStore().patternDoc(TILES)!
+      expect(before.export).not.toBeNull()
+      expect(before.palette).not.toBeNull()
+
+      promoteToBanked(session)
+
+      const after = useTilesetStore().patternDoc(TILES)!
+      expect(isBanked(after)).toBe(true)
+      expect(after.mode).toBe('sc4')
+      expect(after.export).toEqual(before.export)
+      expect(after.reserveTile0).toBe(before.reserveTile0)
+      expect(after.palette).toEqual(before.palette)
+      // Deliberately not carried: both name tiles by number, and every number
+      // changed. `normalizeTiles` would clamp them to the new count of 1 on the
+      // next load anyway; until then a carried block would stamp stale indices.
+      expect(after.blocks).toEqual([])
+      expect(after.flags).toEqual([0])
+      // The session draws the document it published, as it does after a stroke.
+      expect(session.tileset).toBe(after)
+    })
+
+    it('promotion leaves the screen showing the same picture', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      setMode(session, 'paint')
+      // Different art in each of the three bands, at different counts — a
+      // uniform picture cannot tell a transposed bank from the right one.
+      for (const [x, row, color] of [
+        [0, 0, 15],
+        [8, 3, 5],
+        [0, 9, 7],
+        [0, 17, 9],
+        [8, 20, 11],
+        [16, 23, 13]
+      ]) {
+        setPaintColor(session, color)
+        dab(session, x, row * TILE_SIZE)
+      }
+      const tileset = useTilesetStore().patternDoc(TILES)!
+      const before = renderMapPixels(doc(session), tileset, 0)
+      expect(new Set(before.indices).size).toBeGreaterThan(3)
+
+      promoteToBanked(session)
+
+      const banked = useTilesetStore().patternDoc(TILES)!
+      expect(isBanked(banked)).toBe(true)
+      // Blank plus the dabs each band holds: 2, 1 and 3 of them.
+      expect(banked.bankTiles.map((bank) => bank.length)).toEqual([3, 2, 4])
+      const after = renderMapPixels(doc(session), banked, 0)
+      expect(after.indices).toEqual(before.indices)
+    })
+
+    it('honours reserveTile0: bank tile 0 is blank, and a see-through cell stays tile 0', async () => {
+      // The packer numbers each bank from 0 and puts real art there, while
+      // `bankIndexEditable` locks bank index 0 under the flag — the same
+      // shift `importImage` performs, in all three banks.
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      useTilesetStore().set(
+        TILES,
+        normalizeTiles({ mode: 'sc2', count: 3, reserveTile0: true, tiles: [blank(), solid(), distinct(1)] }),
+        'x'
+      )
+      const current = doc(session)
+      const data = current.layers[0].data.slice()
+      data[0] = 1                    // band 0, art
+      data[1] = 0                    // band 0, see-through
+      data[9 * current.width] = 2    // band 1, art
+      data[17 * current.width] = 1   // band 2, art
+      commit(session, { ...current, layers: [{ ...current.layers[0], data }] })
+      const before = renderMapPixels(doc(session), session.tileset!, 0)
+
+      promoteToBanked(session)
+
+      const banked = useTilesetStore().patternDoc(TILES)!
+      expect(banked.reserveTile0).toBe(true)
+      for (const bank of banked.bankTiles) expect(bank[0]).toEqual(blankTileEntry('sc2'))
+      const layer = doc(session).layers[0]
+      expect(layer.data[1]).toBe(0)
+      expect(layer.data[0]).not.toBe(0)
+      expect(layer.data[9 * current.width]).not.toBe(0)
+      expect(layer.data[17 * current.width]).not.toBe(0)
+      expect(renderMapPixels(doc(session), banked, 0).indices).toEqual(before.indices)
+    })
+
+    it('promotion restarts the history and leaves both files dirty for the pair-save', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      expect(canUndo(session.history)).toBe(true)
+
+      promoteToBanked(session)
+
+      // Every earlier step indexes a numbering that no longer exists.
+      expect(canUndo(session.history)).toBe(false)
+      expect(session.dirty).toBe(true)
+      expect(useTilesetStore().isDirty(TILES)).toBe(true)
+      expect(session.promptPromote).toBe(false)
+      expect(session.status).toContain('banked')
+    })
+
+    it('refuses promotion on a taller map and says why', async () => {
+      const session = await openMap()
+      resize(session, 32, 40)
+      useTilesetStore().set(TILES, fullTilesetFixture(), 'x')
+      setMode(session, 'paint')
+
+      strokeNeedingATile(session)
+
+      expect(session.status).toContain(`${SCREEN_ROWS} rows`)
+      expect(session.promptPromote).toBeFalsy()
+    })
+
+    it('refuses promotion when a second layer would keep the old numbering', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      addLayer(session)
+      useTilesetStore().set(TILES, fullTilesetFixture(), 'x')
+      setMode(session, 'paint')
+
+      strokeNeedingATile(session)
+
+      expect(session.status).toContain('layer')
+      expect(session.promptPromote).toBeFalsy()
+    })
+
+    it('refuses promotion on SCREEN 1, which has one pattern table', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      useTilesetStore().set(TILES, normalizeTiles({ mode: 'sc1', count: 4 }), 'x')
+      const tileset = useTilesetStore().patternDoc(TILES)
+
+      expect(canPromoteToBanked(session)).toBe(false)
+      promoteToBanked(session)
+
+      expect(session.status).toContain('SCREEN 1')
+      // Nothing published: `normalizeTiles` would strip the banks on the next load anyway.
+      expect(useTilesetStore().patternDoc(TILES)).toBe(tileset)
+    })
+
+    it('refuses promotion while the map places meta-tiles, which name tiles by number', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      pickMeta(session, META)
+      placeMetaAt(session, 2, 2)
+
+      expect(promotionBlocker(session)).toContain('meta-tiles')
+      expect(canPromoteToBanked(session)).toBe(false)
+    })
+
+    it('a full bank on a banked screen is not something banking can fix', async () => {
+      // Taller than a screen, so a promotion refusal *would* fire if the
+      // decision were made on anything but `refusedBank`: the user would be
+      // told their already-banked map "needs 24 rows".
+      const session = await openMap()
+      resize(session, 32, 40)
+      useTilesetStore().set(TILES, fullBankedFixture(), 'x')
+      setMode(session, 'paint')
+
+      strokeNeedingATile(session)
+
+      expect(session.status).toContain('Bank 1 is full')
+      expect(session.status).not.toContain(`${SCREEN_ROWS} rows`)
+      expect(session.promptPromote).toBeFalsy()
+    })
+
+    it('accepting after the map stopped qualifying refuses rather than repacking', async () => {
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      useTilesetStore().set(TILES, fullTilesetFixture(), 'x')
+      setMode(session, 'paint')
+      strokeNeedingATile(session)
+      expect(session.promptPromote).toBe(true)
+      const tileset = useTilesetStore().patternDoc(TILES)
+
+      resize(session, 32, 40)
+      promoteToBanked(session)
+
+      expect(session.promptPromote).toBe(false)
+      expect(session.status).toContain(`${SCREEN_ROWS} rows`)
+      expect(useTilesetStore().patternDoc(TILES)).toBe(tileset)
     })
   })
 })

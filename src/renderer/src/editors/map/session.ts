@@ -26,6 +26,7 @@ import {
   normalizeMap,
   placeMeta,
   placementAt,
+  placementCount,
   metaRefFrom,
   removePlacement,
   resizeMap,
@@ -39,8 +40,11 @@ import type { ScreenDoc } from '../../../../shared/msx/screen'
 import {
   BANK_COUNT,
   bankTilePixels,
+  blankTileEntry,
   isBanked,
   MAX_TILES,
+  normalizeTiles,
+  packBankedTiles,
   TILE_SIZE,
   tilePixels,
   type TilesDoc
@@ -201,6 +205,12 @@ export interface MapSession {
   paintActive: boolean
   /** Set once the user declines promotion, so the offer is made once per session. */
   promotionDeclined: boolean
+  /**
+   * The offer itself: raised by a refused stroke on a screen that could be
+   * banked, shown by `MapPaintPanel.vue`, cleared by `promoteToBanked` or
+   * `declinePromotion`. UI state, like `mode`.
+   */
+  promptPromote: boolean
 }
 
 const sessions = new Map<string, MapSession>()
@@ -255,7 +265,8 @@ export function mapSession(path: string): MapSession {
     paintOrigin: null,
     paintRole: 'fg',
     paintActive: false,
-    promotionDeclined: false
+    promotionDeclined: false,
+    promptPromote: false
   })
   sessions.set(path, session)
   // `serialize` must produce byte-for-byte what `saveSession` writes, sibling
@@ -1071,12 +1082,165 @@ function publishTileset(session: MapSession, next: TilesDoc): void {
 }
 
 /**
- * Task 10 fills this in: on an unbanked tileset that just hit 256 tiles, offer
- * to repack the screen into three banks. Until then the refusal message is all
- * the user gets — this is the guard that body starts with, and nothing after it.
+ * On an unbanked tileset that just hit 256 tiles, raises the one-time offer to
+ * repack the screen into three banks — or says why that is not on the table.
+ *
+ * Branches on `refusedBank`, never on the message: only a whole-*tileset*
+ * refusal (`null`) can be solved by banking. A full *bank* is the ceiling of a
+ * screen that is banked already, and telling that user their map "needs 24
+ * rows" would be advice that cannot help. The refusal message `endPaint` set
+ * stays in place for that case.
+ *
+ * The triggering stroke is discarded, not replayed: promotion renumbers every
+ * tile, so its cell indices are stale by the time it completes. The user
+ * draws it again on a screen that now has room.
  */
 function offerPromotion(session: MapSession, result: PaintGridResult): void {
   if (result.refusedBank !== null || session.promotionDeclined) return
+  const blocker = promotionBlocker(session)
+  if (blocker === null) {
+    session.promptPromote = true
+    return
+  }
+  session.status = `This screen is out of tiles. ${blocker}`
+}
+
+/**
+ * Why this screen cannot be switched to banked right now, or null when it can.
+ * The one decision point behind the offer, the accept and the refusal message,
+ * so the three can never disagree — `promoteToBanked` re-asks it, because the
+ * map can change between the offer being raised and the button being pressed.
+ *
+ * Promotion is only legal at exactly 32×24: `packBankedTiles` takes a 256×192
+ * image, and `validateMap` refuses a banked map that is not `SCREEN_ROWS`
+ * tall. SCREEN 1 has one pattern table, not three — `normalizeTiles` strips
+ * `bankTiles` from an sc1 document, so banks packed into one would survive
+ * exactly until the next load. Only the active layer is repacked, so a second
+ * layer's indices would be stale after renumbering; a placement's meta names
+ * tiles by number the same way, and a baked one's receipt would claim the grid
+ * holds tiles it no longer does. Those last two are this map's own references,
+ * which is why they refuse rather than merely warn the way the prompt warns
+ * about other files.
+ */
+export function promotionBlocker(session: MapSession): string | null {
+  const tileset = session.tileset
+  const current = doc(session)
+  if (!tileset || !canPaint(session)) return 'This map has no pattern tileset to bank.'
+  if (isBanked(tileset)) return 'This tileset is already banked.'
+  if (tileset.mode === 'sc1') return 'SCREEN 1 has one pattern table, so it cannot be banked — that is SCREEN 2/4 only.'
+  if (current.width !== 32 || current.height !== SCREEN_ROWS) {
+    return (
+      `Switching to banked needs a map exactly 32 wide and ${SCREEN_ROWS} rows tall — ` +
+      `this one is ${current.width}×${current.height}.`
+    )
+  }
+  if (current.layers.length > 1) {
+    return (
+      `Switching to banked repacks one layer, and this map has ${current.layers.length} — ` +
+      'the others would keep the old tile numbering. Remove or merge them first.'
+    )
+  }
+  if (placementCount(current) > 0) {
+    return (
+      'Switching to banked renumbers every tile, and this map places meta-tiles that name tiles by number. ' +
+      'Remove the placements first.'
+    )
+  }
+  return null
+}
+
+export function canPromoteToBanked(session: MapSession): boolean {
+  return promotionBlocker(session) === null
+}
+
+/** The user said no. Once per session: the next refused stroke does not re-ask. */
+export function declinePromotion(session: MapSession): void {
+  session.promotionDeclined = true
+  session.promptPromote = false
+}
+
+/**
+ * Switches the screen to three banks of 256.
+ *
+ * Re-uses the importer rather than inventing a redistributor: the screen is
+ * already fully described by tileset + map, so it is rendered to a 256×192
+ * bitmap and handed to `packBankedTiles`, which is tested and ROM-verified.
+ * The packer returns a *fresh* document, so everything it does not know about
+ * is re-threaded here: `mode` (its own argument), `palette`, `reserveTile0`
+ * and `export` — losing `export` alone would leave the tileset unbuilt.
+ * `flags` and `blocks` are deliberately *not* carried: both name tiles by
+ * number and every number changes. `normalizeTiles` would clamp them against
+ * the new `count` of 1 on the next load anyway, and until then a carried block
+ * would stamp old-numbering indices as bank art through `pickBlock`. The
+ * prompt says so before the user accepts.
+ *
+ * `reserveTile0` is honoured the way `importImage` honours it: the packer
+ * numbers each bank from 0, so a blank is prepended per bank and every layout
+ * index shifts by one — a cell that *was* tile 0 stays tile 0, so its
+ * see-through survives. A bank that had all 256 slots in use loses its last
+ * tile to the shift; that is counted as unplaced, never silent.
+ *
+ * Renumbering makes every earlier history entry a lie — its cells index a
+ * numbering that no longer exists, and its `tileEdits` would write art into
+ * common slots the banks now hide — so the history restarts here, as it does
+ * after a replayed reorder. Both documents are left dirty for the pair-save,
+ * not written: this is an edit, and Save is what writes edits.
+ */
+export function promoteToBanked(session: MapSession): void {
+  session.promptPromote = false
+  const blocker = promotionBlocker(session)
+  if (blocker !== null) {
+    session.status = blocker
+    return
+  }
+  const tileset = session.tileset!
+  const current = doc(session)
+  const layer = current.layers[session.activeLayer]
+  if (!layer) return
+
+  const { width, height, indices } = renderMapPixels(current, tileset, session.activeLayer)
+  const packed = packBankedTiles(indices, width, height, tileset.mode)
+
+  const reserve = tileset.reserveTile0
+  const unplaced = packed.unplaced.slice()
+  const bankTiles = packed.doc.bankTiles.map((bank) =>
+    reserve ? [blankTileEntry(tileset.mode), ...bank].slice(0, MAX_TILES) : bank
+  )
+  const data = packed.layout.map((index, cell) => {
+    if (!reserve) return index
+    if (layer.data[cell] === 0) return 0
+    const shifted = index + 1
+    if (shifted < MAX_TILES) return shifted
+    // The 257th tile the shift pushed out. Placed as tile 0 and counted, the
+    // way the packer itself treats a cell it has no room for.
+    unplaced[bankForRow(Math.floor(cell / current.width))]++
+    return 0
+  })
+
+  // Through `normalizeTiles`, so what the session holds is byte-for-byte what
+  // the next load will read back — it is what blanks common tile 0 under
+  // `reserveTile0`, sizes `flags` to the new count, and keeps `palette` only
+  // where the mode has one.
+  const merged = normalizeTiles({
+    ...packed.doc,
+    bankTiles,
+    palette: tileset.palette,
+    reserveTile0: tileset.reserveTile0,
+    export: tileset.export
+  })
+  const layers = current.layers.map((entry, i) => (i === session.activeLayer ? { ...entry, data } : entry))
+
+  publishTileset(session, merged)
+  session.history = createHistory({ doc: { ...current, layers } })
+  session.selection = null
+  markDirty(session)
+
+  const counts = merged.bankTiles.map((bank) => bank.length).join('/')
+  const short = unplaced.reduce((sum, count) => sum + count, 0)
+  session.status =
+    `Switched to banked — ${counts} tiles in banks 1-3.` +
+    (short ? ` ${short} cells could not be placed.` : '') +
+    ' Draw the last stroke again.'
 }
 
 /**
