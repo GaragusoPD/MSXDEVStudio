@@ -668,6 +668,36 @@ describe('swSpriteOverlapProblems — software sprites vs. the shared/banked pat
     expect(problems[0].message).toContain('199')
   })
 
+  // The bank-length term of `tilesetHighestIndex` is the only one no other test
+  // exercises alone: every other banked fixture reaches 192+ through its shared
+  // region, so dropping the bank term entirely left them all green. A bank can
+  // grow past 192 on its own — `sharedTiles` is 0 here — and that is a real
+  // collision the shared-region cases would never have caught.
+  it('reports a bank whose own art passes 192, with no shared region at all', () => {
+    const root = scratch('overlap-bank-length')
+    const solid = (byte: number) => ({
+      pattern: new Array(8).fill(byte),
+      color: new Array(8).fill(mergeColorByte(15, 4))
+    })
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: [solid(0x11), solid(0x22), solid(0x33), solid(0x44)],
+      // Bank 1 alone reaches 200 entries — highest index 199. Banks deliberately
+      // uneven, and the shared region empty, so only the bank term can trip this.
+      bankTiles: [[solid(0x55)], Array.from({ length: 200 }, (_, i) => solid(i & 0xff)), []],
+      sharedTiles: 0
+    })
+    doc.export = { ...defaultExport('res/hero.tiles.json'), name: 'g_Hero', out: 'content/hero.h' }
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(join(root, 'res/hero.tiles.json'), serializeResource({ kind: 'tiles', doc }), 'utf-8')
+    writeSwSprites(root, 'res/hero.swsprites.json')
+
+    const problems = swSpriteOverlapProblems(root)
+    expect(problems).toHaveLength(1)
+    expect(problems[0].message).toContain('199')
+  })
+
   it('reports nothing when the only swsprites resource is not a pattern-mode (tiled) one', () => {
     // sc5 sprites are blitted into VRAM, not written into the pattern table —
     // `swSpriteFamily` never emits `_FIRST_PATTERN` for them, so there is no
