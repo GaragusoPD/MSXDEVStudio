@@ -14,7 +14,7 @@
  * mounted over the canvas only while it is live. The cell handlers below step
  * aside whenever the mode is not `'tiles'`, so the two can never both fire.
  */
-import { computed, ref, watchEffect } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
 import { type Point } from '../../../../shared/map-editor'
@@ -163,6 +163,23 @@ function onUp(): void {
   origin = null
   last = null
 }
+
+// A mode flip mid-drag: `setMode` has already ended the drag in the session,
+// but the pointer bookkeeping above — and the rect ghost drawn from it — would
+// outlive that and be picked up by a pointerup arriving in the other mode, or
+// by the next drag back in this one. Lifecycle, not logic: nothing here decides.
+watch(
+  () => props.session.mode,
+  () => {
+    origin = null
+    last = null
+    rectPreview.value = []
+    draggingPlacement = false
+    grab = null
+    selecting = false
+    selectAnchor = null
+  }
+)
 
 function onKeydown(event: KeyboardEvent): void {
   if (!event.ctrlKey) {

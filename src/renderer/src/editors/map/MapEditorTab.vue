@@ -10,6 +10,7 @@ import type { MaterialSymbol } from '@material-symbols/font-400'
  */
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import type { MapTool } from '../../../../shared/map-editor'
+import type { TileTool } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import MapCanvas from './MapCanvas.vue'
@@ -19,6 +20,7 @@ import MapSidePanel from './MapSidePanel.vue'
 import Icon from '../../components/Icon.vue'
 import { isTypingTarget } from '../../commands'
 import {
+  canPaint,
   canRedo,
   canUndo,
   copySelection,
@@ -29,6 +31,8 @@ import {
   pruneMapSessions,
   redo,
   saveSession,
+  setMode,
+  setPaintTool,
   setTool,
   undo,
 } from './session'
@@ -45,6 +49,25 @@ const TOOLS: { id: MapTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'rect', icon: 'rectangle', title: 'Rectangle' },
   { id: 'erase', icon: 'ink_eraser', title: 'Erase' }
 ]
+
+/**
+ * The pixel tools, the meta editor's list verbatim — same icons, same names —
+ * so a user moving between the two editors reads one vocabulary. Which list is
+ * live is the Tiles/Paint toggle's business: never one list holding both,
+ * where half the buttons act on cells and half on dots.
+ */
+const PAINT_TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
+  { id: 'pencil', icon: 'edit', title: 'Pencil' },
+  { id: 'line', icon: 'pen_size_1', title: 'Line' },
+  { id: 'rect', icon: 'rectangle', title: 'Rectangle' },
+  { id: 'fill', icon: 'format_color_fill', title: 'Fill' },
+  { id: 'spray', icon: 'blur_on', title: 'Spray (ordered dither)' }
+]
+
+/** `filledRect` serves both rect tools, so the checkbox follows whichever one the mode makes live. */
+const rectLive = computed(
+  () => (session.value.mode === 'paint' ? session.value.paintTool : session.value.tool) === 'rect'
+)
 
 async function save(): Promise<void> {
   try {
@@ -108,18 +131,58 @@ onMounted(() => void resourcesStore.refresh())
     </p>
     <template v-else-if="!session.loading">
       <div class="toolbar">
-        <button
-          v-for="tool in TOOLS"
-          :key="tool.id"
-          type="button"
-          :class="{ active: session.tool === tool.id }"
-          :title="tool.title"
-          @click="setTool(session, tool.id)"
-        >
-          <Icon :name="tool.icon" />
-        </button>
+        <!--
+          Tiles | Paint: which tool set is live. Only offered where there is a
+          pattern tileset to paint into (`canPaint`) — a bitmap map has the
+          screen editor. Hiding it cannot strand a map in paint mode, because
+          `session.ts` drops the mode back to tiles when a map loses its tileset.
+        -->
+        <template v-if="canPaint(session)">
+          <button
+            type="button"
+            :class="{ active: session.mode === 'tiles' }"
+            title="Tiles — stamp, fill, outline and erase whole cells"
+            @click="setMode(session, 'tiles')"
+          >
+            Tiles
+          </button>
+          <button
+            type="button"
+            :class="{ active: session.mode === 'paint' }"
+            title="Paint — draw dots straight onto the map; each stroke becomes tiles in the tileset"
+            @click="setMode(session, 'paint')"
+          >
+            Paint
+          </button>
+          <span class="sep" />
+        </template>
+
+        <template v-if="session.mode === 'paint'">
+          <button
+            v-for="tool in PAINT_TOOLS"
+            :key="tool.id"
+            type="button"
+            :class="{ active: session.paintTool === tool.id }"
+            :title="tool.title"
+            @click="setPaintTool(session, tool.id)"
+          >
+            <Icon :name="tool.icon" />
+          </button>
+        </template>
+        <template v-else>
+          <button
+            v-for="tool in TOOLS"
+            :key="tool.id"
+            type="button"
+            :class="{ active: session.tool === tool.id }"
+            :title="tool.title"
+            @click="setTool(session, tool.id)"
+          >
+            <Icon :name="tool.icon" />
+          </button>
+        </template>
         <label
-          v-if="session.tool === 'rect'"
+          v-if="rectLive"
           class="inline"
         >
           <input
@@ -129,32 +192,34 @@ onMounted(() => void resourcesStore.refresh())
           <span>filled</span>
         </label>
 
-
-        <span class="sep" />
-        <button
-          type="button"
-          title="Copy the selection (Ctrl+C)"
-          :disabled="!session.selection"
-          @click="copySelection(session)"
-        >
-          Copy
-        </button>
-        <button
-          type="button"
-          title="Paste as the stamp brush (Ctrl+V)"
-          :disabled="!session.clipboard"
-          @click="pasteClipboard(session)"
-        >
-          Paste
-        </button>
-        <button
-          type="button"
-          title="Clear the selection (Delete)"
-          :disabled="!session.selection"
-          @click="deleteSelection(session)"
-        >
-          Delete
-        </button>
+        <!-- Cell selection is a tiles-mode affair; the buttons go with the tools. -->
+        <template v-if="session.mode === 'tiles'">
+          <span class="sep" />
+          <button
+            type="button"
+            title="Copy the selection (Ctrl+C)"
+            :disabled="!session.selection"
+            @click="copySelection(session)"
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            title="Paste as the stamp brush (Ctrl+V)"
+            :disabled="!session.clipboard"
+            @click="pasteClipboard(session)"
+          >
+            Paste
+          </button>
+          <button
+            type="button"
+            title="Clear the selection (Delete)"
+            :disabled="!session.selection"
+            @click="deleteSelection(session)"
+          >
+            Delete
+          </button>
+        </template>
 
         <span class="sep" />
         <button

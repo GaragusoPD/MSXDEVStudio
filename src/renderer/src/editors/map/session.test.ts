@@ -14,6 +14,7 @@ import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import { MAX_TILES, normalizeTiles, TILE_SIZE, type TileEntry } from '../../../../shared/msx/tile'
 import { normalizeMap } from '../../../../shared/msx/map'
+import { singleStamp } from '../../../../shared/map-editor'
 import {
   bankSheetOffset,
   beginPaint,
@@ -25,12 +26,14 @@ import {
   metaRowOffsets,
   paintBankOf,
   paintBudgetLabel,
+  paintDrag,
   paintPointAt,
   pickerBankOffset,
   pickMeta,
   placeMetaAt,
   pruneMapSessions,
   redo,
+  reloadTileset,
   renderMapPixels,
   resize,
   saveSession,
@@ -40,6 +43,7 @@ import {
   setPaintColor,
   setPaintTool,
   setPaintWrite,
+  setTileset,
   undo,
   type MapSession
 } from './session'
@@ -773,6 +777,118 @@ describe('paint mode', () => {
       const session = await openMap()
       expect(session.tileset).toBeNull()
       expect(canPaint(session)).toBe(false)
+    })
+  })
+
+  it('a rect fed pencil-style — each segment starting where the last ended — is still anchored on the drag origin', async () => {
+    // The sibling of the line test above: the paint layer advances `from` for
+    // every tool, and a rect anchored on `from` would collapse to whatever
+    // shape the last segment alone describes.
+    const session = await openMap()
+    setMode(session, 'paint')
+    setPaintTool(session, 'rect')
+    beginPaint(session, 'fg')
+    extendPaint(session, { x: 0, y: 0 }, { x: 15, y: 0 })
+    extendPaint(session, { x: 15, y: 0 }, { x: 15, y: 15 })
+    endPaint(session)
+
+    // A hollow 16×16 from (0,0): its left edge runs down x = 0 through cell
+    // (0,1), which a rect anchored on `from` — a vertical line at x = 15 —
+    // never reaches.
+    expect(cell(session, 0, 0)).not.toBe(0)
+    expect(cell(session, 0, 1)).not.toBe(0)
+    expect(cell(session, 1, 1)).not.toBe(0)
+  })
+
+  it('fill floods from where the button went down, not from wherever it was released', async () => {
+    const pixel = (session: MapSession, x: number, y: number): number => {
+      const { width, indices } = renderMapPixels(doc(session), session.tileset!, session.activeLayer)
+      return indices[y * width + x]
+    }
+    const session = await openMap()
+    setMode(session, 'paint')
+    // One white dot on a black picture: two regions, one of them a single pixel.
+    dab(session, 20, 20)
+    expect(pixel(session, 20, 20)).toBe(15)
+
+    setPaintTool(session, 'fill')
+    setPaintColor(session, 7)
+    beginPaint(session, 'fg')
+    extendPaint(session, { x: 20, y: 20 }, { x: 20, y: 20 })
+    const flooded = session.paintPoints
+    // The pointer wanders onto the black region before release.
+    extendPaint(session, { x: 20, y: 20 }, { x: 0, y: 0 })
+    // A later sample is not a new flood: nothing was recomputed.
+    expect(session.paintPoints).toBe(flooded)
+    endPaint(session)
+
+    // The dot was recoloured; the black region it was released over was not.
+    expect(pixel(session, 20, 20)).toBe(7)
+    expect(cell(session, 0, 0)).toBe(0)
+  })
+
+  describe('setMode ends whatever drag is open', () => {
+    it('folds a cell drag into one step, so the next paint stroke does not resolve against a stale preview', async () => {
+      const session = await openMap()
+      // Not the default brush: tile 0 over a grid of zeros is a drag that changes nothing.
+      session.brush = singleStamp(1)
+      const steps = session.history.past.length
+      paintDrag(session, [{ x: 3, y: 3 }])
+      expect(session.preview).not.toBeNull()
+
+      setMode(session, 'paint')
+
+      expect(session.preview).toBeNull()
+      expect(session.paintedPoints).toEqual([])
+      expect(session.history.past.length).toBe(steps + 1)
+      expect(cell(session, 3, 3)).toBe(1)
+    })
+
+    it('resolves an open paint stroke, so its points cannot leak into a later drag', async () => {
+      const session = await openMap()
+      setMode(session, 'paint')
+      beginPaint(session, 'fg')
+      extendPaint(session, { x: 0, y: 0 }, { x: 0, y: 0 })
+
+      setMode(session, 'tiles')
+
+      expect(session.paintActive).toBe(false)
+      expect(session.paintPoints).toEqual([])
+      expect(session.paintOrigin).toBeNull()
+      expect(cell(session, 0, 0)).not.toBe(0)
+    })
+  })
+
+  describe('paint mode does not outlive its tileset', () => {
+    const BTILES = 'res/world.btiles.json'
+    const OTHER = 'res/other.tiles.json'
+
+    it('falls back to tiles mode when the map is pointed at a bitmap tileset', async () => {
+      // Otherwise neither input path is live: the paint overlay is gated on
+      // `canPaint`, the cell handlers step aside for any mode but tiles, and
+      // the toggle that would bring the user back is hidden for the same reason.
+      files[BTILES] = serializeResource({ kind: 'btiles', doc: createBitmapTilesDoc() })
+      const session = await openMap()
+      setMode(session, 'paint')
+
+      await setTileset(session, BTILES)
+
+      expect(session.bitmapTileset).not.toBeNull()
+      expect(canPaint(session)).toBe(false)
+      expect(session.mode).toBe('tiles')
+    })
+
+    it('stays in paint mode across a reload or a swap to another pattern tileset', async () => {
+      files[OTHER] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 6 }) })
+      const session = await openMap()
+      setMode(session, 'paint')
+
+      await reloadTileset(session)
+      expect(session.mode).toBe('paint')
+
+      await setTileset(session, OTHER)
+      expect(session.tileset?.count).toBe(6)
+      expect(session.mode).toBe('paint')
     })
   })
 })

@@ -12,6 +12,7 @@ import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../
 import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
+import MapPaintPanel from './MapPaintPanel.vue'
 
 const props = defineProps<{ session: MapSession }>()
 const resourcesStore = useResourcesStore()
@@ -135,6 +136,11 @@ const packing = computed(() => {
 
 <template>
   <div class="side">
+    <!-- First while painting: the colour is what the next stroke needs, the rest is setup. -->
+    <MapPaintPanel
+      v-if="session.mode === 'paint'"
+      :session="session"
+    />
     <section>
       <h3>Tileset</h3>
       <p class="hint target">

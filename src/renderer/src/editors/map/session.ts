@@ -343,6 +343,14 @@ async function loadTileset(session: MapSession): Promise<void> {
     clearTileset(session)
     session.tilesetError = `Couldn't load tileset ${tilesetPath}: ${String(error)}`
   }
+  // Paint mode needs a pattern tileset, and this is the one place the map can
+  // lose one — switched to a `.btiles.json`, or a load that failed. Left in
+  // paint mode it is a dead canvas: the paint overlay is gated on `canPaint`,
+  // the cell handlers step aside for any mode but `'tiles'`, and the toggle
+  // that would bring the user back is hidden for the same reason. Conditional,
+  // so a reload or a swap to another pattern tileset keeps the mode the user
+  // chose.
+  if (session.mode === 'paint' && !canPaint(session)) session.mode = 'tiles'
   await loadMetaDocs(session)
 }
 
@@ -818,7 +826,21 @@ export function dragPoints(tool: 'stamp' | 'erase' | 'rect', from: Point, to: Po
 
 // ── painting pixels: paint mode ──────────────────────────────────────────
 
+/**
+ * Switches tool sets, ending whatever drag is open in either one first.
+ *
+ * A flip mid-drag (a keyboard toggle, a second pointer) would otherwise leave
+ * the old mode's stroke half-made: a cell drag's `preview` is what `doc()`
+ * answers with, so the next paint stroke would resolve against — and commit —
+ * a document nobody released; a paint stroke's points would sit until the next
+ * `endPaint` folded them into an unrelated drag. Both are resolved rather than
+ * dropped, the way the paint overlay's own unmount already resolves its stroke,
+ * and both are no-ops when nothing is open. The canvas resets its own pointer
+ * bookkeeping on the mode change (`MapCanvas.vue`).
+ */
 export function setMode(session: MapSession, mode: 'tiles' | 'paint'): void {
+  finishDrag(session)
+  endPaint(session)
   session.mode = mode
 }
 
@@ -921,17 +943,25 @@ export function beginPaint(session: MapSession, role: 'fg' | 'bg'): void {
  * one. Resolution happens once, in `endPaint`.
  *
  * A pencil or spray is the path the pointer took, so its segments accumulate.
- * A line, a rect or a fill is a shape between where the drag started and
- * where the pointer is now, so the latest sample *replaces* what came before
- * — accumulating those would bake every intermediate shape into the tileset,
+ * A line or a rect is a shape between where the drag started and where the
+ * pointer is now, so the latest sample *replaces* what came before —
+ * accumulating those would bake every intermediate shape into the tileset,
  * which is the failure this whole stroke model exists to avoid.
+ *
+ * A fill is decided where the button went down, as it is in the tile and meta
+ * editors: the first segment floods from there and every later sample is
+ * ignored. Flooding from the latest sample instead meant pressing on one
+ * region and releasing on another filled the wrong one — and re-rendered the
+ * whole map on every pointer move on the way.
  *
  * Reassigned rather than pushed: the session is `shallowReactive`, so a
  * preview watching the array only notices a new one.
  */
 export function extendPaint(session: MapSession, from: Point, to: Point): void {
   if (!session.paintActive) return
+  const first = session.paintOrigin === null
   session.paintOrigin ??= from
+  if (session.paintTool === 'fill' && !first) return
   const points = pointsFor(session, from, to)
   session.paintPoints =
     session.paintTool === 'pencil' || session.paintTool === 'spray' ? [...session.paintPoints, ...points] : points
@@ -945,7 +975,7 @@ function pointsFor(session: MapSession, from: Point, to: Point): Point[] {
     // The whole picture, not `fillPoints`' default 8×8: the user drew one
     // shape across cell seams, and a flood has to cross them too.
     const { width, height, indices } = renderMapPixels(doc(session), tileset, session.activeLayer)
-    return fillPoints(indices, to, width, height)
+    return fillPoints(indices, session.paintOrigin ?? from, width, height)
   }
   const origin = session.paintTool === 'pencil' ? from : (session.paintOrigin ?? from)
   return pixelToolPoints(session.paintTool, origin, to, [], session.filledRect)
