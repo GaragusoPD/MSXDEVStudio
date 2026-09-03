@@ -77,6 +77,18 @@ testable as a pure refactor before any new UI exists.
 | `fork` | Derive the new art, find-or-create it in the bank, repoint this one cell. Today's `paintMeta` behaviour. | One tile per distinct new cell; can refuse when the bank is full. | This cell only. |
 | `edit` | Rewrite the tile's own pixels at its current index. No allocation. | Zero. Always works, even on a full tileset. | **Every cell and every map using that tile.** |
 
+Two guards on `edit`, both from rules that already exist elsewhere:
+
+- **Reserved tile 0 is never edited in place.** `TilesDoc.reserveTile0` locks it
+  all-blank and `normalizeTiles` re-blanks it on load, so an in-place write there
+  is silently discarded on the next open — and until then every transparent cell
+  in every map shows the stroke. An `edit` stroke on a reserved tile 0 falls
+  through to `fork`.
+- **sc1 carries colour per group of eight tiles, not per row**, so an in-place
+  write must set `groupColors[index >> 3]` as well as the pattern, and `TileEdit`
+  records the previous group byte. Writing pattern alone loses the colour half of
+  a role stroke.
+
 A sidebar toggle picks the mode. Both are legitimate and neither is a safe
 default: `fork` is what keeps a shared tileset uncorrupted, `edit` is what makes
 "recolour every brick at once" possible and what lets a full imported screen be
@@ -91,8 +103,21 @@ one index means one picture in every bank. Meta-tiles need that: it is what lets
 `_DrawPlacements` stay bank-unaware.
 
 A screen does not. Painting row 3 needs art in bank 0 only, and a shared slot
-costs a slot in *all three* banks — the scarcest resource on the tileset. So
-painting gets a **second allocator** beside the existing one, searching and
+costs a slot in *all three* banks — the scarcest resource on the tileset.
+
+**`bankOf` steers the read as well as the write, and that is not optional.**
+`paintGrid` derives each cell's new art from a one-tile scratch document seeded
+from `doc.tiles[index]` — the *common* set. On a banked tileset the art is in
+`bankTiles[b]` and `count` is often 1, so that read returns `undefined` and the
+scratch comes back blank: one dot painted on nothing, and the imported picture
+under the stroke is destroyed. Every read of a cell's current art must go
+through `bankTileAt(doc, bank, index)` when a bank is in play. Likewise an
+`edit` stroke must write into `bankTiles[bank][index]` when the bank overrides
+that slot — writing `doc.tiles[index]` changes a tile the bank does not show.
+`TileEdit` therefore records `bank: number | null` alongside the index, so undo
+puts the art back in the table it came from.
+
+So painting gets a **second allocator** beside the existing one, searching and
 allocating in `bankTiles[bank]` for the row's own bank. `bankOf` takes the
 **cell** row (`Math.floor(point.y / TILE_SIZE)`), not the pixel row — the map
 editor passes `bankForRow` (already in `map.ts`), wrapped by `SCREEN_ROWS` the
@@ -127,6 +152,14 @@ forks tile 0 into real art and that cell stops being transparent.
 `bank 0: 212/256` when banked, reusing `bankBudgetLabel`. On this hardware that
 number decides whether a drawing is possible at all.
 
+**One stroke is one undo step, resolved once.** Painting cannot resolve per
+pointer sample: a `line` or `rect` drag would bake every intermediate shape into
+the tileset, and a pencil drag would mint a tile per sample. The meta editor
+already solved this — `beginStroke`/`extendStroke`/`endStroke` accumulate points,
+re-derive from the *committed* document each time, and resolve into the bank once
+on release — and the map editor already has the same shape for its cell tools.
+Painting uses it.
+
 **Component split:** `MapCanvas.vue` is already the largest file in its
 directory and this adds a second input path. The paint path becomes its own
 component as part of this work — in scope, not a follow-up.
@@ -157,7 +190,15 @@ tile-editor entries already use for `remap`:
 Two constraints, both matching what is already there:
 
 - The map writes the tileset **through `useTilesetStore()`**, never a local copy
-  — the reason that store exists.
+  — the reason that store exists. **This does not exist yet and is the first
+  piece of work.** `map/session.ts` reads its tileset with a bare `fs:read` into
+  `session.tileset` and never touches the store, which is harmless while the map
+  only *reads* tiles and fatal the moment it writes them: a second stroke would
+  derive from the pre-stroke document, `sheet.ts` caches on the document's
+  identity so the canvas would never repaint, and `saveSession` writes only the
+  map, so the painted tiles would never reach disk. The map editor joins the
+  store — load through it, register `onExternalChange`, save the pair, release on
+  prune — before any painting is wired up.
 - Painting rebases on external change the way the map already replays
   `tilesetReorderSeen`. Safe because fork appends and edit's inverse is recorded.
 
