@@ -327,3 +327,36 @@ describe('a refused stroke is announced where the user is looking', () => {
     expect(session.blocked).toBeNull()
   })
 })
+
+describe('undo on a banked tileset tracks shared tiles for Compact', () => {
+  it('records shared tile additions to appended so Compact can find them', async () => {
+    // A banked tileset allocates shared tiles from the top (255 down), and they
+    // do not increment `count`. The old endStroke computed `appended` from count
+    // delta alone, so it saw nothing appended and marked tiles as invisible to
+    // Compact — a slow leak. The fix uses the paint result's `added` array so
+    // that Compact can identify which tiles this session created.
+    const banked = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      reserveTile0: true,
+      bankTiles: [[{ pattern: Array(8).fill(0), color: Array(8).fill(0x21) }], [], []]
+    })
+    files[TILES] = serializeResource({ kind: 'tiles', doc: banked })
+    const session = metaSession(META)
+    await settled()
+    await settled()
+
+    paint(session, [{ x: 0, y: 0 }])
+    // The stroke added tile 255 (a shared tile), which should be recorded in
+    // appended even though count did not change. The old code would have
+    // computed `grew = 4 - 4 = 0` and appended nothing.
+    expect(session.appended).toEqual([255])
+    const afterPaint = useTilesetStore().patternDoc(TILES)!
+    expect(afterPaint.sharedTiles).toBe(1)
+
+    undo(session)
+    // After undo, the meta no longer references tile 255, so it is an orphan.
+    // It is still in appended (this session created it), and Compact can find it.
+    expect(session.appended).toEqual([255])
+  })
+})

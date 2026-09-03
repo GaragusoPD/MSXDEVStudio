@@ -140,6 +140,12 @@ export interface MetaSession {
    */
   appended: number[]
   /**
+   * Tiles added by the most recent stroke's paint result, before being moved
+   * into `appended` by `endStroke`. Used to track additions on banked tilesets,
+   * where count does not change.
+   */
+  strokeAdded: number[]
+  /**
    * The stroke in progress, if any.
    *
    * A drag samples the pointer dozens of times, and resolving each sample
@@ -188,6 +194,7 @@ export function metaSession(path: string): MetaSession {
     status: '',
     blocked: null,
     appended: [],
+    strokeAdded: [],
     strokePoints: [],
     strokeRole: 'fg',
     strokeActive: false,
@@ -539,6 +546,7 @@ export function cellSize(session: MetaSession): { width: number; height: number 
 export function beginStroke(session: MetaSession, role: 'fg' | 'bg' = 'fg'): void {
   session.strokeRole = role
   session.strokePoints = []
+  session.strokeAdded = []
   session.previewMeta = null
   session.previewTiles = null
   session.strokeActive = true
@@ -592,6 +600,7 @@ function extendStroke(session: MetaSession, points: Point[]): void {
     }
     session.previewMeta = result.meta
     session.previewTiles = result.tiles
+    session.strokeAdded = result.added
     session.blocked = null
     session.status = ''
     return
@@ -609,6 +618,7 @@ function extendStroke(session: MetaSession, points: Point[]): void {
   }
   session.previewMeta = result.meta
   session.previewTiles = result.tiles
+  session.strokeAdded = result.added
   session.blocked = null
   session.status = result.dropped
     ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`
@@ -633,8 +643,10 @@ export function endStroke(session: MetaSession): void {
   session.strokeActive = false
   const meta = session.previewMeta
   const tileset = session.previewTiles
+  const added = session.strokeAdded
   session.previewMeta = null
   session.previewTiles = null
+  session.strokeAdded = []
   session.strokePoints = []
   if (!meta || !tileset) return
 
@@ -643,15 +655,17 @@ export function endStroke(session: MetaSession): void {
     session.kind === 'metabtiles' ? store.bitmapDoc(session.tilesetPath) : store.patternDoc(session.tilesetPath)
   if (before && tileset !== before) {
     store.set(session.tilesetPath, tileset, session.path)
-    const grew = countOf(tileset) - countOf(before)
-    if (grew > 0) {
-      session.appended = [...session.appended, ...Array.from({ length: grew }, (_, i) => countOf(before) + i)]
+    // The paint result's `added` array tracks newly created tiles regardless of
+    // whether the tileset's `count` changed. On banked tilesets it matters:
+    // shared tiles are allocated from the top (255 down) and do not increment
+    // `count`, so the old count-delta approach would lose them and make them
+    // permanently unreclaimable by Compact.
+    if (added.length > 0) {
+      session.appended = [...session.appended, ...added]
     }
   }
   commit(session, meta)
 }
-
-const countOf = (doc: TilesDoc | BitmapTilesDoc): number => doc.count
 
 export function setFrame(session: MetaSession, index: number): void {
   if (doc(session).frames[index]) session.frame = index

@@ -221,6 +221,19 @@ describe('allocating into a banked tileset', () => {
     expect(result?.index).toBe(4)
     expect(result?.doc.sharedTiles).toBe(0)
   })
+
+  it('dedup finds shared tiles even when count < 256', () => {
+    // A banked tileset with count:4 allocates shared tiles at 255, 254, etc.
+    // The old search loop `for (let i = 0; i < doc.count; i++)` would never
+    // reach them, so the second paint would think tile 255 is new and mint tile
+    // 254, wasting space. The fix searches to MAX_TILES on banked tilesets.
+    const doc = normalizeTiles({ mode: 'sc2', count: 4, bankTiles: [[solid(1)], [], []], sharedTiles: 0 })
+    const first = findOrCreateTile(doc, solid(0xaa))!
+    expect(first.index).toBe(255)
+    const second = findOrCreateTile(first.doc, solid(0xaa))!
+    expect(second.index).toBe(255)
+    expect(second.doc.sharedTiles).toBe(1)
+  })
 })
 
 describe('paintBitmapMeta', () => {

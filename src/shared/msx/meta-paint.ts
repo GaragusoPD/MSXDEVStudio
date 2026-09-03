@@ -78,7 +78,12 @@ export function findOrCreateTile(
   pair?: number
 ): { doc: TilesDoc; index: number } | null {
   const sc1 = doc.mode === 'sc1'
-  for (let i = 0; i < doc.count; i++) {
+  // When a tileset is banked, shared tiles live at the top (255 down) and fall
+  // outside `doc.count`, so the search must reach them. Unbanked tilesets have
+  // no shared tiles, so the upper bound is moot there — `doc.count <= MAX_TILES`
+  // always, and the extra iterations cost nothing.
+  const searchLimit = isBanked(doc) ? MAX_TILES : doc.count
+  for (let i = 0; i < searchLimit; i++) {
     const candidate = doc.tiles[i]
     if (!candidate || !sameEntry(candidate, entry)) continue
     // In sc1 the pattern is only half the picture: identical bits under
@@ -94,7 +99,7 @@ export function findOrCreateTile(
     if (Math.min(...doc.bankTiles.map((_, b) => bankCapacityLeft(doc, b))) <= 0) return null
     const index = MAX_TILES - 1 - doc.sharedTiles
     const tiles = doc.tiles.slice()
-    tiles[index] = entry
+    tiles[index] = { pattern: entry.pattern.slice(), color: entry.color.slice() }
     return { doc: { ...doc, tiles, sharedTiles: doc.sharedTiles + 1 }, index }
   }
 
@@ -227,7 +232,12 @@ export function paintMeta(
           'Run "Compact unused tiles", or free a tile in the tile editor.'
       }
     }
-    if (found.index >= nextTiles.count) added.push(found.index)
+    // Track newly created tiles for the Compact command. An unbanked allocation
+    // appends at `count`, so an index beyond the old count is new. A banked
+    // allocation takes from the shared top (count stays 256), so a new shared
+    // allocation is detected by `sharedTiles` growing.
+    if (found.index >= nextTiles.count || found.doc.sharedTiles > nextTiles.sharedTiles)
+      added.push(found.index)
     nextTiles = found.doc
     nextMeta = setFrameTile(nextMeta, frame, cx, cy, found.index)
   }
