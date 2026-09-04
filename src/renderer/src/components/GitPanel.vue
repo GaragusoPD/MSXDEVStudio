@@ -74,25 +74,14 @@ function openConflicted(path: string): void {
   tabsStore.openFile(path, path.split('/').pop() ?? path)
 }
 
-/** No dedicated dialog — a URL prompt + folder picker is enough for an occasional clone. */
-function repoNameFromUrl(url: string): string {
-  const cleaned = url.trim().replace(/\/+$/, '').replace(/\.git$/, '')
-  return cleaned.split(/[/\\]/).pop() || 'repository'
-}
-
-async function cloneRepo(): Promise<void> {
-  const url = window.prompt('Repository URL to clone:')
-  if (!url?.trim()) return
-  const parent = await toolchainStore.pickFolder()
-  if (!parent) return
-  const target = `${parent}/${repoNameFromUrl(url)}`
-  busy.value = true
-  try {
-    const ok = await gitStore.cloneRepo(url.trim(), target)
-    if (ok) await projectStore.openProject(target)
-  } finally {
-    busy.value = false
-  }
+/**
+ * Opens the clone dialog. It cannot be a `window.prompt`: that throws in Electron
+ * ("prompt() is not supported"), synchronously, inside this async handler — so
+ * this button raised an unhandled rejection and did nothing for as long as it has
+ * existed. `CloneRepoDialog.vue` collects the URL and runs the picker.
+ */
+function cloneRepo(): void {
+  gitStore.cloneVisible = true
 }
 
 async function initRepo(): Promise<void> {

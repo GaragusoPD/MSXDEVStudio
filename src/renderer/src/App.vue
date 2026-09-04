@@ -16,6 +16,7 @@ import GitBranchPicker from './components/GitBranchPicker.vue'
 import LicenseGate from './components/LicenseGate.vue'
 import NewGameDialog from './components/NewGameDialog.vue'
 import NewProjectDialog from './components/NewProjectDialog.vue'
+import CloneRepoDialog from './components/CloneRepoDialog.vue'
 import NewTiledScreenDialog from './components/NewTiledScreenDialog.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -137,6 +138,7 @@ onUnmounted(() => {
       <NewProjectDialog v-if="projectStore.wizardVisible || examplesStore.forkSource" />
       <NewGameDialog v-if="projectStore.gameWizardVisible" />
       <NewTiledScreenDialog v-if="resourcesStore.newScreenVisible" />
+      <CloneRepoDialog v-if="gitStore.cloneVisible" />
       <PreferencesDialog
         v-if="appStore.preferencesVisible"
         @close="appStore.preferencesVisible = false"

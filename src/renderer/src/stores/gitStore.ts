@@ -18,6 +18,17 @@ function emptyStatus(): GitStatus {
   }
 }
 
+/**
+ * The folder name a clone URL becomes: the last path segment, minus a trailing
+ * `.git` or slashes. Lives here rather than in `GitPanel.vue` because `.vue`
+ * files are outside vitest and this is string munging with edge cases —
+ * `ssh://` forms, a trailing slash, a bare host.
+ */
+export function repoNameFromUrl(url: string): string {
+  const cleaned = url.trim().replace(/\/+$/, '').replace(/\.git$/, '')
+  return cleaned.split(/[/\\]/).pop() || 'repository'
+}
+
 export interface DiffRequest {
   path: string
   staged: boolean
@@ -40,6 +51,8 @@ export const useGitStore = defineStore('git', {
     commitMessage: '',
     amend: false,
     branchPickerOpen: false,
+    /** The clone dialog — `window.prompt` throws in Electron, so a URL needs a real modal. */
+    cloneVisible: false,
     expandedCommit: null as string | null,
     subscribed: false,
     diffRequests: {} as Record<string, DiffRequest>
