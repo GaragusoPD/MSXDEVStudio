@@ -9,7 +9,7 @@ import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
-import { addLayer, commit, doc, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, commit, doc, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 import MapPaintPanel from './MapPaintPanel.vue'
@@ -136,9 +136,13 @@ const packing = computed(() => {
 
 <template>
   <div class="side">
-    <!-- First while painting: the colour is what the next stroke needs, the rest is setup. -->
+    <!--
+      First while painting: the colour is what the next stroke needs, the rest
+      is setup. `painting`, the same predicate the paint layer mounts on, so the
+      panel never offers a palette over a canvas with no layer to take it.
+    -->
     <MapPaintPanel
-      v-if="session.mode === 'paint'"
+      v-if="painting(session)"
       :session="session"
     />
     <section>

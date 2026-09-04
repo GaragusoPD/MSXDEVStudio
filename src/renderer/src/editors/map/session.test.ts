@@ -22,6 +22,7 @@ import {
 } from '../../../../shared/msx/tile'
 import { normalizeMap, SCREEN_ROWS } from '../../../../shared/msx/map'
 import { singleStamp } from '../../../../shared/map-editor'
+import { emitTilesReordered } from '../../../../shared/tile-editor'
 import {
   addLayer,
   bankSheetOffset,
@@ -211,6 +212,122 @@ describe('reorders the map missed while it was closed', () => {
     const layer = doc(session).layers[0].data
     expect(layer.slice(0, 3)).toEqual([2, 1, 3])
     expect(session.tilesetReorderSeen).toBe(at)
+  })
+})
+
+describe('a live reorder reaches an open map', () => {
+  /** Four tiles with art that says which one it is: 0x11, 0x22, 0x33, 0x44. */
+  const art = (i: number): TileEntry => ({ pattern: new Array(8).fill(0x11 * (i + 1)), color: new Array(8).fill(0xf1) })
+  /** A rotation, so applying it twice gives a different answer from applying it once. */
+  const mapping = [1, 2, 3, 0]
+
+  /** The tileset after `mapping`: `tiles[new] = old tiles[old]`, as the tile editor's `reorderTiles` builds it. */
+  function renumbered(original: ReturnType<typeof normalizeTiles>) {
+    const tiles = original.tiles.slice()
+    original.tiles.forEach((tile, i) => {
+      tiles[mapping[i]] = tile
+    })
+    return { ...original, tiles }
+  }
+
+  beforeEach(() => {
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 4, tiles: [art(0), art(1), art(2), art(3)] })
+    })
+    const data = new Array(64).fill(0)
+    data[0] = 1
+    data[1] = 2
+    data[2] = 3
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 8, height: 8, layers: [{ name: 'background', data }] })
+  })
+
+  it("the meta editor's ordering — the store first, then the event — renumbers the cells once and the art not at all", async () => {
+    // `session.tileset` is the store's document. The meta editor publishes the
+    // renumbered tileset *before* it emits, so by the time the map's handler
+    // runs the map has already adopted it. A second, local remap on top of that
+    // is what sent tile 3's art into slot 1.
+    const session = await openMap()
+    const store = useTilesetStore()
+    const next = renumbered(store.patternDoc(TILES)!)
+    store.set(TILES, next, 'res/some.meta-tiles.json')
+    const at = Date.now()
+    store.appendReorder(TILES, { path: TILES, mapping, at })
+
+    emitTilesReordered({ path: TILES, mapping, at })
+
+    // Slot 1 holds what was tile 0. Applied twice, it holds what was tile 3.
+    expect(session.tileset!.tiles[1].pattern[0]).toBe(0x11)
+    expect(session.tileset!.tiles.map((tile) => tile.pattern[0])).toEqual([0x44, 0x11, 0x22, 0x33])
+    expect(session.tileset).toBe(store.patternDoc(TILES))
+    expect(doc(session).layers[0].data.slice(0, 3)).toEqual([2, 3, 0])
+    expect(session.tilesetReorderSeen).toBe(at)
+  })
+
+  it("the tile editor's ordering — the event first, then the store — ends in the same place", async () => {
+    const session = await openMap()
+    const store = useTilesetStore()
+    const next = renumbered(store.patternDoc(TILES)!)
+    const at = Date.now()
+    store.appendReorder(TILES, { path: TILES, mapping, at })
+
+    emitTilesReordered({ path: TILES, mapping, at })
+    store.set(TILES, next, TILES)
+
+    expect(session.tileset).toBe(store.patternDoc(TILES))
+    expect(session.tileset!.tiles.map((tile) => tile.pattern[0])).toEqual([0x44, 0x11, 0x22, 0x33])
+    expect(doc(session).layers[0].data.slice(0, 3)).toEqual([2, 3, 0])
+    expect(session.tilesetReorderSeen).toBe(at)
+  })
+})
+
+describe('what the map holds in the tileset store', () => {
+  const TILES2 = 'res/other.tiles.json'
+  const BTILES = 'res/world.btiles.json'
+
+  beforeEach(() => {
+    files[TILES2] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 3 }) })
+    files[BTILES] = serializeResource({ kind: 'btiles', doc: createBitmapTilesDoc() })
+  })
+
+  it('reloading the tileset does not take a second hold — closing the tab still lets the document go', async () => {
+    const session = await openMap()
+    await reloadTileset(session)
+    expect(session.tileset).toBe(useTilesetStore().patternDoc(TILES))
+
+    pruneMapSessions(new Set())
+
+    // The map was the only holder and the document is clean, so it is gone.
+    expect(useTilesetStore().patternDoc(TILES)).toBeNull()
+  })
+
+  it('switching tilesets gives up the old one and holds the new one', async () => {
+    const session = await openMap()
+    const store = useTilesetStore()
+
+    await setTileset(session, TILES2)
+
+    expect(store.patternDoc(TILES)).toBeNull()
+    expect(store.patternDoc(TILES2)).not.toBeNull()
+    expect(session.tileset).toBe(store.patternDoc(TILES2))
+
+    pruneMapSessions(new Set())
+    expect(store.patternDoc(TILES2)).toBeNull()
+  })
+
+  it('closing a map over a .btiles.json it never loaded leaves the document to the editor that did', async () => {
+    // A bitmap-tiles tab (or a bitmap meta) is the one holder. The map points
+    // at the same file, but its `.btiles.json` branch parses the file itself
+    // and never asks the store for it — so it has nothing to give back.
+    const store = useTilesetStore()
+    await store.load(BTILES)
+    const session = await openMap()
+    await setTileset(session, BTILES)
+    expect(store.patternDoc(TILES)).toBeNull()
+
+    pruneMapSessions(new Set())
+
+    expect(store.bitmapDoc(BTILES)).not.toBeNull()
   })
 })
 
@@ -1545,6 +1662,35 @@ describe('paint mode', () => {
       expect(store.patternDoc(TILES)).toBe(shrunk)
       expect(store.patternDoc(TILES)!.bankTiles[1]).toEqual([])
       expect(session.status).toContain('changed')
+    })
+
+    it('a step whose tileset is not loaded is refused whole, and says so, rather than undone by half', async () => {
+      // Reached by undoing across a tileset switch: the map painted into
+      // `TILES`, saved, and was pointed at another tileset — giving up its
+      // hold, so the clean document left the store. Undo the switch, and the
+      // next undo names a document the store no longer has. Moving history
+      // without the swap would leave the record out of phase: the redo after
+      // it finds the slot still holding `after` and writes `before` over the
+      // stroke. So the step stays where it is until the tileset is back.
+      const TILES2 = 'res/other.tiles.json'
+      files[TILES2] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 3 }) })
+      const session = await openMap()
+      stampTile1(session)
+      setMode(session, 'paint')
+      setPaintWrite(session, 'edit')
+      dab(session, 8, 0)
+      await saveSession(session)
+      await setTileset(session, TILES2)
+      undo(session) // the switch
+      expect(doc(session).tileset).toBe(TILES)
+      expect(useTilesetStore().patternDoc(TILES)).toBeNull()
+      const present = session.history.present
+      session.status = ''
+
+      undo(session) // the stroke
+
+      expect(session.history.present).toBe(present)
+      expect(session.status).toContain('not loaded')
     })
 
     it('a clean undo still restores every tile and says nothing', async () => {

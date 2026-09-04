@@ -154,6 +154,14 @@ export function findOrCreateTile(
  * scarcest resource the tileset has.
  *
  * Null means the bank has no room below the shared region.
+ *
+ * The sc1 handling below (`pair`, the group-colour check) mirrors
+ * `findOrCreateTile`'s and is not reachable today: `normalizeTiles` strips
+ * `bankTiles` from an sc1 document, so `isBanked` is false there and
+ * `paintGrid` never hands this function a bank — which is what
+ * `promotionBlocker` (`map/session.ts`) tells the user in words. Kept so the
+ * two siblings answer the same question the same way should sc1 ever bank,
+ * rather than as a claim that it can.
  */
 export function findOrCreateBankTile(
   doc: TilesDoc,
@@ -430,8 +438,12 @@ export function paintGrid(
         refusedBank: bank,
         refused:
           bank === null
-            ? `The tileset is full — ${MAX_TILES} tiles is the hardware limit. ` +
-              'Run "Compact unused tiles", or free a tile in the tile editor.'
+            ? // Read from the meta editor's status bar and the map's alike, so it
+              // names only what both have: the tile editor. (The meta editor's
+              // own remedy, Compact, is its command and not the map's; the map
+              // offers banking beside this line instead, see `offerPromotion`.)
+              `The tileset is full — ${MAX_TILES} tiles is the hardware limit. ` +
+              'Free a tile in the tile editor, or reuse one already drawn.'
             : // 1-based, like every bank label the user sees (`bankBudgetLabel`'s
               // "bank 1:"): the sidebar shows the two side by side.
               `Bank ${bank + 1} is full — ${MAX_TILES} tiles is the hardware limit for one bank. ` +

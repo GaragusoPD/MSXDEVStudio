@@ -23,7 +23,6 @@ import { metaThumbnail } from './sheet'
 import MapPaintLayer from './MapPaintLayer.vue'
 import {
   bankSheetOffset,
-  canPaint,
   clearSelection,
   copySelection,
   deleteSelection,
@@ -34,6 +33,7 @@ import {
   finishDrag,
   metaRowOffsets,
   movePlacementTo,
+  painting,
   paintDrag,
   pasteClipboard,
   placeMetaAt,
@@ -339,11 +339,12 @@ watchEffect(() => {
       />
       <!--
         Only while there is a pattern tileset to paint into: on a bitmap map a
-        stroke would resolve into nothing (see `canPaint`), and the mode toggle
-        asks the same predicate, so the two agree about which maps offer it.
+        stroke would resolve into nothing (see `canPaint`). `painting` is the
+        one predicate this, the paint panel and the mode toggle all ask, so
+        they agree about which maps offer it and when.
       -->
       <MapPaintLayer
-        v-if="session.mode === 'paint' && canPaint(session)"
+        v-if="painting(session)"
         :session="session"
       />
     </div>

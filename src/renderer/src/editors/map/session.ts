@@ -125,6 +125,13 @@ export interface MapSession {
    * the map has no pattern tileset loaded (a bitmap tileset, an atlas, or none).
    */
   stopWatchingTileset: (() => void) | null
+  /**
+   * The `.tiles.json` this session has asked the store to hold — the one path
+   * it owes a `release` for. Set only by `loadFromPath`'s pattern branch, so a
+   * map over a `.btiles.json` (which the store may hold for *another* editor)
+   * or a `.screen.json` never gives back a hold it did not take.
+   */
+  heldTilesetPath: string | null
   tileset: TilesDoc | null
   /** Set when the map draws from a `.btiles.json` — the bitmap tileset proper. */
   bitmapTileset: BitmapTilesDoc | null
@@ -233,6 +240,7 @@ export function mapSession(path: string): MapSession {
     error: null,
     dirty: false,
     stopWatchingTileset: null,
+    heldTilesetPath: null,
     tileset: null,
     bitmapTileset: null,
     atlas: null,
@@ -298,14 +306,23 @@ export function pruneMapSessions(openPaths: Set<string>): void {
   for (const path of [...sessions.keys()]) {
     if (openPaths.has(path)) continue
     const session = sessions.get(path)
-    session?.stopWatchingTileset?.()
-    // Whatever this session's own tileset reference last resolved to — a
-    // no-op release if it was never the store's (a bitmap tileset, an atlas,
-    // or none), since `release` on an untracked path is harmless.
-    const tilesetPath = session ? doc(session).tileset : null
-    if (tilesetPath) useTilesetStore().release(tilesetPath)
+    if (session) {
+      session.stopWatchingTileset?.()
+      releaseHeldTileset(session)
+    }
     sessions.delete(path)
   }
+}
+
+/**
+ * Gives back the one hold this session took, if any. Nulled as it goes, so a
+ * second call — `clearTileset` on the error path after `loadFromPath` already
+ * let go — does not decrement a count that is someone else's.
+ */
+function releaseHeldTileset(session: MapSession): void {
+  if (session.heldTilesetPath === null) return
+  useTilesetStore().release(session.heldTilesetPath)
+  session.heldTilesetPath = null
 }
 
 export function doc(session: MapSession): MapDoc {
@@ -382,6 +399,7 @@ function leavePaintIfUnpaintable(session: MapSession): void {
 function clearTileset(session: MapSession): void {
   session.stopWatchingTileset?.()
   session.stopWatchingTileset = null
+  releaseHeldTileset(session)
   session.tileset = null
   session.bitmapTileset = null
   session.atlas = null
@@ -449,9 +467,14 @@ async function loadFromPath(session: MapSession, path: string): Promise<void> {
   const parsed = parseResource(path, text)
   // Whichever kind this turns out to be, any subscription from a *previous*
   // tileset (this map may have pointed somewhere else a moment ago, via
-  // `setTileset`) is stale the instant we're loading a new one.
+  // `setTileset`) is stale the instant we're loading a new one — and so is
+  // the hold that came with it. Released before the new `load` rather than
+  // after: on a reload of the same path that lets a clean document nobody
+  // else holds leave the store, so the load below really does re-read the
+  // file, which is what "Reload tileset" promises.
   session.stopWatchingTileset?.()
   session.stopWatchingTileset = null
+  releaseHeldTileset(session)
   if (parsed.kind === 'screen') {
     session.tileset = null
     session.bitmapTileset = null
@@ -476,6 +499,10 @@ async function loadFromPath(session: MapSession, path: string): Promise<void> {
   // private copy here would leave the canvas drawing art that no longer
   // exists the moment anything else writes to it.
   await useTilesetStore().load(path)
+  // Recorded the moment the hold exists: `replayPersistedReorders` below can
+  // throw (it reaches `window.confirm`), and `loadTileset`'s catch then runs
+  // `clearTileset`, which can only give back what it knows about.
+  session.heldTilesetPath = path
   session.tileset = useTilesetStore().patternDoc(path)
   session.bitmapTileset = null
   session.atlas = null
@@ -514,11 +541,13 @@ function reconcileSc3(session: MapSession, sc3: boolean): void {
 }
 
 /**
- * Re-reads the tileset from disk. A map draws with its *own* copy of the
- * tileset, loaded when the map was opened, so tiles edited and saved in the
- * tile editor afterwards don't reach it by themselves — this is what fetches
- * them. Any reorders recorded since are replayed on the way in, exactly as they
- * are when a map is opened.
+ * Loads the tileset again, and replays any reorders recorded since, exactly
+ * as when the map is opened. The map draws with the store's shared document,
+ * so an edit made in another tab already reaches it, and a file rewritten
+ * outside the app reaches it through the store's own watcher; this is the
+ * manual fallback for either arriving late. The file is re-read only when
+ * this map was the document's last holder and it is clean — otherwise the
+ * store's copy is the truth and the load hands it back.
  */
 export async function reloadTileset(session: MapSession): Promise<void> {
   await loadTileset(session)
@@ -551,32 +580,27 @@ async function replayPersistedReorders(session: MapSession): Promise<void> {
 }
 
 /**
- * Reorders `tileset.tiles` by `mapping` (`mapping[old] = new`) — a live, in-memory refresh of the
- * picker/canvas preview only. The persisted file (and its true group-color layout for sc1) is the
- * source of truth once the tileset is saved and this map is reopened.
- * ponytail: sc1's per-group colors don't remap 1:1 with individual tile moves, so an sc1 tileset's
- * live preview may briefly look off until then — self-heals on the next open, narrow enough to skip
- * a full sc1-aware remap for a cosmetic, transient window.
+ * Live reorders (Spec 08's `onTilesReordered`): applied to every open map that
+ * references the tileset, no extra confirm — the tile editor's own drag-reorder
+ * confirm already covers this consequence. One subscription for every session,
+ * matching the `sessions` map pattern used elsewhere in this file.
+ *
+ * Only the map's own *cells* are renumbered here. The renumbered tileset
+ * reaches this session through the store — the editor that moved the tiles
+ * publishes it with `store.set`, and `loadFromPath`'s `onExternalChange`
+ * listener adopts it — so there is nothing to remap on `session.tileset`, and
+ * doing so anyway is not harmless: the meta editor publishes *before* it
+ * emits, so a local remap would be applied to a document that has already
+ * moved, and every subsequent stroke, publish and save would carry the
+ * scrambled art. The tile editor publishes after it emits; whichever order,
+ * the document that arrives is the right one.
  */
-function remapTilesetPreview(tileset: TilesDoc, mapping: readonly number[]): TilesDoc {
-  const tiles = tileset.tiles.slice()
-  tileset.tiles.forEach((tile, index) => {
-    const to = mapping[index]
-    if (to !== undefined) tiles[to] = tile
-  })
-  return { ...tileset, tiles }
-}
-
-/** Live reorders (Spec 08's `onTilesReordered`): applied to every open map that references the tileset, no extra
- *  confirm — the tile editor's own drag-reorder confirm already covers this consequence. One subscription for
- *  every session, matching the `sessions` map pattern used elsewhere in this file. */
 onTilesReordered((event) => {
   for (const session of sessions.values()) {
     if (!samePath(doc(session).tileset, event.path)) continue
     const { doc: next } = replayReorders(doc(session), [event], null)
     commit(session, next)
     session.tilesetReorderSeen = event.at
-    if (session.tileset) session.tileset = remapTilesetPreview(session.tileset, event.mapping)
   }
 })
 
@@ -603,9 +627,9 @@ function markDirty(session: MapSession): void {
 
 /**
  * Every mutation goes through here: pushes one undo step and marks the tab
- * dirty (no-op if nothing changed). `tileEdits` — Task 6 passes these — is the
- * art an `edit` stroke overwrote to reach `next`, for `undo`/`redo` to swap
- * back in.
+ * dirty (no-op if nothing changed). `tileEdits`, which only `endPaint` passes,
+ * is the art an `edit` stroke overwrote to reach `next`, for `undo`/`redo` to
+ * swap back in.
  */
 export function commit(session: MapSession, next: MapDoc, tileEdits?: TileEdit[]): void {
   // `pushHistory` compares by reference and a fresh entry is never the present,
@@ -706,26 +730,38 @@ export function setBank(session: MapSession, bank: number): void {
 }
 
 /**
- * The stacked sheet's offset for a cell on this map row: the row's own bank
- * slice (`bankForRow(row) * MAX_TILES`) when the tileset is banked, `0`
- * otherwise. A name-table byte is 0-255 regardless of banking — this is what
- * turns it into the right cell of `tilesetSheet`'s stacked layout.
- * `MapCanvas.vue` adds this to the cell byte before computing `sx`/`sy`; it is
- * the only banking-aware arithmetic that file needs.
+ * Which pattern bank a *map* row is drawn in, on a banked tileset. The one
+ * row→bank rule in this file: the canvas reads it to draw a cell, `fill`
+ * floods against a screen rendered with it, and a stroke allocates its new
+ * tile in the bank it names — three readers that must never disagree, since
+ * a stroke placed in one bank and drawn from another is silent corruption,
+ * not a visual glitch.
  *
  * `bankForRow` only knows a *screen* row, 0-23 — `validateMap` refuses to
  * export a banked map that isn't exactly `SCREEN_ROWS` tall, since banks are
  * chosen by row and row 24 has none. But that check runs at export time, not
  * while painting: `resize()` lets the canvas show a taller banked map for as
- * long as the user leaves it that way, and without the `% SCREEN_ROWS` below,
+ * long as the user leaves it that way, and without the `% SCREEN_ROWS` here,
  * row 24 and up would index a cell past the stacked sheet's 768 and
- * `drawImage` would silently draw nothing there — the exact bug class this
- * function exists to fix, reappearing below the first screen. Wrapping every
- * screen's worth of rows back onto banks 0-2 keeps the editor honest (if
- * still unexportable) instead of quietly going blank.
+ * `drawImage` would silently draw nothing there. Wrapping every screen's
+ * worth of rows back onto banks 0-2 keeps the editor honest (if still
+ * unexportable) instead of quietly going blank — and keeps the answer in
+ * `0..BANK_COUNT - 1` without a clamp.
+ */
+export function bankOfRow(row: number): number {
+  return bankForRow(row % SCREEN_ROWS)
+}
+
+/**
+ * The stacked sheet's offset for a cell on this map row: the row's own bank
+ * slice (`bankOfRow(row) * MAX_TILES`) when the tileset is banked, `0`
+ * otherwise. A name-table byte is 0-255 regardless of banking — this is what
+ * turns it into the right cell of `tilesetSheet`'s stacked layout.
+ * `MapCanvas.vue` adds this to the cell byte before computing `sx`/`sy`; it is
+ * the only banking-aware arithmetic that file needs.
  */
 export function bankSheetOffset(session: MapSession, row: number): number {
-  return session.tileset && isBanked(session.tileset) ? bankForRow(row % SCREEN_ROWS) * MAX_TILES : 0
+  return session.tileset && isBanked(session.tileset) ? bankOfRow(row) * MAX_TILES : 0
 }
 
 /**
@@ -761,9 +797,8 @@ export function pickerBankOffset(session: MapSession): number {
  * `baseRow === null` is `MapMetaPicker`'s browsing grid, which has no
  * placement to anchor to and should keep showing whichever bank the picker
  * currently has selected — the same bank `MapPicker`'s own tile grid shows.
- * `bankSheetOffset` already wraps every `SCREEN_ROWS` (Task 10's fix for the
- * editor allowing a taller-than-one-screen banked map); calling it per row
- * here inherits that wrap for free.
+ * `bankSheetOffset` already wraps every `SCREEN_ROWS` (see `bankOfRow`);
+ * calling it per row here inherits that wrap for free.
  */
 export function metaRowOffsets(session: MapSession, baseRow: number | null, height: number): number[] {
   if (baseRow === null) return new Array(height).fill(pickerBankOffset(session))
@@ -897,6 +932,17 @@ export function canPaint(session: MapSession): boolean {
   return session.tileset !== null && doc(session).cell === null
 }
 
+/**
+ * Paint mode, with something to paint into. `leavePaintIfUnpaintable` keeps
+ * the two from disagreeing once a load has settled, but not *during* one —
+ * so the paint layer and the paint panel both mount on this, rather than one
+ * of them on `mode` alone and offering a palette over a canvas that has no
+ * layer to take the stroke.
+ */
+export function painting(session: MapSession): boolean {
+  return session.mode === 'paint' && canPaint(session)
+}
+
 export function setPaintTool(session: MapSession, tool: TileTool): void {
   session.paintTool = tool
 }
@@ -928,7 +974,7 @@ export function renderMapPixels(
   if (!layer) return { width, height, indices }
   const banked = isBanked(tiles)
   for (let cy = 0; cy < map.height; cy++) {
-    const bank = banked ? bankForRow(cy % SCREEN_ROWS) : 0
+    const bank = banked ? bankOfRow(cy) : 0
     for (let cx = 0; cx < map.width; cx++) {
       const tile = layer.data[cy * map.width + cx] ?? 0
       const pixels = banked ? bankTilePixels(tiles, bank, tile) : tilePixels(tiles, tile)
@@ -960,8 +1006,8 @@ export function paintPointAt(session: MapSession, offsetX: number, offsetY: numb
  * this — the inverse of `paintPointAt`, and tested against it as a round trip.
  * Kept here rather than in the component because `.vue` files are outside
  * vitest and this is the one number a preview can get wrong invisibly:
- * rounded, at the slider's zoom 12 it draws every dot half again too big and
- * the stroke walks off the pointer.
+ * rounded, at the slider's zoom 12 it draws every dot at 2 pixels instead of
+ * 1.5 — a third too big — and the stroke walks off the pointer.
  */
 export function paintDotSize(session: MapSession): number {
   return session.zoom / TILE_SIZE
@@ -980,16 +1026,13 @@ export function paintPreviewPoints(session: MapSession): Point[] {
 }
 
 /**
- * Which bank a cell row is drawn in, or null when the tileset is not banked.
- * Wrapped by `SCREEN_ROWS` for the same reason `bankSheetOffset` is: a taller
- * map is editable in progress even though `validateMap` refuses it at export.
- * The wrap is also what keeps the answer in `0..BANK_COUNT - 1` without a
- * clamp — `paintGrid` only ever asks about rows inside the grid.
+ * `bankOfRow` for `paintGrid`, or null when the tileset is not banked — so a
+ * stroke allocates in the bank the canvas draws that row from.
  */
 export function paintBankOf(session: MapSession): ((cellRow: number) => number) | null {
   const tileset = session.tileset
   if (!tileset || !isBanked(tileset)) return null
-  return (cellRow) => bankForRow(cellRow % SCREEN_ROWS)
+  return bankOfRow
 }
 
 export function beginPaint(session: MapSession, role: 'fg' | 'bg'): void {
@@ -1413,14 +1456,24 @@ export function resize(session: MapSession, width: number, height: number): void
  * Publishes only when something was applied: `store.set` compares by
  * reference, so re-setting an identical document would dirty the tileset and
  * push a step into every other tab on it.
+ *
+ * Returns `null` when there is no document to write into at all — the map
+ * points at a tileset the store does not hold, which an undo back across a
+ * `setTileset` step can arrange. The caller must then leave history where it
+ * is: the record on an entry flips orientation on every swap, so moving the
+ * step without one would leave it out of phase, and the next redo would find
+ * the slot still holding `after`, pass the guard, and write `before` over the
+ * stroke. Refused whole, the step is retried once the tileset is loaded.
  */
-function swapTileEdits(session: MapSession, edits: TileEdit[] | undefined): TileEdit[] | undefined {
+function swapTileEdits(session: MapSession, edits: TileEdit[] | undefined): TileEdit[] | null | undefined {
   if (!edits?.length) return edits
   const store = useTilesetStore()
   const path = doc(session).tileset
   const tileset = store.patternDoc(path)
-  // No document to write into: nothing applied, so nothing for redo either.
-  if (!tileset) return []
+  if (!tileset) {
+    session.status = `Can't undo or redo this stroke: ${path || 'its tileset'} is not loaded.`
+    return null
+  }
   const tiles = tileset.tiles.slice()
   const bankTiles = tileset.bankTiles.map((bank) => bank.slice())
   const groupColors = tileset.groupColors.slice()
@@ -1474,6 +1527,7 @@ export function undo(session: MapSession): void {
   if (!canUndo(session.history)) return
   const leaving = session.history.present
   const displaced = swapTileEdits(session, leaving.tileEdits)
+  if (displaced === null) return
   const next = undoHistory(session.history)
   session.history = displaced
     ? { ...next, future: [{ ...leaving, tileEdits: displaced }, ...next.future.slice(1)] }
@@ -1487,6 +1541,7 @@ export function redo(session: MapSession): void {
   if (!canRedo(session.history)) return
   const entering = session.history.future[0]
   const displaced = swapTileEdits(session, entering.tileEdits)
+  if (displaced === null) return
   const next = redoHistory(session.history)
   session.history = displaced ? { ...next, present: { ...next.present, tileEdits: displaced } } : next
   session.selection = null
