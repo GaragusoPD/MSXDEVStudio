@@ -39,8 +39,10 @@ import {
   metaRowOffsets,
   paintBankOf,
   paintBudgetLabel,
+  paintDotSize,
   paintDrag,
   paintPointAt,
+  paintPreviewPoints,
   pickerBankOffset,
   pickMeta,
   pickTile,
@@ -764,6 +766,83 @@ describe('paint mode', () => {
     expect(paintPointAt(session, 0, 0)).toEqual({ x: 0, y: 0 })
     // A captured drag can leave the canvas; paintGrid drops what falls outside.
     expect(paintPointAt(session, -1, -3)).toEqual({ x: -1, y: -2 })
+  })
+
+  describe('the preview overlay: its numbers live here because the .vue is not under test', () => {
+    it('paintDotSize is the inverse of paintPointAt at every zoom the slider offers', async () => {
+      const session = await openMap()
+      // The slider runs 4..48 in steps of 2, so most zooms give a fractional dot
+      // (zoom 12 is 1.5 canvas pixels): the case a rounded size drifts on, and
+      // the one a single zoom-16 check can never see.
+      for (let zoom = 4; zoom <= 48; zoom += 2) {
+        session.zoom = zoom
+        const size = paintDotSize(session)
+        // Eight dots span exactly one cell, or the preview walks off the grid.
+        expect(size * TILE_SIZE).toBe(zoom)
+        for (const x of [0, 1, 7, 8, 13, 255]) {
+          for (const y of [0, 3, 8, 191]) {
+            // A dot's leading edge maps back to it...
+            expect(paintPointAt(session, x * size, y * size)).toEqual({ x, y })
+            // ...and so does its trailing edge, so the rect drawn for a dot
+            // covers exactly the offsets that resolve to it and nothing past.
+            expect(paintPointAt(session, (x + 1) * size - 1e-6, (y + 1) * size - 1e-6)).toEqual({ x, y })
+          }
+        }
+      }
+    })
+
+    it('paintPreviewPoints is the stroke in progress for the tools a preview helps', async () => {
+      const session = await openMap()
+      setMode(session, 'paint')
+      expect(paintPreviewPoints(session)).toEqual([])
+      for (const tool of ['pencil', 'line', 'rect', 'spray'] as const) {
+        setPaintTool(session, tool)
+        beginPaint(session, 'fg')
+        extendPaint(session, { x: 1, y: 1 }, { x: 6, y: 1 })
+        expect(session.paintPoints.length).toBeGreaterThan(0)
+        expect(paintPreviewPoints(session)).toEqual(session.paintPoints)
+        endPaint(session)
+        // The real canvas takes over on release; a preview left up would double-draw.
+        expect(paintPreviewPoints(session)).toEqual([])
+      }
+    })
+
+    it('paintPreviewPoints declines a fill: its point set is the flooded region, not a stroke', async () => {
+      const session = await openMap()
+      setMode(session, 'paint')
+      setPaintTool(session, 'fill')
+      beginPaint(session, 'fg')
+      extendPaint(session, { x: 0, y: 0 }, { x: 0, y: 0 })
+      // The flood itself is real — only the preview declines to draw it.
+      expect(session.paintPoints.length).toBeGreaterThan(0)
+      expect(paintPreviewPoints(session)).toEqual([])
+      endPaint(session)
+    })
+
+    it('a refused stroke leaves nothing behind for the preview to show', async () => {
+      // The preview reads `paintPoints`; if a refusal returned before clearing
+      // them, the overlay would keep showing art that was never committed.
+      const session = await openMap()
+      resize(session, 32, SCREEN_ROWS)
+      useTilesetStore().set(
+        TILES,
+        normalizeTiles({ mode: 'sc2', count: MAX_TILES, tiles: Array.from({ length: MAX_TILES }, (_, i) => distinct(i)) }),
+        'x'
+      )
+      setMode(session, 'paint')
+      // Colour 1 on a row `distinct` paints white: a recolour that needs the slot a full tileset has not got.
+      setPaintColor(session, 1)
+      beginPaint(session, 'fg')
+      extendPaint(session, { x: 0, y: 0 }, { x: 0, y: 0 })
+      expect(paintPreviewPoints(session)).toHaveLength(1)
+      const before = doc(session)
+
+      endPaint(session)
+
+      expect(session.promptPromote).toBe(true) // it was refused, not painted
+      expect(doc(session)).toBe(before)
+      expect(paintPreviewPoints(session)).toEqual([])
+    })
   })
 
   it('paintBudgetLabel phrases the budget the way the tile editor does', async () => {

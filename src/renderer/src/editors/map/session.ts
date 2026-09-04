@@ -954,6 +954,32 @@ export function paintPointAt(session: MapSession, offsetX: number, offsetY: numb
 }
 
 /**
+ * The size of one painted dot in canvas pixels, for the preview overlay.
+ *
+ * `session.zoom` is pixels per CELL and a cell is `TILE_SIZE` dots, so a dot is
+ * this — the inverse of `paintPointAt`, and tested against it as a round trip.
+ * Kept here rather than in the component because `.vue` files are outside
+ * vitest and this is the one number a preview can get wrong invisibly:
+ * rounded, at the slider's zoom 12 it draws every dot half again too big and
+ * the stroke walks off the pointer.
+ */
+export function paintDotSize(session: MapSession): number {
+  return session.zoom / TILE_SIZE
+}
+
+/**
+ * What the preview overlay draws while a stroke is open: the points the drag
+ * has accumulated, drawn from here so the component need not know which tool
+ * is live. Nothing for a fill, whose "points" are the whole flooded region
+ * computed from the rendered screen — a click, not a stroke, and resolved the
+ * instant the button comes up. Empty between strokes, and empty the moment
+ * `endPaint` runs, refused or not, because the real canvas takes over then.
+ */
+export function paintPreviewPoints(session: MapSession): Point[] {
+  return session.paintTool === 'fill' ? [] : session.paintPoints
+}
+
+/**
  * Which bank a cell row is drawn in, or null when the tileset is not banked.
  * Wrapped by `SCREEN_ROWS` for the same reason `bankSheetOffset` is: a taller
  * map is editable in progress even though `validateMap` refuses it at export.
