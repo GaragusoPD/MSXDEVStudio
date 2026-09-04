@@ -1439,6 +1439,35 @@ describe('paint mode', () => {
       expect(session.status).toContain('changed')
     })
 
+    it('a slot that no longer exists in its table — a bank shrunk elsewhere — is a changed slot, not a crash', async () => {
+      const session = await openMap()
+      useTilesetStore().set(TILES, bankedFixture(), 'x')
+      setMode(session, 'paint')
+      resize(session, 8, 24)
+      // A fork stroke on row 9 mints a bank-1 tile; an edit stroke on the same
+      // cell then rewrites it *there*, so the record points into bank 1.
+      dab(session, 0, 9 * TILE_SIZE)
+      const index = cell(session, 0, 9)
+      expect(session.tileset!.bankTiles[1][index]).toBeDefined()
+      setPaintWrite(session, 'edit')
+      setPaintColor(session, 4)
+      dab(session, 1, 9 * TILE_SIZE)
+      expect(session.history.present.tileEdits).toEqual([expect.objectContaining({ bank: 1, index })])
+
+      // The tile tab undoes its own bank painting: bank 1 is empty again and
+      // the slot the record names is simply not there.
+      const store = useTilesetStore()
+      const current = store.patternDoc(TILES)!
+      const shrunk = { ...current, bankTiles: [current.bankTiles[0], [], current.bankTiles[2]] }
+      store.set(TILES, shrunk, 'some/other/editor')
+
+      undo(session)
+
+      expect(store.patternDoc(TILES)).toBe(shrunk)
+      expect(store.patternDoc(TILES)!.bankTiles[1]).toEqual([])
+      expect(session.status).toContain('changed')
+    })
+
     it('a clean undo still restores every tile and says nothing', async () => {
       const session = await openMap()
       stampTile1(session)

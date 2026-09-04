@@ -1401,8 +1401,11 @@ function swapTileEdits(session: MapSession, edits: TileEdit[] | undefined): Tile
   const displaced: TileEdit[] = []
   let skipped = 0
   for (const edit of edits) {
-    // `?.` on the bank: a `bank: n` edit can meet a tileset that has since
-    // lost its banks, and an empty slot is a slot that no longer holds ours.
+    // A `bank: n` record can meet a bank that has since shrunk under it (the
+    // tile tab undoing its own bank paint empties the array), so the slot is
+    // `undefined` — and a slot that is not there no longer holds ours. The
+    // `?.` is `bankTileAt`'s own defence against a document that skipped
+    // `normalizeTiles`; a normalized one always has `BANK_COUNT` arrays.
     const current: TileEntry | undefined = edit.bank === null ? tiles[edit.index] : bankTiles[edit.bank]?.[edit.index]
     // Off `tileset.groupColors` — the untouched snapshot — not the mutable
     // `groupColors` copy this loop is writing into: eight tiles share one sc1
