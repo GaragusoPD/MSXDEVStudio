@@ -53,6 +53,9 @@ import {
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
 import { normalizeMetaTile, remapMetaTiles, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { isOwnedMeta, normalizeOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
+import { animModesCompatible } from '../../../../shared/msx/tile-anim'
+import { onAnimSaved } from '../anim/events'
 import {
   paintGrid,
   sameEntry,
@@ -149,8 +152,21 @@ export interface MapSession {
    *
    * Read from disk rather than taken from the resources store, which knows only
    * `{ path, kind, out }` and cannot say which tileset a meta references.
+   *
+   * A meta that owns its pixels is here as its *view* in this tileset — the
+   * version-2 shape, one frame of the tiles its attachment resolved to — so
+   * the canvas, the picker and baking draw every meta the same way. Its own
+   * document is in `ownedMetas`.
    */
   metaDocs: Map<string, MetaTileDoc>
+  /**
+   * Every meta-tile that owns its pixels in a mode this map's tileset can
+   * show, attached there or not — the picker offers the unattached ones too,
+   * and picking one attaches it. By path.
+   */
+  ownedMetas: Map<string, OwnedMetaDoc>
+  /** The version-2 metas over this tileset, as read — `metaDocs` without the views. */
+  refMetas: Map<string, MetaTileDoc>
   tilesetError: string | null
   /** Last tileset `reorderLog` entry (by `at`) this map has folded in; null = never replayed. */
   tilesetReorderSeen: number | null
@@ -251,6 +267,8 @@ export function mapSession(path: string): MapSession {
     bitmapTileset: null,
     atlas: null,
     metaDocs: new Map(),
+    ownedMetas: new Map(),
+    refMetas: new Map(),
     tilesetError: null,
     tilesetReorderSeen: null,
     activeLayer: 0,
@@ -421,6 +439,7 @@ function clearTileset(session: MapSession): void {
 async function loadMetaDocs(session: MapSession): Promise<void> {
   const tilesetPath = doc(session).tileset
   const found = new Map<string, MetaTileDoc>()
+  const owned = new Map<string, OwnedMetaDoc>()
   // A pattern map takes pattern metas, a bitmap map takes bitmap ones. The
   // suffix already says which, so no file has to be opened to find out.
   const wanted = doc(session).cell ? 'metabtiles' : 'metatiles'
@@ -428,16 +447,81 @@ async function loadMetaDocs(session: MapSession): Promise<void> {
     for (const entry of useResourcesStore().entries) {
       if (entry.kind !== wanted) continue
       try {
-        const text = await window.api.invoke('fs:read', { path: entry.path })
-        const parsed = normalizeMetaTile(JSON.parse(text))
+        const raw: unknown = JSON.parse(await window.api.invoke('fs:read', { path: entry.path }))
+        if (isOwnedMeta(raw)) {
+          // Owns its pixels and names no tileset: any pattern tileset that can
+          // show its mode can have it attached.
+          const meta = normalizeOwnedMeta(raw)
+          if (session.tileset && animModesCompatible(meta.mode, session.tileset.mode)) owned.set(entry.path, meta)
+          continue
+        }
+        const parsed = normalizeMetaTile(raw)
         if (samePath(parsed.tileset, tilesetPath)) found.set(entry.path, parsed)
       } catch {
         // Not a reason to break the picker.
       }
     }
   }
-  session.metaDocs = found
+  session.refMetas = found
+  session.ownedMetas = owned
+  refreshAttachedMetas(session)
+  rebuildMetaViews(session)
   refreshMetaRefs(session)
+}
+
+/**
+ * Re-resolves, in the tileset, every attached meta this map knows the file
+ * of — what the tile editor does on load, done here too because a map is
+ * often edited with no tile tab open. Through the store, so every editor of
+ * the tileset sees it; it dirties the tileset, which saving the map saves.
+ */
+function refreshAttachedMetas(session: MapSession): void {
+  const tileset = session.tileset
+  const tilesetPath = doc(session).tileset
+  if (!tileset?.metas.length || !tilesetPath) return
+  const loaded = new Map<string, LoadedMeta>()
+  for (const binding of tileset.metas) {
+    const meta = session.ownedMetas.get(binding.path)
+    if (meta) loaded.set(binding.path, { meta, name: meta.export?.name || defaultExport(binding.path).name })
+  }
+  const { doc: next, changed } = refreshMetas(tileset, loaded)
+  if (next === tileset) return
+  useTilesetStore().set(tilesetPath, next, session.path)
+  session.tileset = next
+  session.status = `${changed.map((path) => path.split('/').pop()).join(', ')} changed since ${tilesetPath.split('/').pop()} was saved — its tiles are up to date again.`
+}
+
+/**
+ * `metaDocs` from what is known: the version-2 metas as read, and a view of
+ * each attached meta that owns its pixels — one frame of its tiles in this
+ * tileset. Called whenever the tileset changes, since that is where the views'
+ * numbers live.
+ */
+function rebuildMetaViews(session: MapSession): void {
+  const views = new Map(session.refMetas)
+  const tilesetPath = doc(session).tileset
+  for (const binding of session.tileset?.metas ?? []) {
+    const meta = session.ownedMetas.get(binding.path)
+    if (!meta) continue
+    views.set(binding.path, {
+      version: 2,
+      tileset: tilesetPath,
+      width: binding.width,
+      height: binding.height,
+      cell: null,
+      transparent: null,
+      frames: [{ tiles: binding.cells.slice() }],
+      flags: binding.flags,
+      export: meta.export
+    })
+  }
+  session.metaDocs = views
+}
+
+/** The metas that own their pixels and could be attached here, but are not yet. */
+export function unattachedMetas(session: MapSession): string[] {
+  const attached = new Set(session.tileset?.metas.map((binding) => binding.path) ?? [])
+  return [...session.ownedMetas.keys()].filter((path) => !attached.has(path))
 }
 
 /**
@@ -455,7 +539,7 @@ function refreshMetaRefs(session: MapSession): void {
   let next = current
   for (const ref of current.metas) {
     const meta = session.metaDocs.get(ref.path)
-    if (meta) next = addMetaRef(next, refFor(ref.path, meta))
+    if (meta) next = addMetaRef(next, refFor(session, ref.path, meta))
   }
   // Silent: this is a correction, not an edit the user made, so it must not
   // dirty the tab or land on the undo stack. The rewrap keeps the present
@@ -521,6 +605,10 @@ async function loadFromPath(session: MapSession, path: string): Promise<void> {
     // `'tiles'` only ever hears about its own, so the narrowing is a fact of
     // the path, not a guess.
     session.tileset = next as TilesDoc
+    // An attached meta's tiles live in the tileset: a refresh there (the meta
+    // saved, a tile deleted) is a new picture here.
+    rebuildMetaViews(session)
+    refreshMetaRefs(session)
   })
   await replayPersistedReorders(session)
 }
@@ -607,6 +695,24 @@ onTilesReordered((event) => {
     const { doc: next } = replayReorders(doc(session), [event], null)
     commit(session, next)
     session.tilesetReorderSeen = event.at
+  }
+})
+
+/**
+ * A meta-tile that owns its pixels, saved in its editor: every open map whose
+ * tileset could show it takes the new document, and re-resolves it in the
+ * tileset if it is attached there — the tile editor does the same when it is
+ * open, and whichever runs second finds nothing left to change.
+ */
+onAnimSaved((event) => {
+  const meta = event.doc
+  if (!isOwnedMeta(meta)) return
+  for (const session of sessions.values()) {
+    if (!session.tileset || !animModesCompatible(meta.mode, session.tileset.mode)) continue
+    session.ownedMetas = new Map(session.ownedMetas).set(event.path, meta)
+    refreshAttachedMetas(session)
+    rebuildMetaViews(session)
+    refreshMetaRefs(session)
   }
 })
 
@@ -1498,6 +1604,9 @@ async function tilesUsedElsewhere(session: MapSession): Promise<{ used: Set<numb
       if (map.cell !== null || !samePath(map.tileset, tilesetPath)) continue
       take(entry.path, mapTiles(replayReorders(map, log, seen).doc))
     } else {
+      // A meta that owns its pixels holds no tile numbers; its tiles are the
+      // tileset's own attachment, which compaction keeps by itself.
+      if (isOwnedMeta(raw)) continue
       let meta = normalizeMetaTile(raw)
       if (!samePath(meta.tileset, tilesetPath)) continue
       for (const event of pendingReorders(log, seen)) meta = remapMetaTiles(meta, event.mapping)
@@ -1957,9 +2066,10 @@ export { canRedo, canUndo }
  * for it, which is the moment they are most likely to have just edited it.
  */
 export function pickMeta(session: MapSession, path: string): void {
+  if (!session.metaDocs.has(path) && session.ownedMetas.has(path) && !attachOwnedMeta(session, path)) return
   const meta = session.metaDocs.get(path)
   if (!meta) return
-  const next = addMetaRef(doc(session), refFor(path, meta))
+  const next = addMetaRef(doc(session), refFor(session, path, meta))
   if (next === doc(session) && metaSlotOf(doc(session), path) < 0) {
     session.status = `A map can place ${MAX_MAP_METAS} different meta-tiles.`
     return
@@ -1977,8 +2087,38 @@ export function pickMeta(session: MapSession, path: string): void {
  * they disagreed about the symbol name and every map with helpers on failed to
  * link.
  */
-function refFor(path: string, meta: MetaTileDoc): MetaRef {
+function refFor(session: MapSession, path: string, meta: MetaTileDoc): MetaRef {
+  const owned = session.ownedMetas.get(path)
+  if (owned) {
+    const binding = session.tileset?.metas.find((candidate) => candidate.path === path) ?? null
+    return metaRefFrom(path, owned, defaultExport(path).name, binding)
+  }
   return metaRefFrom(path, meta, defaultExport(path).name)
+}
+
+/**
+ * Attaches a meta that owns its pixels to this map's tileset, so it can be
+ * placed: what picking an unattached one in the picker means. Through the
+ * store, as an edit the tileset's own tab can undo; saving the map saves it.
+ */
+function attachOwnedMeta(session: MapSession, path: string): boolean {
+  const meta = session.ownedMetas.get(path)
+  const tileset = session.tileset
+  const tilesetPath = doc(session).tileset
+  if (!meta || !tileset || !tilesetPath) return false
+  const result = resolveMeta(tileset, path, meta, meta.export?.name || defaultExport(path).name)
+  if (typeof result === 'string') {
+    session.status = result
+    return false
+  }
+  useTilesetStore().set(tilesetPath, result.doc, session.path)
+  session.tileset = result.doc
+  rebuildMetaViews(session)
+  const window = result.doc.animations.find((binding) => binding.path === path)
+  session.status =
+    `Attached ${path.split('/').pop()} to ${tilesetPath.split('/').pop()}` +
+    (window ? ` — tiles ${window.slot}-${window.slot + window.width * window.height - 1} move with its _Animate().` : '.')
+  return true
 }
 
 export function placeMetaAt(session: MapSession, x: number, y: number): void {

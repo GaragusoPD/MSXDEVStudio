@@ -23,6 +23,7 @@ import {
   withAnimFrame,
   type TileAnimDoc
 } from '../../../../shared/msx/tile-anim'
+import { detachMeta, isOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta } from '../../../../shared/msx/meta-owned'
 import { onAnimSaved } from '../anim/events'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import {
@@ -33,6 +34,7 @@ import {
   colorByteAt,
   createTilesDoc,
   isBanked,
+  isMetaPath,
   MAX_BLOCK,
   MAX_TILES,
   animCells,
@@ -232,6 +234,7 @@ async function load(session: TileSession): Promise<void> {
     session.doc = useTilesetStore().patternDoc(session.path) ?? session.doc
     session.history = initHistory(session.doc)
     session.error = null
+    await refreshMetaBindings(session)
     await refreshAnimations(session)
     // What the Animations panel offers to attach comes from the project's
     // resource list, which nothing has filled if the Resources panel was never shown.
@@ -746,9 +749,11 @@ function refuseAnimated(session: TileSession, indices: readonly number[]): boole
   const hit = indices.map((index) => [index, animationAt(session, index)] as const).find(([, binding]) => binding)
   if (!hit) return false
   const [index, binding] = hit
-  session.status =
-    `Tile ${index} shows the animation ${binding!.path.split('/').pop()} — edit its poses there; ` +
-    'this tile is rewritten from it at every build.'
+  session.status = isMetaPath(binding!.path)
+    ? `Tile ${index} is a moving part of the meta-tile ${binding!.path.split('/').pop()} — edit its poses there; ` +
+      'this tile is rewritten from it at every build.'
+    : `Tile ${index} shows the animation ${binding!.path.split('/').pop()} — edit its poses there; ` +
+      'this tile is rewritten from it at every build.'
   return true
 }
 
@@ -802,6 +807,8 @@ export function detachAnim(session: TileSession, path: string): void {
 
 /** The animations in the project this tileset could attach, by path. */
 export function attachableAnimations(session: TileSession): string[] {
+  // (A meta-tile's window is filed with the animations, under the meta's path;
+  // it is attached through the meta, so it never shows up as attachable here.)
   const attached = new Set(session.doc.animations.map((binding) => binding.path))
   return useResourcesStore()
     .entries.filter((entry) => entry.kind === 'anim' && !attached.has(entry.path))
@@ -856,6 +863,8 @@ async function refreshAnimations(session: TileSession): Promise<void> {
   if (!session.doc.animations.length) return
   const loaded = new Map<string, TileAnimDoc>()
   for (const binding of session.doc.animations) {
+    // A meta-tile's window: `refreshMetaBindings` brought it up to date.
+    if (isMetaPath(binding.path)) continue
     const anim = await readAnimation(binding.path)
     if (typeof anim !== 'string') loaded.set(binding.path, anim)
   }
@@ -879,14 +888,100 @@ function applyAnimations(session: TileSession, loaded: ReadonlyMap<string, TileA
   session.status = 'An attached animation changed since this tileset was saved — its window now shows the new first pose.'
 }
 
-// One subscription for every open tileset: an animation saved in its editor
-// shows up in the windows of the tilesets it is attached to straight away.
+// One subscription for every open tileset: an animation or a meta-tile saved
+// in its editor shows up in the tilesets it is attached to straight away.
 onAnimSaved((event) => {
+  const { doc } = event
   for (const session of sessions.values()) {
+    if (isOwnedMeta(doc)) {
+      if (!session.doc.metas.some((binding) => binding.path === event.path)) continue
+      applyMetas(session, new Map([[event.path, { meta: doc, name: doc.export?.name || defaultExport(event.path).name }]]))
+      continue
+    }
     if (!session.doc.animations.some((binding) => binding.path === event.path)) continue
-    applyAnimations(session, new Map([[event.path, event.doc]]))
+    applyAnimations(session, new Map([[event.path, doc]]))
   }
 })
+
+// ── attached meta-tiles ─────────────────────────────────────────────────────
+
+/** A meta-tile file as `refreshMetas` takes it — or why it cannot be attached. */
+async function readOwnedMeta(path: string): Promise<LoadedMeta> {
+  const file = path.split('/').pop() ?? path
+  try {
+    const parsed = parseResource(path, await window.api.invoke('fs:read', { path }))
+    if (parsed.kind !== 'metatiles') return `${file} is not a meta-tile.`
+    if (!isOwnedMeta(parsed.doc)) {
+      return `${file} references a tileset's tiles rather than owning its art — open it and convert it first.`
+    }
+    return { meta: parsed.doc, name: parsed.doc.export?.name || defaultExport(path).name }
+  } catch (error) {
+    return `Couldn't read ${path}: ${String(error)}`
+  }
+}
+
+/**
+ * Re-resolves every attached meta from its file — the editor's half of the
+ * rule the exporter keeps (`refreshTileMetas`), through the same
+ * `refreshMetas`. A meta edited since this tileset was saved gets its new
+ * tiles here, as an undo step that dirties the tab, so what the editor shows
+ * is what the next build will export.
+ */
+async function refreshMetaBindings(session: TileSession): Promise<void> {
+  if (!session.doc.metas.length) return
+  const loaded = new Map<string, LoadedMeta>()
+  for (const binding of session.doc.metas) loaded.set(binding.path, await readOwnedMeta(binding.path))
+  applyMetas(session, loaded)
+}
+
+function applyMetas(session: TileSession, loaded: ReadonlyMap<string, LoadedMeta>): void {
+  const { doc, problems, changed } = refreshMetas(session.doc, loaded)
+  if (doc !== session.doc) {
+    commit(session, doc, 'refresh meta-tile')
+    session.status = `${changed.map((path) => path.split('/').pop()).join(', ')} changed since this tileset was saved — its tiles are up to date again.`
+  }
+  if (problems.length) session.status = problems[0]
+}
+
+/**
+ * Attaches the meta-tile at `path`: a tile for each still cell (shared with
+ * identical art), and a window at the end of the set for the cells that move.
+ * Nothing already in the tileset changes.
+ */
+export async function attachMetaFile(session: TileSession, path: string): Promise<void> {
+  const loaded = await readOwnedMeta(path)
+  if (typeof loaded === 'string') {
+    session.status = loaded
+    return
+  }
+  const result = resolveMeta(session.doc, path, loaded.meta, loaded.name)
+  if (typeof result === 'string') {
+    session.status = result
+    return
+  }
+  commit(session, result.doc, 'attach meta-tile')
+  const window = result.doc.animations.find((binding) => binding.path === path)
+  const file = path.split('/').pop()
+  session.status = window
+    ? `Attached ${file}: tiles ${window.slot}-${window.slot + animCells(window) - 1} move. Call ${defineFor(session)}_AnimReset() once and ${defineFor(session)}_Animate() every frame.`
+    : `Attached ${file}. Draw it with ${defineFor(session)}_DrawMeta(), or place it on a map.`
+}
+
+/** Detaches it; its tiles stay as ordinary art, and its window stops moving. */
+export function detachMetaFile(session: TileSession, path: string): void {
+  const next = detachMeta(session.doc, path)
+  if (next === session.doc) return
+  commit(session, next, 'detach meta-tile')
+  session.status = `Detached ${path.split('/').pop()} — its tiles stay as art.`
+}
+
+/** The meta-tiles in the project not attached here yet, by path. Version-2 ones are refused at attach, with the reason. */
+export function attachableMetas(session: TileSession): string[] {
+  const attached = new Set(session.doc.metas.map((binding) => binding.path))
+  return useResourcesStore()
+    .entries.filter((entry) => entry.kind === 'metatiles' && !attached.has(entry.path))
+    .map((entry) => entry.path)
+}
 
 // ── clipboard ───────────────────────────────────────────────────────────────
 

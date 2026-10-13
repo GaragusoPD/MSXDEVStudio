@@ -1,12 +1,15 @@
 <script setup lang="ts">
 /**
- * The `*.anim-tiles.json` editor: an animated tile's poses, their timing, and
- * where the animation is attached.
+ * The `*.anim-tiles.json` editor — an animated tile's poses, their timing, and
+ * where the animation is attached — and, with three more controls, the editor
+ * of a `*.meta-tiles.json` that owns its pixels: the same poses plus which
+ * cells are see-through and the meta's eight flags (`session.kind`).
  *
  * A shell: the canvas, the pose strip and the side panel are their own
  * components, and every mutation is a call into `./session`.
  */
 import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { movingCells } from '../../../../shared/msx/meta-owned'
 import type { MaterialSymbol } from '@material-symbols/font-400'
 import { isTypingTarget } from '../../commands'
 import type { TileTool } from '../../../../shared/tile-editor'
@@ -21,9 +24,11 @@ import {
   canRedo,
   canUndo,
   doc,
+  ownedMeta,
   pruneAnimSessions,
   redo,
   saveSession,
+  setHoleMode,
   setTool,
   setZoom,
   undo,
@@ -38,6 +43,12 @@ const resourcesStore = useResourcesStore()
 const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed<AnimSession>(() => animSession(path.value))
 const anim = computed(() => doc(session.value))
+const meta = computed(() => ownedMeta(session.value))
+
+function pickTool(tool: TileTool): void {
+  setHoleMode(session.value, false)
+  setTool(session.value, tool)
+}
 
 const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'pencil', icon: 'edit', title: 'Pencil' },
@@ -96,11 +107,20 @@ watch(
           v-for="tool in TOOLS"
           :key="tool.id"
           type="button"
-          :class="{ active: session.tool === tool.id }"
+          :class="{ active: !session.holeMode && session.tool === tool.id }"
           :title="tool.title"
-          @click="setTool(session, tool.id)"
+          @click="pickTool(tool.id)"
         >
           <Icon :name="tool.icon" />
+        </button>
+        <button
+          v-if="session.kind === 'metatiles'"
+          type="button"
+          :class="{ active: session.holeMode }"
+          title="See-through cells: click a cell to let what is under the meta show there, in every pose"
+          @click="setHoleMode(session, !session.holeMode)"
+        >
+          <Icon name="texture" />
         </button>
       </div>
 
@@ -166,6 +186,9 @@ watch(
 
     <footer class="statusbar">
       {{ anim.mode.toUpperCase() }} · {{ anim.width }}×{{ anim.height }} tiles ·
+      <template v-if="meta">
+        {{ meta.holes.filter(Boolean).length }} see-through, {{ movingCells(meta).length }} moving ·
+      </template>
       pose {{ session.frame + 1 }} of {{ anim.frames.length }}, held {{ anim.frames[session.frame]?.duration }} frames
     </footer>
   </div>

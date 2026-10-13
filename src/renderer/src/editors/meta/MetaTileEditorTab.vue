@@ -26,6 +26,7 @@ import {
   bitmapTiles,
   canRedo,
   canUndo,
+  convertToOwned,
   doc,
   metaSession,
   pruneMetaSessions,
@@ -113,6 +114,20 @@ watch(
       class="banner error"
     >
       {{ session.error }}
+    </p>
+    <p
+      v-else-if="session.kind === 'metatiles' && !session.loading && session.tilesetPath"
+      class="banner convert"
+    >
+      This meta-tile is made of {{ session.tilesetPath.split('/').pop() }}'s tiles, so it can only be used with
+      that tileset, and its frames redraw each copy.
+      <button
+        type="button"
+        title="Copy its art into the file, keep it attached to this tileset at the same tiles, and make its frames poses every copy shows at once"
+        @click="convertToOwned(session)"
+      >
+        Make it independent
+      </button>
     </p>
 
     <header class="toolbar">
@@ -346,6 +361,13 @@ watch(
 .banner.error {
   background: #3a2020;
   color: #ffb0b0;
+}
+
+.banner.convert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #1e2a36;
 }
 
 .statusbar {

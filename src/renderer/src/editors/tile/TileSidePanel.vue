@@ -19,7 +19,7 @@ import {
   unpackGrb
 } from '../../../../shared/msx/palette'
 import { defaultExport } from '../../../../shared/msx/resource'
-import { animCells, BANK_COUNT, isBanked, MAX_BLOCK, TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
+import { animCells, BANK_COUNT, isBanked, isMetaPath, MAX_BLOCK, TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
 import { DEFAULT_ANIM_DURATION } from '../../../../shared/msx/tile-anim'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -29,8 +29,11 @@ import {
   activeBlock,
   addBlock,
   attachableAnimations,
+  attachableMetas,
   attachAnim,
+  attachMetaFile,
   detachAnim,
+  detachMetaFile,
   extractAnimation,
   bankBudgetLabel,
   changeMode,
@@ -99,6 +102,22 @@ const tabsStore = useTabsStore()
 const resourcesStore = useResourcesStore()
 /** The animation file picked in the Attach dropdown. */
 const attachPick = ref('')
+/** The meta-tile file picked in its own Attach dropdown. */
+const metaPick = ref('')
+/** A meta-tile's window is filed with the animations, but listed — and detached — with its meta. */
+const plainAnimations = computed(() => doc.value.animations.filter((binding) => !isMetaPath(binding.path)))
+
+function metaLabel(binding: (typeof doc.value.metas)[number]): string {
+  const window = doc.value.animations.find((other) => other.path === binding.path)
+  const size = `${binding.width}×${binding.height}`
+  return window ? `${size} · ${windowLabel(window)} move` : `${size} · still`
+}
+
+async function attachMetaPicked(): Promise<void> {
+  if (!metaPick.value) return
+  await attachMetaFile(props.session, metaPick.value)
+  metaPick.value = ''
+}
 /** "Make animation from block": the pose size it is read as, and how long each is held. */
 const extract = ref({ width: 1, height: 1, duration: DEFAULT_ANIM_DURATION, slot: 0 })
 // Opening a block makes its first tile the active one, and picking another tile
@@ -497,11 +516,11 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         the tile your map cells use, then attach.
       </p>
       <ul
-        v-if="doc.animations.length"
+        v-if="plainAnimations.length"
         class="blocks"
       >
         <li
-          v-for="binding in doc.animations"
+          v-for="binding in plainAnimations"
           :key="binding.path"
         >
           <div class="block-row">
@@ -601,6 +620,70 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
           </button>
         </div>
       </template>
+
+      <h3>Meta-tiles</h3>
+      <p class="blurb">
+        A meta-tile (<code>.meta-tiles.json</code>) attached here gets tiles for its art — shared with
+        any identical ones — and a window for the cells that move, played by this tileset's
+        <code>_Animate()</code>. Maps drawn with this tileset can then place it.
+      </p>
+      <ul
+        v-if="doc.metas.length"
+        class="blocks"
+      >
+        <li
+          v-for="binding in doc.metas"
+          :key="binding.path"
+        >
+          <div class="block-row">
+            <button
+              type="button"
+              class="anim-name"
+              :title="`Open ${binding.path}`"
+              @click="openFile(binding.path)"
+            >
+              {{ binding.path.split('/').pop()?.replace('.meta-tiles.json', '') }}
+            </button>
+            <span class="dims">{{ metaLabel(binding) }}</span>
+            <button
+              type="button"
+              title="Detach — its tiles stay as art"
+              @click.stop="detachMetaFile(session, binding.path)"
+            >
+              <Icon
+                name="link_off"
+                :size="14"
+              />
+            </button>
+          </div>
+        </li>
+      </ul>
+      <div class="new-block">
+        <select
+          v-model="metaPick"
+          title="A meta-tile in this project"
+          @focus="resourcesStore.refresh()"
+        >
+          <option value="">
+            {{ attachableMetas(session).length ? 'Meta-tile…' : 'No meta-tiles to attach' }}
+          </option>
+          <option
+            v-for="path in attachableMetas(session)"
+            :key="path"
+            :value="path"
+          >
+            {{ path.split('/').pop() }}
+          </option>
+        </select>
+        <button
+          type="button"
+          :disabled="!metaPick"
+          title="Attach: tiles for its art, and a window at the end of the set for what moves"
+          @click="attachMetaPicked"
+        >
+          Attach
+        </button>
+      </div>
 
       <h3>Export</h3>
       <template v-if="doc.export">

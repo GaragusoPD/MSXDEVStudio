@@ -57,7 +57,8 @@ const label = (kind: string): string => KIND_LABELS[kind as ResourceKind] ?? kin
 const KIND_HELP: Record<ResourceKind, string> = {
   tiles: '8×8 patterns with colour attributes, for SCREEN 1, 2 and 4. Two colours per row.',
   btiles: 'A bank of small images addressed by number — SCREEN 3 blocks, or MSX2 bitmap tiles. One size for the whole bank.',
-  metatiles: 'One design bigger than a tile — a tree, a door, a coin — with its own frames and flags, that a map places.',
+  metatiles:
+    'One design bigger than a tile — a tree, a door, a torch — with its own art, poses and flags. Attach it to tilesets; maps drawn with them place it.',
   metabtiles: 'The same, over a bitmap tileset.',
   anim: 'Poses and timing for a tile (or a small block of tiles) that animates — water, a coin, a torch. Attach it to a tileset and every cell showing it animates.',
   sprites: 'Hardware sprites: 8×8 or 16×16, one colour per plane, four or eight per scanline.',
@@ -74,12 +75,13 @@ const KIND_HELP: Record<ResourceKind, string> = {
  * otherwise at creation, so "make me a SCREEN 3 tileset" meant creating the
  * wrong thing and changing it afterwards.
  *
- * Kinds with no mode (maps, meta-tiles, sprites, sfx) take it from what they
- * reference, so they get no picker.
+ * Kinds with no mode (maps, bitmap meta-tiles, sprites, sfx) take it from
+ * what they reference, so they get no picker.
  */
 const modeOptions = computed<readonly ScreenMode[]>(() => {
-  // An animation stores its poses as tile bytes, so it is born in a tile mode.
-  if (newKind.value === 'tiles' || newKind.value === 'anim') return TILE_MODES
+  // An animation stores its poses as tile bytes, and so does a meta-tile that
+  // owns its pixels: both are born in a tile mode.
+  if (newKind.value === 'tiles' || newKind.value === 'anim' || newKind.value === 'metatiles') return TILE_MODES
   if (newKind.value === 'btiles' || newKind.value === 'screen') return BITMAP_MODES
   // Software sprites work in every mode that has pixels, which is a wider set
   // than either of the others: they are drawn *into* the picture, whatever it is.
@@ -104,7 +106,14 @@ async function createResource(): Promise<void> {
     // Seeded with the chosen mode rather than patched afterwards: `normalize*`
     // is what applies a mode's constraints (SCREEN 3 forces an even tile width
     // and drops the palette), and it only runs on the way in.
-    const seed = modeOptions.value.length ? JSON.stringify({ mode: newMode.value }) : '{}'
+    // A new `.meta-tiles.json` owns its pixels (version 3); the version-2 form
+    // that references one tileset is only ever opened, never created.
+    const seed =
+      newKind.value === 'metatiles'
+        ? JSON.stringify({ version: 3, mode: newMode.value })
+        : modeOptions.value.length
+          ? JSON.stringify({ mode: newMode.value })
+          : '{}'
     const resource = parseResource(path, seed)
     // A screen is born with a canvas. Without one the editor has nothing to draw
     // on and the only way forward is importing an image, which is exactly the

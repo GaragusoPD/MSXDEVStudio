@@ -1,15 +1,18 @@
 <script setup lang="ts">
 /**
- * The animation editor's centre pane: one pose at zoom, with the drawing tools.
+ * The pose editor's centre pane: one pose at zoom, with the drawing tools.
  *
  * Coordinates are the pose's own dot space — `width*8 × height*8` — and every
  * stroke goes to `paint` in `./session`, which runs the tile editor's own role
  * strokes against the pose. Nothing here knows a colour rule.
+ *
+ * For a meta-tile, see-through cells are drawn hatched, and in the see-through
+ * mode a click toggles the cell under it instead of painting.
  */
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { beginStroke, doc, endStroke, paint, posePixels, type AnimSession } from './session'
+import { beginStroke, doc, endStroke, ownedMeta, paint, posePixels, toggleHole, type AnimSession } from './session'
 
 const props = defineProps<{ session: AnimSession }>()
 
@@ -41,8 +44,12 @@ function pointsFor(from: Point, to: Point): Point[] {
 }
 
 function onDown(event: PointerEvent): void {
-  ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
   const point = pointAt(event)
+  if (props.session.holeMode) {
+    toggleHole(props.session, Math.floor(point.y / 8) * anim.value.width + Math.floor(point.x / 8))
+    return
+  }
+  ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
   role = event.button === 2 ? 'bg' : 'fg'
   origin = point
   painting = true
@@ -96,6 +103,30 @@ watchEffect(() => {
       context.fillRect(x * px, y * px, px, px)
     }
   }
+  const holes = ownedMeta(props.session)?.holes ?? []
+  holes.forEach((hole, cell) => {
+    if (!hole) return
+    // Hatched over the art it keeps: the art is still in the file, it is just
+    // never drawn — what is under the meta shows here.
+    const x0 = (cell % anim.value.width) * 8 * px
+    const y0 = Math.floor(cell / anim.value.width) * 8 * px
+    const size = 8 * px
+    context.fillStyle = 'rgba(20, 20, 20, 0.55)'
+    context.fillRect(x0, y0, size, size)
+    context.save()
+    context.beginPath()
+    context.rect(x0, y0, size, size)
+    context.clip()
+    context.strokeStyle = 'rgba(255, 210, 78, 0.6)'
+    context.lineWidth = 1
+    context.beginPath()
+    for (let d = -size; d < size; d += Math.max(4, px * 2)) {
+      context.moveTo(x0 + d, y0 + size)
+      context.lineTo(x0 + d + size, y0)
+    }
+    context.stroke()
+    context.restore()
+  })
   if (preview.value.length) {
     context.globalAlpha = 0.6
     context.fillStyle = toHex(rgb.value[props.session.color])
@@ -126,6 +157,7 @@ watchEffect(() => {
   <div class="anim-canvas">
     <canvas
       ref="canvas"
+      :class="{ holes: session.holeMode }"
       @contextmenu.prevent
       @pointerdown="onDown"
       @pointermove="onMove"
@@ -149,5 +181,9 @@ canvas {
   image-rendering: pixelated;
   cursor: crosshair;
   box-shadow: 0 0 0 1px var(--border, #444);
+}
+
+canvas.holes {
+  cursor: cell;
 }
 </style>

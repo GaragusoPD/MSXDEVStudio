@@ -78,7 +78,7 @@ describe('the animation editor', () => {
   it('loads the file and lists the tilesets it is attached to', async () => {
     const session = await open()
     expect(doc(session).frames.map((f) => f.duration)).toEqual([4, 6])
-    expect(session.attachedTo).toEqual([{ tileset: 'res/a.tiles.json', slot: 6, bank: null }])
+    expect(session.attachedTo).toEqual([{ tileset: 'res/a.tiles.json', slot: 6, bank: null, cells: 1 }])
   })
 
   it('finds its tilesets even when nothing has listed the project yet', async () => {
@@ -94,7 +94,7 @@ describe('the animation editor', () => {
       return fallback(channel, args)
     })
     const session = await open()
-    expect(session.attachedTo).toEqual([{ tileset: 'res/a.tiles.json', slot: 6, bank: null }])
+    expect(session.attachedTo).toEqual([{ tileset: 'res/a.tiles.json', slot: 6, bank: null, cells: 1 }])
   })
 
   it('a drag is one undo step, and paints the row ink with the left button', async () => {

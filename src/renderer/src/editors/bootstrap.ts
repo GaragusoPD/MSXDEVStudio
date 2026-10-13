@@ -18,6 +18,7 @@ import ExampleViewerTab from './ExampleViewerTab.vue'
 import GitDiffTab from './GitDiffTab.vue'
 import MapEditorTab from './map/MapEditorTab.vue'
 import MetaTileEditorTab from './meta/MetaTileEditorTab.vue'
+import MetaTileRouter from './meta/MetaTileRouter.vue'
 import MonacoEditorTab from './MonacoEditorTab.vue'
 import ProjectSettingsTab from './ProjectSettingsTab.vue'
 import ScreenEditorTab from './screen/ScreenEditorTab.vue'
@@ -100,20 +101,32 @@ registerEditor({
   redo: (path) => btiles.redo(btiles.bitmapTileSession(path))
 })
 
-// Meta-tile sets: groups of tiles a map can index instead of indexing tiles.
-// One editor for both suffixes — the document is the same, and the kind only
-// decides which `_DrawMeta` the export emits. `file-kind.ts` lists the
+// Meta-tiles. A `.meta-tiles.json` is one of two formats and the file says
+// which (`meta/format.ts`): one that owns its pixels is edited with the pose
+// editor, a version-2 one that references a tileset with the meta editor. The
+// menu's hooks ask for whichever session the router actually opened — the
+// pose session only exists for a file that owns its pixels. A
+// `.meta-btiles.json` is always the meta editor's. `file-kind.ts` lists the
 // hyphenated suffixes first so the longer match wins; they cannot collide with
 // `tiles.json`/`btiles.json` anyway, which is why the hyphen is there.
-for (const extension of ['meta-tiles.json', 'meta-btiles.json']) {
-  registerEditor({
-    extensions: [extension],
-    component: MetaTileEditorTab,
-    save: (path) => meta.saveSession(meta.metaSession(path)),
-    undo: (path) => meta.undo(meta.metaSession(path)),
-    redo: (path) => meta.redo(meta.metaSession(path))
-  })
+const ownedOr = <T>(path: string, owned: (s: anim.AnimSession) => T, refs: (s: meta.MetaSession) => T): T => {
+  const session = anim.existingAnimSession(path)
+  return session ? owned(session) : refs(meta.metaSession(path))
 }
+registerEditor({
+  extensions: ['meta-tiles.json'],
+  component: MetaTileRouter,
+  save: (path) => ownedOr(path, anim.saveSession, meta.saveSession),
+  undo: (path) => ownedOr(path, anim.undo, meta.undo),
+  redo: (path) => ownedOr(path, anim.redo, meta.redo)
+})
+registerEditor({
+  extensions: ['meta-btiles.json'],
+  component: MetaTileEditorTab,
+  save: (path) => meta.saveSession(meta.metaSession(path)),
+  undo: (path) => meta.undo(meta.metaSession(path)),
+  redo: (path) => meta.redo(meta.metaSession(path))
+})
 
 // Animated tiles: an animation's own poses and timing. Hyphenated like the
 // meta suffixes, and listed before `tiles.json` in `file-kind.ts` for the same

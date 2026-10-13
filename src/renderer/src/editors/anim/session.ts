@@ -1,5 +1,10 @@
 /**
- * Per-tab state for the animated-tile editor (`*.anim-tiles.json`).
+ * Per-tab state for the editor of anything made of poses: an animated tile
+ * (`*.anim-tiles.json`), and a meta-tile that owns its pixels
+ * (`*.meta-tiles.json` version 3). A meta is an animation's poses plus a
+ * footprint (`holes`) and eight flags, and attaches to tilesets the same way,
+ * so it is the same editor with three more controls — not a second copy of
+ * this one. `session.kind` says which file it is.
  *
  * Same shape as the other resource sessions: a module-level map keyed by path,
  * one immutable document per undo step (`shared/history.ts`), and every edit a
@@ -17,6 +22,8 @@
  */
 
 import { shallowReactive } from 'vue'
+import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
+import { isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import {
   animDocCells,
   colorsVary,
@@ -28,28 +35,39 @@ import {
   MAX_ANIM_FRAMES,
   normalizeTileAnim,
   withFrameTiles,
+  type PoseDoc,
   type TileAnimDoc
 } from '../../../../shared/msx/tile-anim'
 import { tilePixels, type AnimLoop, type TileBlock } from '../../../../shared/msx/tile'
 import { applyRoleStroke, splitBlockPoints, type Point, type TileTool } from '../../../../shared/tile-editor'
 import { canRedo, canUndo, createHistory, pushHistory, redo as redoHistory, undo as undoHistory, type History } from '../../../../shared/history'
-import { parseResource, serializeResource } from '../../../../shared/msx/resource'
+import { parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { samePath } from '../../../../shared/map-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import { watchResourceFile } from '../external-changes'
 import { emitAnimSaved } from './events'
 
-/** Where this animation is attached: a tileset, and the window it drives there. */
+/** Either file this editor opens. */
+export type PoseFile = TileAnimDoc | OwnedMetaDoc
+
+/**
+ * Where this file is attached: a tileset, and the window it drives there —
+ * null for a meta-tile that has no moving cells, and so no window.
+ */
 export interface AnimAttachment {
   tileset: string
-  slot: number
+  slot: number | null
   bank: number | null
+  /** How many slots the window spans. */
+  cells: number
 }
 
 export interface AnimSession {
   path: string
-  history: History<TileAnimDoc>
+  /** Which file this is: an animation, or a meta-tile that owns its pixels. */
+  kind: 'anim' | 'metatiles'
+  history: History<PoseFile>
   loading: boolean
   error: string | null
   dirty: boolean
@@ -63,7 +81,9 @@ export interface AnimSession {
   /** Preview playback in the editor — UI state, never saved. */
   playing: boolean
   /** The document mid-stroke; `doc()` answers with it so the canvas follows the drag. */
-  preview: TileAnimDoc | null
+  preview: PoseFile | null
+  /** Meta-tiles only: clicks toggle a cell see-through instead of painting. */
+  holeMode: boolean
   strokeActive: boolean
   attachedTo: AnimAttachment[]
   status: string
@@ -72,12 +92,16 @@ export interface AnimSession {
 
 const sessions = new Map<string, AnimSession>()
 
+const kindOf = (path: string): AnimSession['kind'] => (resourceKindOf(path) === 'metatiles' ? 'metatiles' : 'anim')
+
 export function animSession(path: string): AnimSession {
   const existing = sessions.get(path)
   if (existing) return existing
+  const kind = kindOf(path)
   const session = shallowReactive<AnimSession>({
     path,
-    history: createHistory(createTileAnimDoc()),
+    kind,
+    history: createHistory<PoseFile>(kind === 'metatiles' ? normalizeOwnedMeta({}) : createTileAnimDoc()),
     loading: true,
     error: null,
     dirty: false,
@@ -88,6 +112,7 @@ export function animSession(path: string): AnimSession {
     filledRect: false,
     playing: false,
     preview: null,
+    holeMode: false,
     strokeActive: false,
     attachedTo: [],
     status: '',
@@ -95,12 +120,24 @@ export function animSession(path: string): AnimSession {
   })
   sessions.set(path, session)
   session.stopWatching = watchResourceFile(path, {
-    serialize: () => serializeResource({ kind: 'anim', doc: session.history.present }),
+    serialize: () => serialize(session),
     reload: () => void load(session),
     isDirty: () => session.dirty
   })
   void load(session)
   return session
+}
+
+/** The session for `path` if one is open — never creates one. What the menu's save/undo hooks ask first. */
+export function existingAnimSession(path: string): AnimSession | null {
+  return sessions.get(path) ?? null
+}
+
+function serialize(session: AnimSession): string {
+  const present = session.history.present
+  return isOwnedMeta(present)
+    ? serializeResource({ kind: 'metatiles', doc: present })
+    : serializeResource({ kind: 'anim', doc: present as TileAnimDoc })
 }
 
 export function pruneAnimSessions(openPaths: Set<string>): void {
@@ -111,15 +148,27 @@ export function pruneAnimSessions(openPaths: Set<string>): void {
   }
 }
 
-export function doc(session: AnimSession): TileAnimDoc {
+export function doc(session: AnimSession): PoseFile {
   return session.preview ?? session.history.present
+}
+
+/** The meta-tile being edited, or null in an animation's tab. */
+export function ownedMeta(session: AnimSession): OwnedMetaDoc | null {
+  const current = doc(session)
+  return isOwnedMeta(current) ? current : null
 }
 
 async function load(session: AnimSession): Promise<void> {
   try {
     const text = await window.api.invoke('fs:read', { path: session.path })
     const raw: unknown = text.trim() ? JSON.parse(text) : {}
-    session.history = createHistory(normalizeTileAnim(raw))
+    if (session.kind === 'metatiles' && text.trim() && !isOwnedMeta(raw)) {
+      // A version-2 meta is the other editor's; saving it from here would
+      // throw its tile references away.
+      session.error = `${session.path} references a tileset's tiles — close and reopen the tab to edit it, or convert it there.`
+      return
+    }
+    session.history = createHistory<PoseFile>(session.kind === 'metatiles' ? normalizeOwnedMeta(raw) : normalizeTileAnim(raw))
     session.frame = Math.min(session.frame, doc(session).frames.length - 1)
     session.dirty = false
     session.error = null
@@ -147,8 +196,15 @@ export async function findAttachments(session: AnimSession): Promise<void> {
     try {
       const parsed = parseResource(entry.path, await window.api.invoke('fs:read', { path: entry.path }))
       if (parsed.kind !== 'tiles') continue
-      for (const binding of parsed.doc.animations) {
-        if (samePath(binding.path, session.path)) found.push({ tileset: entry.path, slot: binding.slot, bank: binding.bank })
+      const window_ = parsed.doc.animations.find((binding) => samePath(binding.path, session.path))
+      const attached = session.kind === 'anim' ? Boolean(window_) : parsed.doc.metas.some((binding) => samePath(binding.path, session.path))
+      if (attached) {
+        found.push({
+          tileset: entry.path,
+          slot: window_?.slot ?? null,
+          bank: window_?.bank ?? null,
+          cells: window_ ? window_.width * window_.height : 0
+        })
       }
     } catch {
       // A tileset that cannot be read is not a reason to break this list.
@@ -158,8 +214,11 @@ export async function findAttachments(session: AnimSession): Promise<void> {
 }
 
 export async function saveSession(session: AnimSession): Promise<void> {
+  // Nothing loaded is nothing to save — and for a version-2 meta, saving the
+  // blank document would replace its tile references.
+  if (session.error) return
   const current = session.history.present
-  await window.api.invoke('fs:write', { path: session.path, content: serializeResource({ kind: 'anim', doc: current }) })
+  await window.api.invoke('fs:write', { path: session.path, content: serialize(session) })
   session.dirty = false
   useTabsStore().setDirty(session.path, false)
   session.status = 'Saved'
@@ -172,7 +231,7 @@ function markDirty(session: AnimSession): void {
 }
 
 /** One undo step; a no-op when nothing changed. */
-export function commit(session: AnimSession, next: TileAnimDoc): void {
+export function commit(session: AnimSession, next: PoseFile): void {
   if (next === session.history.present) return
   session.history = pushHistory(session.history, next)
   markDirty(session)
@@ -197,7 +256,7 @@ export { canRedo, canUndo }
 // ── painting ─────────────────────────────────────────────────────────────────
 
 /** The pose's cells as one block over its scratch tileset — tile i is cell i. */
-function poseBlock(anim: TileAnimDoc): TileBlock {
+function poseBlock(anim: PoseDoc): TileBlock {
   return { name: 'pose', width: anim.width, height: anim.height, tiles: Array.from({ length: animDocCells(anim) }, (_, i) => i) }
 }
 
@@ -257,14 +316,19 @@ export function setFrame(session: AnimSession, frame: number): void {
 export function addFrame(session: AnimSession, copyOf: number | null = session.frame): void {
   const current = doc(session)
   if (current.frames.length >= MAX_ANIM_FRAMES) {
-    session.status = `An animation holds at most ${MAX_ANIM_FRAMES} poses.`
+    session.status = `At most ${MAX_ANIM_FRAMES} poses.`
     return
   }
   const source = copyOf !== null ? current.frames[copyOf] : null
-  const fresh = normalizeTileAnim({ ...current, frames: [{}] }).frames[0]
+  // One blank tile of the document's mode, repeated: an animation's own
+  // normalizer would cap a big meta's pose at a window's 16 tiles.
+  const blank = normalizeTileAnim({ mode: current.mode, frames: [{}] }).frames[0].tiles[0]
   const frame = source
     ? { duration: source.duration, tiles: source.tiles.map((t) => ({ pattern: t.pattern.slice(), color: t.color.slice() })) }
-    : { ...fresh, duration: current.frames[current.frames.length - 1]?.duration ?? DEFAULT_ANIM_DURATION }
+    : {
+        tiles: Array.from({ length: animDocCells(current) }, () => ({ pattern: blank.pattern.slice(), color: blank.color.slice() })),
+        duration: current.frames[current.frames.length - 1]?.duration ?? DEFAULT_ANIM_DURATION
+      }
   const at = (copyOf ?? current.frames.length - 1) + 1
   const frames = [...current.frames.slice(0, at), frame, ...current.frames.slice(at)]
   commit(session, { ...current, frames })
@@ -274,7 +338,7 @@ export function addFrame(session: AnimSession, copyOf: number | null = session.f
 export function removeFrame(session: AnimSession, index: number): void {
   const current = doc(session)
   if (current.frames.length <= 1) {
-    session.status = 'An animation needs at least one pose.'
+    session.status = 'There has to be at least one pose.'
     return
   }
   commit(session, { ...current, frames: current.frames.filter((_, i) => i !== index) })
@@ -306,16 +370,22 @@ export function setLoop(session: AnimSession, loop: AnimLoop): void {
 }
 
 /**
- * Resizes the window. Cells keep their place from the top-left; new ones are
- * blank. Refused past `MAX_ANIM_CELLS` — and the tilesets it is attached to
- * will refuse to export until their windows have room, which their own
- * validation says.
+ * Resizes the window, or the meta. Cells keep their place from the top-left;
+ * new ones are blank (and opaque). An animation is refused past
+ * `MAX_ANIM_CELLS` — and the tilesets it is attached to will refuse to export
+ * until their windows have room, which their own validation says. A meta may
+ * be up to `MAX_META_SIZE` a side; only what *moves* in it is a window.
  */
 export function resize(session: AnimSession, width: number, height: number): void {
   const current = doc(session)
   const w = Math.max(1, Math.round(width) || 1)
   const h = Math.max(1, Math.round(height) || 1)
-  if (w * h > MAX_ANIM_CELLS) {
+  if (isOwnedMeta(current)) {
+    if (w > MAX_META_SIZE || h > MAX_META_SIZE) {
+      session.status = `A meta-tile is at most ${MAX_META_SIZE}×${MAX_META_SIZE} tiles.`
+      return
+    }
+  } else if (w * h > MAX_ANIM_CELLS) {
     session.status = `An animation window holds at most ${MAX_ANIM_CELLS} tiles.`
     return
   }
@@ -330,7 +400,45 @@ export function resize(session: AnimSession, width: number, height: number): voi
       return old ? { pattern: old.pattern.slice(), color: old.color.slice() } : { pattern: blank.pattern.slice(), color: blank.color.slice() }
     })
   }))
+  if (isOwnedMeta(current)) {
+    const holes = Array.from({ length: w * h }, (_, i) => {
+      const x = i % w
+      const y = Math.floor(i / w)
+      return x < current.width && y < current.height ? current.holes[y * current.width + x] : false
+    })
+    commit(session, { ...current, width: w, height: h, frames, holes })
+    return
+  }
   commit(session, { ...current, width: w, height: h, frames })
+}
+
+// ── meta-tiles: footprint and flags ─────────────────────────────────────────
+
+export function setHoleMode(session: AnimSession, on: boolean): void {
+  session.holeMode = on && session.kind === 'metatiles'
+}
+
+/**
+ * Makes cell `index` see-through, or opaque again. A see-through cell keeps its
+ * art in the file — it is just never drawn — so toggling back loses nothing.
+ */
+export function toggleHole(session: AnimSession, index: number): void {
+  const current = ownedMeta(session)
+  if (!current || index < 0 || index >= current.holes.length) return
+  const holes = current.holes.slice()
+  holes[index] = !holes[index]
+  commit(session, { ...current, holes })
+  session.status = holes[index]
+    ? 'See-through: whatever is under this cell shows, in every pose.'
+    : 'Opaque again.'
+}
+
+/** Sets or clears gameplay flag `bit` (0-7) — what the meta *means* to the game. */
+export function setFlag(session: AnimSession, bit: number, on: boolean): void {
+  const current = ownedMeta(session)
+  if (!current || bit < 0 || bit > 7) return
+  const flags = on ? current.flags | (1 << bit) : current.flags & ~(1 << bit)
+  if (flags !== current.flags) commit(session, { ...current, flags })
 }
 
 /** SCREEN 1's one ink/paper pair, which every pose is drawn in. */
@@ -365,7 +473,10 @@ export function togglePlaying(session: AnimSession): void {
  * writes that bank only — a third of this; the tileset knows which, not the
  * animation.)
  */
-export function stepBytes(anim: TileAnimDoc): number {
+export function stepBytes(file: PoseFile): number {
+  // A meta's step rewrites only the cells that move: its window.
+  const anim = isOwnedMeta(file) ? metaWindowAnim(file) : file
+  if (!anim) return 0
   const cells = animDocCells(anim)
   if (anim.mode === 'sc1') return cells * 8
   return cells * 8 * 3 * (colorsVary(anim) ? 2 : 1)
@@ -376,7 +487,7 @@ export function stepBytes(anim: TileAnimDoc): number {
  * stepping the generated `_Animate()` does, so the preview tells the truth
  * about timing, ping-pong and play-once.
  */
-export function poseAtTick(anim: TileAnimDoc, ticks: number): number {
+export function poseAtTick(anim: Pick<PoseDoc, 'frames' | 'loop'>, ticks: number): number {
   const order: number[] = []
   const count = anim.frames.length
   if (anim.loop === 'pingpong' && count > 1) {

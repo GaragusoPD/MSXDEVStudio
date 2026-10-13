@@ -35,7 +35,7 @@ import {
   type MetaTileDoc
 } from '../../../../shared/msx/meta-tile'
 import { paintBitmapMeta, paintMeta, usedTiles } from '../../../../shared/msx/meta-paint'
-import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
+import { defaultExport, parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
 import {
   blankTileEntry,
   isBanked,
@@ -72,6 +72,9 @@ import {
 import { pendingReorders, samePath, type Point } from '../../../../shared/map-editor'
 import { emitTilesReordered, onTilesReordered, type TileTool, type TilesReorderEvent } from '../../../../shared/tile-editor'
 import { animationOfTile, placeAnimationInMeta } from '../../../../shared/msx/tile-anim'
+import { attachMigrated, isOwnedMeta, metaFromV2 } from '../../../../shared/msx/meta-owned'
+import { emitAnimSaved } from '../anim/events'
+import { setMetaFormat } from './format'
 import { useTabsStore } from '../../stores/tabsStore'
 import { watchResourceFile } from '../external-changes'
 import { useTilesetStore } from '../../stores/tilesetStore'
@@ -91,6 +94,12 @@ export interface MetaSession {
   loading: boolean
   error: string | null
   dirty: boolean
+  /**
+   * The file on disk owns its pixels (version 3) — converted here or
+   * elsewhere. This session's version-2 document is then not the file's, and
+   * nothing it holds is saved: writing it would throw the art away.
+   */
+  ownsPixels: boolean
 
   /** Project-relative path of the tileset. Its document lives in the store. */
   tilesetPath: string
@@ -180,6 +189,7 @@ export function metaSession(path: string): MetaSession {
     loading: true,
     error: null,
     dirty: false,
+    ownsPixels: false,
     tilesetPath: '',
     atlas: null,
     tilesetError: null,
@@ -268,6 +278,11 @@ async function load(session: MetaSession): Promise<void> {
       raw = text.trim() ? JSON.parse(text) : {}
     } catch {
       raw = {}
+    }
+    if (session.kind === 'metatiles' && isOwnedMeta(raw)) {
+      session.ownsPixels = true
+      session.error = `${session.path} owns its pixels now — close this tab and open it again to edit it.`
+      return
     }
     const saved = raw as SavedMetaTile
     session.history = createHistory(normalizeMetaTile(raw))
@@ -371,6 +386,7 @@ export function openMetaDocs(): { path: string; tilesetPath: string; doc: MetaTi
 }
 
 export async function saveSession(session: MetaSession): Promise<void> {
+  if (session.ownsPixels) return
   // Dead tiles this session minted while experimenting must not reach the file.
   const reclaimed = reclaimOrphans(session)
   const content: SavedMetaTile = { ...committed(session) }
@@ -992,4 +1008,66 @@ export function setFilledRect(session: MetaSession, on: boolean): void {
 export function setBrush(session: MetaSession, radius: number, density: number): void {
   session.brushRadius = Math.max(1, Math.min(16, radius | 0))
   session.density = Math.max(0, Math.min(16, density | 0))
+}
+
+// ── version 2 → 3 ───────────────────────────────────────────────────────────
+
+/**
+ * Turns this meta into one that owns its pixels (`meta-owned.ts`), attached to
+ * the tileset it referenced **at the tiles it already used** — so every map
+ * that placed it keeps drawing exactly what it drew.
+ *
+ * What does change is said first, behind one confirm: frames become poses
+ * every copy shows at once (a window the tileset's `_Animate()` plays, not a
+ * per-copy redraw), a cell see-through in only some frames becomes opaque, and
+ * a SCREEN 1 meta keeps one colour pair.
+ *
+ * The meta file is written at once and the tileset saved with it unless it
+ * already had unsaved edits of its own, which are the user's to keep or drop —
+ * then the status says to save it. Returns true when converted; the tab then
+ * re-opens in the pose editor (`setMetaFormat`).
+ */
+export async function convertToOwned(session: MetaSession): Promise<boolean> {
+  const tileset = tiles(session)
+  if (session.kind !== 'metatiles' || !tileset || session.ownsPixels) {
+    session.status = 'Its tileset has to be open to copy the art out of it.'
+    return false
+  }
+  const v2 = committed(session)
+  const { meta, cells, partialHoles, lostColors } = metaFromV2(v2, tileset)
+  const changes: string[] = []
+  if (v2.frames.length > 1) {
+    changes.push(
+      `Its ${v2.frames.length} frames become poses that every copy shows at once, played by the tileset's _Animate() — ` +
+        'a game that stepped them per copy through _DrawPlacements(frames) will see them move in step.'
+    )
+  }
+  if (partialHoles) changes.push(`${partialHoles} cell${partialHoles === 1 ? ' is' : 's are'} see-through in only some frames and will be opaque.`)
+  if (lostColors) changes.push('SCREEN 1 keeps one colour pair per meta-tile: cells drawn in other pairs take its first one.')
+  const question =
+    `Make ${session.path.split('/').pop()} own its art? It stays attached to ${session.tilesetPath} at the same tiles, ` +
+    'and can then be attached to other tilesets too.' +
+    (changes.length ? `\n\n${changes.join('\n\n')}` : '')
+  if (!window.confirm(question)) return false
+
+  const name = meta.export?.name || defaultExport(session.path).name
+  const result = attachMigrated(tileset, session.path, meta, name, cells)
+  if (typeof result === 'string') {
+    session.status = result
+    return false
+  }
+  const store = useTilesetStore()
+  const tilesetWasDirty = store.isDirty(session.tilesetPath)
+  store.set(session.tilesetPath, result.doc, session.path)
+  await window.api.invoke('fs:write', { path: session.path, content: serializeResource({ kind: 'metatiles', doc: meta }) })
+  if (!tilesetWasDirty) await store.save(session.tilesetPath)
+  session.ownsPixels = true
+  session.dirty = false
+  useTabsStore().setDirty(session.path, false)
+  session.status = tilesetWasDirty
+    ? `Converted. ${session.tilesetPath} had unsaved edits, so it was not saved — save it to keep the attachment.`
+    : 'Converted.'
+  emitAnimSaved({ path: session.path, doc: meta })
+  setMetaFormat(session.path, 'owned')
+  return true
 }

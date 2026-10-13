@@ -1,0 +1,183 @@
+/**
+ * Meta-tiles that own their pixels, in the tile and map editors: attaching one
+ * to a tileset, placing it on a map (which attaches it to the map's tileset),
+ * and both editors following the meta when it is saved.
+ *
+ * The export path is tested from files alone in `resources.test.ts`; these
+ * are the editors' halves — the canvas has to show what the build will draw.
+ */
+
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
+import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
+import { normalizeTiles, type TileEntry } from '../../../../shared/msx/tile'
+import { emitAnimSaved } from '../anim/events'
+import { useResourcesStore } from '../../stores/resourcesStore'
+import { useTilesetStore } from '../../stores/tilesetStore'
+import { resetExternalWatches } from '../external-changes'
+import { attachableMetas, attachMetaFile, detachMetaFile, pruneTileSessions, tileSession } from '../tile/session'
+import { doc, mapSession, pickMeta, placeMetaAt, pruneMapSessions, selectPlacementAt, setBaked, unattachedMetas } from './session'
+
+const MAP = 'res/level.map.json'
+const TILES = 'res/main.tiles.json'
+const ROCK = 'res/rock.meta-tiles.json'
+const OLD = 'res/old.meta-tiles.json'
+let files: Record<string, string>
+const settled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+const tile = (mark: number, paper = 1): TileEntry => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf0 | paper) })
+
+/** A 2×1 rock: a left half, and a see-through right half. */
+function rock(mark = 0x81, poses = 1): OwnedMetaDoc {
+  return normalizeOwnedMeta({
+    version: 3,
+    mode: 'sc2',
+    width: 2,
+    height: 1,
+    holes: [false, true],
+    frames: Array.from({ length: poses }, (_, pose) => ({ tiles: [tile(mark + pose), tile(0)], duration: 4 })),
+    flags: 1,
+    export: defaultExport(ROCK)
+  })
+}
+
+beforeEach(() => {
+  resetExternalWatches()
+  setActivePinia(createPinia())
+  files = {
+    [MAP]: JSON.stringify({ version: 1, tileset: TILES, width: 8, height: 8 }),
+    [TILES]: serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: true, tiles: [tile(0), tile(1), tile(2), tile(3)] })
+    }),
+    [ROCK]: serializeResource({ kind: 'metatiles', doc: rock() }),
+    [OLD]: serializeResource({ kind: 'metatiles', doc: createMetaTileDoc(TILES, 1, 1) })
+  }
+  ;(globalThis as { window?: unknown }).window = {
+    confirm: vi.fn(() => true),
+    api: {
+      on: vi.fn(),
+      invoke: vi.fn(async (channel: string, args: { path: string; content?: string }) => {
+        if (channel === 'fs:read') return files[args.path] ?? ''
+        if (channel === 'fs:write') {
+          files[args.path] = args.content ?? ''
+          return undefined
+        }
+        if (channel === 'resources:list') {
+          return Object.keys(files).map((path) => ({ path, kind: path.endsWith('.meta-tiles.json') ? 'metatiles' : path.endsWith('.map.json') ? 'map' : 'tiles', out: null }))
+        }
+        throw new Error(`unexpected channel ${channel}`)
+      })
+    }
+  }
+  useResourcesStore().entries = [
+    { path: ROCK, kind: 'metatiles', out: null },
+    { path: OLD, kind: 'metatiles', out: null }
+  ]
+  pruneMapSessions(new Set())
+  pruneTileSessions(new Set())
+})
+
+async function open<T>(make: () => T): Promise<T> {
+  const session = make()
+  for (let i = 0; i < 6; i++) await settled()
+  return session
+}
+
+describe('attaching from the tile editor', () => {
+  it('gives the meta tiles for its art and lists it', async () => {
+    const session = await open(() => tileSession(TILES))
+    expect(attachableMetas(session)).toEqual([ROCK, OLD])
+    await attachMetaFile(session, ROCK)
+    expect(session.doc.metas.map((binding) => [binding.path, binding.cells])).toEqual([[ROCK, [4, 0]]])
+    expect(session.status).toMatch(/_DrawMeta/)
+    expect(attachableMetas(session)).toEqual([OLD])
+  })
+
+  it('refuses a version-2 meta, saying how to convert it', async () => {
+    const session = await open(() => tileSession(TILES))
+    await attachMetaFile(session, OLD)
+    expect(session.doc.metas).toEqual([])
+    expect(session.status).toMatch(/convert it first/)
+  })
+
+  it('an animated meta’s moving cells get a window, and the status says how to play it', async () => {
+    files[ROCK] = serializeResource({ kind: 'metatiles', doc: rock(0x81, 3) })
+    const session = await open(() => tileSession(TILES))
+    await attachMetaFile(session, ROCK)
+    expect(session.doc.animations.map((binding) => [binding.path, binding.slot])).toEqual([[ROCK, 4]])
+    expect(session.status).toMatch(/_Animate\(\) every frame/)
+  })
+
+  it('detaching keeps the art', async () => {
+    const session = await open(() => tileSession(TILES))
+    await attachMetaFile(session, ROCK)
+    detachMetaFile(session, ROCK)
+    expect(session.doc.metas).toEqual([])
+    expect(session.doc.tiles[4].pattern[0]).toBe(0x81)
+  })
+
+  it('opening a tileset whose meta changed on disk gives it its new tiles', async () => {
+    const session = await open(() => tileSession(TILES))
+    await attachMetaFile(session, ROCK)
+    files[TILES] = serializeResource({ kind: 'tiles', doc: session.doc })
+    files[ROCK] = serializeResource({ kind: 'metatiles', doc: rock(0x99) })
+    pruneTileSessions(new Set())
+    setActivePinia(createPinia())
+    const reopened = await open(() => tileSession(TILES))
+    const cell = reopened.doc.metas[0].cells[0]
+    expect(reopened.doc.tiles[cell].pattern[0]).toBe(0x99)
+    expect(reopened.status).toMatch(/rock\.meta-tiles\.json changed/)
+  })
+
+  it('saving the meta updates an open tileset straight away', async () => {
+    const session = await open(() => tileSession(TILES))
+    await attachMetaFile(session, ROCK)
+    emitAnimSaved({ path: ROCK, doc: rock(0x7e) })
+    expect(session.doc.tiles[session.doc.metas[0].cells[0]].pattern[0]).toBe(0x7e)
+  })
+})
+
+describe('placing one on a map', () => {
+  it('is offered whatever tileset it was made over, and picking it attaches it to the map’s', async () => {
+    const session = await open(() => mapSession(MAP))
+    expect(unattachedMetas(session)).toEqual([ROCK])
+    pickMeta(session, ROCK)
+    expect(useTilesetStore().patternDoc(TILES)!.metas.map((binding) => binding.path)).toEqual([ROCK])
+    expect(useTilesetStore().isDirty(TILES)).toBe(true)
+    expect(unattachedMetas(session)).toEqual([])
+    expect(doc(session).metas[0]).toMatchObject({ path: ROCK, frames: 1, flags: 1, cells: [4, 0] })
+    expect(session.status).toMatch(/Attached rock\.meta-tiles\.json/)
+  })
+
+  it('places it, and baking writes the tiles its attachment gave it — never the see-through cell', async () => {
+    const session = await open(() => mapSession(MAP))
+    pickMeta(session, ROCK)
+    placeMetaAt(session, 2, 3)
+    selectPlacementAt(session, 2, 3)
+    setBaked(session, true)
+    const data = doc(session).layers[0].data
+    expect(data[3 * 8 + 2]).toBe(4)
+    expect(data[3 * 8 + 3]).toBe(0)
+  })
+
+  it('follows the meta when it is saved, through the tileset', async () => {
+    const session = await open(() => mapSession(MAP))
+    pickMeta(session, ROCK)
+    emitAnimSaved({ path: ROCK, doc: rock(0x55) })
+    const tileset = useTilesetStore().patternDoc(TILES)!
+    const cell = tileset.metas[0].cells[0]
+    expect(tileset.tiles[cell].pattern[0]).toBe(0x55)
+    // The map's mirror and its view of the meta both moved with it.
+    expect(doc(session).metas[0].cells).toEqual([cell, 0])
+    expect(session.metaDocs.get(ROCK)!.frames[0].tiles).toEqual([cell, 0])
+  })
+
+  it('is not offered to a tileset that cannot show its mode', async () => {
+    files[ROCK] = serializeResource({ kind: 'metatiles', doc: normalizeOwnedMeta({ ...rock(), mode: 'sc1' }) })
+    const session = await open(() => mapSession(MAP))
+    expect(unattachedMetas(session)).toEqual([])
+  })
+})

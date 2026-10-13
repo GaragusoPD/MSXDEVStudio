@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * The animation editor's sidebar: colour, window size, timing and loop, a
- * playing preview, what a step costs, and where the animation is attached.
+ * The pose editor's sidebar: colour, size, timing and loop, a playing preview,
+ * what a step costs, and where the file is attached — plus, for a meta-tile,
+ * its eight gameplay flags.
  * Readouts of session state and calls into it — every decision is in
  * `./session`, which is tested; this file is not.
  */
@@ -9,16 +10,20 @@ import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { ANIM_LOOPS, type AnimLoop } from '../../../../shared/msx/tile'
 import { MAX_ANIM_CELLS } from '../../../../shared/msx/tile-anim'
+import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
+import { movingCells } from '../../../../shared/msx/meta-owned'
 import { useTabsStore } from '../../stores/tabsStore'
 import {
   doc,
   findAttachments,
+  ownedMeta,
   poseAtTick,
   posePixels,
   resize,
   setColor,
   setDuration,
   setLoop,
+  setFlag,
   setPair,
   stepBytes,
   togglePlaying,
@@ -29,6 +34,9 @@ const props = defineProps<{ session: AnimSession }>()
 const tabsStore = useTabsStore()
 
 const anim = computed(() => doc(props.session))
+const meta = computed(() => ownedMeta(props.session))
+const moving = computed(() => (meta.value ? movingCells(meta.value).length : 0))
+const maxSide = computed(() => (meta.value ? MAX_META_SIZE : MAX_ANIM_CELLS))
 const rgb = computed(() => paletteToRgb(null))
 const LOOP_LABELS: Record<AnimLoop, string> = { loop: 'Loop', pingpong: 'Ping-pong', once: 'Play once' }
 
@@ -135,26 +143,63 @@ function openTileset(path: string): void {
     </section>
 
     <section>
-      <h3>Window</h3>
+      <h3>{{ meta ? 'Size' : 'Window' }}</h3>
       <div class="row">
         <label>W <input
           type="number"
           min="1"
-          :max="MAX_ANIM_CELLS"
+          :max="maxSide"
           :value="anim.width"
           @change="resize(session, Number(($event.target as HTMLInputElement).value), anim.height)"
         ></label>
         <label>H <input
           type="number"
           min="1"
-          :max="MAX_ANIM_CELLS"
+          :max="maxSide"
           :value="anim.height"
           @change="resize(session, anim.width, Number(($event.target as HTMLInputElement).value))"
         ></label>
         <span class="unit">tiles</span>
       </div>
-      <p class="hint">
+      <p
+        v-if="meta && !moving"
+        class="hint"
+      >
+        Still: every pose looks the same, so it costs nothing per frame. Add a pose that differs to animate it.
+      </p>
+      <p
+        v-else-if="meta"
+        class="hint"
+      >
+        {{ moving }} tile{{ moving === 1 ? '' : 's' }} change between poses — the window each tileset gives it.
+        A step writes {{ stepBytes(anim) }} bytes of VRAM, only on the frames a pose changes, and moves every copy at once.
+      </p>
+      <p
+        v-else
+        class="hint"
+      >
         A step writes {{ stepBytes(anim) }} bytes of VRAM, only on the frames a pose changes.
+      </p>
+    </section>
+
+    <section v-if="meta">
+      <h3>Flags</h3>
+      <div class="flags">
+        <label
+          v-for="bit in 8"
+          :key="bit"
+          :title="`Flag ${bit} — what the meta means to the game is the game's to decide`"
+        >
+          <input
+            type="checkbox"
+            :checked="(meta.flags & (1 << (bit - 1))) !== 0"
+            @change="setFlag(session, bit - 1, ($event.target as HTMLInputElement).checked)"
+          >{{ bit }}
+        </label>
+      </div>
+      <p class="hint">
+        Exported in each tileset's <code>_MetaInfo</code> and in a map's meta table, for collision against
+        the object rather than its tiles.
       </p>
     </section>
 
@@ -218,9 +263,18 @@ function openTileset(path: string): void {
           >
             {{ attachment.tileset.split('/').pop() }}
           </button>
-          <span>tile {{ attachment.slot }}{{ attachment.bank !== null ? `, bank ${attachment.bank + 1}` : '' }}</span>
+          <span v-if="attachment.slot === null">still</span>
+          <span v-else-if="attachment.cells > 1">tiles {{ attachment.slot }}-{{ attachment.slot + attachment.cells - 1 }}{{ attachment.bank !== null ? `, bank ${attachment.bank + 1}` : '' }}</span>
+          <span v-else>tile {{ attachment.slot }}{{ attachment.bank !== null ? `, bank ${attachment.bank + 1}` : '' }}</span>
         </li>
       </ul>
+      <p
+        v-else-if="meta"
+        class="hint"
+      >
+        Not attached yet. Attach it from a tileset's <strong>Meta-tiles</strong> panel, or place it on a
+        map — that attaches it to the map's tileset.
+      </p>
       <p
         v-else
         class="hint"
@@ -289,6 +343,13 @@ section {
 
 .unit {
   opacity: 0.7;
+}
+
+.flags {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px 6px;
+  font-size: 12px;
 }
 
 .hint {

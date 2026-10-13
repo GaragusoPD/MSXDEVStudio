@@ -2,20 +2,22 @@
 /**
  * The map sidebar's lower half: the meta-tiles this map can place.
  *
- * Only metas drawn over *this map's* tileset are offered. A meta's cells are
- * tile indices, so one built over a different bank names tiles that either do
- * not exist here or are different art — placing it would paint garbage, and the
- * user would have no way to see why.
+ * A version-2 meta is offered only over *its* tileset: its cells are tile
+ * indices, so one built over a different bank names tiles that either do not
+ * exist here or are different art. A meta that owns its pixels is offered to
+ * any tileset that can show its mode — attached there already, or attached by
+ * picking it.
  *
  * Picking one arms the brush; the next click on the canvas places it.
  */
 import { computed } from 'vue'
 import { metaThumbnail } from './sheet'
-import { doc, metaRowOffsets, pickMeta, sheet, type MapSession } from './session'
+import { doc, metaRowOffsets, pickMeta, sheet, unattachedMetas, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
 
 const metas = computed(() => [...props.session.metaDocs.entries()])
+const attachable = computed(() => unattachedMetas(props.session))
 
 /**
  * Frame 0 as a data URL, composed from the tileset's own sheet. No placement
@@ -39,7 +41,7 @@ function label(path: string): string {
   <section class="meta-picker">
     <header>
       <span class="title">Meta-tiles</span>
-      <span class="readout">{{ metas.length }}</span>
+      <span class="readout">{{ metas.length + attachable.length }}</span>
     </header>
 
     <p
@@ -49,12 +51,17 @@ function label(path: string): string {
       Pick a tileset first.
     </p>
     <p
-      v-else-if="!metas.length"
+      v-else-if="!metas.length && !attachable.length"
       class="hint"
     >
-      No meta-tiles over <code>{{ doc(session).tileset }}</code> yet. Create a
-      <code>{{ doc(session).cell ? '.meta-btiles.json' : '.meta-tiles.json' }}</code> and point it
-      at this tileset.
+      <template v-if="doc(session).cell">
+        No meta-tiles over <code>{{ doc(session).tileset }}</code> yet. Create a
+        <code>.meta-btiles.json</code> and point it at this tileset.
+      </template>
+      <template v-else>
+        No meta-tiles yet. Create a <code>.meta-tiles.json</code> — any one in this tileset's mode can be
+        placed here.
+      </template>
     </p>
 
     <div
@@ -80,6 +87,17 @@ function label(path: string): string {
           v-if="meta.frames.length > 1"
           class="frames"
         >{{ meta.frames.length }}f</span>
+      </button>
+      <button
+        v-for="path in attachable"
+        :key="path"
+        type="button"
+        class="entry unattached"
+        :title="`${path} — not attached to ${doc(session).tileset} yet: picking it attaches it`"
+        @click="pickMeta(session, path)"
+      >
+        <span class="name">{{ label(path) }}</span>
+        <span class="frames">+</span>
       </button>
     </div>
 
@@ -153,6 +171,11 @@ header {
 
 .entry:hover {
   background: var(--color-bg-hover);
+}
+
+.entry.unattached {
+  border-style: dashed;
+  opacity: 0.8;
 }
 
 .entry.active {
