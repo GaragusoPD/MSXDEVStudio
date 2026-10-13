@@ -108,7 +108,7 @@ So a setting missing from \`project_config.js\` is not unset — it is inherited
 
 Graphics and sound are authored in the IDE's editors as JSON under \`res/\`
 (\`.tiles.json\`, \`.btiles.json\`, \`.meta-tiles.json\`, \`.meta-btiles.json\`,
-\`.sprites.json\`, \`.map.json\`, \`.screen.json\`, \`.sfx.json\`) and exported to C in
+\`.anim-tiles.json\`, \`.sprites.json\`, \`.map.json\`, \`.screen.json\`, \`.sfx.json\`) and exported to C in
 \`content/\` automatically before every build — a \`.h\` of declarations and a
 \`.c\` of tables, both generated. Edit the \`res/\` file (or the editor), never
 either half of the output.
@@ -414,7 +414,46 @@ capped.
 ### Animated tiles
 
 There are two ways to make every coin in a level spin: change *which* tile each
-cell points at, or change what that tile *looks like*. **Prefer the second.**
+cell points at, or change what that tile *looks like*. **Prefer the second** —
+and let the IDE write it.
+
+**An animation is its own resource**, \`res/*.anim-tiles.json\`: the poses (tile
+bytes, owned by the file — it references no tileset), how many frames each is
+held, and loop / ping-pong / play-once. It is **attached** to a tileset in the
+tile editor's *Animations* panel, at the tile the map cells already use; that
+window of slots shows the first pose, and the poses themselves stay in the
+animation's own ROM table rather than costing tileset slots. A tileset with
+something attached, and *Export ready-made C* on, exports:
+
+\`\`\`c
+#define G_MYTILES_ANIMS          1
+#define G_MYTILES_ANIM_COIN      0    // index for _AnimSetActive
+#define G_MYTILES_ANIM_COIN_SLOT 6    // first tile of its window
+
+g_MyTiles_AnimReset();               // once the tiles are in VRAM — RAM is not
+                                     // cleared at boot, and it shows pose 0
+while(1)
+{
+    Halt();
+    g_MyTiles_Animate();             // once per frame; writes VRAM only when a
+    ...                              // pose changes, at its own pace
+}
+g_MyTiles_AnimSetActive(G_MYTILES_ANIM_COIN, FALSE);   // hold it where it is
+\`\`\`
+
+**Change the timing or the poses in the animation file, not in C.** The
+generated step copies a pose's colours only when the poses differ in colour
+(colour writes mirror into all three thirds of the screen, so they would undo
+any per-third recolouring your game does), writes one bank only for a window on
+a bank's own art, and writes SCREEN 1's single pattern table directly. Copies
+that must animate *independently* — each at its own phase, or stopping one at a
+time — are animated meta-tiles (below), not this.
+
+Without *Export ready-made C* there is no \`_Animate()\`; the defines above and
+the animation's own \`g_Coin_Patterns\`/\`_Colors\`/\`_Durations\` tables are still
+there, and the manual version below is what the generated one does.
+
+#### By hand, from a block of poses
 
 Keep the poses as a block — a 4×1 rectangle named e.g. "coin" — then read their
 pattern indices out of \`_Blocks\` instead of treating \`_BASE\` as one of them.

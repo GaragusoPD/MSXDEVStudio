@@ -62,6 +62,30 @@ adds a `_Load()` and refuses a map that isn't exactly 24 rows tall — is
 Spec 10's *Banked tilesets* section; this editor is where it is authored, not
 where it is defined.
 
+## Animations
+
+Design: `docs/superpowers/specs/2026-10-13-tile-animations-design.md`.
+
+- An animation is its own resource, `*.anim-tiles.json` (`shared/msx/tile-anim.ts`),
+  owning its poses, per-pose durations and loop mode, with its own editor tab.
+- The tile editor's **Animations** panel attaches one at the active tile
+  (`attachAnim`) — a `TilesDoc.animations` binding, a window of consecutive
+  slots holding frame 0, and a block over the window named after the file — and
+  detaches it, leaving the pose as ordinary art. **Make animation** turns a
+  selected pose block into a file and attaches it at a typed slot
+  (`extractAnimation`).
+- `animWindowProblems` refuses a window past the set, over another window, over
+  a reserved tile 0, or (for a common window on a banked tileset) over a bank's
+  own art.
+- Window slots are marked in the grid and refuse paint, transforms, row colours
+  and paste (`refuseAnimated`): their art is the animation's, rewritten before
+  every export. Reorders and deletes move a window with its tiles
+  (`remapAnimBindings`); one split by a delete is detached, and the status says so.
+- The window follows the animation: refreshed on load (`refreshAnimations`) and
+  when the animation is saved (`onAnimSaved`).
+- With *Export ready-made C*, the tileset exports `_AnimReset`, `_Animate` and
+  `_AnimSetActive` (`tileAnimHelperC`).
+
 ## Extras (small, in scope)
 
 - Import: PNG → tileset via Spec 07's converter (quantize + per-row constraint fit,

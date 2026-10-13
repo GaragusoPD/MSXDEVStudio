@@ -54,6 +54,15 @@ describe('agentGuideFiles', () => {
     expect(guide('2')).toContain('g_ScreenPatternHigh, 8);')
   })
 
+  it('leads animation with the attached resource and its generated calls', () => {
+    for (const machine of ['1', '2']) {
+      const text = guide(machine)
+      expect(text).toContain('`.anim-tiles.json`')
+      expect(text).toContain('g_MyTiles_AnimReset();')
+      expect(text).toContain('g_MyTiles_Animate();')
+    }
+  })
+
   it('follows the machine into the right sprite mode', () => {
     expect(guide('1')).toContain('VDP_SetSpriteSM1')
     expect(guide('1')).not.toContain('VDP_SetSpriteExMultiColor')

@@ -7,6 +7,44 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Animated tiles
+
+An animation is now a resource of its own — `*.anim-tiles.json` — that you
+attach to a tileset instead of building out of a block and hand-written C.
+
+#### Added
+
+- **The animation editor.** Paint each pose (the tile editor's own colour
+  rules), set how many frames each is held, loop / ping-pong / play-once, and
+  watch a preview that steps exactly as the game will. It shows what a step
+  costs in VRAM and which tilesets it is attached to.
+- **Attach and detach, in the tile editor's Animations panel.** Select the tile
+  your map cells use and attach: that tile shows the first pose and every cell
+  drawing it animates. The other poses live in the animation, not in the
+  tileset, so they no longer cost tileset slots. Detaching leaves the first
+  pose behind as an ordinary tile. Animated tiles are marked in the grid and
+  refuse edits there — edit the animation instead.
+- **Make animation from a block**, for projects that animated by hand: select
+  the block of poses, say how big a pose is and how long it is held, and the
+  animation file is written and attached at the tile you type.
+- **`g_Tiles_AnimReset()` / `g_Tiles_Animate()` / `g_Tiles_AnimSetActive()`**,
+  generated for a tileset with animations attached and *Export ready-made C*
+  on. A step writes VRAM only when a pose changes; it copies colours only when
+  the poses differ in colour (so per-third recolouring survives), writes only
+  its own bank for a bank's own tiles, and handles SCREEN 1's single pattern
+  table. Each write path is built against the real MSXgl in the test suite.
+- **`demo_msx1` uses it.** The coin spin is `res/coin.anim-tiles.json` attached
+  at tile 6; `SpinCoins()` and its timers are gone, the four pose tiles are
+  freed (68 → 64), and `T_TRANS` is read from a `trans` block instead of the
+  literal 39. Booted in openMSX, the coin's VRAM and the screen are identical
+  to the old build, frame for frame.
+
+#### Fixed
+
+- **A map's header kept a meta-tile's old size or frame count** when only the
+  meta had changed: the export skip compared the map's own file and nothing
+  else. It now checks every file a resource mirrors.
+
 ### Fixed
 
 - **The agent guide's tile-animation example copied the pattern but not the

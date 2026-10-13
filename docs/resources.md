@@ -10,6 +10,7 @@ in your project that an editor owns, and each one exports a C header your game
 | bitmap tiles | `name.btiles.json` | Bitmap tile editor | Tilesets for the MSX2 bitmap modes (SCREEN 5–8) |
 | meta-tiles | `name.meta-tiles.json` | Meta-tile editor | One design bigger than a tile, with frames and flags, that a map places |
 | meta-tiles (bitmap) | `name.meta-btiles.json` | Meta-tile editor | The same, over a bitmap tileset: painted, animated and placed the same way |
+| animated tile | `name.anim-tiles.json` | Animation editor | A tile (or a few) that animates — water, a coin, a torch — attached to a tileset |
 | sprites | `name.sprites.json` | Sprite editor | 8×8 or 16×16 hardware sprites |
 | map | `name.map.json` | Map editor | Tile layouts / levels |
 | screen | `name.screen.json` | Screen editor | Full-screen MSX2 bitmaps (SCREEN 5–8) |
@@ -377,6 +378,39 @@ If the layers are compressed, unpack them yourself once with `RLEp_UnpackToRAM`
 — the meta helpers read an unpacked layer. That is what you want anyway: a meta
 layer is small enough to keep in RAM and change as the game runs.
 
+### Animated tiles
+
+An animation owns its poses — they are tile bytes inside the file, not tiles in
+a tileset — and is **attached** to a tileset in the tile editor's *Animations*
+panel: select the tile your map cells already use, pick the animation, press
+**Attach**. That tile (a window of tiles, for a bigger animation) shows the
+first pose, every cell drawing it animates, and the other poses never take a
+slot in the tileset. Detaching leaves the first pose there as ordinary art.
+
+The animation exports its own tables:
+
+```c
+#define G_COINANIM_FRAMES 4
+extern const unsigned char g_CoinAnim_Patterns[];   // poses end to end
+extern const unsigned char g_CoinAnim_Colors[];
+extern const unsigned char g_CoinAnim_Durations[];  // frames each pose is held
+```
+
+and the tileset it is attached to states where:
+
+```c
+#define G_TILES_ANIMS 1
+#define G_TILES_ANIM_COIN 0
+#define G_TILES_ANIM_COIN_SLOT 6
+```
+
+With **Export ready-made C** on the tileset, it plays them — see *Animated tiles*
+under the ready-made C below.
+
+Already animating by hand from a block of poses? Select the block in the tile
+editor and use **Make animation**: it writes the animation file from the block
+and attaches it at the tile you type.
+
 ### Screen
 
 Exports `_Palette` (when the mode has one) and `_Data`.
@@ -457,6 +491,24 @@ g_Level_DrawPlacements(frames);                // the live metas over it
 `frames[slot]` is the frame each meta currently shows, so animating a placed
 meta is advancing that array and calling `_DrawPlacements` again. Baked
 placements are skipped — their tiles are already in the layer.
+
+**Animated tiles** — a tileset with animations attached gets a player for all of
+them. Call the reset once the tiles are in VRAM, then the step once per frame:
+
+```c
+g_Tiles_AnimReset();      // RAM is not cleared at boot; this also shows pose 0
+while(1)
+{
+    Halt();
+    g_Tiles_Animate();    // each animation at its own pace; VRAM only on a pose change
+}
+g_Tiles_AnimSetActive(G_TILES_ANIM_COIN, FALSE);   // hold one where it is
+```
+
+It rewrites the window's patterns, so every coin animates at once, on screen or
+not, for 24 bytes a step in SCREEN 2 — and copies colours only when the poses
+differ in colour. Coins that must turn independently are animated meta-tiles
+instead.
 
 **Software sprites** (MSX2, `VDP_USE_COMMAND`) — characters drawn *into* the
 screen, so the per-scanline sprite limit does not apply. The fragments are

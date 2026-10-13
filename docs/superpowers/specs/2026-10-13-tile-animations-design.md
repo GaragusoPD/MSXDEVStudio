@@ -1,7 +1,9 @@
 # Animated tiles as their own resource — design
 
 **Date:** 2026-10-13
-**Status:** approved 2026-10-13 with the decisions below. Phase 1 in progress.
+**Status:** approved 2026-10-13 with the decisions below. Phase 1 implemented
+(resource, editor, tileset attachment, export, demo migration); phase 2 (maps)
+next.
 **Scope:** a new resource kind, `*.anim-tiles.json`, that owns an animation's
 poses and timing, and is *attached* to the things that show it — a tileset
 first, then maps (tiled screens). Plus the generated C that plays it, and the
