@@ -43,6 +43,7 @@ import {
   mergeColorByte,
   regroupAfterTile0Shift,
   removeTile,
+  remapAnimBindings,
   TILE_SIZE,
   type TilesDoc
 } from '../../../../shared/msx/tile'
@@ -551,7 +552,12 @@ export function reserveTile0(session: MetaSession): void {
     count: tileset.count + 1,
     tiles: [blankTileEntry(tileset.mode), ...tileset.tiles],
     flags: [0, ...tileset.flags],
-    blocks: tileset.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => tile + 1) }))
+    blocks: tileset.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => tile + 1) })),
+    // Attached animations' windows move with their tiles, like blocks do.
+    animations: remapAnimBindings(
+      tileset.animations,
+      tileset.tiles.map((_, i) => i + 1)
+    )
   }
   // sc1 shares one color pair across 8 tiles, so the shift above moves group
   // boundaries too: the tile that lands on a new boundary can end up rendered

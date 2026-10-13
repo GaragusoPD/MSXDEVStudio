@@ -304,7 +304,11 @@ export async function importImage(
     palette: session.doc.mode === 'sc4' ? (result.palette ?? session.doc.palette) : null,
     count: commonTiles.length,
     tiles,
-    groupColors: mode === 'replace' ? packed.doc.groupColors : session.doc.groupColors
+    groupColors: mode === 'replace' ? packed.doc.groupColors : session.doc.groupColors,
+    // A replace puts unrelated art at every index, so a window would now name
+    // tiles that are not its animation's — and the exporter would write frame 0
+    // over the imported picture. Detached; a merge only appends and keeps them.
+    animations: mode === 'replace' ? [] : session.doc.animations
   })
   // sc1 shares one color pair across 8 tiles, so the prepend above moves group
   // boundaries the same way `reserveTile0()`'s own shift does, and needs the

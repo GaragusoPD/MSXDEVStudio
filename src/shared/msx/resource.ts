@@ -43,6 +43,15 @@ import {
   type MetaTileDoc
 } from './meta-tile'
 import { MODES } from './modes'
+import {
+  normalizeTileAnim,
+  tileAnimConstants,
+  tileAnimHelperC,
+  tileAnimTables,
+  tilesetAnimConstants,
+  validateTileAnim,
+  type TileAnimDoc
+} from './tile-anim'
 import { sc3Constants, sc3LinearBytes } from './sc3'
 import {
   normalizeSwSprites,
@@ -140,6 +149,7 @@ export type ResourceKind =
   | 'btiles'
   | 'metatiles'
   | 'metabtiles'
+  | 'anim'
   | 'sprites'
   | 'swsprites'
   | 'map'
@@ -165,6 +175,8 @@ export const RESOURCE_SUFFIXES: Readonly<Record<ResourceKind, string>> = {
   btiles: '.btiles.json',
   metatiles: '.meta-tiles.json',
   metabtiles: '.meta-btiles.json',
+  // Hyphenated like the meta suffixes: `.anim-tiles.json` must not resolve to `tiles`.
+  anim: '.anim-tiles.json',
   sprites: '.sprites.json',
   // Listed before `sprites` for the same reason the meta suffixes are hyphenated:
   // `resourceKindOf` matches by `endsWith` over this record's insertion order.
@@ -184,6 +196,7 @@ export type ResourceDoc =
   | { kind: 'btiles'; doc: BitmapTilesDoc }
   | { kind: 'metatiles'; doc: MetaTileDoc }
   | { kind: 'metabtiles'; doc: MetaTileDoc }
+  | { kind: 'anim'; doc: TileAnimDoc }
   | { kind: 'sprites'; doc: SpritesDoc }
   | { kind: 'swsprites'; doc: SwSpritesDoc }
   | { kind: 'map'; doc: MapDoc }
@@ -245,6 +258,8 @@ export function parseResource(path: string, text: string): ResourceDoc {
     case 'metatiles':
     case 'metabtiles':
       return { kind, doc: normalizeMetaTile(raw) }
+    case 'anim':
+      return { kind, doc: normalizeTileAnim(raw) }
     case 'sprites':
       return { kind, doc: normalizeSprites(raw) }
     case 'swsprites':
@@ -283,6 +298,8 @@ export function validateResource(resource: ResourceDoc): string[] {
     case 'metatiles':
     case 'metabtiles':
       return validateMetaTile(resource.doc)
+    case 'anim':
+      return validateTileAnim(resource.doc)
     case 'sprites':
       return validateSprites(resource.doc)
     case 'swsprites':
@@ -431,6 +448,8 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
         }
       ]
     }
+    case 'anim':
+      return tileAnimTables(resource.doc)
     case 'sprites': {
       const { doc } = resource
       const tables: EmitTable[] = [
@@ -629,6 +648,9 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
       if (resource.doc.flags.some((value) => value !== 0)) {
         notes.push(`Flagged tiles: ${resource.doc.flags.filter((value) => value !== 0).length}`)
       }
+      if (resource.doc.animations.length) {
+        notes.push(`Animations: ${resource.doc.animations.map((binding) => `${binding.path} at ${binding.slot}`).join(', ')}`)
+      }
       break
     case 'btiles': {
       const sheet = sheetPixels(resource.doc)
@@ -681,6 +703,15 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
         )
       }
       break
+    case 'anim': {
+      const { doc } = resource
+      notes.push(
+        `Mode: ${MODES[doc.mode].label}`,
+        `Window: ${doc.width}×${doc.height} tiles`,
+        `Frames: ${doc.frames.length}, held ${doc.frames.map((frame) => frame.duration).join('/')} VBlanks, ${doc.loop}`
+      )
+      break
+    }
     case 'metatiles':
     case 'metabtiles':
       notes.push(
@@ -868,6 +899,7 @@ function resourceConstants(
     ]
   }
   if (isMetaKind(resource.kind)) return metaConstants(resource.doc as MetaTileDoc, name)
+  if (resource.kind === 'anim') return tileAnimConstants(resource.doc, name)
   if (resource.kind === 'tiles') {
     const { doc } = resource
     // Only a banked tileset needs its own tile counts — an unbanked one keeps
@@ -883,6 +915,7 @@ function resourceConstants(
       : []
     return [
       ...bankDefines,
+      ...tilesetAnimConstants(doc, name),
       ...blockPlacements(doc).flatMap((placement) => {
         const id = `${prefix}_${defineName(placement.name)}`
         return [
@@ -962,7 +995,8 @@ function resourceCode(
     // slicing to do, so game code keeps calling VDP_LoadPattern_GM2/
     // VDP_LoadColor_GM2 directly, exactly as it does today (see agent-guide.ts).
     const load = isBanked(doc) ? bankLoadHelperC(doc, name) : NO_CODE
-    return joinHelpers(blocks, load)
+    // Additive: a tileset with nothing attached emits exactly what it did.
+    return joinHelpers(blocks, load, tileAnimHelperC(doc, name))
   }
   // Unlike pattern tiles, this is worth emitting with no blocks at all: the
   // upload and the single-tile blit are the whole reason a bitmap tileset can

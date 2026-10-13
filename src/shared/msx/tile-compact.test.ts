@@ -72,6 +72,25 @@ describe('compactTileset', () => {
     expect(result.doc.flags).toEqual([0, 9])
   })
 
+  it("keeps an attached animation's window, even unused and identical to another tile", () => {
+    const before = doc([tile(1), tile(2), tile(2), tile(3)], {
+      animations: [{ path: 'res/a.anim-tiles.json', slot: 2, bank: null, name: 'g_A', width: 1, height: 1, frames: 2, colorsVary: false, loop: 'loop' }]
+    })
+    const result = compactTileset(before, [0, 1], { merge: true })
+    // Tile 3 goes; tile 2 stays itself (not merged into 1) and moves nowhere.
+    expect(result.doc.count).toBe(3)
+    expect(result.mapping[2]).toBe(2)
+    expect(result.doc.animations[0].slot).toBe(2)
+  })
+
+  it('moves a window down with the tiles under it', () => {
+    const before = doc([tile(1), tile(2), tile(3), tile(4)], {
+      animations: [{ path: 'res/a.anim-tiles.json', slot: 3, bank: null, name: 'g_A', width: 1, height: 1, frames: 2, colorsVary: false, loop: 'loop' }]
+    })
+    const result = compactTileset(before, [0])
+    expect(result.doc.animations[0].slot).toBe(1)
+  })
+
   it('refuses a banked tileset', () => {
     const before = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[tile(1)], [], []] })
     const result = compactTileset(before, [])

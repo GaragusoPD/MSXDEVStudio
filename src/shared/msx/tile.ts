@@ -80,6 +80,60 @@ export interface TilesDoc {
    * entries" cannot be read off the data.
    */
   sharedTiles: number
+
+  /**
+   * Animations attached to this tileset (`*.anim-tiles.json`), each driving a
+   * window of consecutive slots. Empty in every file written before animations
+   * were their own resource. See `TileAnimBinding`.
+   */
+  animations: TileAnimBinding[]
+}
+
+/** How an animation runs past its last pose. */
+export type AnimLoop = 'loop' | 'pingpong' | 'once'
+export const ANIM_LOOPS: readonly AnimLoop[] = ['loop', 'pingpong', 'once']
+
+/**
+ * An animation attached to a tileset: the window of slots it drives, and what
+ * the tileset's generated C needs to know about the animation without opening
+ * its file.
+ *
+ * The window is `slot … slot + width*height - 1`, consecutive and row-major, so
+ * one step is one `VDP_LoadPattern_GM2` with a count rather than a call per
+ * cell. Its static art is the animation's frame 0, written there by whoever has
+ * the animation in hand (the tile editor on attach and load, the exporter
+ * before every export) — so a map, an export or an editor that does not play
+ * animations shows the resting pose, never stale art.
+ *
+ * Everything after `bank` is a **mirror** of the animation file, for the reason
+ * `MetaRef` mirrors a meta: `shared/` is dependency-free and the exporter
+ * renders one resource at a time. `animRefFrom` (`tile-anim.ts`) is the one
+ * builder, used by the editor and the exporter alike.
+ */
+export interface TileAnimBinding {
+  /** Project-relative path of the `.anim-tiles.json`. */
+  path: string
+  /** First slot of the window. */
+  slot: number
+  /**
+   * Null: the common set, shown in every bank (an unbanked tileset, or a
+   * banked one's index no bank overrides). 0-2: that bank's own art at those
+   * indices — the step writes that bank only.
+   */
+  bank: number | null
+  /** The animation's export symbol — what the generated C `extern`s. */
+  name: string
+  width: number
+  height: number
+  frames: number
+  /** False when every pose has the same colour bytes — the step then copies patterns only. */
+  colorsVary: boolean
+  loop: AnimLoop
+}
+
+/** Tiles in an animation window. */
+export function animCells(binding: { width: number; height: number }): number {
+  return binding.width * binding.height
 }
 
 /**
@@ -285,8 +339,83 @@ export function normalizeTiles(raw: unknown): TilesDoc {
     blocks: normalizeBlocks(input.blocks, count),
     export: (input.export as ExportBlock | undefined) ?? null,
     bankTiles,
-    sharedTiles
+    sharedTiles,
+    animations: normalizeAnimBindings(input.animations, bankTiles.some((bank) => bank.length > 0))
   }
+}
+
+/** Animation windows are capped at 16 cells; see `MAX_ANIM_CELLS` in `tile-anim.ts`. */
+const MAX_WINDOW_CELLS = 16
+
+/**
+ * Reads attached animations back, dropping any entry that could not mean
+ * anything: no path, or a window that runs past the hardware's 256 slots. A
+ * bank number on a tileset that has no banks is meaningless, so it becomes the
+ * common set.
+ */
+function normalizeAnimBindings(raw: unknown, banked: boolean): TileAnimBinding[] {
+  if (!Array.isArray(raw)) return []
+  const int = (value: unknown, min: number, max: number, fallback: number): number => {
+    const n = Math.round(Number(value))
+    return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback
+  }
+  const out: TileAnimBinding[] = []
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const input = entry as Partial<TileAnimBinding>
+    const path = String(input.path ?? '')
+    if (!path) continue
+    const width = int(input.width, 1, MAX_WINDOW_CELLS, 1)
+    const height = int(input.height, 1, Math.floor(MAX_WINDOW_CELLS / width), 1)
+    const slot = int(input.slot, 0, MAX_TILES - 1, 0)
+    if (slot + width * height > MAX_TILES) continue
+    const bank = banked && typeof input.bank === 'number' ? int(input.bank, 0, BANK_COUNT - 1, 0) : null
+    out.push({
+      path,
+      slot,
+      bank,
+      name: String(input.name ?? ''),
+      width,
+      height,
+      frames: int(input.frames, 1, 255, 1),
+      colorsVary: input.colorsVary === true,
+      loop: ANIM_LOOPS.includes(input.loop as AnimLoop) ? (input.loop as AnimLoop) : 'loop'
+    })
+  }
+  return out
+}
+
+/**
+ * Follows a renumbering (`mapping[old] = new`) with every common-set window.
+ *
+ * A window has to stay consecutive — the generated step writes `cells` slots
+ * from `slot` in one call — so a renumbering that splits one (a tile removed or
+ * moved out of the middle of it) detaches that animation rather than leaving
+ * it to write over whatever art moved into the gap. A bank's own window does
+ * not move: a bank's indices never renumber (see `removeTile`).
+ */
+export function remapAnimBindings(bindings: readonly TileAnimBinding[], mapping: readonly number[]): TileAnimBinding[] {
+  return bindings.flatMap((binding) => {
+    if (binding.bank !== null) return [binding]
+    const slot = mapping[binding.slot] ?? binding.slot
+    for (let i = 0; i < animCells(binding); i++) {
+      const old = binding.slot + i
+      if ((mapping[old] ?? old) !== slot + i) return []
+      // A tile mapped to 0 from anything but 0 was dropped, not moved there.
+      if (slot + i === 0 && old !== 0) return []
+    }
+    return [{ ...binding, slot }]
+  })
+}
+
+/** Every common-set slot an attached animation drives — what compaction must never drop. */
+export function animWindowSlots(doc: TilesDoc): Set<number> {
+  const slots = new Set<number>()
+  for (const binding of doc.animations) {
+    if (binding.bank !== null) continue
+    for (let i = 0; i < animCells(binding); i++) slots.add(binding.slot + i)
+  }
+  return slots
 }
 
 /** Clamps a block list to the grid limits and to tiles that actually exist. */
@@ -1000,12 +1129,13 @@ export function removeTile(doc: TilesDoc, index: number): { doc: TilesDoc; mappi
   }
 }
 
-/** Rewrites every tile reference inside the document itself — today that means blocks. */
+/** Rewrites every tile reference inside the document itself — blocks, and attached animations' windows. */
 function applyTileMapping(doc: TilesDoc, mapping: readonly number[]): TilesDoc {
-  if (!doc.blocks.length) return doc
+  if (!doc.blocks.length && !doc.animations.length) return doc
   return {
     ...doc,
-    blocks: doc.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => mapping[tile] ?? 0) }))
+    blocks: doc.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => mapping[tile] ?? 0) })),
+    animations: remapAnimBindings(doc.animations, mapping)
   }
 }
 
@@ -1236,12 +1366,58 @@ export function validateTiles(doc: TilesDoc): string[] {
     }
   })
 
+  problems.push(...animWindowProblems(doc))
+
   if (doc.palette) {
     if (doc.mode !== 'sc4') problems.push(`${doc.mode} uses the fixed TMS9918A palette; palette must be null`)
     if (doc.palette.length !== 16) problems.push(`Palette must hold 16 entries, found ${doc.palette.length}`)
     if (doc.palette.some((value) => (value & ~0x0777) !== 0)) problems.push('Palette entry outside the GRB333 space')
   }
   return problems
+}
+
+/**
+ * What would make an attached animation write over art it does not own.
+ *
+ * Every rule here is one way a step's VRAM write lands somewhere else than the
+ * window the user sees: past the end of the set it indexes, over another
+ * window, over the reserved see-through tile 0, or — for a common-set window
+ * on a banked tileset, which the step mirrors into all three banks — over a
+ * bank's own art at those indices.
+ */
+export function animWindowProblems(doc: TilesDoc): string[] {
+  const problems: string[] = []
+  const owner = new Map<string, string>()
+  doc.animations.forEach((binding) => {
+    const label = `Animation ${binding.name || binding.path}`
+    const cells = animCells(binding)
+    const last = binding.slot + cells - 1
+    if (binding.bank === null) {
+      if (last >= doc.count) problems.push(`${label}: tiles ${binding.slot}-${last} run past the tileset's ${doc.count} tiles`)
+      if (doc.reserveTile0 && binding.slot === 0) problems.push(`${label}: tile 0 is the reserved see-through tile`)
+      doc.bankTiles.forEach((bank, index) => {
+        if (bank.length > binding.slot) {
+          problems.push(
+            `${label}: bank ${index + 1} has its own art at tile ${binding.slot}, which a step in every bank would overwrite — attach it to that bank instead`
+          )
+        }
+      })
+    } else if (last >= (doc.bankTiles[binding.bank]?.length ?? 0)) {
+      problems.push(`${label}: tiles ${binding.slot}-${last} run past bank ${binding.bank + 1}'s own tiles`)
+    }
+    // A common-set window writes every bank, so it collides with any window at
+    // the same index; two bank windows only with one in the same bank.
+    const scopes = binding.bank === null ? ['0', '1', '2'] : [String(binding.bank)]
+    for (let i = 0; i < cells; i++) {
+      for (const scope of scopes) {
+        const key = `${scope}:${binding.slot + i}`
+        const other = owner.get(key)
+        if (other && other !== label) problems.push(`${label}: tile ${binding.slot + i} is also driven by ${other.replace(/^Animation /, '')}`)
+        else owner.set(key, label)
+      }
+    }
+  })
+  return [...new Set(problems)]
 }
 
 /**

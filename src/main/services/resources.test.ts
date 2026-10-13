@@ -8,6 +8,9 @@ import type { ImgRule, MsxProject } from '../../shared/msxproj'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS } from '../../shared/msx/sfx'
 import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
 import { defaultExport, serializeResource } from '../../shared/msx/resource'
+import { normalizeTileAnim } from '../../shared/msx/tile-anim'
+import { createMetaTileDoc } from '../../shared/msx/meta-tile'
+import { normalizeMap } from '../../shared/msx/map'
 import { normalizeSwSprites, type SwMode } from '../../shared/msx/swsprite'
 import { BuildService, type BuildDeps } from './build-service'
 import { createProject, resolveNodeBinary, saveProject, writeGeneratedConfig } from './project'
@@ -103,6 +106,100 @@ describe('findResourceFiles', () => {
 
   it('returns nothing for a folder that does not exist', () => {
     expect(findResourceFiles(join(tmpdir(), 'definitely-not-here-msxdevstudio'))).toEqual([])
+  })
+})
+
+describe('exports that read other files', () => {
+  const ANIM = 'res/coin.anim-tiles.json'
+  const TILESET = 'res/main.tiles.json'
+
+  /** A 1×1, four-pose animation whose first pose's rows are all `first`. */
+  function writeAnim(root: string, first = 0x18): void {
+    const doc = normalizeTileAnim({
+      mode: 'sc2',
+      frames: [first, 0x3c, 0x7e, 0x3c].map((mark) => ({ tiles: [{ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xb5) }], duration: 10 })),
+      export: defaultExport(ANIM)
+    })
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(join(root, ANIM), serializeResource({ kind: 'anim', doc }), 'utf-8')
+  }
+
+  /** A tileset with the animation attached at slot 2 — and, on disk, stale art in the window. */
+  function writeAnimatedTileset(root: string): void {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      animations: [{ path: ANIM, slot: 2, bank: null, name: 'g_CoinAnim', width: 1, height: 1, frames: 4, colorsVary: false, loop: 'loop' }],
+      export: { ...defaultExport(TILESET), helpers: true }
+    })
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(join(root, TILESET), serializeResource({ kind: 'tiles', doc }), 'utf-8')
+  }
+
+  const setTime = (root: string, relative: string, seconds: number): void => utimesSync(join(root, relative), seconds, seconds)
+
+  it("writes the animation's first pose into the window, whatever the tileset file says", () => {
+    const root = scratch('anim-refresh')
+    writeAnim(root)
+    writeAnimatedTileset(root)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+    const source = readFileSync(join(root, 'content/main_tiles.c'), 'utf-8')
+    // Tile 2's eight pattern rows are the coin's first pose, not the blank the file holds.
+    expect(source).toMatch(/(\t0x18, \/\* \.\.\.##\.\.\. \*\/\n){8}/)
+    const header = readFileSync(join(root, 'content/main_tiles.h'), 'utf-8')
+    expect(header).toContain('void g_MainTiles_Animate(void);')
+    expect(source).toContain('VDP_LoadPattern_GM2(g_CoinAnim_Patterns + (u16)frame * 8, 1, 2);')
+  })
+
+  it('re-exports the tileset when only the animation changed', () => {
+    const root = scratch('anim-dep')
+    writeAnim(root)
+    writeAnimatedTileset(root)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+    // Everything the same age; then the animation is saved again, alone.
+    for (const file of [TILESET, ANIM, 'content/main_tiles.h', 'content/main_tiles.c']) setTime(root, file, 1_000_000)
+    expect(exportResourceFile(root, TILESET).status).toBe('skipped')
+    writeAnim(root, 0xff)
+    setTime(root, ANIM, 2_000_000)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+    expect(readFileSync(join(root, 'content/main_tiles.c'), 'utf-8')).toContain('0xFF, /* ######## */')
+  })
+
+  it('fails, naming the file, when an attached animation is missing', () => {
+    const root = scratch('anim-missing')
+    writeAnimatedTileset(root)
+    const result = exportResourceFile(root, TILESET)
+    expect(result.status).toBe('failed')
+    expect(result.message).toContain('res/coin.anim-tiles.json is attached but missing')
+  })
+
+  it("re-exports a map when only a meta it places changed — the mirror it keeps of the meta's size and frames", () => {
+    const root = scratch('meta-dep')
+    mkdirSync(join(root, 'res'), { recursive: true })
+    const meta = createMetaTileDoc('res/main.tiles.json', 1, 1)
+    meta.export = defaultExport('res/rock.meta-tiles.json')
+    writeFileSync(join(root, 'res/rock.meta-tiles.json'), serializeResource({ kind: 'metatiles', doc: meta }), 'utf-8')
+    writeFileSync(join(root, TILESET), serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 2 }) }), 'utf-8')
+    const map = normalizeMap({
+      tileset: TILESET,
+      width: 4,
+      height: 4,
+      metas: [{ path: 'res/rock.meta-tiles.json', name: 'g_RockMetatiles', width: 1, height: 1, frames: 1, flags: 0 }],
+      layers: [{ name: 'bg', data: new Array(16).fill(0), placements: [{ slot: 0, x: 1, y: 1 }] }],
+      export: { ...defaultExport('res/level.map.json'), helpers: true }
+    })
+    writeFileSync(join(root, 'res/level.map.json'), serializeResource({ kind: 'map', doc: map }), 'utf-8')
+    expect(exportResourceFile(root, 'res/level.map.json').status).toBe('converted')
+    for (const file of ['res/level.map.json', 'content/level_map.h', 'content/level_map.c']) setTime(root, file, 1_000_000)
+    setTime(root, 'res/rock.meta-tiles.json', 1_000_000)
+    expect(exportResourceFile(root, 'res/level.map.json').status).toBe('skipped')
+
+    // A second frame, saved in the meta editor; the map file is not touched.
+    meta.frames = [...meta.frames, { tiles: [1] }]
+    writeFileSync(join(root, 'res/rock.meta-tiles.json'), serializeResource({ kind: 'metatiles', doc: meta }), 'utf-8')
+    setTime(root, 'res/rock.meta-tiles.json', 2_000_000)
+    expect(exportResourceFile(root, 'res/level.map.json').status).toBe('converted')
+    expect(readFileSync(join(root, 'content/level_map.c'), 'utf-8')).toContain('{ g_RockMetatiles, 1, 1, 1, 2 },')
   })
 })
 

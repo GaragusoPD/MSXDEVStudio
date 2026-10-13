@@ -1233,6 +1233,16 @@ export function repackBlocker(session: MapSession): string | null {
   const current = doc(session)
   if (!tileset || !canPaint(session)) return 'This map has no pattern tileset to bank.'
   if (tileset.mode === 'sc1') return 'SCREEN 1 has one pattern table, so it cannot be banked — that is SCREEN 2/4 only.'
+  if (tileset.animations.length) {
+    // A window is a slot number, and repacking renumbers every slot — the
+    // animation would go on writing its poses over whatever art landed there.
+    return (
+      `Repacking renumbers every tile, and this tileset has ${tileset.animations.length} animation` +
+      `${tileset.animations.length === 1 ? '' : 's'} attached by tile number ` +
+      `(${tileset.animations.map((binding) => binding.path.split('/').pop()).join(', ')}). Detach them first, ` +
+      'then attach them again afterwards.'
+    )
+  }
   if (current.width !== 32 || current.height !== SCREEN_ROWS) {
     return (
       `Switching to banked needs a map exactly 32 wide and ${SCREEN_ROWS} rows tall — ` +

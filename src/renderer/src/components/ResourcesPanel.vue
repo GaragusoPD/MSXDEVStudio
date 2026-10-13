@@ -43,6 +43,7 @@ const KIND_LABELS: Record<ResourceKind, string> = {
   btiles: 'tiles — SCREEN 3 blocks / MSX2 bitmap',
   metatiles: 'meta-tiles',
   metabtiles: 'meta-tiles (bitmap)',
+  anim: 'animated tile',
   sprites: 'sprites — hardware',
   swsprites: 'sprites — software, any size',
   map: 'map',
@@ -58,6 +59,7 @@ const KIND_HELP: Record<ResourceKind, string> = {
   btiles: 'A bank of small images addressed by number — SCREEN 3 blocks, or MSX2 bitmap tiles. One size for the whole bank.',
   metatiles: 'One design bigger than a tile — a tree, a door, a coin — with its own frames and flags, that a map places.',
   metabtiles: 'The same, over a bitmap tileset.',
+  anim: 'Poses and timing for a tile (or a small block of tiles) that animates — water, a coin, a torch. Attach it to a tileset and every cell showing it animates.',
   sprites: 'Hardware sprites: 8×8 or 16×16, one colour per plane, four or eight per scanline.',
   swsprites:
     'Software sprites: drawn into the picture, so any size, any colours, no per-line limit. Each character has its own size and its own animation frames.',
@@ -76,7 +78,8 @@ const KIND_HELP: Record<ResourceKind, string> = {
  * reference, so they get no picker.
  */
 const modeOptions = computed<readonly ScreenMode[]>(() => {
-  if (newKind.value === 'tiles') return TILE_MODES
+  // An animation stores its poses as tile bytes, so it is born in a tile mode.
+  if (newKind.value === 'tiles' || newKind.value === 'anim') return TILE_MODES
   if (newKind.value === 'btiles' || newKind.value === 'screen') return BITMAP_MODES
   // Software sprites work in every mode that has pixels, which is a wider set
   // than either of the others: they are drawn *into* the picture, whatever it is.

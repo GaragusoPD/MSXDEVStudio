@@ -1,11 +1,21 @@
 # Animated tiles as their own resource — design
 
 **Date:** 2026-10-13
-**Status:** proposed, awaiting approval. Nothing here is implemented.
+**Status:** approved 2026-10-13 with the decisions below. Phase 1 in progress.
 **Scope:** a new resource kind, `*.anim-tiles.json`, that owns an animation's
 poses and timing, and is *attached* to the things that show it — a tileset
-first, then maps, then bitmap screens. Plus the generated C that plays it, and
-the MSX1 demo moved onto it as the proof.
+first, then maps (tiled screens). Plus the generated C that plays it, and the
+MSX1 demo moved onto it as the proof.
+
+## Decisions
+
+1. **Per-copy animation reuses animated meta-tiles.** No second placement
+   system.
+2. **"Screens" means tiled screens** — a tileset plus a map. The bitmap
+   `.screen.json` phase is dropped.
+3. **One `_Animate()` per tileset.** A game shows one tileset at a time.
+4. **The demo deletes its pose tiles** and gains a `trans` block in place of
+   the `T_TRANS` literal.
 
 ## Why
 
@@ -65,6 +75,8 @@ everything drawn in one index for two bytes.
 
 ## What this is not
 
+- **Not for bitmap screens.** SCREEN 5+ pictures have no pattern table to
+  swap; they are out of scope (decision 2).
 - **Not a replacement for meta-tiles.** A meta is a *design* — a tree, a house —
   that may have frames. An animation is a *behaviour* on tile slots. A meta cell
   that points at an animated slot animates for free, because swap is global.
@@ -166,14 +178,7 @@ Two separate needs, kept separate:
    lists its torches, a level does not.
 2. **Per-copy instances.** For things that must animate independently. This
    **reuses animated meta-tiles** rather than adding a second placement system
-   (see *Open questions*).
-
-### To a bitmap screen (phase 3)
-
-A `.screen.json` or a bitmap map has no pattern table, so an attachment is an
-*instance*: the animation's poses are uploaded to a strip in spare VRAM and
-each instance is an `HMMM` per step. Same resource, different runtime. MSX2
-palette cycling is a separate, smaller kind and is not part of this design.
+   (decision 1).
 
 ## The generated runtime (phase 1)
 
@@ -314,16 +319,3 @@ Today: block `coin_spin` = tiles 32–35, tile 6 is the coin cells point at,
    mirror (with the dependency-mtime fix), `_Animate()`, Extract-from-block,
    the guide, and the demo migration.
 2. **Maps** — scope lists and per-map `_Animate()`; per-copy via metas.
-3. **Bitmap screens** — instance blits for `.screen.json` and bitmap maps.
-
-## Open questions
-
-1. **Per-copy animation:** reuse animated meta-tiles (recommended — they are
-   already exactly that, with placements, frames and a runtime), or a second
-   placement system specific to animations?
-2. **"Screens"**: tiled screens (a tileset + a map, painted in the map editor)
-   are covered by phases 1–2. Is phase 3, the bitmap `.screen.json`, wanted too?
-3. **One `_Animate()` per tileset** (recommended: a game shows one tileset at a
-   time), or a single project-wide `Anim_Update()`?
-4. **The demo**: delete the four pose tiles and introduce the `trans` block as
-   above (recommended), or keep the tileset numbering and only swap the C?

@@ -18,6 +18,7 @@ import { defaultExport, isMetaKind, parseResource, renderResourceFiles,
 import { metaRefFrom, validateMap, type MapDoc } from '../../shared/msx/map'
 import type { MetaTileDoc } from '../../shared/msx/meta-tile'
 import { isBanked, MAX_TILES, type TilesDoc } from '../../shared/msx/tile'
+import { animModesCompatible, animRefFrom, withAnimFrame, type TileAnimDoc } from '../../shared/msx/tile-anim'
 import { swSpriteFamily } from '../../shared/msx/swsprite'
 
 /** `<msxgl>/tools/MSXtk/bin/MSXimg(.exe)` — MSXgl ships Linux and Windows builds. */
@@ -82,11 +83,39 @@ function mtime(path: string): number {
   }
 }
 
-/** True when `out` already reflects `input` (and the project config it was configured by). */
-function upToDate(input: string, out: string, options: ExportOptions): boolean {
+/**
+ * True when `out` already reflects `input`, the project config it was
+ * configured by, and every other file `input` mirrors (`dependencies`).
+ *
+ * Comparing `input` alone was the whole check once, and that was wrong as soon
+ * as a resource's header carried data from another file: edit a meta-tile's
+ * frame count, leave the map that places it untouched, and the map's header
+ * kept the old count. A dependency that is missing is never "up to date" —
+ * the export has to run to say so.
+ */
+function upToDate(input: string, out: string, options: ExportOptions, dependencies: readonly string[] = []): boolean {
   if (options.force) return false
   const outTime = mtime(out)
-  return outTime !== 0 && outTime >= mtime(input) && outTime >= (options.configMtimeMs ?? 0)
+  if (outTime === 0 || outTime < mtime(input) || outTime < (options.configMtimeMs ?? 0)) return false
+  return dependencies.every((dependency) => {
+    const time = mtime(dependency)
+    return time !== 0 && outTime >= time
+  })
+}
+
+/**
+ * The other files a resource's export reads, as absolute paths: the metas a
+ * map mirrors, the animations a tileset plays. What `upToDate` must also be
+ * newer than.
+ */
+function exportDependencies(root: string, resource: ResourceDoc): string[] {
+  const paths =
+    resource.kind === 'map'
+      ? resource.doc.metas.map((ref) => ref.path)
+      : resource.kind === 'tiles'
+        ? resource.doc.animations.map((binding) => binding.path)
+        : []
+  return paths.map((path) => insideRoot(root, path)).filter((path): path is string => path !== null)
 }
 
 /**
@@ -154,6 +183,55 @@ function refreshMapMetas(root: string, resource: ResourceDoc): void {
       }
     })
   }
+}
+
+/**
+ * Re-reads every animation attached to a tileset and refreshes the binding's
+ * mirror and the window's art (frame 0) from it — the build's half of the rule
+ * that a mirror is derived data only a layer with file access can refresh. The
+ * tile editor does the same on load, through the same `animRefFrom`; a build
+ * that never opens the editor (a fresh clone, CI, an agent editing `res/`) is
+ * exactly when this is the only refresh there is.
+ *
+ * Unlike a missing meta, a missing animation fails the export: the tileset's
+ * generated C names the animation's tables, and a stale mirror would export
+ * cleanly and then fail to link.
+ */
+function refreshTileAnims(root: string, resource: ResourceDoc): string[] {
+  if (resource.kind !== 'tiles' || !resource.doc.animations.length) return []
+  const problems: string[] = []
+  const loaded = new Map<string, TileAnimDoc>()
+  let doc = resource.doc
+  const animations = doc.animations.map((binding) => {
+    const abs = insideRoot(root, binding.path)
+    if (!abs || !existsSync(abs)) {
+      problems.push(`Animation ${binding.path} is attached but missing — restore it, or detach it in the tile editor`)
+      return binding
+    }
+    try {
+      const parsed = parseResource(binding.path, readFileSync(abs, 'utf-8'))
+      if (parsed.kind !== 'anim') {
+        problems.push(`${binding.path} is attached as an animation but is not one`)
+        return binding
+      }
+      if (!animModesCompatible(parsed.doc.mode, doc.mode)) {
+        problems.push(`${binding.path} holds ${parsed.doc.mode} poses, which a ${doc.mode} tileset cannot show`)
+        return binding
+      }
+      loaded.set(binding.path, parsed.doc)
+      return animRefFrom(binding.path, parsed.doc, defaultExport(binding.path).name, binding)
+    } catch (error) {
+      problems.push(`Couldn't read animation ${binding.path}: ${error instanceof Error ? error.message : String(error)}`)
+      return binding
+    }
+  })
+  doc = { ...doc, animations }
+  for (const binding of animations) {
+    const anim = loaded.get(binding.path)
+    if (anim) doc = withAnimFrame(doc, binding, anim)
+  }
+  resource.doc = doc
+  return problems
 }
 
 /**
@@ -267,7 +345,11 @@ export function exportResourceFile(root: string, relative: string, options: Expo
     // Both halves must be newer than the resource, or a deleted .c would never
     // come back.
     const pairAbs = block.format === 'bin' ? null : insideRoot(root, sourcePathFor(block.out))
-    if (upToDate(sourceAbs, outAbs, options) && (!pairAbs || upToDate(sourceAbs, pairAbs, options))) {
+    const dependencies = exportDependencies(root, resource)
+    if (
+      upToDate(sourceAbs, outAbs, options, dependencies) &&
+      (!pairAbs || upToDate(sourceAbs, pairAbs, options, dependencies))
+    ) {
       return { ...base, out: block.out, status: 'skipped' }
     }
 
@@ -275,11 +357,12 @@ export function exportResourceFile(root: string, relative: string, options: Expo
     // stale sizes, and "this placement hangs off the map" must be judged
     // against the meta as it is now.
     refreshMapMetas(root, resource)
+    const animProblems = refreshTileAnims(root, resource)
 
     const problems =
       resource.kind === 'map'
         ? validateMap(resource.doc, mapValidateOptions(root, resource.doc))
-        : validateResource(resource)
+        : [...animProblems, ...validateResource(resource)]
     if (problems.length) return { ...base, out: block.out, message: problems.join('; ') }
 
     const files = renderResourceFiles(resource, relative, block)

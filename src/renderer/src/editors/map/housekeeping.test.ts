@@ -191,6 +191,28 @@ describe('removeUnusedTiles', () => {
     expect(session.status).toMatch(/Merged 1 duplicate/)
   })
 
+  it('will not rebuild banks while an animation is attached by tile number', async () => {
+    const bank = Array.from({ length: 10 }, (_, i) => art(i))
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 1,
+        bankTiles: [bank, bank, bank],
+        animations: [{ path: 'res/coin.anim-tiles.json', slot: 4, bank: 0, name: 'g_Coin', width: 1, height: 1, frames: 4, colorsVary: false, loop: 'loop' }]
+      })
+    })
+    files[MAP] = mapFile(new Array(32 * SCREEN_ROWS).fill(0), 32, SCREEN_ROWS)
+    const session = await openMap()
+    const before = session.tileset
+
+    await removeUnusedTiles(session)
+
+    expect(session.tileset).toBe(before)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(session.status).toMatch(/coin\.anim-tiles\.json\)\. Detach them first/)
+  })
+
   it('on a banked screen, rebuilds the banks from the screen', async () => {
     const bank = Array.from({ length: 10 }, (_, i) => art(i))
     files[TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [bank, bank, bank] }) })
