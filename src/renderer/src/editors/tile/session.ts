@@ -25,6 +25,7 @@ import {
 } from '../../../../shared/msx/tile-anim'
 import { detachMeta, isOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta } from '../../../../shared/msx/meta-owned'
 import { onAnimSaved } from '../anim/events'
+import { removeMetaFromTileset } from '../meta-removal'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import {
   bankTileAt,
@@ -911,9 +912,6 @@ async function readOwnedMeta(path: string): Promise<LoadedMeta> {
   try {
     const parsed = parseResource(path, await window.api.invoke('fs:read', { path }))
     if (parsed.kind !== 'metatiles') return `${file} is not a meta-tile.`
-    if (!isOwnedMeta(parsed.doc)) {
-      return `${file} references a tileset's tiles rather than owning its art — open it and convert it first.`
-    }
     return { meta: parsed.doc, name: parsed.doc.export?.name || defaultExport(path).name }
   } catch (error) {
     return `Couldn't read ${path}: ${String(error)}`
@@ -967,15 +965,23 @@ export async function attachMetaFile(session: TileSession, path: string): Promis
     : `Attached ${file}. Draw it with ${defineFor(session)}_DrawMeta(), or place it on a map.`
 }
 
-/** Detaches it; its tiles stay as ordinary art, and its window stops moving. */
-export function detachMetaFile(session: TileSession, path: string): void {
-  const next = detachMeta(session.doc, path)
-  if (next === session.doc) return
-  commit(session, next, 'detach meta-tile')
-  session.status = `Detached ${path.split('/').pop()} — its tiles stay as art.`
+/**
+ * Removes it from this tileset, and from every map drawn with it that places
+ * it (`meta-removal.ts`) — asking first when one does. Its tiles stay as
+ * ordinary art and its window stops moving; the tileset's half is one undo
+ * step here.
+ */
+export async function removeMetaFile(session: TileSession, path: string): Promise<void> {
+  const status = await removeMetaFromTileset(session.path, path, () => {
+    const next = detachMeta(session.doc, path)
+    if (next === session.doc) return false
+    commit(session, next, 'remove meta-tile')
+    return true
+  })
+  if (status !== null) session.status = status
 }
 
-/** The meta-tiles in the project not attached here yet, by path. Version-2 ones are refused at attach, with the reason. */
+/** The meta-tiles in the project not attached here yet, by path. */
 export function attachableMetas(session: TileSession): string[] {
   const attached = new Set(session.doc.metas.map((binding) => binding.path))
   return useResourcesStore()

@@ -18,12 +18,13 @@
  * tileset is a document the tile editor owns (and the tileset store shares);
  * this editor lists where the animation is attached and opens that tileset.
  * What it does do is tell open tile tabs when the poses change, so the window
- * shows the new frame 0 without waiting for a build (`onAnimSaved`).
+ * shows the new frame 0 without waiting for a build (`onAnimSaved`), and
+ * remove a meta-tile from a tileset it is attached to (`removeFromTileset`).
  */
 
 import { shallowReactive } from 'vue'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
-import { isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
+import { detachMeta, isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import {
   animDocCells,
   colorsVary,
@@ -45,7 +46,9 @@ import { parseResource, resourceKindOf, serializeResource } from '../../../../sh
 import { samePath } from '../../../../shared/map-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
+import { useTilesetStore } from '../../stores/tilesetStore'
 import { watchResourceFile } from '../external-changes'
+import { removeMetaFromTileset } from '../meta-removal'
 import { emitAnimSaved } from './events'
 
 /** Either file this editor opens. */
@@ -205,6 +208,47 @@ export async function findAttachments(session: AnimSession): Promise<void> {
     }
   }
   session.attachedTo = found
+}
+
+/**
+ * Removes this meta-tile from one tileset it is attached to, and from the maps
+ * drawn with that tileset (`meta-removal.ts`), asking first when one places
+ * it. The tileset is saved straight away unless it already had unsaved edits:
+ * the maps beside it are rewritten on disk now, and no tab may have it open to
+ * show it dirty.
+ */
+export async function removeFromTileset(session: AnimSession, tileset: string): Promise<void> {
+  if (session.kind !== 'metatiles') return
+  const store = useTilesetStore()
+  try {
+    await store.load(tileset)
+  } catch (error) {
+    store.release(tileset)
+    session.status = `Couldn't open ${tileset}: ${String(error)}`
+    return
+  }
+  try {
+    const wasDirty = store.isDirty(tileset)
+    const status = await removeMetaFromTileset(tileset, session.path, () => {
+      const current = store.patternDoc(tileset)
+      const next = current && detachMeta(current, session.path)
+      if (!current || !next || next === current) return false
+      store.set(tileset, next, session.path)
+      return true
+    })
+    if (status === null) return
+    if (wasDirty) {
+      session.status = `${status} ${tileset.split('/').pop()} has other unsaved edits — save it to keep this.`
+    } else {
+      if (store.isDirty(tileset)) await store.save(tileset)
+      session.status = status
+    }
+  } catch (error) {
+    session.status = `Couldn't save ${tileset}: ${String(error)}`
+  } finally {
+    store.release(tileset)
+  }
+  await findAttachments(session)
 }
 
 export async function saveSession(session: AnimSession): Promise<void> {

@@ -9,7 +9,7 @@
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { expandIndexedLayer } from '../../../../shared/msx/map'
+import { expandIndexedLayer, normalizeMap } from '../../../../shared/msx/map'
 import { normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import { normalizeTiles, type TileEntry } from '../../../../shared/msx/tile'
@@ -17,7 +17,8 @@ import { emitAnimSaved } from '../anim/events'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
-import { attachableMetas, attachMetaFile, detachMetaFile, pruneTileSessions, tileSession } from '../tile/session'
+import { attachableMetas, attachMetaFile, pruneTileSessions, removeMetaFile, tileSession } from '../tile/session'
+import { animSession, findAttachments, pruneAnimSessions, removeFromTileset } from '../anim/session'
 import {
   doc,
   indexedSummary,
@@ -30,6 +31,7 @@ import {
   selectPlacementAt,
   setBaked,
   setIndexed,
+  undo,
   unattachedMetas
 } from './session'
 
@@ -86,6 +88,7 @@ beforeEach(() => {
   useResourcesStore().entries = [{ path: ROCK, kind: 'metatiles', out: null }]
   pruneMapSessions(new Set())
   pruneTileSessions(new Set())
+  pruneAnimSessions(new Set())
 })
 
 async function open<T>(make: () => T): Promise<T> {
@@ -112,12 +115,14 @@ describe('attaching from the tile editor', () => {
     expect(session.status).toMatch(/_Animate\(\) every frame/)
   })
 
-  it('detaching keeps the art', async () => {
+  it('removing it keeps the art, and asks nothing when no map places it', async () => {
     const session = await open(() => tileSession(TILES))
     await attachMetaFile(session, ROCK)
-    detachMetaFile(session, ROCK)
+    await removeMetaFile(session, ROCK)
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(session.doc.metas).toEqual([])
     expect(session.doc.tiles[4].pattern[0]).toBe(0x81)
+    expect(session.status).toMatch(/Removed rock\.meta-tiles\.json from main\.tiles\.json\. Its tiles stay as art/)
   })
 
   it('opening a tileset whose meta changed on disk gives it its new tiles', async () => {
@@ -234,5 +239,90 @@ describe('an indexed layer', () => {
     setBaked(session, true)
     expect(doc(session).layers[0].placements[0].baked).toBeUndefined()
     expect(session.status).toMatch(/no grid to bake into/)
+  })
+})
+
+describe('removing one from a tileset', () => {
+  const OTHER = 'res/other.map.json'
+
+  /** The tileset with the rock attached, saved; `level` places it twice, `other` (closed) once. */
+  async function setUp(): Promise<{ map: ReturnType<typeof mapSession>; tiles: ReturnType<typeof tileSession> }> {
+    const tiles = await open(() => tileSession(TILES))
+    await attachMetaFile(tiles, ROCK)
+    files[TILES] = serializeResource({ kind: 'tiles', doc: tiles.doc })
+    const map = await open(() => mapSession(MAP))
+    pickMeta(map, ROCK)
+    placeMetaAt(map, 0, 0)
+    placeMetaAt(map, 4, 4)
+    const ref = doc(map).metas[0]
+    files[OTHER] = JSON.stringify({
+      version: 1,
+      tileset: TILES,
+      width: 8,
+      height: 8,
+      metas: [ref],
+      layers: [{ name: 'bg', placements: [{ slot: 0, x: 1, y: 1 }] }],
+      tilesetReorderSeen: 1234
+    })
+    return { map, tiles }
+  }
+
+  it('asks, naming the maps, then takes it out of every map drawn with the tileset', async () => {
+    const { map, tiles } = await setUp()
+    await removeMetaFile(tiles, ROCK)
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/level\.map\.json, other\.map\.json use it, and its 3 placements go with it/))
+    expect(tiles.doc.metas).toEqual([])
+    // The open map: one undoable edit.
+    expect(doc(map).metas).toEqual([])
+    expect(doc(map).layers[0].placements).toEqual([])
+    expect(map.dirty).toBe(true)
+    expect(map.status).toMatch(/removed from main\.tiles\.json, and from this map with it/)
+    // The closed map: rewritten on disk, its reorder bookmark kept.
+    const other = JSON.parse(files[OTHER])
+    expect(normalizeMap(other).metas).toEqual([])
+    expect(normalizeMap(other).layers[0].placements).toEqual([])
+    expect(other.tilesetReorderSeen).toBe(1234)
+    expect(tiles.status).toMatch(/Removed rock\.meta-tiles\.json from main\.tiles\.json and 3 placements from level\.map\.json, other\.map\.json/)
+
+    undo(map)
+    expect(doc(map).layers[0].placements).toHaveLength(2)
+  })
+
+  it('changes nothing when the confirm is declined', async () => {
+    const { map, tiles } = await setUp()
+    const before = files[OTHER]
+    ;(window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false)
+    await removeMetaFile(tiles, ROCK)
+    expect(tiles.doc.metas).toHaveLength(1)
+    expect(doc(map).layers[0].placements).toHaveLength(2)
+    expect(files[OTHER]).toBe(before)
+  })
+
+  it('from the meta-tile’s own editor: saves the tileset, which no tab may be showing, and lists it no more', async () => {
+    const { map } = await setUp()
+    // Saved, so the tileset is clean; the map tab stays open.
+    await useTilesetStore().save(TILES)
+    pruneTileSessions(new Set())
+    const meta = await open(() => animSession(ROCK))
+    await findAttachments(meta)
+    expect(meta.attachedTo.map((attachment) => attachment.tileset)).toEqual([TILES])
+
+    await removeFromTileset(meta, TILES)
+    expect(JSON.parse(files[TILES]).metas ?? []).toEqual([])
+    expect(useTilesetStore().isDirty(TILES)).toBe(false)
+    expect(doc(map).metas).toEqual([])
+    expect(normalizeMap(JSON.parse(files[OTHER])).metas).toEqual([])
+    expect(meta.attachedTo).toEqual([])
+    expect(meta.status).toMatch(/^Removed rock\.meta-tiles\.json from main\.tiles\.json/)
+  })
+
+  it('from the meta-tile’s own editor: leaves a tileset with other unsaved edits unsaved, and says so', async () => {
+    await setUp()
+    const meta = await open(() => animSession(ROCK))
+    await removeFromTileset(meta, TILES)
+    expect(useTilesetStore().patternDoc(TILES)!.metas).toEqual([])
+    expect(useTilesetStore().isDirty(TILES)).toBe(true)
+    expect(meta.status).toMatch(/main\.tiles\.json has other unsaved edits — save it to keep this\./)
   })
 })

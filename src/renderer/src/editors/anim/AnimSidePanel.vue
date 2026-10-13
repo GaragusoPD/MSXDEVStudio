@@ -13,10 +13,12 @@ import { MAX_ANIM_CELLS } from '../../../../shared/msx/tile-anim'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
 import { movingCells } from '../../../../shared/msx/meta-owned'
 import { useTabsStore } from '../../stores/tabsStore'
+import Icon from '../../components/Icon.vue'
 import {
   doc,
   findAttachments,
   ownedMeta,
+  removeFromTileset,
   poseAtTick,
   posePixels,
   resize,
@@ -266,6 +268,18 @@ function openTileset(path: string): void {
           <span v-if="attachment.slot === null">still</span>
           <span v-else-if="attachment.cells > 1">tiles {{ attachment.slot }}-{{ attachment.slot + attachment.cells - 1 }}{{ attachment.bank !== null ? `, bank ${attachment.bank + 1}` : '' }}</span>
           <span v-else>tile {{ attachment.slot }}{{ attachment.bank !== null ? `, bank ${attachment.bank + 1}` : '' }}</span>
+          <button
+            v-if="meta"
+            type="button"
+            class="remove"
+            :title="`Remove from ${attachment.tileset.split('/').pop()}, and from the maps drawn with it that place it — its tiles stay as art`"
+            @click="removeFromTileset(session, attachment.tileset)"
+          >
+            <Icon
+              name="link_off"
+              :size="14"
+            />
+          </button>
         </li>
       </ul>
       <p
@@ -379,6 +393,12 @@ section {
   display: flex;
   gap: 6px;
   align-items: baseline;
+}
+
+.attached .remove {
+  margin-left: auto;
+  padding: 0 2px;
+  line-height: 1;
 }
 
 .link {

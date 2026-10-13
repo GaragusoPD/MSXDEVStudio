@@ -33,7 +33,7 @@ import {
   attachAnim,
   attachMetaFile,
   detachAnim,
-  detachMetaFile,
+  removeMetaFile,
   extractAnimation,
   bankBudgetLabel,
   changeMode,
@@ -625,7 +625,8 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
       <p class="blurb">
         A meta-tile (<code>.meta-tiles.json</code>) attached here gets tiles for its art — shared with
         any identical ones — and a window for the cells that move, played by this tileset's
-        <code>_Animate()</code>. Maps drawn with this tileset can then place it.
+        <code>_Animate()</code>. Maps drawn with this tileset can then place it; removing it here
+        takes it off those maps too, and leaves its tiles as art.
       </p>
       <ul
         v-if="doc.metas.length"
@@ -647,8 +648,8 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
             <span class="dims">{{ metaLabel(binding) }}</span>
             <button
               type="button"
-              title="Detach — its tiles stay as art"
-              @click.stop="detachMetaFile(session, binding.path)"
+              title="Remove from this tileset, and from the maps that place it — its tiles stay as art"
+              @click.stop="removeMetaFile(session, binding.path)"
             >
               <Icon
                 name="link_off"

@@ -32,6 +32,7 @@ import {
   placeMeta,
   placementAt,
   metaRefFrom,
+  removeMetaRef,
   removePlacement,
   resizeMap,
   SCREEN_ROWS,
@@ -60,6 +61,7 @@ import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta
 import { isOwnedMeta, normalizeOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { animModesCompatible } from '../../../../shared/msx/tile-anim'
 import { onAnimSaved } from '../anim/events'
+import { onMetaRemoved, provideOpenMaps } from '../meta-removal'
 import {
   paintGrid,
   sameEntry,
@@ -716,6 +718,27 @@ onAnimSaved((event) => {
     refreshMetaRefs(session)
   }
 })
+
+/**
+ * A meta-tile removed from this map's tileset (`meta-removal.ts`): it goes
+ * from the map too, placements and all, as one undoable step. Undo puts the
+ * placements back, but the export will refuse them until the meta is attached
+ * to the tileset again — which placing it does.
+ */
+onMetaRemoved((event) => {
+  for (const session of sessions.values()) {
+    const current = doc(session)
+    if (!samePath(current.tileset, event.tileset)) continue
+    const slot = current.metas.findIndex((ref) => samePath(ref.path, event.path))
+    if (slot < 0) continue
+    commit(session, removeMetaRef(current, slot))
+    session.selectedPlacement = null
+    if (session.brushMeta && samePath(session.brushMeta, event.path)) session.brushMeta = null
+    session.status = `${event.path.split('/').pop()} was removed from ${event.tileset.split('/').pop()}, and from this map with it.`
+  }
+})
+
+provideOpenMaps(() => [...sessions.values()].map((session) => ({ path: session.path, doc: doc(session) })))
 
 export async function saveSession(session: MapSession): Promise<void> {
   const content: SavedMap = { ...doc(session) }
