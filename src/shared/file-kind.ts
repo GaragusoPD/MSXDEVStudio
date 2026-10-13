@@ -10,10 +10,11 @@
  */
 const RESOURCE_SUFFIXES = [
   // Longest first: `endsWith` would otherwise hand `hero.btiles.json` to the
-  // `tiles.json` editor. The meta suffixes are hyphenated, so they cannot
-  // collide with these at all — which is exactly why they are.
+  // `tiles.json` editor. The meta and animation suffixes are hyphenated, so
+  // they cannot collide with these at all — which is exactly why they are.
   'meta-btiles.json',
   'meta-tiles.json',
+  'anim-tiles.json',
   'btiles.json',
   'tiles.json',
   'swsprites.json',

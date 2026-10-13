@@ -14,6 +14,7 @@ import { bankTilePixels, BANK_COUNT, isBanked, MAX_TILES, tilePixels, TILE_SIZE 
 import { fitColumns, marqueeIndices } from '../../../../shared/tile-editor'
 import {
   addTile,
+  animationAt,
   bankBudgetLabel,
   copySelection,
   deleteTiles,
@@ -238,6 +239,28 @@ watchEffect(() => {
       context.fillRect(x, y, size, size)
       context.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1)
     }
+  }
+
+  // Animation windows: their art is the animation's first pose, rewritten from
+  // the animation file at every build, so they are marked as not this
+  // editor's to paint — `animationAt` in session.ts is what refuses the stroke.
+  context.strokeStyle = 'rgba(120, 230, 140, 0.9)'
+  context.fillStyle = 'rgba(120, 230, 140, 0.9)'
+  context.lineWidth = 1
+  for (let index = 0; index < slotCount.value; index++) {
+    if (!animationAt(props.session, index)) continue
+    const x = (index % COLUMNS.value) * size
+    const y = Math.floor(index / COLUMNS.value) * height
+    context.setLineDash([3, 2])
+    context.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1)
+    context.setLineDash([])
+    // A small play triangle in the corner.
+    context.beginPath()
+    context.moveTo(x + size - 9, y + 2)
+    context.lineTo(x + size - 2, y + 5.5)
+    context.lineTo(x + size - 9, y + 9)
+    context.closePath()
+    context.fill()
   }
 
   // The marquee: a tint on every selected cell, and one outline around the

@@ -2,6 +2,7 @@ import { registerEditor, registerFallbackEditor } from './registry'
 import { registerMsxglCompletions } from './msxgl-completions'
 import { setupMonacoEnvironment } from './monaco-setup'
 import { useProjectStore } from '../stores/projectStore'
+import * as anim from './anim/session'
 import * as btiles from './btiles/session'
 import * as map from './map/session'
 import * as meta from './meta/session'
@@ -10,6 +11,7 @@ import * as sfx from './sfx/session'
 import * as sprite from './sprite/session'
 import * as swsprite from './swsprites/session'
 import * as tile from './tile/session'
+import AnimTileEditorTab from './anim/AnimTileEditorTab.vue'
 import BitmapTileEditorTab from './btiles/BitmapTileEditorTab.vue'
 import DocsTab from './docs/DocsTab.vue'
 import ExampleViewerTab from './ExampleViewerTab.vue'
@@ -112,6 +114,17 @@ for (const extension of ['meta-tiles.json', 'meta-btiles.json']) {
     redo: (path) => meta.redo(meta.metaSession(path))
   })
 }
+
+// Animated tiles: an animation's own poses and timing. Hyphenated like the
+// meta suffixes, and listed before `tiles.json` in `file-kind.ts` for the same
+// reason.
+registerEditor({
+  extensions: ['anim-tiles.json'],
+  component: AnimTileEditorTab,
+  save: (path) => anim.saveSession(anim.animSession(path)),
+  undo: (path) => anim.undo(anim.animSession(path)),
+  redo: (path) => anim.redo(anim.animSession(path))
+})
 
 // Spec 09: same compound-extension trick, for `*.sprites.json`.
 registerEditor({

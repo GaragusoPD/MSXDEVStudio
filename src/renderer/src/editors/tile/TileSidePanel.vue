@@ -5,7 +5,7 @@
  * FG/BG strip, the multi-tile blocks, and the export block Spec 07's
  * converter reads.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Icon from '../../components/Icon.vue'
 import { MODES, TILE_MODES, type TileMode } from '../../../../shared/msx/modes'
 import {
@@ -19,12 +19,19 @@ import {
   unpackGrb
 } from '../../../../shared/msx/palette'
 import { defaultExport } from '../../../../shared/msx/resource'
-import { BANK_COUNT, isBanked, MAX_BLOCK, TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
+import { animCells, BANK_COUNT, isBanked, MAX_BLOCK, TILE_FLAG_COUNT } from '../../../../shared/msx/tile'
+import { DEFAULT_ANIM_DURATION } from '../../../../shared/msx/tile-anim'
+import { useResourcesStore } from '../../stores/resourcesStore'
+import { useTabsStore } from '../../stores/tabsStore'
 import { splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
 import { blockColorGroupWarning, renameBlock } from '../../../../shared/tile-editor'
 import {
   activeBlock,
   addBlock,
+  attachableAnimations,
+  attachAnim,
+  detachAnim,
+  extractAnimation,
   bankBudgetLabel,
   changeMode,
   commit,
@@ -85,6 +92,46 @@ function grbLabel(index: number): string {
 }
 
 const newBlock = ref({ width: 2, height: 2 })
+
+const tabsStore = useTabsStore()
+// Re-listed when the Attach dropdown opens: the store is only filled once the
+// Resources panel has been shown, and an animation made since would be missing.
+const resourcesStore = useResourcesStore()
+/** The animation file picked in the Attach dropdown. */
+const attachPick = ref('')
+/** "Make animation from block": the pose size it is read as, and how long each is held. */
+const extract = ref({ width: 1, height: 1, duration: DEFAULT_ANIM_DURATION, slot: 0 })
+// Opening a block makes its first tile the active one, and picking another tile
+// in the grid closes the block — so the slot the animation attaches at is typed,
+// not clicked. It starts at the block's first pose, the usual answer when the
+// map cells already show that tile.
+watch(
+  () => props.session.block,
+  () => {
+    extract.value.slot = props.session.active
+  }
+)
+
+function openFile(path: string): void {
+  tabsStore.openFile(path, path.split('/').pop() ?? path)
+}
+
+function windowLabel(binding: (typeof doc.value.animations)[number]): string {
+  const last = binding.slot + animCells(binding) - 1
+  const tiles = last === binding.slot ? `tile ${binding.slot}` : `tiles ${binding.slot}-${last}`
+  return binding.bank === null ? tiles : `${tiles}, bank ${binding.bank + 1}`
+}
+
+async function attachPicked(): Promise<void> {
+  if (!attachPick.value) return
+  await attachAnim(props.session, attachPick.value)
+  attachPick.value = ''
+}
+
+async function extractFromBlock(): Promise<void> {
+  if (props.session.block === null) return
+  await extractAnimation(props.session, props.session.block, extract.value, extract.value.slot)
+}
 
 /** The unnamed marquee, when that's what the canvas is showing — what "from selection" would name. */
 const marquee = computed(() => (props.session.block === null ? activeBlock(props.session) : null))
@@ -443,6 +490,118 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         + Block from selection
       </button>
 
+      <h3>Animations</h3>
+      <p class="blurb">
+        An animation (<code>.anim-tiles.json</code>) attached here drives a window of tiles: every
+        cell showing them animates, and the poses live in the animation, not in this tileset. Select
+        the tile your map cells use, then attach.
+      </p>
+      <ul
+        v-if="doc.animations.length"
+        class="blocks"
+      >
+        <li
+          v-for="binding in doc.animations"
+          :key="binding.path"
+        >
+          <div class="block-row">
+            <button
+              type="button"
+              class="anim-name"
+              :title="`Open ${binding.path}`"
+              @click="openFile(binding.path)"
+            >
+              {{ binding.path.split('/').pop()?.replace('.anim-tiles.json', '') }}
+            </button>
+            <span class="dims">{{ windowLabel(binding) }} · {{ binding.frames }} poses</span>
+            <button
+              type="button"
+              title="Detach — the tiles keep the pose they show"
+              @click.stop="detachAnim(session, binding.path)"
+            >
+              <Icon
+                name="link_off"
+                :size="14"
+              />
+            </button>
+          </div>
+        </li>
+      </ul>
+      <div class="new-block">
+        <select
+          v-model="attachPick"
+          title="An animation in this project"
+          @focus="resourcesStore.refresh()"
+        >
+          <option value="">
+            {{ attachableAnimations(session).length ? 'Animation…' : 'No animations to attach' }}
+          </option>
+          <option
+            v-for="path in attachableAnimations(session)"
+            :key="path"
+            :value="path"
+          >
+            {{ path.split('/').pop() }}
+          </option>
+        </select>
+        <button
+          type="button"
+          :disabled="!attachPick"
+          :title="`Attach with its window starting at tile ${session.active}`"
+          @click="attachPicked"
+        >
+          Attach at {{ session.active }}
+        </button>
+      </div>
+      <template v-if="session.block !== null && doc.blocks[session.block]">
+        <p class="blurb">
+          This block, read as poses of W × H tiles, each held N frames, can become an animation
+          file attached at the tile your map cells use:
+        </p>
+        <div class="new-block">
+          <input
+            v-model.number="extract.width"
+            type="number"
+            min="1"
+            max="16"
+            title="Pose width, in tiles"
+          >
+          <span>×</span>
+          <input
+            v-model.number="extract.height"
+            type="number"
+            min="1"
+            max="16"
+            title="Pose height, in tiles"
+          >
+          <input
+            v-model.number="extract.duration"
+            type="number"
+            min="1"
+            max="255"
+            title="Frames (VBlanks) each pose is held"
+          >
+        </div>
+        <div class="new-block">
+          <span>at tile</span>
+          <input
+            v-model.number="extract.slot"
+            type="number"
+            min="0"
+            max="255"
+            title="The tile your map cells show — the window starts here"
+          >
+          <button
+            type="button"
+            :disabled="banked"
+            :title="`Write res/${doc.blocks[session.block].name}.anim-tiles.json and attach it at tile ${extract.slot}`"
+            @click="extractFromBlock"
+          >
+            Make animation
+          </button>
+        </div>
+      </template>
+
       <h3>Export</h3>
       <template v-if="doc.export">
         <label>
@@ -554,6 +713,16 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
 .block-row.active {
   border-color: var(--color-accent);
   background: var(--color-bg-active-item);
+}
+
+.anim-name {
+  flex: 1;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-accent, #6cf);
+  text-align: left;
+  cursor: pointer;
 }
 
 .block-name {

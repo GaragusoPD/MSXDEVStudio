@@ -12,7 +12,19 @@ import { shallowReactive, shallowRef } from 'vue'
 import type { TileMode } from '../../../../shared/msx/modes'
 import type { ImportResult } from '../../composables/useImageImport'
 import { mapFromLayout } from '../../../../shared/msx/map'
-import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
+import { defaultExport, parseResource, RESOURCE_DIR, RESOURCE_SUFFIXES, serializeResource } from '../../../../shared/msx/resource'
+import {
+  animationFromBlock,
+  animBaseName,
+  animModesCompatible,
+  animRefFrom,
+  attachAnimation,
+  detachAnimation,
+  withAnimFrame,
+  type TileAnimDoc
+} from '../../../../shared/msx/tile-anim'
+import { onAnimSaved } from '../anim/events'
+import { useResourcesStore } from '../../stores/resourcesStore'
 import {
   bankTileAt,
   BANK_COUNT,
@@ -23,6 +35,8 @@ import {
   isBanked,
   MAX_BLOCK,
   MAX_TILES,
+  animCells,
+  animWindowProblems,
   convertTileMode,
   normalizeTiles,
   packTiles,
@@ -34,6 +48,7 @@ import {
   tileModeConversionLossy,
   tilePixels,
   type PaintConflict,
+  type TileAnimBinding,
   type TileBlock,
   type TileEntry,
   type TilesDoc
@@ -217,6 +232,10 @@ async function load(session: TileSession): Promise<void> {
     session.doc = useTilesetStore().patternDoc(session.path) ?? session.doc
     session.history = initHistory(session.doc)
     session.error = null
+    await refreshAnimations(session)
+    // What the Animations panel offers to attach comes from the project's
+    // resource list, which nothing has filled if the Resources panel was never shown.
+    if (!useResourcesStore().entries.length) void useResourcesStore().refresh()
   } catch (error) {
     session.error = `Couldn't open ${session.path}: ${String(error)}`
   } finally {
@@ -531,6 +550,7 @@ export function paint(session: TileSession, points: Point[], role?: 'fg' | 'bg')
       session.status = bankEditRefusal(session.doc, tile)
       continue
     }
+    if (refuseAnimated(session, [tile])) continue
     if (role) {
       // Left button paints the row's ink, right its paper — the same model as
       // the meta-tile editor, and the reason a second colour lands instead of
@@ -701,6 +721,173 @@ export function deleteBlock(session: TileSession, index: number): void {
   selectBlock(session, null)
 }
 
+// ── attached animations ─────────────────────────────────────────────────────
+
+/**
+ * The animation whose window holds `index` in the view the canvas shows — the
+ * common set, or the selected bank — or null.
+ */
+export function animationAt(session: TileSession, index: number): TileAnimBinding | null {
+  const bank = activeBank(session)
+  return (
+    session.doc.animations.find(
+      (binding) => (binding.bank === null || binding.bank === bank) && index >= binding.slot && index < binding.slot + animCells(binding)
+    ) ?? null
+  )
+}
+
+/**
+ * Refuses an edit to a window slot, saying where to make it instead. A
+ * window's art is the animation's frame 0, rewritten from the animation file
+ * before every export — an edit here would look like it worked and vanish at
+ * the next build.
+ */
+function refuseAnimated(session: TileSession, indices: readonly number[]): boolean {
+  const hit = indices.map((index) => [index, animationAt(session, index)] as const).find(([, binding]) => binding)
+  if (!hit) return false
+  const [index, binding] = hit
+  session.status =
+    `Tile ${index} shows the animation ${binding!.path.split('/').pop()} — edit its poses there; ` +
+    'this tile is rewritten from it at every build.'
+  return true
+}
+
+async function readAnimation(path: string): Promise<TileAnimDoc | string> {
+  try {
+    const parsed = parseResource(path, await window.api.invoke('fs:read', { path }))
+    return parsed.kind === 'anim' ? parsed.doc : `${path} is not an animation.`
+  } catch (error) {
+    return `Couldn't read ${path}: ${String(error)}`
+  }
+}
+
+/**
+ * Attaches the animation at `path` with its window starting at the active
+ * tile, in the bank the canvas shows. Refused, with the reason, when the
+ * window would write over something it does not own (`animWindowProblems`).
+ */
+export async function attachAnim(session: TileSession, path: string, slot = session.active): Promise<void> {
+  const anim = await readAnimation(path)
+  if (typeof anim === 'string') {
+    session.status = anim
+    return
+  }
+  if (!animModesCompatible(anim.mode, session.doc.mode)) {
+    session.status = `${path.split('/').pop()} holds ${anim.mode} poses, which a ${session.doc.mode} tileset cannot show.`
+    return
+  }
+  const bank = activeBank(session)
+  const next = attachAnimation(session.doc, path, anim, { slot, bank, name: anim.export?.name || defaultExport(path).name })
+  const problems = animWindowProblems(next)
+  if (problems.length) {
+    session.status = problems[0]
+    return
+  }
+  commit(session, next, 'attach animation')
+  const last = slot + anim.width * anim.height - 1
+  session.status = `Attached ${path.split('/').pop()} at tile${last === slot ? ` ${slot}` : `s ${slot}-${last}`}. Call ${defineFor(session)}_AnimReset() once and ${defineFor(session)}_Animate() every frame.`
+}
+
+function defineFor(session: TileSession): string {
+  return session.doc.export?.name || defaultExport(session.path).name
+}
+
+/** Detaches it; the window keeps the pose it shows as ordinary art. */
+export function detachAnim(session: TileSession, path: string): void {
+  const next = detachAnimation(session.doc, path)
+  if (next === session.doc) return
+  commit(session, next, 'detach animation')
+  session.status = `Detached ${path.split('/').pop()} — its tiles keep the pose they show.`
+}
+
+/** The animations in the project this tileset could attach, by path. */
+export function attachableAnimations(session: TileSession): string[] {
+  const attached = new Set(session.doc.animations.map((binding) => binding.path))
+  return useResourcesStore()
+    .entries.filter((entry) => entry.kind === 'anim' && !attached.has(entry.path))
+    .map((entry) => entry.path)
+}
+
+/**
+ * Turns a block used as a pose strip into an animation file and attaches it
+ * at `slot` — the migration every project that animated by hand needs, and
+ * the one `demo_msx1` went through. The block and its pose tiles are left
+ * alone: whether anything else still uses them is the user's call (Remove
+ * unused tiles in the map editor's paint mode answers it project-wide).
+ */
+export async function extractAnimation(
+  session: TileSession,
+  blockIndex: number,
+  frame: { width: number; height: number; duration: number },
+  slot: number
+): Promise<void> {
+  const block = session.doc.blocks[blockIndex]
+  if (!block) return
+  if (isBanked(session.doc)) {
+    session.status = 'Blocks reference the common tileset — extract from an unbanked one.'
+    return
+  }
+  const anim = animationFromBlock(session.doc, block, frame.width, frame.height, frame.duration)
+  if (!anim) {
+    session.status = `${block.width}×${block.height} does not divide into ${frame.width}×${frame.height} poses.`
+    return
+  }
+  const stem = block.name.replace(/[^A-Za-z0-9_-]/g, '_') || 'anim'
+  const path = `${RESOURCE_DIR}/${stem}${RESOURCE_SUFFIXES.anim}`
+  if (await window.api.invoke('fs:stat', { path })) {
+    session.status = `${path} already exists — rename the block, or attach that file instead.`
+    return
+  }
+  anim.export = defaultExport(path)
+  await window.api.invoke('fs:create', { path: RESOURCE_DIR, kind: 'directory' })
+  await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'anim', doc: anim }) })
+  await useResourcesStore().refresh()
+  await attachAnim(session, path, slot)
+}
+
+/**
+ * Re-reads every attached animation and refreshes the window's art and the
+ * binding's mirror — the editor's half of the rule the exporter keeps too
+ * (`refreshTileAnims`), through the same `animRefFrom`. A change is a real
+ * edit (the file on disk holds stale art), so it lands as an undo step and
+ * dirties the tab, with a status saying why.
+ */
+async function refreshAnimations(session: TileSession): Promise<void> {
+  if (!session.doc.animations.length) return
+  const loaded = new Map<string, TileAnimDoc>()
+  for (const binding of session.doc.animations) {
+    const anim = await readAnimation(binding.path)
+    if (typeof anim !== 'string') loaded.set(binding.path, anim)
+  }
+  applyAnimations(session, loaded)
+}
+
+function applyAnimations(session: TileSession, loaded: ReadonlyMap<string, TileAnimDoc>): void {
+  let next = session.doc
+  const animations = next.animations.map((binding) => {
+    const anim = loaded.get(binding.path)
+    return anim ? animRefFrom(binding.path, anim, binding.name || animBaseName(binding.path), binding) : binding
+  })
+  const mirrorChanged = animations.some((binding, i) => JSON.stringify(binding) !== JSON.stringify(next.animations[i]))
+  if (mirrorChanged) next = { ...next, animations }
+  for (const binding of next.animations) {
+    const anim = loaded.get(binding.path)
+    if (anim) next = withAnimFrame(next, binding, anim)
+  }
+  if (next === session.doc) return
+  commit(session, next, 'refresh animation')
+  session.status = 'An attached animation changed since this tileset was saved — its window now shows the new first pose.'
+}
+
+// One subscription for every open tileset: an animation saved in its editor
+// shows up in the windows of the tilesets it is attached to straight away.
+onAnimSaved((event) => {
+  for (const session of sessions.values()) {
+    if (!session.doc.animations.some((binding) => binding.path === event.path)) continue
+    applyAnimations(session, new Map([[event.path, event.doc]]))
+  }
+})
+
 // ── clipboard ───────────────────────────────────────────────────────────────
 
 /**
@@ -747,6 +934,10 @@ export function pasteClipboard(session: TileSession): void {
   }
   const mode = session.doc.mode
   const { doc, pasted } = pasteTiles(session.doc, source, session.active, session.columns)
+  // A paste that lands on a window would be overwritten by the animation's
+  // frame 0 at the next export — say so now, not after the build.
+  const landed = doc.tiles.flatMap((tile, index) => (tile !== session.doc.tiles[index] ? [index] : []))
+  if (refuseAnimated(session, landed)) return
   if (!pasted) {
     session.status = 'Nothing pasted — that corner leaves no room for the clipboard.'
     return
@@ -763,6 +954,7 @@ export function pasteClipboard(session: TileSession): void {
 // ── the rest of the toolbar ─────────────────────────────────────────────────
 
 export function transform(session: TileSession, op: TileTransform): void {
+  if (refuseAnimated(session, [session.active])) return
   const bank = activeBank(session)
   if (bank !== null) {
     if (!bankIndexEditable(session.doc, session.active)) {
@@ -796,6 +988,7 @@ function colorTargets(session: TileSession): number[] {
 }
 
 export function swapRow(session: TileSession, y: number): void {
+  if (refuseAnimated(session, colorTargets(session))) return
   const bank = activeBank(session)
   if (bank !== null) {
     if (!bankIndexEditable(session.doc, session.active)) {
@@ -811,6 +1004,7 @@ export function swapRow(session: TileSession, y: number): void {
 }
 
 export function setRow(session: TileSession, y: number, fg: number, bg: number): void {
+  if (refuseAnimated(session, colorTargets(session))) return
   const bank = activeBank(session)
   if (bank !== null) {
     if (!bankIndexEditable(session.doc, session.active)) {
@@ -902,7 +1096,11 @@ export function deleteTiles(session: TileSession, indices: readonly number[]): v
 
   publishRemap(session, mapping)
   const label = doomed.length === 1 ? `delete tile ${doomed[0]}` : `delete ${doomed.length} tiles`
+  const detached = session.doc.animations.filter((binding) => !next.animations.some((kept) => kept.path === binding.path))
   commit(session, next, label, mapping)
+  if (detached.length) {
+    session.status = `Detached ${detached.map((binding) => binding.path.split('/').pop()).join(', ')}: a deleted tile was part of its window.`
+  }
   selectBlock(session, null)
   // Land on the lowest index that was removed — where the gap now is.
   select(session, Math.min(doomed[doomed.length - 1], next.count - 1))
