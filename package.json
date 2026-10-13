@@ -1,6 +1,6 @@
 {
   "name": "msxdevstudio",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "A desktop IDE for MSX game development.",
   "license": "SEE LICENSE IN LICENSE",
   "private": true,

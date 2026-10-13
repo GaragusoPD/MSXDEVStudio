@@ -7,6 +7,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-13
+
 ### Animated tiles
 
 An animation is now a resource of its own — `*.anim-tiles.json` — that you
@@ -33,6 +35,12 @@ attach to a tileset instead of building out of a block and hand-written C.
   the poses differ in colour (so per-third recolouring survives), writes only
   its own bank for a bank's own tiles, and handles SCREEN 1's single pattern
   table. Each write path is built against the real MSXgl in the test suite.
+- **Animated meta-tiles, through an animation.** The meta editor's *Animated
+  tiles* section points cells at an attached animation, in every frame. Every
+  copy of the meta then animates with the tileset's `_Animate()` — baked
+  placements included — at no cost per copy; the meta's own frames still
+  animate each copy separately. Booted in openMSX, a live and a baked placement
+  both show the animation's tiles while their patterns change.
 - **`demo_msx1` uses it.** The coin spin is `res/coin.anim-tiles.json` attached
   at tile 6; `SpinCoins()` and its timers are gone, the four pose tiles are
   freed (68 → 64), and `T_TRANS` is read from a `trans` block instead of the
@@ -44,6 +52,10 @@ attach to a tileset instead of building out of a block and hand-written C.
 - **A map's header kept a meta-tile's old size or frame count** when only the
   meta had changed: the export skip compared the map's own file and nothing
   else. It now checks every file a resource mirrors.
+- **Painting could adopt an animated tile as still art**, and the map's *Edit
+  tile* mode could rewrite one in place (lost at the next export). Every
+  allocator now skips animation windows, and painting over an animated cell
+  gives it a still tile of its own, saying so.
 
 ### Fixed
 
