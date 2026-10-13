@@ -30,6 +30,7 @@ import {
   pruneMapSessions,
   selectPlacementAt,
   setBaked,
+  saveSession as saveMap,
   setIndexed,
   undo,
   unattachedMetas
@@ -299,10 +300,11 @@ describe('removing one from a tileset', () => {
     expect(files[OTHER]).toBe(before)
   })
 
-  it('from the meta-tile’s own editor: saves the tileset, which no tab may be showing, and lists it no more', async () => {
+  it('from the meta-tile’s own editor: saves the tileset and the clean open map, and lists it no more', async () => {
     const { map } = await setUp()
-    // Saved, so the tileset is clean; the map tab stays open.
-    await useTilesetStore().save(TILES)
+    // Saved, so the tileset and the map are clean; the map tab stays open.
+    await saveMap(map)
+    expect(useTilesetStore().isDirty(TILES)).toBe(false)
     pruneTileSessions(new Set())
     const meta = await open(() => animSession(ROCK))
     await findAttachments(meta)
@@ -312,17 +314,37 @@ describe('removing one from a tileset', () => {
     expect(JSON.parse(files[TILES]).metas ?? []).toEqual([])
     expect(useTilesetStore().isDirty(TILES)).toBe(false)
     expect(doc(map).metas).toEqual([])
+    // Saved with it, or its file would place a meta the tileset's no longer has.
+    await settled()
+    expect(map.dirty).toBe(false)
+    expect(normalizeMap(JSON.parse(files[MAP])).metas).toEqual([])
+    expect(map.status).toMatch(/— saved\.$/)
     expect(normalizeMap(JSON.parse(files[OTHER])).metas).toEqual([])
     expect(meta.attachedTo).toEqual([])
     expect(meta.status).toMatch(/^Removed rock\.meta-tiles\.json from main\.tiles\.json/)
   })
 
   it('from the meta-tile’s own editor: leaves a tileset with other unsaved edits unsaved, and says so', async () => {
-    await setUp()
+    const { map } = await setUp()
+    const mapFile = files[MAP]
     const meta = await open(() => animSession(ROCK))
     await removeFromTileset(meta, TILES)
     expect(useTilesetStore().patternDoc(TILES)!.metas).toEqual([])
     expect(useTilesetStore().isDirty(TILES)).toBe(true)
     expect(meta.status).toMatch(/main\.tiles\.json has other unsaved edits — save it to keep this\./)
+    // Nothing saved behind the user's back: the map had edits of its own too.
+    expect(map.dirty).toBe(true)
+    expect(files[MAP]).toBe(mapFile)
+  })
+
+  it('from the meta-tile’s own editor: leaves an open map with other unsaved edits unsaved, and says to save it', async () => {
+    const { map } = await setUp()
+    await useTilesetStore().save(TILES)
+    const meta = await open(() => animSession(ROCK))
+    await removeFromTileset(meta, TILES)
+    await settled()
+    expect(useTilesetStore().isDirty(TILES)).toBe(false)
+    expect(map.dirty).toBe(true)
+    expect(map.status).toMatch(/save the map to keep it buildable/)
   })
 })

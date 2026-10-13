@@ -724,6 +724,9 @@ onAnimSaved((event) => {
  * from the map too, placements and all, as one undoable step. Undo puts the
  * placements back, but the export will refuse them until the meta is attached
  * to the tileset again — which placing it does.
+ *
+ * When the tileset is saved with the removal, a map with nothing else unsaved
+ * is saved too, so the two files agree on disk, where the build reads them.
  */
 onMetaRemoved((event) => {
   for (const session of sessions.values()) {
@@ -731,10 +734,19 @@ onMetaRemoved((event) => {
     if (!samePath(current.tileset, event.tileset)) continue
     const slot = current.metas.findIndex((ref) => samePath(ref.path, event.path))
     if (slot < 0) continue
+    const wasDirty = session.dirty
     commit(session, removeMetaRef(current, slot))
     session.selectedPlacement = null
     if (session.brushMeta && samePath(session.brushMeta, event.path)) session.brushMeta = null
-    session.status = `${event.path.split('/').pop()} was removed from ${event.tileset.split('/').pop()}, and from this map with it.`
+    const what = `${event.path.split('/').pop()} was removed from ${event.tileset.split('/').pop()}, and from this map with it`
+    if (event.persist && !wasDirty) {
+      void saveSession(session).then(
+        () => (session.status = `${what} — saved.`),
+        (error) => (session.status = `${what}, but saving the map failed: ${String(error)}`)
+      )
+    } else {
+      session.status = event.persist ? `${what} — save the map to keep it buildable.` : `${what}.`
+    }
   }
 })
 

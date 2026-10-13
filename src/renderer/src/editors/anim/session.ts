@@ -214,8 +214,8 @@ export async function findAttachments(session: AnimSession): Promise<void> {
  * Removes this meta-tile from one tileset it is attached to, and from the maps
  * drawn with that tileset (`meta-removal.ts`), asking first when one places
  * it. The tileset is saved straight away unless it already had unsaved edits:
- * the maps beside it are rewritten on disk now, and no tab may have it open to
- * show it dirty.
+ * the maps beside it are rewritten on disk now (open ones with nothing else
+ * unsaved included), and no tab may have it open to show it dirty.
  */
 export async function removeFromTileset(session: AnimSession, tileset: string): Promise<void> {
   if (session.kind !== 'metatiles') return
@@ -229,13 +229,18 @@ export async function removeFromTileset(session: AnimSession, tileset: string): 
   }
   try {
     const wasDirty = store.isDirty(tileset)
-    const status = await removeMetaFromTileset(tileset, session.path, () => {
-      const current = store.patternDoc(tileset)
-      const next = current && detachMeta(current, session.path)
-      if (!current || !next || next === current) return false
-      store.set(tileset, next, session.path)
-      return true
-    })
+    const status = await removeMetaFromTileset(
+      tileset,
+      session.path,
+      () => {
+        const current = store.patternDoc(tileset)
+        const next = current && detachMeta(current, session.path)
+        if (!current || !next || next === current) return false
+        store.set(tileset, next, session.path)
+        return true
+      },
+      { persist: !wasDirty }
+    )
     if (status === null) return
     if (wasDirty) {
       session.status = `${status} ${tileset.split('/').pop()} has other unsaved edits — save it to keep this.`

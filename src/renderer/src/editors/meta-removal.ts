@@ -25,6 +25,12 @@ export interface MetaRemovedEvent {
   tileset: string
   /** The meta-tile's file. */
   path: string
+  /**
+   * The tileset is being saved with the removal, so an open map with nothing
+   * else unsaved saves too — its file would otherwise place a meta the
+   * tileset's file no longer has, and the next build would refuse it.
+   */
+  persist: boolean
 }
 
 type Listener = (event: MetaRemovedEvent) => void
@@ -99,11 +105,17 @@ async function mapsUsing(tileset: string, meta: string): Promise<MapUse[]> {
  * Asks first when a map places it, naming them — a closed map is rewritten on
  * disk, which no undo reaches. `detach` takes the meta out of the tileset
  * itself; it runs once the user has agreed and before any map changes, and
- * answers false when there was nothing to detach.
+ * answers false when there was nothing to detach. `persist` says the caller
+ * saves the tileset afterwards (see `MetaRemovedEvent.persist`).
  *
  * Returns the status line to show, or null when the user declined.
  */
-export async function removeMetaFromTileset(tileset: string, meta: string, detach: () => boolean): Promise<string | null> {
+export async function removeMetaFromTileset(
+  tileset: string,
+  meta: string,
+  detach: () => boolean,
+  { persist = false }: { persist?: boolean } = {}
+): Promise<string | null> {
   let uses: MapUse[]
   try {
     uses = await mapsUsing(tileset, meta)
@@ -125,7 +137,7 @@ export async function removeMetaFromTileset(tileset: string, meta: string, detac
   }
   if (!detach()) return `${fileName(meta)} is not attached to ${fileName(tileset)}.`
 
-  for (const listener of [...listeners]) listener({ tileset, path: meta })
+  for (const listener of [...listeners]) listener({ tileset, path: meta, persist })
   const failed: string[] = []
   for (const use of uses) {
     if (!use.raw) continue
