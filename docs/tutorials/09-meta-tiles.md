@@ -106,8 +106,17 @@ Two ways, and they do the same thing:
 - On a **map**, just place it (below): a meta that is not attached to the map's
   tileset yet is attached when you pick it.
 
-Detaching leaves its tiles in the tileset as ordinary art, so nothing already
-drawn with them changes.
+### Removing it
+
+The unlink button beside it in the tile editor's list — or beside the tileset in
+the meta's own *Attached to* list — removes it from that tileset. A map cannot
+place a meta its tileset does not have, so every map drawn with the tileset loses
+it too: the editor asks first, naming them, then takes it off each one — an open
+map as one undoable edit, a closed one rewritten on disk.
+
+Its tiles stay in the tileset as ordinary art, so nothing else drawn with them
+changes, and a baked copy leaves its cells in the grid. A map's **Remove unused
+tiles** reclaims the ones nothing uses any more.
 
 ## Placing one on a map
 
@@ -140,12 +149,15 @@ A level built from meta-tiles should not store every cell. Click a layer's
 **tiles** label in the map's side panel and it becomes **indexed**: a layer of
 meta-tiles and nothing else.
 
-- Meta-tiles sit side by side, in any mix of sizes. They cannot overlap — put
-  anything that overlaps on another layer.
+- Meta-tiles come in any mix of sizes, and may overlap: they stack as you
+  placed them, later on top, and a see-through cell shows the one underneath.
+  Click picks the top one.
 - Painting tiles on an indexed layer is refused; its grid is not exported at all.
 - It exports **one byte per meta-tile**. A screen of 2×2 blocks is 192 bytes
-  instead of 768, and a long wall of 4×1 bricks is a quarter of that again. The
-  side panel shows the count against what a tile layer would cost.
+  instead of 768, and a long wall of 4×1 bricks is a quarter of that again. A
+  meta that starts inside another, or that has to be drawn over one further
+  down the screen, costs three bytes more. The side panel shows the count
+  against what a tile layer would cost.
 
 The game expands it once into a tile map in RAM, and from there it is any map:
 drawn with the same layout write, read for collision, rewritten when something
@@ -188,13 +200,11 @@ beside its layers:
 #define G_LEVEL_META_G_TREE  0      // a name per meta
 #define G_LEVEL_FLAGS_G_TREE 0x01   // mirrored, so you need no other header
 
-u8 frames[G_LEVEL_METAS] = { 0 };
 g_Level_DrawLayer(g_Level_Background, 0, 0);   // the grid, one call
-g_Level_DrawPlacements(frames);                // the live metas over it
+g_Level_DrawPlacements();                      // the live metas over it
 ```
 
-(`frames` is for older meta-tiles, whose frames are redrawn per copy; a meta
-that owns its pixels animates in place and ignores it.)
+An animated one needs no redraw: `_Animate()` changes its tiles' art in place.
 
 An indexed layer is expanded first, over whatever is under it:
 
@@ -212,7 +222,7 @@ VDP_WriteLayout_GM2(g_Map, 0, 0, G_LEVEL_W, G_LEVEL_H);
 ```
 
 See-through and empty cells keep what was in `g_Map`, which is how layers
-compose. For a map wider than the screen, draw the view a row at a time from the
+compose; meta-tiles that overlap land in the order you placed them. For a map wider than the screen, draw the view a row at a time from the
 buffer:
 
 ```c
@@ -233,35 +243,22 @@ Two independent sets of flags, and neither overrides the other:
   `g_Level_MetaInfo[(g_Objects[i] - 1) * 3 + 2]` is its flags. For placements,
   the map's own header mirrors them as `G_LEVEL_FLAGS_<NAME>`.
 
-## Older meta-tiles, and bitmap ones
+## Bitmap and multicolour modes
 
-Before meta-tiles owned their pixels, one was made of a single tileset's tiles:
-it stored tile numbers, and its editor resolved every stroke into that tileset
-as you painted. Such a `.meta-tiles.json` still opens in that editor — with its
-spray tool, onion skin and **Compact unused tiles** — and still exports exactly
-what it did:
+The bitmap and multicolour modes keep their meta-tiles in a different resource:
+a `.meta-btiles.json`, drawn over one bitmap tileset (`.btiles.json`). It
+holds that tileset's tile numbers rather than art of its own — painting it puts
+the tiles into the tileset as you draw, frames and all, and **Compact unused
+tiles** gives back the ones your session made and stopped using. A map redraws
+its frames per copy:
 
 ```c
-#define G_TREE_META_W 2
-#define G_TREE_META_H 3
-#define G_TREE_CELLS  6      // tiles per frame — the table's stride
-#define G_TREE_FRAMES 4
-#define G_TREE_FLAGS  0x01
-extern const u8 g_Tree[];
-
-g_Tree_Draw(10, 5, 0);       // frame 0 at tile column 10, row 5
+u8 frames[G_LEVEL_METAS] = { 0 };     // the frame each meta shows; zero it if global
+g_Level_DrawPlacements(frames, 212);  // from the atlas parked at line 212
+g_Rock_Draw(80, 140, 0, 212);         // or one copy, frame 0, at pixel 80,140
 ```
 
-Its frames are redrawn per copy through `_DrawPlacements(frames)`, and its
-see-through cells are the ones holding tile 0, which the tileset must reserve. It
-cannot go on an indexed layer. **Make it independent**, in the banner above its
-canvas, copies its art into the file and attaches it to the same tileset **at
-the same tiles** — every map that placed it keeps drawing exactly what it drew.
-
-### Bitmap and multicolour modes
-
-A `.meta-btiles.json` over a `.btiles.json` is always this older kind — same
-editor, same frames, same placement — with three differences the hardware forces.
+Beyond that, three differences the hardware forces.
 
 **Nothing gets dropped.** Every pixel in a bitmap mode carries its own colour,
 so there is no two-per-row rule and no status-bar count. Draw what you like.
@@ -270,7 +267,8 @@ so there is no two-per-row rule and no status-bar count. Draw what you like.
 32×16. The canvas grid and the seams follow it rather than a fixed 8.
 
 **Two kinds of see-through, and they compose.** A cell holding tile 0 is not
-blitted at all, exactly as in pattern modes. On top of that, if the tileset
+blitted at all, like a see-through cell in pattern modes — reserve tile 0 in the
+tileset for it. On top of that, if the tileset
 nominates **colour 0** as its transparent index, the emitted blit uses the
 VDP's own transparency (`LMMM` with `VDP_OP_TIMP`) and the colour-0 pixels
 inside a cell show the background too — so a tree can have a real outline
@@ -285,7 +283,8 @@ why. The side panel tells you which you are getting.
 Multicolour splits, because an MSX1 has no command engine.
 
 - A **2×2** SCREEN 3 tileset makes its map a name-table map — the VDP draws it,
-  exactly as in SCREEN 1/2 — so meta-tiles place there and work unchanged.
+  exactly as in SCREEN 1/2 — so meta-tiles place there, drawn by
+  `_DrawPlacements(frames)`.
 - **Any other SCREEN 3 tile size** blits into a shadow buffer, and there is no
   blitter. Placing meta-tiles on such a map is refused in the Problems panel
   rather than exported as `VDP_CommandHMMM` that links and does nothing.

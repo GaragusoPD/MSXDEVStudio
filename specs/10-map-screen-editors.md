@@ -353,34 +353,28 @@ emits its layers as before, plus `_Placements` (three bytes each) with `_METAS`,
 `_DrawPlacements(frames)`, which `extern`s each meta's symbol and skips the baked
 entries.
 
-**Animated metas, two ways.** A meta's own *frames* animate each copy on its
-own, through `_DrawPlacements(frames)` — name-table writes per copy, so only live
-placements move. A meta can also show an *attached animation*
-(`*.anim-tiles.json`, see Spec 08): the editor's *Animated tiles* section points
-cells at an animation window in every frame (`placeAnimationInMeta`), and since
-the tileset's `_Animate()` rewrites the window's patterns, every copy animates
-in step — baked ones too — for no work per copy. The two compose. Painting over
-an animated cell forks it to a still tile; every allocator (`findOrCreateTile`,
-`findOrCreateBankTile`, `placePicture`) skips window slots, and the map's `edit`
-mode forks a window cell rather than rewrite it, because a window's art is
-rewritten from the animation before every export.
-
-**Version 3: meta-tiles own their pixels** (`meta-owned.ts`; design
-`docs/superpowers/specs/2026-10-13-indexed-meta-maps-design.md`). A pattern-mode
-meta now stores poses as tile bytes, plus see-through cells (`holes`) and flags,
-names no tileset, and is *attached* to tilesets (`TilesDoc.metas`): still cells
+**Meta-tiles own their pixels** (0.2.2; `meta-owned.ts`, design
+`docs/superpowers/specs/2026-10-13-indexed-meta-maps-design.md`). The
+tileset-referencing pattern meta described above is gone: a `.meta-tiles.json`
+stores its poses as tile bytes, plus see-through cells (`holes`) and flags,
+names no tileset, and is *attached* to tilesets (`TilesDoc.metas`). Still cells
 find-or-create their art (never tile 0, so 0 always means skip), and the cells
 that change between poses get a window in `TilesDoc.animations` under the meta's
-path, played by the tileset's `_Animate()`. A map mirrors a v3 meta's cells in
-this tileset (`MetaRef.cells`) and `_DrawPlacements` draws from that copy. The
-version-2 shape above stays for existing files and for `.meta-btiles.json`, with
-an explicit *Make it independent* that keeps a converted meta at its tiles.
+path, so the tileset's `_Animate()` animates every copy in step, baked ones too,
+for no work per copy. A map mirrors each meta's cells in its tileset
+(`MetaRef.cells`) and `_DrawPlacements()` — no frames array — draws live
+placements from that copy. Removing a meta from a tileset removes it from every
+map drawn with that tileset, which could no longer export it. The frame-per-copy
+shape above lives on only in `.meta-btiles.json`, the bitmap and SCREEN 3 kind.
 
 **Indexed layers** (`MapLayer.indexed`) are the map indexed by meta-tiles after
-all — but as a layer kind beside tile layers, not instead of them: v3 metas only,
-any mix of sizes, never overlapping, exported as one byte per meta in reading
-order (slot + 1, 0 for an empty cell), with `_MetaCells`/`_MetaCellsAt` and
-(helpers on) `_Expand(layer, tiles, objects)` into a RAM tile map.
+all — but as a layer kind beside tile layers, not instead of them: meta-tiles
+only, any mix of sizes, free to overlap and stacked in placing order. Exported
+as one byte per meta in reading order (slot + 1, 0 for an empty cell), then an
+overlay record (slot + 1, x, y) for each meta reading order cannot carry — its
+top-left covered, or an opaque overlap reading order would stack the wrong way
+— ended by 0; with `_MetaCells`/`_MetaCellsAt` and (helpers on)
+`_Expand(layer, tiles, objects)` into a RAM tile map.
 
 **Stage 2** brings pixel painting and placement to the bitmap and multicolour
 modes. Until then `.meta-btiles.json` shares the document shape and exports a

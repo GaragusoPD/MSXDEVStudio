@@ -9,7 +9,7 @@ in your project that an editor owns, and each one exports a C header your game
 | tiles | `name.tiles.json` | Tile editor | 8×8 patterns for SCREEN 1/2/4 |
 | bitmap tiles | `name.btiles.json` | Bitmap tile editor | Tilesets for the MSX2 bitmap modes (SCREEN 5–8) |
 | meta-tiles | `name.meta-tiles.json` | Pose editor | One design bigger than a tile, with its own art, poses and flags: attached to tilesets, placed on maps |
-| meta-tiles (bitmap) | `name.meta-btiles.json` | Meta-tile editor | The same, over a bitmap tileset: painted, animated and placed the same way |
+| meta-tiles (bitmap) | `name.meta-btiles.json` | Meta-tile editor | A design bigger than a tile in a bitmap mode: drawn into one bitmap tileset, frames redrawn per copy |
 | animated tile | `name.anim-tiles.json` | Animation editor | A tile (or a few) that animates — water, a coin, a torch — attached to a tileset |
 | sprites | `name.sprites.json` | Sprite editor | 8×8 or 16×16 hardware sprites |
 | map | `name.map.json` | Map editor | Tile layouts / levels |
@@ -169,6 +169,14 @@ only rewrites the chimney. Save the meta and every tileset it is attached to
 follows: tiles that still show the right art are kept, what changed is appended,
 and nothing else drawn with the tileset moves.
 
+**Removing** one from a tileset — the unlink button beside it in the tile
+editor's **Meta-tiles** list, or beside the tileset in the meta-tile's own
+*Attached to* list — takes it off every map drawn with that tileset too, after a
+confirm naming them: a map cannot place a meta its tileset does not have. An
+open map drops it as one undoable edit; a closed one is rewritten. Its tiles
+stay in the tileset as art (a map's **Remove unused tiles** reclaims them), and
+a baked placement leaves its cells in the grid.
+
 To use one, open a map and pick it from the **lower half** of the left sidebar —
 tiles above, meta-tiles below. Every meta-tile in the tileset's mode is offered;
 a dashed one is not attached yet, and picking it attaches it. Click to place,
@@ -184,21 +192,20 @@ what the record claims.
 
 **Indexed layers** — a map built from meta-tiles should not store every cell.
 Click a layer's **tiles** label to make it **indexed**: it then holds meta-tiles
-only, side by side in any mix of sizes and never overlapping, and exports one
-byte per meta-tile instead of one per cell — a screen of 2×2 metas is 192 bytes
-rather than 768. The side panel says what the layer costs. The game expands it
+only, in any mix of sizes, and exports one byte per meta-tile instead of one per
+cell — a screen of 2×2 metas is 192 bytes rather than 768. They may overlap, and
+stack as placed, later on top; one that starts inside another, or that reading
+order would draw underneath, costs three bytes more. The side panel says what the
+layer costs. The game expands it
 into a tile map in RAM (`_Expand()`, below) and draws that; animated metas keep
 animating there, including the ones a scrolling view only reaches later.
 
-**Older meta-tiles** — a `.meta-tiles.json` made before meta-tiles owned their
-pixels holds tile numbers into the one tileset it names, and opens in the
-meta-tile editor it was made with, frames, spray and all. Its frames are redrawn
-per copy rather than animated in place. **Make it independent**, in the banner
-above its canvas, copies its art into the file and attaches it to the same
-tileset at the same tiles, so every map keeps drawing exactly what it drew. A
-bitmap meta-tile (`.meta-btiles.json`, over a bitmap tileset) is always this
-kind; **Compact unused tiles** in its side panel reclaims tiles its editing
-session created and no longer uses.
+**Bitmap meta-tiles** — a `.meta-btiles.json` is the bitmap-mode kind, and
+works differently: it is drawn over one bitmap tileset (`.btiles.json`), holds
+that tileset's tile numbers, and painting it resolves each stroke into the
+tileset as you draw. Its frames are redrawn per copy, by the map's
+`_DrawPlacements(frames, …)`. **Compact unused tiles** in its side panel reclaims
+tiles its editing session created and no longer uses.
 
 **Bitmap tiles** — the SCREEN 5/6/7/8 counterpart of a pattern tileset, and a
 different thing from a screen. A screen is one picture used as it is; a tileset
@@ -488,21 +495,21 @@ see-through cells skipped:
 g_MyTiles_DrawMeta(G_MYTILES_META_TREE, 10, 5);   // top-left at tile column 10, row 5
 ```
 
-(An older meta-tile, made of one tileset's tiles, draws itself instead:
-`g_Tree_Draw(10, 5, 0)`, frame 0.)
+(A bitmap meta-tile draws itself: `g_Rock_Draw(80, 140, 0, 212)` — frame 0 at
+pixel 80,140, from the atlas parked at line 212.)
 
 A map that places meta-tiles exports a placement table beside its layers, and
 with helpers on, the runtime that walks it:
 
 ```c
-u8 frames[G_LEVEL_METAS] = { 0 };
 g_Level_DrawLayer(g_Level_Background, 0, 0);   // the grid, one call
-g_Level_DrawPlacements(frames);                // the live metas over it
+g_Level_DrawPlacements();                      // the live metas over it
 ```
 
-`frames[slot]` is the frame an older meta-tile currently shows; one that owns
-its pixels animates in place through `_Animate()` instead, and ignores it.
-Baked placements are skipped — their tiles are already in the layer.
+An animated meta needs no redraw: `_Animate()` changes its tiles' art in place.
+Baked placements are skipped — their tiles are already in the layer. A map of
+bitmap meta-tiles takes the frame each slot shows, `frames[G_LEVEL_METAS]`
+(zero it if it is a global), and the atlas line: `_DrawPlacements(frames, 212)`.
 
 A map with an **indexed layer** gets the expander. Fill the buffer first — RAM
 is not cleared at boot on a ROM target — then expand the layer over it and draw
@@ -517,7 +524,8 @@ VDP_WriteLayout_GM2(g_Map, 0, 0, G_LEVEL_W, G_LEVEL_H);
 ```
 
 Only the cells a meta draws are written, so see-through and empty cells keep
-what was there — expand lower layers first, into the same buffer. `g_Objects`,
+what was there — expand lower layers first, into the same buffer. Overlapping
+meta-tiles land in the order they were placed. `g_Objects`,
 or `NULL`, gets the slot + 1 of the meta covering each cell it draws, for
 collision against the object: `g_Level_MetaInfo[(g_Objects[i] - 1) * 3 + 2]` is
 its flags.
@@ -547,10 +555,6 @@ not, for 24 bytes a step in SCREEN 2 — and copies colours only when the poses
 differ in colour. A meta-tile with more than one pose is played by the same
 `_Animate()`, through the window its moving cells were given, and has an
 `_ANIM_` index of its own for `_AnimSetActive`/`_AnimRestart`/`_AnimGetFrame`.
-
-An older meta-tile can show an animation too: in its editor's *Animated tiles*
-section, place an attached animation at a cell and those cells point at its
-window in every frame.
 
 **Software sprites** (MSX2, `VDP_USE_COMMAND`) — characters drawn *into* the
 screen, so the per-scanline sprite limit does not apply. The fragments are

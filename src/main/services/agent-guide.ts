@@ -349,7 +349,10 @@ that header has to be exported and compiled, which the IDE does.
 numbers are re-resolved from it at every export (and when the tile editor
 opens), keeping every tile that still shows the right art and appending what
 changed — nothing else drawn with the tileset moves. Don't hand-edit a
-\`.tiles.json\`'s \`metas\` list: it is derived.
+\`.tiles.json\`'s \`metas\` list: it is derived. To take a meta out of a
+tileset, remove it in the tile editor's *Meta-tiles* panel — that removes it
+from every map drawn with the tileset too, because a map that places a meta its
+tileset does not have will not export.
 
 ### Placing meta-tiles on a map
 
@@ -464,7 +467,8 @@ VDP_WriteLayout_GM2(g_Map, 0, 0, G_LEVEL_W, G_LEVEL_H);
   meta covers, the meta that starts there — so it draws in reading order. A
   meta that starts inside another's rectangle, or that must be drawn over one
   that comes later in reading order, is an *overlay* record after the stream
-  (slot + 1, x, y), drawn after it in placing order. Where one of two overlapping
+  (slot + 1, x, y), drawn after it in placing order — x and y two bytes each,
+  low first, on a map wider or taller than 256. Where one of two overlapping
   metas is see-through, their order does not matter and nothing extra is spent.
 
 ### Animated tiles

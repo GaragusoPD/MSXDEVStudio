@@ -1,8 +1,9 @@
 # Meta-tiles as attached entities, and maps indexed by them — design
 
 **Date:** 2026-10-13
-**Status:** phases 1 and 2 implemented; phase 3 (SCREEN 3) not started. See
-*As built* for where the implementation differs from the proposal below.
+**Status:** phases 1 and 2 implemented (0.2.1), then overlap, removal and one
+meta model (0.2.2); phase 3 (SCREEN 3) not started. See *As built* for where the
+implementation differs from the proposal below.
 **Builds on:** `2026-10-13-tile-animations-design.md` (attached animations).
 
 ## As built
@@ -31,11 +32,26 @@ another way, each for a reason found while building it.
   metas in a tileset renumbers nothing in any map, and no meta reorder log was
   needed. The tileset still exports its own `_MetaInfo`/`_MetaCells` and
   `_DrawMeta()` for drawing a meta outside a map.
-- **Version-2 meta-tiles were kept, not migrated on open.** They open in the
-  editor they were made with and export exactly as before; *Make it
-  independent* converts one explicitly (decision 2's recommendation). Bitmap
-  meta-tiles are version 2 by nature. Only version-3 metas can be on an indexed
-  layer.
+- **Version-2 pattern meta-tiles were kept in 0.2.1, then dropped in 0.2.2**
+  (Pablo: *"We don't need to worry about breaking old code. We are not in
+  version 1 yet … Just need to make sure we are consistent in the current
+  version."*). 0.2.1 opened them in their old editor with *Make it independent*
+  to convert; 0.2.2 removed that editor path, the conversion, per-copy frames
+  on pattern maps (`_DrawPlacements()` takes no frames array) and placing an
+  attached animation in a meta. Bitmap meta-tiles (`.meta-btiles.json`) keep
+  the frame-per-copy shape: they are their own kind.
+- **Indexed layers allow overlap** (0.2.2; *"Meta tiles can overlap"*), and
+  keep the editor's stacking order — later on top. The one-byte-per-meta stream
+  stays as it was; `indexedLayerPlan` moves to an overlay list (slot + 1, x, y,
+  ended by 0) any meta whose top-left is covered, that starts where another
+  does, or whose opaque overlap reading order would stack the wrong way.
+  `_Expand()` stamps the overlays after the stream. Where a see-through cell is
+  all that overlaps, order is free and nothing extra is spent.
+- **Removing a meta from a tileset removes it from the maps drawn with it**
+  (0.2.2), from the tile editor or from the meta's own *Attached to* list: a map
+  cannot export a meta its tileset does not have. A confirm names the maps; open
+  ones drop it as an undoable edit, closed ones are rewritten. Its tiles stay as
+  art.
 - **The stream is never RLEp-packed**, even when the map's tile layers are:
   `_Expand(layer, tiles, objects)` reads it byte by byte.
 - Decision 1 (merge `.anim-tiles.json` into meta-tiles) was not taken as a file
@@ -43,11 +59,15 @@ another way, each for a reason found while building it.
   meta is an animation's poses plus holes and flags. *Attach again* for
   independent copies is not built: a binding is keyed by the meta's path.
 
-Verified: pure round trips of mixed sizes against the C's walk, the export
-rendered from files alone, real MSXgl builds of every entry point (SCREEN 2 on
-an MSX1, SCREEN 1 on an MSX2), and an openMSX boot of a scrolling indexed level
-whose torches — one on screen, one scrolled in — show the window's tiles while
-the window's patterns step through their ping-pong.
+Verified: pure round trips of mixed sizes against the C's walk (and, for
+overlaps, 60 random layouts expanded both ways against painting in z-order), the
+export rendered from files alone, real MSXgl builds of every entry point
+(SCREEN 2 on an MSX1, SCREEN 1 on an MSX2), and an openMSX boot of a scrolling
+indexed level whose torches — one on screen, one scrolled in — show the
+window's tiles while the window's patterns step through their ping-pong. In
+0.2.2 that level gained three overlaps (one streamed, two overlays); its name
+table read back from the emulator matches the editor's expansion in all 704
+view cells at both scroll positions.
 
 ## Why
 
