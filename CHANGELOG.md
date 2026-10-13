@@ -7,6 +7,43 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-13
+
+### Meta-tiles: overlap, removal, one model
+
+#### Added
+
+- **Overlapping meta-tiles on indexed layers.** They stack as placed, later on
+  top, and a see-through cell shows the one underneath; a click picks the top
+  one. The layer still costs one byte per meta-tile: a meta that starts inside
+  another, or that reading order would draw underneath, is an overlay record
+  (slot + 1, x, y — two bytes per coordinate past 256) after the stream, which
+  `_Expand()` draws last. Built by the real MSXgl and booted in openMSX: the
+  expanded name table matches the editor's to the cell.
+- **Removing a meta-tile from a tileset**, from the tile editor's *Meta-tiles*
+  list or from the meta-tile's own *Attached to* list. A map cannot place a
+  meta its tileset does not have, so every map drawn with the tileset follows:
+  after a confirm naming them, an open map drops it as one undoable edit and a
+  closed one is rewritten. Its tiles stay in the tileset as art, and a baked
+  copy leaves its cells in the grid. From the meta's editor the tileset is
+  saved straight away — with every open map that had nothing else unsaved, so
+  the files the build reads agree — unless it already had unsaved edits of its
+  own.
+
+#### Changed
+
+- **One kind of pattern meta-tile.** A `.meta-tiles.json` is always the kind
+  that owns its pixels and is attached to tilesets; the older kind made of one
+  tileset's tile numbers is gone, with its editor path, the *Make it
+  independent* conversion and placing an attached animation inside a meta. A
+  file from before opens as a blank meta at its own size.
+- **A pattern map's `_DrawPlacements()` takes no frames array.** Every live
+  placement draws from the map's own `_MetaCells`, and an animated meta-tile
+  animates in place through the tileset's `_Animate()`. Bitmap and SCREEN 3
+  maps keep `_DrawPlacements(frames, …)`: a `.meta-btiles.json` still redraws
+  its frames per copy.
+- The meta-tile editor is the `.meta-btiles.json` editor only.
+
 ## [0.2.1] - 2026-10-13
 
 ### Meta-tiles as their own entities, and maps indexed by them
