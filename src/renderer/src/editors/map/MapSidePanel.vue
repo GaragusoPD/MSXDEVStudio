@@ -9,7 +9,7 @@ import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
-import { addLayer, commit, doc, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, commit, doc, indexedSummary, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setIndexed, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 import MapPaintPanel from './MapPaintPanel.vue'
@@ -367,7 +367,22 @@ const packing = computed(() => {
           @click.stop
           @change="renameLayer(session, index, ($event.target as HTMLInputElement).value)"
         >
-        <span class="kind">{{ layer.kind }}</span>
+        <button
+          v-if="!mapDoc.cell"
+          type="button"
+          class="kind"
+          :class="{ indexed: layer.indexed }"
+          :title="layer.indexed
+            ? 'Indexed: meta-tiles only, one byte each in the export, expanded into RAM by _Expand(). Click to make it a tile layer.'
+            : 'A tile layer: one byte per cell. Click to make it indexed — meta-tiles only, one byte each.'"
+          @click.stop="setIndexed(session, index, !layer.indexed)"
+        >
+          {{ layer.indexed ? 'indexed' : 'tiles' }}
+        </button>
+        <span
+          v-else
+          class="kind"
+        >{{ layer.kind }}</span>
         <button
           type="button"
           class="move"
@@ -404,6 +419,13 @@ const packing = computed(() => {
           Add layer
         </button>
       </div>
+      <p
+        v-if="mapDoc.layers[session.activeLayer]?.indexed"
+        class="hint"
+      >
+        Indexed: {{ indexedSummary(session, session.activeLayer) }} Animated meta-tiles keep animating
+        there — their tiles are the tileset's windows.
+      </p>
     </section>
 
     <section>
@@ -585,6 +607,23 @@ label > span:first-child {
   flex: none;
   font-size: 9px;
   color: var(--color-text-muted);
+}
+
+.layer-row button.kind {
+  padding: 0 3px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: none;
+  cursor: pointer;
+}
+
+.layer-row button.kind:hover {
+  border-color: var(--color-border);
+}
+
+.layer-row button.kind.indexed {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .add-row {

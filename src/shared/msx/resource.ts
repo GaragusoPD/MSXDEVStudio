@@ -26,6 +26,9 @@ import {
   normalizeMap,
   mapExport,
   mapHelperC,
+  hasIndexedLayers,
+  indexedLayerHelperC,
+  metaCellTables,
   metaInfoBytes,
   placementBytes,
   placementCount,
@@ -491,9 +494,19 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       return tables
     }
     case 'map': {
-      const tables: EmitTable[] = mapExport(resource.doc, compress).layers.map(({ bytes, unpacked }, index) => {
+      const tables: EmitTable[] = mapExport(resource.doc, compress).layers.map(({ bytes, unpacked, indexed }, index) => {
         const layer = resource.doc.layers[index]
         const size = `${resource.doc.width}×${resource.doc.height}`
+        if (indexed) {
+          return {
+            suffix: `_${pascal(layer.name)}`,
+            bytes,
+            perLine: 16,
+            comment:
+              `Indexed layer "${layer.name}" (${size}) — ${layer.placements.length} meta-tile${layer.placements.length === 1 ? '' : 's'} in ${bytes.length} bytes: ` +
+              'in reading order, at each cell no earlier meta covers, its slot + 1, or 0 for an empty cell. Expand it into RAM before drawing.'
+          }
+        }
         return {
           suffix: `_${pascal(layer.name)}`,
           bytes,
@@ -508,16 +521,35 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       })
       // Uncompressed on purpose, unlike the layers: a placement table is three
       // bytes an entry and the game indexes into it directly.
+      const indexed = hasIndexedLayers(resource.doc)
+      // Ahead of the placements, because it describes what they index — and
+      // what an indexed layer's bytes name.
+      if ((placementCount(resource.doc) || indexed) && resource.doc.metas.length) {
+        tables.push({
+          suffix: '_MetaInfo',
+          bytes: metaInfoBytes(resource.doc),
+          perLine: 3,
+          comment: 'Per meta slot: width, height, flags — three bytes each, indexed by a placement\'s slot'
+        })
+      }
+      if (indexed && resource.doc.metas.length) {
+        const { cells, at } = metaCellTables(resource.doc)
+        tables.push(
+          {
+            suffix: '_MetaCells',
+            bytes: cells,
+            perLine: 16,
+            comment: 'Each slot\'s tiles, row-major, end to end — the tiles its attachment to the tileset gives it; 0 is a see-through cell'
+          },
+          {
+            suffix: '_MetaCellsAt',
+            bytes: at,
+            perLine: 2,
+            comment: 'Where each slot\'s tiles start in _MetaCells — two bytes a slot, low first'
+          }
+        )
+      }
       if (placementCount(resource.doc)) {
-        // Ahead of the placements, because it describes what they index.
-        if (resource.doc.metas.length) {
-          tables.push({
-            suffix: '_MetaInfo',
-            bytes: metaInfoBytes(resource.doc),
-            perLine: 3,
-            comment: 'Per meta slot: width, height, flags — three bytes each, indexed by a placement\'s slot'
-          })
-        }
         tables.push({
           suffix: '_Placements',
           bytes: placementBytes(resource.doc),
@@ -717,6 +749,14 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
         notes.push(
           `Meta-tiles: ${resource.doc.metas.map((meta) => meta.name).join(', ')}`,
           `Placements: ${placementCount(resource.doc)}`
+        )
+      }
+      if (hasIndexedLayers(resource.doc)) {
+        notes.push(
+          `Indexed layers: ${resource.doc.layers
+            .filter((layer) => layer.indexed)
+            .map((layer) => `${layer.name} (${layer.placements.length} meta-tiles)`)
+            .join(', ')}`
         )
       }
       if (resource.doc.cell) {
@@ -991,9 +1031,9 @@ function resourceCode(
       `${name}_${pascal(first.name)}`
     )
     // The placement runtime is additive: a map that places nothing gets exactly
-    // the C it always did.
+    // the C it always did. So is the expander, for a map with indexed layers.
     const placed = placementHelperC(resource.doc, name)
-    return { header: [...layers.header, ...placed.header], source: [...layers.source, ...placed.source] }
+    return joinHelpers(layers, placed, indexedLayerHelperC(resource.doc, name))
   }
   if (resource.kind === 'screen') {
     const banded = screenDataExport(resource.doc, compress).geometry

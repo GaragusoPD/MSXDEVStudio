@@ -28,6 +28,14 @@ export interface MapLayer {
   visible: boolean
   /** Meta-tiles dropped on this layer. Z-order is list order. */
   placements: MetaPlacement[]
+  /**
+   * An **indexed** layer is made of meta-tiles and nothing else: its
+   * placements, which never overlap, are its whole content, and it exports as
+   * one byte per meta-tile (`indexedLayerStream`) rather than one per cell.
+   * The game expands it into a tile map in RAM (`_Expand`). Its `data` is
+   * unused and kept at 0. Written only when true.
+   */
+  indexed?: boolean
 }
 
 /**
@@ -204,13 +212,15 @@ export function normalizeMap(raw: unknown): MapDoc {
     const layer = (typeof entry === 'object' && entry !== null ? entry : {}) as Partial<MapLayer>
     const data = new Array<number>(cells).fill(0)
     for (let i = 0; i < cells; i++) data[i] = Number(layer.data?.[i]) || 0
-    return {
+    const out: MapLayer = {
       name: String(layer.name ?? `layer_${index}`),
       kind: 'tiles',
       data,
       visible: layer.visible !== false,
       placements: normalizePlacements(layer.placements, width, height, metas.length)
     }
+    if (layer.indexed === true) out.indexed = true
+    return out
   })
 
 
@@ -409,6 +419,8 @@ export function validateMap(doc: MapDoc, options: { banked?: boolean } = {}): st
     }
   }
 
+  problems.push(...indexedLayerProblems(doc))
+
   // A placement's *origin* is inside the grid — `placeMeta` and
   // `normalizePlacements` both enforce that — but its far edge need not be, and
   // a meta hanging off the right of the map writes into the next row of the
@@ -462,13 +474,22 @@ export function mapLayerBytes(layer: MapLayer): Uint8Array {
 export function mapExport(
   doc: MapDoc,
   compress: ExportBlock['compress']
-): { compressed: boolean; layers: { bytes: Uint8Array; unpacked?: number }[] } {
-  const raw = doc.layers.map(mapLayerBytes)
-  const uncompressed = { compressed: false, layers: raw.map((bytes) => ({ bytes })) }
-  if (compress !== 'rlep' || !raw.length) return uncompressed
-  const packed = raw.map(packRlep)
-  if (!packed.every((bytes, index) => bytes.length < raw[index].length)) return uncompressed
-  return { compressed: true, layers: packed.map((bytes, index) => ({ bytes, unpacked: raw[index].length })) }
+): { compressed: boolean; layers: { bytes: Uint8Array; unpacked?: number; indexed?: true }[] } {
+  // An indexed layer is its stream, raw whatever is asked: `_Expand` reads it
+  // byte by byte, and it is a byte per meta-tile already. The all-or-nothing
+  // rule is about the layers one `_DrawLayer()` serves, which it is not.
+  const raw = doc.layers.map((layer) => (layer.indexed ? indexedLayerStream(doc, layer) : mapLayerBytes(layer)))
+  const plain = (bytes: Uint8Array, index: number): { bytes: Uint8Array; indexed?: true } =>
+    doc.layers[index].indexed ? { bytes, indexed: true } : { bytes }
+  const uncompressed = { compressed: false, layers: raw.map(plain) }
+  const tileLayers = raw.filter((_, index) => !doc.layers[index].indexed)
+  if (compress !== 'rlep' || !tileLayers.length) return uncompressed
+  const packed = raw.map((bytes, index) => (doc.layers[index].indexed ? bytes : packRlep(bytes)))
+  if (!packed.every((bytes, index) => doc.layers[index].indexed || bytes.length < raw[index].length)) return uncompressed
+  return {
+    compressed: true,
+    layers: packed.map((bytes, index) => (doc.layers[index].indexed ? plain(bytes, index) : { bytes, unpacked: raw[index].length }))
+  }
 }
 
 /**
@@ -739,6 +760,309 @@ function bitmapOverlayC(doc: MapDoc, name: string, prefix: string): HelperC {
   }
 }
 
+// ── indexed layers ──────────────────────────────────────────────────────────
+
+/** True for a layer made of meta-tiles only, exported as one byte each. */
+export function isIndexedLayer(layer: MapLayer | undefined): boolean {
+  return layer?.indexed === true
+}
+
+/** Whether any layer is indexed — what decides the expander and its tables. */
+export function hasIndexedLayers(doc: MapDoc): boolean {
+  return doc.layers.some((layer) => layer.indexed)
+}
+
+/**
+ * The placement on `layerIndex` a `width × height` meta at (x, y) would
+ * overlap, or null. `ignore` leaves one placement out — the one being moved.
+ */
+export function overlappingPlacement(
+  doc: MapDoc,
+  layerIndex: number,
+  rect: { x: number; y: number; width: number; height: number },
+  ignore: number | null = null
+): number | null {
+  const layer = doc.layers[layerIndex]
+  if (!layer) return null
+  for (const [index, placement] of layer.placements.entries()) {
+    if (index === ignore) continue
+    const ref = doc.metas[placement.slot]
+    if (!ref) continue
+    const apart =
+      placement.x >= rect.x + rect.width ||
+      rect.x >= placement.x + ref.width ||
+      placement.y >= rect.y + rect.height ||
+      rect.y >= placement.y + ref.height
+    if (!apart) return index
+  }
+  return null
+}
+
+/**
+ * Makes a layer indexed, or ordinary again.
+ *
+ * On: the grid is cleared — an indexed layer is its meta-tiles — and baked
+ * placements become live, since baking is writing into the grid it no longer
+ * has. Off: lossless; the meta-tiles stay as live placements over an empty
+ * grid.
+ */
+export function setLayerIndexed(doc: MapDoc, layerIndex: number, on: boolean): MapDoc {
+  const layer = doc.layers[layerIndex]
+  if (!layer || isIndexedLayer(layer) === on) return doc
+  const layers = doc.layers.slice()
+  if (on) {
+    layers[layerIndex] = {
+      ...layer,
+      indexed: true,
+      data: new Array<number>(layer.data.length).fill(0),
+      placements: layer.placements.map((p) => ({ slot: p.slot, x: p.x, y: p.y }))
+    }
+  } else {
+    const { indexed: _indexed, ...plain } = layer
+    void _indexed
+    layers[layerIndex] = plain
+  }
+  return { ...doc, layers }
+}
+
+/**
+ * An indexed layer as the game reads it: one byte per meta-tile, any mix of
+ * sizes. Walking the cells in reading order, at each cell no earlier meta
+ * covers, the byte is the slot + 1 of the meta whose top-left is there — or 0,
+ * an empty 1×1 cell, when none is.
+ *
+ * Unambiguous because a meta's top-left is the first of its cells in reading
+ * order, so the decoder always meets it before any cell it covers — and so it
+ * knows to skip those. Runs of 0 are what RLEp packs best, though this table
+ * ships raw: the expander reads it byte by byte.
+ */
+export function indexedLayerStream(doc: MapDoc, layer: MapLayer): Uint8Array {
+  const width = doc.width
+  const covered = new Uint8Array(width * doc.height)
+  const origin = new Map<number, MetaPlacement>()
+  for (const placement of layer.placements) origin.set(placement.y * width + placement.x, placement)
+  const out: number[] = []
+  for (let y = 0; y < doc.height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = y * width + x
+      if (covered[at]) continue
+      const placement = origin.get(at)
+      const ref = placement && doc.metas[placement.slot]
+      if (!placement || !ref) {
+        out.push(0)
+        continue
+      }
+      out.push(placement.slot + 1)
+      for (let dy = 0; dy < ref.height && y + dy < doc.height; dy++) {
+        for (let dx = 0; dx < ref.width && x + dx < width; dx++) covered[(y + dy) * width + x + dx] = 1
+      }
+    }
+  }
+  return Uint8Array.from(out)
+}
+
+/**
+ * The stream read back into placements — the proof the encoding loses
+ * nothing. Walks it exactly as the generated `_Expand` does: a column counter
+ * per cell of the row says how many more rows an earlier meta covers it for.
+ */
+export function decodeIndexedStream(doc: MapDoc, stream: ArrayLike<number>): MetaPlacement[] {
+  const placements: MetaPlacement[] = []
+  const cover = new Array<number>(doc.width).fill(0)
+  let read = 0
+  for (let y = 0; y < doc.height; y++) {
+    for (let x = 0; x < doc.width; x++) {
+      if (cover[x]) continue
+      const m = stream[read++] ?? 0
+      const ref = m ? doc.metas[m - 1] : undefined
+      if (!ref) continue
+      placements.push({ slot: m - 1, x, y })
+      for (let c = 0; c < ref.width && x + c < doc.width; c++) cover[x + c] = ref.height
+    }
+    for (let x = 0; x < doc.width; x++) if (cover[x]) cover[x]--
+  }
+  return placements
+}
+
+/**
+ * What `_Expand` leaves in RAM: the layer's meta-tiles written into `under`
+ * (another layer's tiles, or zeros), and which slot + 1 covers each cell it
+ * drew. See-through cells and empty ones keep what was under them. Pure, and
+ * the same walk as the C — what the tests hold the generated code to.
+ */
+export function expandIndexedLayer(
+  doc: MapDoc,
+  layer: MapLayer,
+  under: readonly number[] = new Array<number>(doc.width * doc.height).fill(0)
+): { tiles: number[]; objects: number[] } {
+  const tiles = under.slice()
+  const objects = new Array<number>(doc.width * doc.height).fill(0)
+  for (const placement of decodeIndexedStream(doc, indexedLayerStream(doc, layer))) {
+    const ref = doc.metas[placement.slot]
+    const cells = ref?.cells ?? []
+    for (let r = 0; r < ref.height; r++) {
+      for (let c = 0; c < ref.width; c++) {
+        const tile = cells[r * ref.width + c] ?? 0
+        if (!tile) continue
+        const at = (placement.y + r) * doc.width + placement.x + c
+        tiles[at] = tile
+        objects[at] = placement.slot + 1
+      }
+    }
+  }
+  return { tiles, objects }
+}
+
+/**
+ * What would make an indexed layer expand to something other than what the
+ * editor shows — or not expand at all.
+ */
+function indexedLayerProblems(doc: MapDoc): string[] {
+  const problems: string[] = []
+  doc.layers.forEach((layer, layerIndex) => {
+    if (!layer.indexed) return
+    const label = `Layer "${layer.name}"`
+    if (doc.cell) {
+      problems.push(`${label} is indexed, which needs a map drawn through the name table with a pattern tileset`)
+      return
+    }
+    layer.placements.forEach((placement, index) => {
+      const ref = doc.metas[placement.slot]
+      if (!ref) return
+      if (!ref.cells) {
+        problems.push(
+          `${label}: "${ref.name}" references its tileset's tiles — an indexed layer holds meta-tiles that own their pixels; open it and make it independent`
+        )
+      }
+      if (placement.baked) problems.push(`${label}: "${ref.name}" at ${placement.x},${placement.y} is baked, and an indexed layer has no grid to bake into`)
+      const other = overlappingPlacement(doc, layerIndex, { x: placement.x, y: placement.y, width: ref.width, height: ref.height }, index)
+      if (other !== null && other > index) {
+        const hit = layer.placements[other]
+        problems.push(
+          `${label}: "${ref.name}" at ${placement.x},${placement.y} overlaps "${doc.metas[hit.slot]?.name}" at ${hit.x},${hit.y} — meta-tiles on an indexed layer cannot overlap`
+        )
+      }
+    })
+  })
+  return [...new Set(problems)]
+}
+
+/**
+ * Each slot's tiles, end to end, as the expander reads them — and where each
+ * slot starts, two bytes a slot, low first. A slot that references its
+ * tileset's tiles (version 2) contributes nothing: it can only be placed, not
+ * be part of an indexed layer.
+ */
+export function metaCellTables(doc: MapDoc): { cells: Uint8Array; at: Uint8Array } {
+  const cells: number[] = []
+  const at: number[] = []
+  for (const ref of doc.metas) {
+    at.push(cells.length & 0xff, (cells.length >> 8) & 0xff)
+    if (ref.cells) cells.push(...ref.cells)
+  }
+  // An empty table is not valid C; a map with no cells to expand has one byte.
+  return { cells: Uint8Array.from(cells.length ? cells : [0]), at: Uint8Array.from(at) }
+}
+
+/**
+ * The ready-made C that expands an indexed layer into a tile map in RAM — the
+ * runtime half of `indexedLayerStream`, walking it as `decodeIndexedStream`
+ * does. The expanded map is what the game already keeps for a level it can
+ * change (`demo_msx1`'s `g_Map`): drawn with the same layout write, read for
+ * collision, rewritten when something is taken.
+ *
+ * Animated meta-tiles need nothing here: their cells are window tiles, so
+ * expanding them writes window numbers, and the tileset's `_Animate()` moves
+ * every copy — on screen or scrolled in later.
+ */
+export function indexedLayerHelperC(doc: MapDoc, name: string): HelperC {
+  if (!hasIndexedLayers(doc) || doc.cell) return { header: [], source: [] }
+  const prefix = defineName(name)
+  const first = doc.layers.find((layer) => layer.indexed)!
+  const xType = doc.width > 255 ? 'u16' : 'u8'
+  const yType = doc.height > 255 ? 'u16' : 'u8'
+  const signature = `void ${name}_Expand(const u8* layer, u8* tiles, u8* objects)`
+  return {
+    header: [
+      '',
+      `// ── ${name}: indexed layers ───────────────────────────────────────────`,
+      '//',
+      '// Expands an indexed layer — one byte per meta-tile — into a tile map in',
+      `// RAM: ${prefix}_W * ${prefix}_H bytes, row-major, which VDP_WriteLayout_GM2 draws as it is.`,
+      '//',
+      '// Only the cells a meta-tile draws are written. See-through cells and empty',
+      '// ones keep what `tiles` held, so expanding a layer over another one',
+      '// composes them: expand the lower layer first, into the same buffer.',
+      '//',
+      '// `objects`, unless NULL, gets the slot + 1 of the meta-tile covering each',
+      `// cell it draws — ${prefix}_META_<NAME> + 1 — for collision against the object`,
+      `// rather than its tiles: ${name}_MetaInfo[(objects[i] - 1) * 3 + 2] is its flags.`,
+      '//',
+      '// RAM is not cleared at boot on a ROM target: fill `tiles` (and zero',
+      '// `objects`) before the first expand, or the cells no meta covers are',
+      '// whatever the machine powered up with.',
+      '//',
+      '// Example:',
+      `//   u8 map[${prefix}_W * ${prefix}_H];`,
+      `//   for(u16 i = 0; i < sizeof(map); ++i) map[i] = 0;`,
+      `//   ${name}_Expand(${name}_${pascalName(first.name)}, map, NULL);`,
+      `//   VDP_WriteLayout_GM2(map, 0, 0, ${prefix}_W, ${prefix}_H);`,
+      `${signature};`
+    ],
+    source: [
+      '',
+      signature,
+      '{',
+      `	// Per column: how many more rows an earlier meta-tile covers it for.`,
+      `	u8 cover[${prefix}_W];`,
+      `	for(${xType} x = 0; x < ${prefix}_W; ++x) cover[x] = 0;`,
+      '	u16 row = 0;',
+      `	for(${yType} y = 0; y < ${prefix}_H; ++y)`,
+      '	{',
+      `		for(${xType} x = 0; x < ${prefix}_W; ++x)`,
+      '		{',
+      '			if(cover[x]) continue;',
+      '			u8 m = *layer++;',
+      `			if(m == 0 || m > ${prefix}_METAS) continue;`,
+      '			--m;',
+      `			const u8* info = ${name}_MetaInfo + (u16)m * 3;`,
+      '			const u8 w = info[0];',
+      '			const u8 h = info[1];',
+      `			const u8* src = ${name}_MetaCells + (${name}_MetaCellsAt[m * 2] | ((u16)${name}_MetaCellsAt[m * 2 + 1] << 8));`,
+      '			u16 dst = row + x;',
+      '			for(u8 r = 0; r < h; ++r)',
+      '			{',
+      '				for(u8 c = 0; c < w; ++c)',
+      '				{',
+      '					const u8 t = src[c];',
+      '					if(!t) continue;',
+      '					tiles[dst + c] = t;',
+      '					if(objects) objects[dst + c] = m + 1;',
+      '				}',
+      '				src += w;',
+      `				dst += ${prefix}_W;`,
+      '			}',
+      '			for(u8 c = 0; c < w; ++c) cover[x + c] = h;',
+      '		}',
+      `		for(${xType} x = 0; x < ${prefix}_W; ++x) if(cover[x]) --cover[x];`,
+      `		row += ${prefix}_W;`,
+      '	}',
+      '}'
+    ]
+  }
+}
+
+/** A layer name as the table suffix `resourceTables` gives it — `pascal` there, repeated so this file needs no import. */
+function pascalName(name: string): string {
+  return (
+    name
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('') || 'Layer'
+  )
+}
+
 // ── placed meta-tiles ───────────────────────────────────────────────────────
 
 /**
@@ -884,8 +1208,17 @@ export function placementAt(doc: MapDoc, layerIndex: number, x: number, y: numbe
   return null
 }
 
-/** How many placements the whole map holds — what `_PLACEMENTS` counts. */
+/**
+ * How many placements the placement table holds — what `_PLACEMENTS` counts
+ * and `_DrawPlacements` draws. An indexed layer's meta-tiles are not among
+ * them: they are its stream, drawn by expanding it.
+ */
 export function placementCount(doc: MapDoc): number {
+  return doc.layers.reduce((sum, layer) => sum + (layer.indexed ? 0 : layer.placements.length), 0)
+}
+
+/** Every meta-tile on the map, indexed layers included — what renumbering tiles would disturb. */
+export function metaUseCount(doc: MapDoc): number {
   return doc.layers.reduce((sum, layer) => sum + layer.placements.length, 0)
 }
 
@@ -898,6 +1231,7 @@ export function placementCount(doc: MapDoc): number {
 export function placementBytes(doc: MapDoc): Uint8Array {
   const out: number[] = []
   for (const layer of doc.layers) {
+    if (layer.indexed) continue
     for (const placement of layer.placements) {
       out.push((placement.slot & 0x7f) | (placement.baked ? 0x80 : 0), placement.x & 0xff, placement.y & 0xff)
     }

@@ -177,10 +177,10 @@ describe('converting a version-2 meta', () => {
     expect(saved.frames[0].tiles[0].pattern[0]).toBe(0x24)
     expect(saved.flags).toBe(2)
     // The tileset, saved with it since it had no edits of its own.
-    const tileset = parseResource(TILES, files[TILES]).doc
-    if (!('metas' in tileset)) throw new Error('not a tileset')
-    expect(tileset.metas[0].cells).toEqual([3, 0])
-    expect(tileset.count).toBe(4)
+    const parsed = parseResource(TILES, files[TILES])
+    if (parsed.kind !== 'tiles') throw new Error('not a tileset')
+    expect(parsed.doc.metas[0].cells).toEqual([3, 0])
+    expect(parsed.doc.count).toBe(4)
     expect(metaFormat(META)).toBe('owned')
   })
 

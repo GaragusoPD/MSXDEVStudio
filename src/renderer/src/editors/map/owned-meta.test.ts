@@ -18,7 +18,20 @@ import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
 import { attachableMetas, attachMetaFile, detachMetaFile, pruneTileSessions, tileSession } from '../tile/session'
-import { doc, mapSession, pickMeta, placeMetaAt, pruneMapSessions, selectPlacementAt, setBaked, unattachedMetas } from './session'
+import {
+  doc,
+  indexedSummary,
+  mapSession,
+  movePlacementTo,
+  paintDrag,
+  pickMeta,
+  placeMetaAt,
+  pruneMapSessions,
+  selectPlacementAt,
+  setBaked,
+  setIndexed,
+  unattachedMetas
+} from './session'
 
 const MAP = 'res/level.map.json'
 const TILES = 'res/main.tiles.json'
@@ -179,5 +192,66 @@ describe('placing one on a map', () => {
     files[ROCK] = serializeResource({ kind: 'metatiles', doc: normalizeOwnedMeta({ ...rock(), mode: 'sc1' }) })
     const session = await open(() => mapSession(MAP))
     expect(unattachedMetas(session)).toEqual([])
+  })
+})
+
+describe('an indexed layer', () => {
+  it('is meta-tiles only: painting tiles on it is refused, and says why', async () => {
+    const session = await open(() => mapSession(MAP))
+    setIndexed(session, 0, true)
+    const before = doc(session)
+    paintDrag(session, [{ x: 1, y: 1 }])
+    expect(doc(session)).toBe(before)
+    expect(session.status).toMatch(/indexed layer: it holds meta-tiles only/)
+  })
+
+  it('asks before clearing a layer that has painted cells', async () => {
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 8, height: 8, layers: [{ name: 'bg', data: new Array(64).fill(2) }] })
+    const session = await open(() => mapSession(MAP))
+    ;(window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false)
+    setIndexed(session, 0, true)
+    expect(doc(session).layers[0].indexed).toBeUndefined()
+    setIndexed(session, 0, true)
+    expect(doc(session).layers[0].indexed).toBe(true)
+    expect(doc(session).layers[0].data.every((tile) => tile === 0)).toBe(true)
+  })
+
+  it('places meta-tiles that own their pixels side by side, never over each other', async () => {
+    const session = await open(() => mapSession(MAP))
+    setIndexed(session, 0, true)
+    pickMeta(session, ROCK)
+    placeMetaAt(session, 0, 0)
+    placeMetaAt(session, 1, 0)
+    expect(session.status).toMatch(/would overlap g_RockMetatiles at 0,0/)
+    placeMetaAt(session, 2, 0)
+    expect(doc(session).layers[0].placements.map((p) => [p.x, p.y])).toEqual([
+      [0, 0],
+      [2, 0]
+    ])
+    // Moving one onto the other is refused the same way.
+    selectPlacementAt(session, 2, 0)
+    movePlacementTo(session, 1, 0)
+    expect(doc(session).layers[0].placements[1].x).toBe(2)
+    expect(indexedSummary(session, 0)).toMatch(/^2 meta-tiles in 62 bytes — a tile layer is 64/)
+  })
+
+  it('has nothing to bake into', async () => {
+    const session = await open(() => mapSession(MAP))
+    setIndexed(session, 0, true)
+    pickMeta(session, ROCK)
+    placeMetaAt(session, 0, 0)
+    setBaked(session, true)
+    expect(doc(session).layers[0].placements[0].baked).toBeUndefined()
+    expect(session.status).toMatch(/no grid to bake into/)
+  })
+
+  it('refuses a meta that references its tileset’s tiles', async () => {
+    files[OLD] = serializeResource({ kind: 'metatiles', doc: { ...createMetaTileDoc(TILES, 1, 1), frames: [{ tiles: [2] }] } })
+    const session = await open(() => mapSession(MAP))
+    setIndexed(session, 0, true)
+    pickMeta(session, OLD)
+    placeMetaAt(session, 4, 4)
+    expect(doc(session).layers[0].placements).toEqual([])
+    expect(session.status).toMatch(/make it independent/)
   })
 })

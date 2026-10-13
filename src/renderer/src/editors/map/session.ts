@@ -20,13 +20,18 @@ import { shallowReactive } from 'vue'
 import {
   addMetaRef,
   bankForRow,
+  indexedLayerStream,
+  isIndexedLayer,
   MAX_MAP_METAS,
   metaSlotOf,
+  metaUseCount,
+  overlappingPlacement,
+  setLayerIndexed as setLayerIndexedPure,
+  validateMap,
   movePlacement,
   normalizeMap,
   placeMeta,
   placementAt,
-  placementCount,
   metaRefFrom,
   removePlacement,
   resizeMap,
@@ -956,8 +961,21 @@ export function pickBlock(session: MapSession, index: number): void {
 
 // ── painting on the map canvas ───────────────────────────────────────────
 
+/**
+ * Refuses a tile edit on an indexed layer, saying why. Such a layer is its
+ * meta-tiles — its grid is not exported at all — so a tile painted there
+ * would look like it worked and never reach the game.
+ */
+function refuseIndexed(session: MapSession): boolean {
+  const layer = doc(session).layers[session.activeLayer]
+  if (!isIndexedLayer(layer)) return false
+  session.status = `"${layer!.name}" is an indexed layer: it holds meta-tiles only. Pick one under Meta-tiles, or make the layer a tile layer.`
+  return true
+}
+
 /** `points` come from `toolPoints`/`floodPoints` (`from`/`to` in grid cells). */
 export function paintDrag(session: MapSession, points: Point[]): void {
+  if (refuseIndexed(session)) return
   const current = session.preview ?? session.history.present.doc
   const layerIndex = session.activeLayer
   // Collected across the whole drag so the baked-record check runs once, on
@@ -992,6 +1010,7 @@ export function finishDrag(session: MapSession): void {
 }
 
 export function fillAt(session: MapSession, start: Point): void {
+  if (refuseIndexed(session)) return
   const current = doc(session)
   const layer = current.layers[session.activeLayer]
   if (!layer) return
@@ -1148,6 +1167,8 @@ export function paintBankOf(session: MapSession): ((cellRow: number) => number) 
 }
 
 export function beginPaint(session: MapSession, role: 'fg' | 'bg'): void {
+  // Nothing is armed, so the stroke's extend and end calls fall through too.
+  if (refuseIndexed(session)) return
   session.paintRole = role
   session.paintPoints = []
   session.paintOrigin = null
@@ -1367,7 +1388,7 @@ export function repackBlocker(session: MapSession): string | null {
       'the others would keep the old tile numbering. Remove or merge them first.'
     )
   }
-  if (placementCount(current) > 0) {
+  if (metaUseCount(current) > 0) {
     return (
       'Switching to banked renumbers every tile, and this map places meta-tiles that name tiles by number. ' +
       'Remove the placements first.'
@@ -1900,7 +1921,7 @@ export function pasteClipboard(session: MapSession): void {
 }
 
 export function deleteSelection(session: MapSession): void {
-  if (!session.selection) return
+  if (!session.selection || refuseIndexed(session)) return
   commit(session, clearRect(doc(session), session.activeLayer, session.selection))
 }
 
@@ -1932,6 +1953,39 @@ export function toggleLayerVisible(session: MapSession, index: number): void {
 
 export function selectLayer(session: MapSession, index: number): void {
   session.activeLayer = index
+}
+
+/**
+ * Makes a layer indexed — meta-tiles only, one byte each in the export — or a
+ * tile layer again. Turning it on clears the layer's grid, so a layer with
+ * tiles on it asks first.
+ */
+export function setIndexed(session: MapSession, index: number, on: boolean): void {
+  const current = doc(session)
+  const layer = current.layers[index]
+  if (!layer || isIndexedLayer(layer) === on) return
+  if (on) {
+    if (current.cell) {
+      session.status = 'Indexed layers are for maps drawn through the name table with a pattern tileset.'
+      return
+    }
+    const painted = layer.data.filter((tile) => tile !== 0).length
+    if (painted && !window.confirm(`"${layer.name}" has ${painted} painted cell${painted === 1 ? '' : 's'}. An indexed layer is its meta-tiles only — clear them?`)) return
+  }
+  const next = setLayerIndexedPure(current, index, on)
+  commit(session, next)
+  const problems = validateMap(next).filter((problem) => problem.startsWith(`Layer "${layer.name}"`))
+  session.status = problems[0] ?? (on ? `"${layer.name}" is indexed: ${indexedSummary(session, index)}` : `"${layer.name}" is a tile layer again.`)
+}
+
+/** "N meta-tiles in B bytes", against what a tile layer of this map costs — the editor's readout of the encoding. */
+export function indexedSummary(session: MapSession, index: number): string {
+  const current = doc(session)
+  const layer = current.layers[index]
+  if (!layer) return ''
+  const bytes = indexedLayerStream(current, layer).length
+  const count = layer.placements.length
+  return `${count} meta-tile${count === 1 ? '' : 's'} in ${bytes} bytes — a tile layer is ${current.width * current.height}. The game expands it into ${current.width * current.height} bytes of RAM.`
 }
 
 // ── size / validation ──────────────────────────────────────────────────
@@ -2121,11 +2175,33 @@ function attachOwnedMeta(session: MapSession, path: string): boolean {
   return true
 }
 
+/**
+ * Why a meta cannot go at (x, y) on the active layer, if it cannot: only an
+ * indexed layer has rules — its metas own their pixels and never overlap,
+ * which is what lets it be one byte each.
+ */
+function indexedRefusal(session: MapSession, slot: number, x: number, y: number, ignore: number | null): string | null {
+  const current = doc(session)
+  if (!isIndexedLayer(current.layers[session.activeLayer])) return null
+  const ref = current.metas[slot]
+  if (!ref) return null
+  if (!ref.cells) return `${ref.name} references its tileset's tiles — an indexed layer takes meta-tiles that own their pixels. Open it and make it independent.`
+  const hit = overlappingPlacement(current, session.activeLayer, { x, y, width: ref.width, height: ref.height }, ignore)
+  if (hit === null) return null
+  const other = current.layers[session.activeLayer].placements[hit]
+  return `It would overlap ${current.metas[other.slot]?.name ?? 'another meta-tile'} at ${other.x},${other.y} — meta-tiles on an indexed layer cannot overlap.`
+}
+
 export function placeMetaAt(session: MapSession, x: number, y: number): void {
   const path = session.brushMeta
   if (!path) return
   const slot = metaSlotOf(doc(session), path)
   if (slot < 0) return
+  const refused = indexedRefusal(session, slot, x, y, null)
+  if (refused) {
+    session.status = refused
+    return
+  }
   const next = placeMeta(doc(session), session.activeLayer, slot, x, y)
   if (next === doc(session)) return
   commit(session, next)
@@ -2140,6 +2216,12 @@ export function selectPlacementAt(session: MapSession, x: number, y: number): nu
 
 export function movePlacementTo(session: MapSession, x: number, y: number): void {
   if (session.selectedPlacement === null) return
+  const placement = doc(session).layers[session.activeLayer]?.placements[session.selectedPlacement]
+  const refused = placement && indexedRefusal(session, placement.slot, x, y, session.selectedPlacement)
+  if (refused) {
+    session.status = refused
+    return
+  }
   commit(session, movePlacement(doc(session), session.activeLayer, session.selectedPlacement, x, y))
 }
 
@@ -2165,6 +2247,10 @@ export function deleteSelectedPlacement(session: MapSession): void {
 export function setBaked(session: MapSession, baked: boolean): void {
   const index = session.selectedPlacement
   if (index === null) return
+  if (baked && isIndexedLayer(doc(session).layers[session.activeLayer])) {
+    session.status = 'An indexed layer has no grid to bake into — its meta-tiles are its content.'
+    return
+  }
   const current = doc(session)
   const placement = current.layers[session.activeLayer]?.placements[index]
   const ref = placement && current.metas[placement.slot]
