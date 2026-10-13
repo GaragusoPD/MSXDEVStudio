@@ -22,8 +22,10 @@ import {
 } from './map'
 import { addLayer } from '../map-editor'
 
-const tree: MetaRef = { path: 'res/tree.meta-tiles.json', name: 'tree', width: 2, height: 3, frames: 4, flags: 1 }
-const coin: MetaRef = { path: 'res/coin.meta-tiles.json', name: 'coin', width: 1, height: 1, frames: 6, flags: 2 }
+// As a pattern map mirrors them: one frame (they animate in place), and the
+// tiles their attachment to the map's tileset gives them.
+const tree: MetaRef = { path: 'res/tree.meta-tiles.json', name: 'tree', width: 2, height: 3, frames: 1, flags: 1, cells: [1, 2, 3, 4, 5, 6] }
+const coin: MetaRef = { path: 'res/coin.meta-tiles.json', name: 'coin', width: 1, height: 1, frames: 1, flags: 2, cells: [7] }
 
 const blank = (): ReturnType<typeof normalizeMap> => normalizeMap({ tileset: 't.tiles.json', width: 8, height: 8 })
 const withTree = (): ReturnType<typeof normalizeMap> => addMetaRef(blank(), tree)
@@ -176,7 +178,8 @@ describe('placements in a bitmap mode', () => {
       cell: { width: 16, height: 16, cols: 16 },
       ...over
     })
-    doc = addMetaRef(doc, { ...tree, width: 2, height: 2, masked: true })
+    // A bitmap meta: frames of its own, and no cells — it carries its own table.
+    doc = addMetaRef(doc, { path: 'res/tree.meta-btiles.json', name: 'tree', width: 2, height: 2, frames: 4, flags: 1, masked: true })
     return placeMeta(doc, 0, 0, 2, 2)
   }
 
@@ -214,9 +217,18 @@ describe('placements in a bitmap mode', () => {
   })
 })
 
-describe('the placement runtime defends its caller-owned frame array', () => {
+describe("a bitmap map's placement runtime defends its caller-owned frame array", () => {
+  // Bitmap meta-tiles still animate per copy, by frame: there is no pattern
+  // table to swap in a bitmap mode.
+  const rock: MetaRef = { path: 'res/rock.meta-btiles.json', name: 'tree', width: 2, height: 3, frames: 4, flags: 1 }
   const withFrames = (frames: number): ReturnType<typeof normalizeMap> =>
-    placeMeta(addMetaRef(normalizeMap({ tileset: 't.tiles.json', width: 8, height: 8 }), { ...tree, frames }), 0, 0, 1, 1)
+    placeMeta(
+      addMetaRef(normalizeMap({ tileset: 't.btiles.json', width: 8, height: 8, cell: { width: 16, height: 16, cols: 16 } }), { ...rock, frames }),
+      0,
+      0,
+      1,
+      1
+    )
 
   it('clamps an out-of-range frame index back to 0', () => {
     // `frames` is the caller's array, and on a ROM target an uninitialised
@@ -230,7 +242,7 @@ describe('the placement runtime defends its caller-owned frame array', () => {
   })
 
   it('carries each meta\'s frame count in the table it clamps against', () => {
-    expect(placementHelperC(withFrames(6), 'g_Level').source.join('\n')).toContain('{ tree, 2, 3, 6, 6 },')
+    expect(placementHelperC(withFrames(6), 'g_Level').source.join('\n')).toContain('{ tree, 2, 3, 6, 6, 0 },')
   })
 })
 

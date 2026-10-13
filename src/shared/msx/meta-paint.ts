@@ -1,19 +1,20 @@
 /**
- * Painting a meta-tile in pixels, when a meta-tile owns no pixels.
+ * Painting in pixels over a grid of tile references.
  *
- * The meta editor shows a canvas; the document underneath holds tile indices.
- * This module is the bridge, and for a meta it works **copy-on-write**: a stroke
- * never edits a tile in place, it derives the tile the cell *would* now look
- * like and then finds or creates that tile in the bank. Two consequences make
- * the whole feature safe:
+ * Two editors show a canvas over a document that holds tile indices: the map
+ * editor's paint mode (a screen painted as a picture — `paintGrid`) and the
+ * bitmap meta-tile editor (`paintBitmapMeta`). This module is the bridge, and by
+ * default it works **copy-on-write**: a stroke never edits a tile in place, it
+ * derives the tile the cell *would* now look like and then finds or creates
+ * that tile in the bank. Two consequences make that safe:
  *
- * - Nothing that already pointed at a tile can be changed by painting a meta. A
- *   map drawn with tile 12 keeps tile 12; the meta moves to tile 87.
+ * - Nothing that already pointed at a tile can be changed by the stroke. A map
+ *   drawn with tile 12 keeps tile 12; the painted cell moves to tile 87.
  * - The bank is append-only, so no index ever shifts and no other document ever
  *   needs renumbering. The price is orphans — undo repoints the cell and leaves
- *   the tile behind — which is what the editor's explicit Compact command is
- *   for. It is never automatic: reachability across maps, blocks and metas that
- *   are not open is not knowable from here.
+ *   the tile behind — which an explicit command reclaims. It is never
+ *   automatic: reachability across files that are not open is not knowable
+ *   from here.
  *
  * The hardware constraint is not reimplemented. `paintPixel` in `tile.ts`
  * already decides whether a pixel fits a row's (or an sc1 group's) two colours,
@@ -28,8 +29,10 @@
  * allocated, a full tileset cannot refuse the stroke, and every other cell
  * drawn with that tile changes too — which is what someone touching up a
  * converted screen means by painting. The reversal data that costs is
- * `PaintGridResult.tileEdits`. A meta never passes `write`, so nothing above
- * changes for it.
+ * `PaintGridResult.tileEdits`.
+ *
+ * The allocator, `findOrCreateTile`, is also what attaches a meta-tile that
+ * owns its pixels (`meta-owned.ts`): its still cells are found or created here.
  */
 
 import {
@@ -58,19 +61,6 @@ import {
   type TileEntry,
   type TilesDoc
 } from './tile'
-
-export interface PaintMetaResult {
-  meta: MetaTileDoc
-  tiles: TilesDoc
-  /** Indices appended by this stroke — what Compact would reclaim if it is undone. */
-  added: number[]
-  /** Points the hardware colour limit refused. Reported, never fatal. */
-  dropped: number
-  /** Set when nothing could be done at all; `meta` and `tiles` come back unchanged. */
-  refused?: string
-  /** Cells that showed an attached animation and now have a static tile — see `PaintGridResult`. */
-  unanimated?: number
-}
 
 /** `SC1_GROUP` is 8, so the group of tile `i` is `i >> 3`. */
 const SC1_SHIFT = 3
@@ -509,50 +499,6 @@ export function paintGrid(
     tileEdits,
     unanimated
   }
-}
-
-/**
- * Applies a stroke to one frame of a meta.
- *
- * Points are in the meta's own pixel space — `(0,0)` is the meta's top-left
- * dot, not the tile's. Points outside it are ignored, so a drag that leaves the
- * canvas needs no clamping by the caller.
- *
- * `role` is which half of the row's colour pair the stroke owns — the mouse
- * button, as in the tile editor. It matters because sc2/sc4 hold two colours
- * per 8×1 row and sc1 two per group of eight tiles: without a role, the second
- * colour a row is asked for has nowhere to go and is dropped, which reads as an
- * editor that stopped working. With one, the row's foreground (or background)
- * is *recoloured*, which is how MSX art is actually drawn.
- */
-export function paintMeta(
-  meta: MetaTileDoc,
-  tiles: TilesDoc,
-  frame: number,
-  points: readonly Point[],
-  color: number,
-  role?: 'fg' | 'bg'
-): PaintMetaResult {
-  const frameTiles = meta.frames[frame]
-  if (!frameTiles) return { meta, tiles, added: [], dropped: 0 }
-
-  const result = paintGrid(
-    { width: meta.width, height: meta.height, tiles: frameTiles.tiles },
-    tiles,
-    points,
-    color,
-    role
-  )
-  if (result.refused) return { meta, tiles, added: [], dropped: 0, refused: result.refused }
-  // Nothing moved: hand back the same meta so `pushHistory` no-ops, exactly as
-  // `setFrameTile` used to make it. `dropped` still travels — an all-dropped
-  // stroke reported its count before and must keep doing so.
-  if (result.grid.tiles === frameTiles.tiles)
-    return { meta, tiles: result.tiles, added: result.added, dropped: result.dropped, unanimated: result.unanimated }
-
-  const frames = meta.frames.slice()
-  frames[frame] = { tiles: result.grid.tiles }
-  return { meta: { ...meta, frames }, tiles: result.tiles, added: result.added, dropped: result.dropped, unanimated: result.unanimated }
 }
 
 /**

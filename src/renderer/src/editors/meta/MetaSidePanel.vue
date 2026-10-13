@@ -1,31 +1,26 @@
 <script setup lang="ts">
 /**
- * The meta-tile editor's right pane: the tileset reference (and the tile-0
- * reservation the whole feature rests on), the meta's size in tiles, its eight
- * gameplay flags, the palette, how full the bank is, and the export block.
+ * The bitmap meta-tile editor's right pane: the tileset reference (and the
+ * tile-0 reservation see-through cells rest on), the meta's size in tiles, its
+ * eight gameplay flags, the palette, how full the set is, and the export block.
  */
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { MSX1_PALETTE_GRB, paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { MAX_META_SIZE, META_FLAG_COUNT } from '../../../../shared/msx/meta-tile'
-import { MAX_TILES, colorByteAt, splitColorByte } from '../../../../shared/msx/tile'
+import { MAX_BITMAP_TILES } from '../../../../shared/msx/bitmap-tile'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import {
   bitmapTiles,
+  cellSize,
   commit,
   compact,
   doc,
-  frameTileAt,
-  metaAnimations,
-  placeAnimation,
   reserveBitmapTile0,
-  reserveTile0,
   resize,
   setColor,
-  setGroupPair,
   setTileset,
   tileUsage,
-  tiles,
   toggleFlag,
   type MetaSession
 } from './session'
@@ -33,76 +28,24 @@ import {
 const props = defineProps<{ session: MetaSession }>()
 const resourcesStore = useResourcesStore()
 
-// Where "Place" puts an animation. Typed, because a click on the canvas paints;
-// it follows the cell the last stroke touched, the usual answer.
-const placeAt = ref({ x: 0, y: 0 })
-watch(
-  () => props.session.activeCell,
-  (cell) => {
-    placeAt.value = { ...cell }
-  },
-  { immediate: true }
-)
-
 const meta = computed(() => doc(props.session))
-const tileset = computed(() => tiles(props.session))
 const usage = computed(() => tileUsage(props.session))
 
-/** A pattern meta groups a `.tiles.json`; a bitmap one groups the bitmap forms. */
-const TILESET_KINDS = computed<ResourceKind[]>(() =>
-  props.session.kind === 'metatiles' ? ['tiles'] : ['btiles', 'screen']
-)
+/** A bitmap meta groups a `.btiles.json`, or a screen read as an atlas. */
+const TILESET_KINDS: ResourceKind[] = ['btiles', 'screen']
 const tilesetOptions = computed(() =>
-  resourcesStore.entries.filter((entry) => TILESET_KINDS.value.includes(entry.kind)).map((entry) => entry.path)
+  resourcesStore.entries.filter((entry) => TILESET_KINDS.includes(entry.kind)).map((entry) => entry.path)
 )
 
 const bitmap = computed(() => bitmapTiles(props.session))
-const rgb = computed(() => paletteToRgb(bitmap.value?.palette ?? tileset.value?.palette ?? null))
+const rgb = computed(() => paletteToRgb(bitmap.value?.palette ?? null))
+const cell = computed(() => cellSize(props.session))
 
-/** Whichever tileset this meta references needs tile 0 reserved before it can be see-through. */
-const needsReserve = computed(() => {
-  if (bitmap.value) return !bitmap.value.reserveTile0
-  return tileset.value ? !tileset.value.reserveTile0 : false
-})
+/** A bitmap set needs tile 0 reserved before a meta's cells can be see-through. */
+const needsReserve = computed(() => (bitmap.value ? !bitmap.value.reserveTile0 : false))
 
-const sc1 = computed(() => tileset.value?.mode === 'sc1')
-
-/** In SCREEN 1, the pair in force for the cell the last stroke touched. */
-const groupPair = computed(() => {
-  const doc0 = tileset.value
-  if (!doc0 || !sc1.value) return null
-  const tile = frameTileAt(meta.value, props.session.frame, props.session.activeCell.x, props.session.activeCell.y)
-  return { group: tile >> 3, ...splitColorByte(colorByteAt(doc0, tile, 0)) }
-})
-
-/**
- * The colours the palette offers.
- *
- * In SCREEN 1 that is only the two the *active cell's* group already spends —
- * every pixel of all eight tiles in a group shares one pair, so offering the
- * other fourteen would just produce dropped pixels. Elsewhere it is all
- * sixteen, and the row's own two-colour rule is enforced per stroke.
- */
-const palette = computed<number[]>(() => {
-  // Every pixel carries its own colour in a bitmap mode, so all sixteen are on
-  // offer and nothing can be refused.
-  if (bitmap.value) return Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
-  const doc0 = tileset.value
-  if (!doc0) return []
-  if (!sc1.value) return Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
-  const pair = groupPair.value
-  // 0 is always offered: it is how a cell is erased back to transparent.
-  return pair ? [...new Set([0, pair.bg, pair.fg])] : [0]
-})
-
-const ALL_COLORS = Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
-
-function changePair(fg: number, bg: number): void {
-  const pair = groupPair.value
-  if (!pair) return
-  if (!window.confirm(`Recolour group ${pair.group}? All 8 tiles in it change, wherever else they are used.`)) return
-  setGroupPair(props.session, fg, bg)
-}
+/** Every pixel carries its own colour in a bitmap mode, so all sixteen are on offer. */
+const palette = Array.from({ length: MSX1_PALETTE_GRB.length }, (_, i) => i)
 
 function patchExport(patch: Partial<ExportBlock>): void {
   const current = meta.value.export
@@ -149,7 +92,7 @@ function setupExport(): void {
         <button
           type="button"
           class="wide"
-          @click="bitmap ? reserveBitmapTile0(session) : reserveTile0(session)"
+          @click="reserveBitmapTile0(session)"
         >
           Reserve tile 0
         </button>
@@ -193,7 +136,7 @@ function setupExport(): void {
         </label>
       </div>
       <p class="hint">
-        {{ meta.width * 8 }}×{{ meta.height * 8 }} dots, {{ meta.width * meta.height }} tiles per frame.
+        {{ meta.width * cell.width }}×{{ meta.height * cell.height }} dots, {{ meta.width * meta.height }} tiles per frame.
       </p>
     </section>
 
@@ -210,54 +153,6 @@ function setupExport(): void {
           @click="setColor(session, index)"
         />
       </div>
-      <p
-        v-if="!bitmap"
-        class="hint"
-      >
-        <strong>Left</strong> button paints the ink of the row you click,
-        <strong>right</strong> its paper — {{ sc1 ? 'for the whole group of 8 tiles' : 'for that 8-pixel row' }}.
-        That is the mode's two-colours rule, so a third colour replaces one of them rather than
-        being refused.
-      </p>
-      <template v-if="groupPair">
-        <p class="hint">
-          SCREEN 1 shares one colour pair across every group of 8 tiles. The cell at
-          {{ session.activeCell.x }},{{ session.activeCell.y }} is in group
-          <strong>{{ groupPair.group }}</strong>, so only its pair is on offer.
-        </p>
-        <div class="pair">
-          <label>
-            <span>Ink</span>
-            <select
-              :value="groupPair.fg"
-              @change="changePair(Number(($event.target as HTMLSelectElement).value), groupPair.bg)"
-            >
-              <option
-                v-for="index in ALL_COLORS"
-                :key="index"
-                :value="index"
-              >
-                {{ index }}
-              </option>
-            </select>
-          </label>
-          <label>
-            <span>Paper</span>
-            <select
-              :value="groupPair.bg"
-              @change="changePair(groupPair.fg, Number(($event.target as HTMLSelectElement).value))"
-            >
-              <option
-                v-for="index in ALL_COLORS"
-                :key="index"
-                :value="index"
-              >
-                {{ index }}
-              </option>
-            </select>
-          </label>
-        </div>
-      </template>
     </section>
 
     <section>
@@ -282,11 +177,11 @@ function setupExport(): void {
       </div>
     </section>
 
-    <section v-if="tileset">
+    <section v-if="bitmap">
       <h3>Tiles</h3>
       <p class="hint">
-        This meta uses {{ usage.used }} tile{{ usage.used === 1 ? '' : 's' }}; the bank holds
-        {{ usage.total }} of {{ MAX_TILES }}.
+        This meta uses {{ usage.used }} tile{{ usage.used === 1 ? '' : 's' }}; the set holds
+        {{ usage.total }} of {{ MAX_BITMAP_TILES }}.
       </p>
       <p
         v-if="usage.orphans"
@@ -303,70 +198,6 @@ function setupExport(): void {
       >
         Compact unused tiles
       </button>
-    </section>
-
-    <section v-if="session.kind === 'metatiles' && tileset">
-      <h3>Animated tiles</h3>
-      <p class="hint">
-        A meta animates two ways. Its own <strong>frames</strong> (below the canvas) animate each copy
-        separately — the game steps them. An <strong>animation</strong> attached to the tileset
-        animates every copy at once, live or baked, for no work per copy: place it here and those
-        cells show it in every frame.
-      </p>
-      <ul
-        v-if="metaAnimations(session).length"
-        class="animations"
-      >
-        <li
-          v-for="binding in metaAnimations(session)"
-          :key="binding.path"
-        >
-          <span>{{ binding.path.split('/').pop()?.replace('.anim-tiles.json', '') }}</span>
-          <span class="dims">{{ binding.width }}×{{ binding.height }}</span>
-          <button
-            type="button"
-            :disabled="binding.bank !== null"
-            :title="
-              binding.bank !== null
-                ? `Bank ${binding.bank + 1}'s own art — a meta can be drawn on any row`
-                : `Point the cells from ${placeAt.x},${placeAt.y} at it, in every frame`
-            "
-            @click="placeAnimation(session, binding.path, placeAt.x, placeAt.y)"
-          >
-            Place
-          </button>
-        </li>
-      </ul>
-      <div
-        v-if="metaAnimations(session).length"
-        class="place-at"
-      >
-        <span>at cell</span>
-        <input
-          v-model.number="placeAt.x"
-          type="number"
-          min="0"
-          :max="meta.width - 1"
-          title="Column, in tiles"
-        >
-        <input
-          v-model.number="placeAt.y"
-          type="number"
-          min="0"
-          :max="meta.height - 1"
-          title="Row, in tiles"
-        >
-      </div>
-      <p
-        v-else
-        class="hint"
-      >
-        Nothing is attached to {{ meta.tileset.split('/').pop() }} yet — attach an animation in the
-        tile editor's <strong>Animations</strong> panel, then place it here.
-      </p>
-      <p class="hint">
-        Animated cells are outlined on the canvas; painting over one gives it a still tile of its own.
-      </p>
     </section>
 
     <section>
@@ -406,7 +237,7 @@ function setupExport(): void {
             :checked="meta.export.helpers === true"
             @change="patchExport({ helpers: ($event.target as HTMLInputElement).checked })"
           >
-          <span title="Appends a _Draw() that stamps one frame, skipping transparent cells. Needs msxgl.h included first.">
+          <span title="Appends a _Draw() that blits one frame out of the atlas, skipping transparent cells. Needs msxgl.h included first.">
             Export ready-made C
           </span>
         </label>
@@ -433,34 +264,6 @@ function setupExport(): void {
 
 section {
   margin-bottom: 18px;
-}
-
-.animations {
-  margin: 0 0 6px;
-  padding: 0;
-  list-style: none;
-  font-size: 12px;
-}
-
-.animations li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.place-at {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-}
-
-.place-at input {
-  width: 44px;
-}
-
-.animations .dims {
-  opacity: 0.7;
 }
 
 h3 {
@@ -500,22 +303,6 @@ input[type='text'] {
 
 .size-row input {
   width: 56px;
-}
-
-.pair {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.pair label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.pair select {
-  width: 60px;
 }
 
 .swatches {

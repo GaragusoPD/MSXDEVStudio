@@ -9,7 +9,7 @@
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { expandIndexedLayer } from '../../../../shared/msx/map'
 import { normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import { normalizeTiles, type TileEntry } from '../../../../shared/msx/tile'
@@ -36,7 +36,6 @@ import {
 const MAP = 'res/level.map.json'
 const TILES = 'res/main.tiles.json'
 const ROCK = 'res/rock.meta-tiles.json'
-const OLD = 'res/old.meta-tiles.json'
 let files: Record<string, string>
 const settled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -65,8 +64,7 @@ beforeEach(() => {
       kind: 'tiles',
       doc: normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: true, tiles: [tile(0), tile(1), tile(2), tile(3)] })
     }),
-    [ROCK]: serializeResource({ kind: 'metatiles', doc: rock() }),
-    [OLD]: serializeResource({ kind: 'metatiles', doc: createMetaTileDoc(TILES, 1, 1) })
+    [ROCK]: serializeResource({ kind: 'metatiles', doc: rock() })
   }
   ;(globalThis as { window?: unknown }).window = {
     confirm: vi.fn(() => true),
@@ -85,10 +83,7 @@ beforeEach(() => {
       })
     }
   }
-  useResourcesStore().entries = [
-    { path: ROCK, kind: 'metatiles', out: null },
-    { path: OLD, kind: 'metatiles', out: null }
-  ]
+  useResourcesStore().entries = [{ path: ROCK, kind: 'metatiles', out: null }]
   pruneMapSessions(new Set())
   pruneTileSessions(new Set())
 })
@@ -102,18 +97,11 @@ async function open<T>(make: () => T): Promise<T> {
 describe('attaching from the tile editor', () => {
   it('gives the meta tiles for its art and lists it', async () => {
     const session = await open(() => tileSession(TILES))
-    expect(attachableMetas(session)).toEqual([ROCK, OLD])
+    expect(attachableMetas(session)).toEqual([ROCK])
     await attachMetaFile(session, ROCK)
     expect(session.doc.metas.map((binding) => [binding.path, binding.cells])).toEqual([[ROCK, [4, 0]]])
     expect(session.status).toMatch(/_DrawMeta/)
-    expect(attachableMetas(session)).toEqual([OLD])
-  })
-
-  it('refuses a version-2 meta, saying how to convert it', async () => {
-    const session = await open(() => tileSession(TILES))
-    await attachMetaFile(session, OLD)
-    expect(session.doc.metas).toEqual([])
-    expect(session.status).toMatch(/convert it first/)
+    expect(attachableMetas(session)).toEqual([])
   })
 
   it('an animated meta’s moving cells get a window, and the status says how to play it', async () => {
@@ -216,23 +204,26 @@ describe('an indexed layer', () => {
     expect(doc(session).layers[0].data.every((tile) => tile === 0)).toBe(true)
   })
 
-  it('places meta-tiles that own their pixels side by side, never over each other', async () => {
+  it('places meta-tiles over each other, the later one on top', async () => {
     const session = await open(() => mapSession(MAP))
     setIndexed(session, 0, true)
     pickMeta(session, ROCK)
     placeMetaAt(session, 0, 0)
     placeMetaAt(session, 1, 0)
-    expect(session.status).toMatch(/would overlap g_RockMetatiles at 0,0/)
-    placeMetaAt(session, 2, 0)
     expect(doc(session).layers[0].placements.map((p) => [p.x, p.y])).toEqual([
       [0, 0],
-      [2, 0]
+      [1, 0]
     ])
-    // Moving one onto the other is refused the same way.
-    selectPlacementAt(session, 2, 0)
+    // A click picks the one on top, and moving it over another is allowed.
+    expect(selectPlacementAt(session, 1, 0)).toBe(1)
+    movePlacementTo(session, 0, 0)
+    expect(doc(session).layers[0].placements[1].x).toBe(0)
     movePlacementTo(session, 1, 0)
-    expect(doc(session).layers[0].placements[1].x).toBe(2)
-    expect(indexedSummary(session, 0)).toMatch(/^2 meta-tiles in 62 bytes — a tile layer is 64/)
+    // The second rock's left half lands on the first one's see-through half;
+    // its own see-through half leaves x=2 empty.
+    const { tiles } = expandIndexedLayer(doc(session), doc(session).layers[0])
+    expect([...tiles.slice(0, 3)]).toEqual([4, 4, 0])
+    expect(indexedSummary(session, 0)).toMatch(/^2 meta-tiles in \d+ bytes — a tile layer is 64/)
   })
 
   it('has nothing to bake into', async () => {
@@ -243,15 +234,5 @@ describe('an indexed layer', () => {
     setBaked(session, true)
     expect(doc(session).layers[0].placements[0].baked).toBeUndefined()
     expect(session.status).toMatch(/no grid to bake into/)
-  })
-
-  it('refuses a meta that references its tileset’s tiles', async () => {
-    files[OLD] = serializeResource({ kind: 'metatiles', doc: { ...createMetaTileDoc(TILES, 1, 1), frames: [{ tiles: [2] }] } })
-    const session = await open(() => mapSession(MAP))
-    setIndexed(session, 0, true)
-    pickMeta(session, OLD)
-    placeMetaAt(session, 4, 4)
-    expect(doc(session).layers[0].placements).toEqual([])
-    expect(session.status).toMatch(/make it independent/)
   })
 })

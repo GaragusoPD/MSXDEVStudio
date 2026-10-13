@@ -9,7 +9,6 @@
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { serializeResource } from '../../../../shared/msx/resource'
 import { isBanked, MAX_TILES, normalizeTiles, TILE_SIZE, tilePixels, type TileEntry } from '../../../../shared/msx/tile'
 import { SCREEN_ROWS } from '../../../../shared/msx/map'
@@ -25,7 +24,6 @@ import {
   undo,
   type MapSession
 } from './session'
-import { commit as commitMeta, doc as metaDoc, metaSession, pruneMetaSessions } from '../meta/session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
@@ -33,7 +31,6 @@ import { resetExternalWatches } from '../external-changes'
 const MAP = 'res/level.map.json'
 const OTHER = 'res/other.map.json'
 const TILES = 'res/main.tiles.json'
-const META = 'res/rock.meta-tiles.json'
 
 /** Tile `i`'s art says which one it is: every row is the byte `i`, ink 15 on paper 1. */
 const art = (i: number): TileEntry => ({ pattern: new Array(8).fill(i), color: new Array(8).fill(0xf1) })
@@ -81,7 +78,6 @@ beforeEach(() => {
   }
   useResourcesStore().entries = []
   pruneMapSessions(new Set())
-  pruneMetaSessions(new Set())
 })
 
 async function openMap(path = MAP): Promise<MapSession> {
@@ -141,24 +137,6 @@ describe('removeUnusedTiles', () => {
     const survivors = session.tileset!.tiles.slice(0, session.tileset!.count).map((t) => t.pattern[0])
     expect(survivors).toContain(4)
     expect(survivors).not.toContain(6)
-  })
-
-  it("counts an open meta-tile's unsaved strokes as used", async () => {
-    files[META] = serializeResource({ kind: 'metatiles', doc: { ...createMetaTileDoc(TILES, 1, 1), frames: [{ tiles: [2] }] } })
-    useResourcesStore().entries = [{ path: META, kind: 'metatiles', out: null }]
-    const meta = metaSession(META)
-    for (let i = 0; i < 4; i++) await settled()
-    // A stroke not saved yet: the file says 2, the tab says 7.
-    commitMeta(meta, { ...metaDoc(meta), frames: [{ tiles: [7] }] })
-
-    const session = await openMap()
-    await removeUnusedTiles(session)
-
-    const survivors = session.tileset!.tiles.slice(0, session.tileset!.count).map((t) => t.pattern[0])
-    expect(survivors).toContain(7)
-    expect(survivors).not.toContain(2)
-    // ...and the open meta followed the renumbering.
-    expect(session.tileset!.tiles[metaDoc(meta).frames[0].tiles[0]].pattern[0]).toBe(7)
   })
 
   it('does nothing when a file over the tileset cannot be read', async () => {

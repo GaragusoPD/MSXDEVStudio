@@ -4,11 +4,11 @@ import {
   decodeIndexedStream,
   expandIndexedLayer,
   indexedLayerHelperC,
+  indexedLayerPlan,
   indexedLayerStream,
   mapExport,
   metaCellTables,
   normalizeMap,
-  overlappingPlacement,
   placeMeta,
   placementBytes,
   placementCount,
@@ -54,37 +54,87 @@ describe('the indexed layer stream', () => {
     let doc = indexedMap(32, 24, [ref('block', 2, 2)])
     for (let y = 0; y < 24; y += 2) for (let x = 0; x < 32; x += 2) doc = placeMeta(doc, 0, 0, x, y)
     const stream = indexedLayerStream(doc, doc.layers[0])
-    expect(stream.length).toBe(192)
-    expect([...stream].every((byte) => byte === 1)).toBe(true)
+    // 192 metas, and the 0 that says no overlays follow.
+    expect(stream.length).toBe(193)
+    expect([...stream.slice(0, 192)].every((byte) => byte === 1)).toBe(true)
   })
 
-  it('takes any mix of sizes, with empty cells between, and reads back to the same placements', () => {
-    const metas = [ref('a', 1, 1), ref('b', 2, 1), ref('c', 1, 3), ref('d', 3, 2), ref('e', 4, 4)]
-    for (let seed = 1; seed <= 40; seed++) {
+  it('is one byte a meta for metas side by side, empty cells between them a byte each, and a terminator', () => {
+    let doc = indexedMap(8, 2, [ref('a', 1, 1), ref('wide', 3, 1)])
+    doc = placeMeta(placeMeta(doc, 0, 1, 0, 0), 0, 0, 3, 0)
+    // Row 0: the wide one, the dot, four empty cells; row 1: eight empty; then the 0 ending the overlays.
+    expect([...indexedLayerStream(doc, doc.layers[0])]).toEqual([2, 1, ...new Array(4 + 8).fill(0), 0])
+  })
+
+  it('a meta tucked into another’s see-through corner needs no overlay record of its own stacking', () => {
+    // A 2×2 rock open at the bottom-right, and a dot sitting in that hole: it
+    // starts inside the rock's rectangle, which the walk skips, so it is an
+    // overlay — but only because of where it starts.
+    let doc = indexedMap(4, 4, [ref('rock', 2, 2, [5, 6, 7, 0]), ref('dot', 1, 1, [9])])
+    doc = placeMeta(placeMeta(doc, 0, 0, 0, 0), 0, 1, 1, 1)
+    expect(indexedLayerPlan(doc, doc.layers[0])).toEqual({ stream: [{ slot: 0, x: 0, y: 0 }], overlays: [{ slot: 1, x: 1, y: 1 }] })
+    expect(expandIndexedLayer(doc, doc.layers[0]).tiles.slice(0, 6)).toEqual([5, 6, 0, 0, 7, 9])
+  })
+
+  it('a meta placed over another, whose corner comes first in reading order, stays on top', () => {
+    // The tree is placed second, so it is on top — yet its corner is read first.
+    let doc = indexedMap(6, 6, [ref('wall', 3, 2), ref('tree', 2, 3)])
+    doc = placeMeta(placeMeta(doc, 0, 0, 1, 2), 0, 1, 2, 1)
+    const plan = indexedLayerPlan(doc, doc.layers[0])
+    expect(plan.overlays).toEqual([{ slot: 1, x: 2, y: 1 }])
+    const { objects } = expandIndexedLayer(doc, doc.layers[0])
+    expect(objects[2 * 6 + 2]).toBe(2)
+  })
+
+  it('the same two, placed the other way round, need no overlay: reading order is already the stacking order', () => {
+    let doc = indexedMap(6, 6, [ref('wall', 3, 2), ref('tree', 2, 3)])
+    doc = placeMeta(placeMeta(doc, 0, 1, 2, 1), 0, 0, 1, 2)
+    expect(indexedLayerPlan(doc, doc.layers[0]).overlays).toEqual([])
+    expect(expandIndexedLayer(doc, doc.layers[0]).objects[2 * 6 + 2]).toBe(1)
+  })
+
+  it('overlapping metas of any size expand exactly as they stack in the editor', () => {
+    const metas = [
+      ref('a', 1, 1),
+      ref('b', 2, 1),
+      ref('c', 1, 3),
+      ref('d', 3, 2, [1, 0, 1, 0, 1, 0]),
+      ref('e', 4, 4, [1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1])
+    ]
+    for (let seed = 1; seed <= 60; seed++) {
       const random = rng(seed)
       let doc = indexedMap(20, 12, metas)
-      for (let attempt = 0; attempt < 60; attempt++) {
+      for (let attempt = 0; attempt < 30; attempt++) {
         const slot = Math.floor(random() * metas.length)
-        const x = Math.floor(random() * (20 - metas[slot].width + 1))
-        const y = Math.floor(random() * (12 - metas[slot].height + 1))
-        const rect = { x, y, width: metas[slot].width, height: metas[slot].height }
-        if (overlappingPlacement(doc, 0, rect) === null) doc = placeMeta(doc, 0, slot, x, y)
+        doc = placeMeta(doc, 0, slot, Math.floor(random() * (20 - metas[slot].width + 1)), Math.floor(random() * (12 - metas[slot].height + 1)))
       }
-      const stream = indexedLayerStream(doc, doc.layers[0])
-      const byPosition = (p: { x: number; y: number }): number => p.y * 20 + p.x
-      const expected = doc.layers[0].placements.map(({ slot, x, y }) => ({ slot, x, y })).sort((p, q) => byPosition(p) - byPosition(q))
-      expect(decodeIndexedStream(doc, stream)).toEqual(expected)
-      // Every cell is read once, as a meta's top-left or an empty one.
-      const covered = expected.reduce((sum, p) => sum + metas[p.slot].width * metas[p.slot].height, 0)
-      expect(stream.length).toBe(20 * 12 - covered + expected.length)
+      // Painting each placement in list order — what the editor shows.
+      const tiles = new Array(240).fill(0)
+      const objects = new Array(240).fill(0)
+      for (const placement of doc.layers[0].placements) {
+        const meta = metas[placement.slot]
+        meta.cells!.forEach((tile, i) => {
+          if (!tile) return
+          const at = (placement.y + Math.floor(i / meta.width)) * 20 + placement.x + (i % meta.width)
+          tiles[at] = tile
+          objects[at] = placement.slot + 1
+        })
+      }
+      expect(expandIndexedLayer(doc, doc.layers[0]), `seed ${seed}`).toEqual({ tiles, objects })
+      // Every placement survives the encoding, as stream or overlay.
+      expect(decodeIndexedStream(doc, indexedLayerStream(doc, doc.layers[0]))).toHaveLength(doc.layers[0].placements.length)
     }
   })
 
-  it('a meta whose top-left is covered by an earlier one cannot be encoded — which is why they must not overlap', () => {
-    let doc = indexedMap(8, 4, [ref('wide', 3, 1), ref('dot', 1, 1)])
-    doc = placeMeta(placeMeta(doc, 0, 0, 0, 0), 0, 1, 1, 0)
-    expect(decodeIndexedStream(doc, indexedLayerStream(doc, doc.layers[0]))).toEqual([{ slot: 0, x: 0, y: 0 }])
-    expect(validateMap(doc).join()).toMatch(/overlaps "g_wide"|overlaps "g_dot"/)
+  it('on a map wider than 256 tiles, an overlay’s x takes two bytes', () => {
+    let doc = indexedMap(300, 4, [ref('a', 2, 2)])
+    doc = placeMeta(placeMeta(doc, 0, 0, 280, 1), 0, 0, 281, 1)
+    const stream = indexedLayerStream(doc, doc.layers[0])
+    expect([...stream.slice(-5)]).toEqual([1, 281 & 0xff, 281 >> 8, 1, 0])
+    expect(decodeIndexedStream(doc, stream)).toEqual([
+      { slot: 0, x: 280, y: 1 },
+      { slot: 0, x: 281, y: 1 }
+    ])
   })
 })
 
@@ -121,10 +171,10 @@ describe('indexed layers in the editor model', () => {
     expect(again.metas[0].cells).toEqual(doc.metas[0].cells)
   })
 
-  it('refuses a meta that references its tileset’s tiles, and an indexed layer on a bitmap map', () => {
+  it('refuses a meta the map’s tileset has not attached, and an indexed layer on a bitmap map', () => {
     let doc = indexedMap(8, 8, [{ ...ref('old', 1, 1), cells: undefined }])
     doc = placeMeta(doc, 0, 0, 0, 0)
-    expect(validateMap(doc).join()).toMatch(/own their pixels/)
+    expect(validateMap(doc).join()).toMatch(/is not attached to res\/main\.tiles\.json/)
     const bitmap = { ...indexedMap(8, 8, []), cell: { width: 16, height: 16, cols: 16 } }
     expect(validateMap(bitmap).join()).toMatch(/needs a map drawn through the name table/)
   })
@@ -158,7 +208,7 @@ describe('export', () => {
     expect(exported.layers[0].unpacked).toBe(768)
     expect(exported.layers[1].indexed).toBe(true)
     expect(exported.layers[1].unpacked).toBeUndefined()
-    expect(exported.layers[1].bytes.length).toBe(768 - 4 - 4 + 2)
+    expect(exported.layers[1].bytes.length).toBe(768 - 4 - 4 + 2 + 1)
   })
 
   it('states each slot’s tiles and where they start', () => {

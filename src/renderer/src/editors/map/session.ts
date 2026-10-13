@@ -25,7 +25,6 @@ import {
   MAX_MAP_METAS,
   metaSlotOf,
   metaUseCount,
-  overlappingPlacement,
   setLayerIndexed as setLayerIndexedPure,
   validateMap,
   movePlacement,
@@ -57,7 +56,7 @@ import {
 } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
-import { normalizeMetaTile, remapMetaTiles, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { isOwnedMeta, normalizeOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { animModesCompatible } from '../../../../shared/msx/tile-anim'
 import { onAnimSaved } from '../anim/events'
@@ -65,7 +64,6 @@ import {
   paintGrid,
   sameEntry,
   sprayPoints,
-  usedTiles,
   type PaintGridResult,
   type TileEdit
 } from '../../../../shared/msx/meta-paint'
@@ -84,7 +82,6 @@ import {
   eraseCells,
   floodPoints,
   normalizeSelection,
-  pendingReorders,
   paintValue,
   pushHistory,
   redo as redoHistory,
@@ -114,7 +111,6 @@ import {
   type TilesReorderEvent
 } from '../../../../shared/tile-editor'
 import { bankBudgetLabel } from '../tile/session'
-import { openMetaDocs } from '../meta/session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
@@ -152,15 +148,13 @@ export interface MapSession {
   /** Set instead of `tileset` when the map draws in a bitmap mode — see `MapCell`. */
   atlas: ScreenDoc | null
   /**
-   * The `.meta-tiles.json` files over this map's tileset, by path — what the
+   * The meta-tiles this map can place, by path, in one shape — what the
    * sidebar's lower half offers and what the canvas draws a placement from.
    *
-   * Read from disk rather than taken from the resources store, which knows only
-   * `{ path, kind, out }` and cannot say which tileset a meta references.
-   *
-   * A meta that owns its pixels is here as its *view* in this tileset — the
-   * version-2 shape, one frame of the tiles its attachment resolved to — so
-   * the canvas, the picker and baking draw every meta the same way. Its own
+   * On a bitmap map, the `.meta-btiles.json` files over its tileset, as read.
+   * On a pattern map, each attached `.meta-tiles.json` as its *view* in this
+   * tileset — one frame of the tiles its attachment resolved to — so the
+   * canvas, the picker and baking draw every meta the same way. Its own
    * document is in `ownedMetas`.
    */
   metaDocs: Map<string, MetaTileDoc>
@@ -170,7 +164,7 @@ export interface MapSession {
    * and picking one attaches it. By path.
    */
   ownedMetas: Map<string, OwnedMetaDoc>
-  /** The version-2 metas over this tileset, as read — `metaDocs` without the views. */
+  /** The bitmap metas over this tileset, as read — `metaDocs` without the views. */
   refMetas: Map<string, MetaTileDoc>
   tilesetError: string | null
   /** Last tileset `reorderLog` entry (by `at`) this map has folded in; null = never replayed. */
@@ -435,11 +429,13 @@ function clearTileset(session: MapSession): void {
 }
 
 /**
- * Every `.meta-tiles.json` in the project drawn over *this map's* tileset.
+ * Every meta-tile in the project this map can place: on a pattern map, each
+ * `.meta-tiles.json` in a mode its tileset can show (attached or not — picking
+ * one attaches it); on a bitmap map, each `.meta-btiles.json` drawn over *this
+ * map's* tileset, since its indices name tiles that exist nowhere else.
  *
- * Metas over another tileset are not offered: their indices name tiles that do
- * not exist here, so placing one would paint garbage. A file that is malformed
- * or half-written is skipped rather than allowed to break the picker.
+ * A file that is malformed or half-written is skipped rather than allowed to
+ * break the picker.
  */
 async function loadMetaDocs(session: MapSession): Promise<void> {
   const tilesetPath = doc(session).tileset
@@ -453,7 +449,7 @@ async function loadMetaDocs(session: MapSession): Promise<void> {
       if (entry.kind !== wanted) continue
       try {
         const raw: unknown = JSON.parse(await window.api.invoke('fs:read', { path: entry.path }))
-        if (isOwnedMeta(raw)) {
+        if (wanted === 'metatiles') {
           // Owns its pixels and names no tileset: any pattern tileset that can
           // show its mode can have it attached.
           const meta = normalizeOwnedMeta(raw)
@@ -497,8 +493,8 @@ function refreshAttachedMetas(session: MapSession): void {
 }
 
 /**
- * `metaDocs` from what is known: the version-2 metas as read, and a view of
- * each attached meta that owns its pixels — one frame of its tiles in this
+ * `metaDocs` from what is known: the bitmap metas as read, and a view of
+ * each attached pattern meta — one frame of its tiles in this
  * tileset. Called whenever the tileset changes, since that is where the views'
  * numbers live.
  */
@@ -1575,7 +1571,8 @@ export function paintBudgetLabel(session: MapSession): string {
 
 /**
  * Every tile anything drawn with this map's tileset uses, apart from this map —
- * the other maps and meta-tiles in the project, open or not.
+ * the other maps in the project, open or not. (Attached meta-tiles and
+ * animations are the tileset's own, and compaction keeps their tiles itself.)
  *
  * An open tab's document wins over its file, since a stroke not yet saved
  * references tiles the file does not. A closed file is read in whatever
@@ -1605,14 +1602,9 @@ async function tilesUsedElsewhere(session: MapSession): Promise<{ used: Set<numb
     if (other === session || !samePath(doc(other).tileset, tilesetPath)) continue
     take(other.path, mapTiles(doc(other)))
   }
-  for (const meta of openMetaDocs()) {
-    if (!samePath(meta.tilesetPath, tilesetPath)) continue
-    take(meta.path, usedTiles(meta.doc))
-  }
-
   for (const entry of useResourcesStore().entries) {
-    if ((entry.kind !== 'map' && entry.kind !== 'metatiles') || counted.has(entry.path)) continue
-    let raw: (MapDoc | MetaTileDoc) & { tilesetReorderSeen?: number }
+    if (entry.kind !== 'map' || counted.has(entry.path)) continue
+    let raw: MapDoc & { tilesetReorderSeen?: number }
     try {
       raw = JSON.parse(await window.api.invoke('fs:read', { path: entry.path }))
     } catch (error) {
@@ -1620,19 +1612,9 @@ async function tilesUsedElsewhere(session: MapSession): Promise<{ used: Set<numb
       return null
     }
     const seen = typeof raw.tilesetReorderSeen === 'number' ? raw.tilesetReorderSeen : null
-    if (entry.kind === 'map') {
-      const map = normalizeMap(raw)
-      if (map.cell !== null || !samePath(map.tileset, tilesetPath)) continue
-      take(entry.path, mapTiles(replayReorders(map, log, seen).doc))
-    } else {
-      // A meta that owns its pixels holds no tile numbers; its tiles are the
-      // tileset's own attachment, which compaction keeps by itself.
-      if (isOwnedMeta(raw)) continue
-      let meta = normalizeMetaTile(raw)
-      if (!samePath(meta.tileset, tilesetPath)) continue
-      for (const event of pendingReorders(log, seen)) meta = remapMetaTiles(meta, event.mapping)
-      take(entry.path, usedTiles(meta))
-    }
+    const map = normalizeMap(raw)
+    if (map.cell !== null || !samePath(map.tileset, tilesetPath)) continue
+    take(entry.path, mapTiles(replayReorders(map, log, seen).doc))
   }
   return { used, users }
 }
@@ -2175,33 +2157,11 @@ function attachOwnedMeta(session: MapSession, path: string): boolean {
   return true
 }
 
-/**
- * Why a meta cannot go at (x, y) on the active layer, if it cannot: only an
- * indexed layer has rules — its metas own their pixels and never overlap,
- * which is what lets it be one byte each.
- */
-function indexedRefusal(session: MapSession, slot: number, x: number, y: number, ignore: number | null): string | null {
-  const current = doc(session)
-  if (!isIndexedLayer(current.layers[session.activeLayer])) return null
-  const ref = current.metas[slot]
-  if (!ref) return null
-  if (!ref.cells) return `${ref.name} references its tileset's tiles — an indexed layer takes meta-tiles that own their pixels. Open it and make it independent.`
-  const hit = overlappingPlacement(current, session.activeLayer, { x, y, width: ref.width, height: ref.height }, ignore)
-  if (hit === null) return null
-  const other = current.layers[session.activeLayer].placements[hit]
-  return `It would overlap ${current.metas[other.slot]?.name ?? 'another meta-tile'} at ${other.x},${other.y} — meta-tiles on an indexed layer cannot overlap.`
-}
-
 export function placeMetaAt(session: MapSession, x: number, y: number): void {
   const path = session.brushMeta
   if (!path) return
   const slot = metaSlotOf(doc(session), path)
   if (slot < 0) return
-  const refused = indexedRefusal(session, slot, x, y, null)
-  if (refused) {
-    session.status = refused
-    return
-  }
   const next = placeMeta(doc(session), session.activeLayer, slot, x, y)
   if (next === doc(session)) return
   commit(session, next)
@@ -2216,12 +2176,6 @@ export function selectPlacementAt(session: MapSession, x: number, y: number): nu
 
 export function movePlacementTo(session: MapSession, x: number, y: number): void {
   if (session.selectedPlacement === null) return
-  const placement = doc(session).layers[session.activeLayer]?.placements[session.selectedPlacement]
-  const refused = placement && indexedRefusal(session, placement.slot, x, y, session.selectedPlacement)
-  if (refused) {
-    session.status = refused
-    return
-  }
   commit(session, movePlacement(doc(session), session.activeLayer, session.selectedPlacement, x, y))
 }
 

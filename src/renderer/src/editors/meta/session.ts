@@ -1,6 +1,7 @@
 /**
- * Per-tab state for the meta-tile editor (`*.meta-tiles.json`,
- * `*.meta-btiles.json`).
+ * Per-tab state for the bitmap meta-tile editor (`*.meta-btiles.json`). A
+ * pattern meta-tile owns its pixels and is edited with the pose editor
+ * (`../anim/session.ts`).
  *
  * Same shape as every other resource editor: a module-level map keyed by tab id
  * (= the project-relative path), every mutation through the pure functions in
@@ -9,7 +10,7 @@
  *
  * What is different here is that painting writes into **another document**. The
  * meta owns no pixels, so a stroke resolves to a tile index that the same
- * stroke found or created in the referenced `.tiles.json` — which is why the
+ * stroke found or created in the referenced `.btiles.json` — which is why the
  * tileset lives in `useTilesetStore` rather than in this session. Two documents
  * move together and are saved together; a meta pointing at a tile the tileset
  * has not saved yet is a broken pair of files.
@@ -34,20 +35,8 @@ import {
   META_FLAG_COUNT,
   type MetaTileDoc
 } from '../../../../shared/msx/meta-tile'
-import { paintBitmapMeta, paintMeta, usedTiles } from '../../../../shared/msx/meta-paint'
-import { defaultExport, parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
-import {
-  blankTileEntry,
-  isBanked,
-  MAX_TILES,
-  mergeColorByte,
-  regroupAfterTile0Shift,
-  removeTile,
-  remapAnimBindings,
-  TILE_SIZE,
-  type TileAnimBinding,
-  type TilesDoc
-} from '../../../../shared/msx/tile'
+import { paintBitmapMeta, usedTiles } from '../../../../shared/msx/meta-paint'
+import { parseResource, serializeResource, resourceKindOf } from '../../../../shared/msx/resource'
 import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import {
   MAX_BITMAP_TILES,
@@ -59,7 +48,7 @@ import {
 import { encodeIndices } from '../../../../shared/msx/screen'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
 import { screenPixels } from '../../../../shared/msx/screen'
-import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from '../map/sheet'
+import { atlasSheet, bitmapTilesetSheet, type Sheet } from '../map/sheet'
 import {
   canRedo,
   canUndo,
@@ -69,12 +58,8 @@ import {
   undo as undoHistory,
   type History
 } from '../../../../shared/history'
-import { pendingReorders, samePath, type Point } from '../../../../shared/map-editor'
+import { samePath, type Point } from '../../../../shared/map-editor'
 import { emitTilesReordered, onTilesReordered, type TileTool, type TilesReorderEvent } from '../../../../shared/tile-editor'
-import { animationOfTile, placeAnimationInMeta } from '../../../../shared/msx/tile-anim'
-import { attachMigrated, isOwnedMeta, metaFromV2 } from '../../../../shared/msx/meta-owned'
-import { emitAnimSaved } from '../anim/events'
-import { setMetaFormat } from './format'
 import { useTabsStore } from '../../stores/tabsStore'
 import { watchResourceFile } from '../external-changes'
 import { useTilesetStore } from '../../stores/tilesetStore'
@@ -84,22 +69,12 @@ type SavedMetaTile = MetaTileDoc & { tilesetReorderSeen?: number }
 
 export interface MetaSession {
   path: string
-  /**
-   * `metatiles` or `metabtiles`. Stage 1 paints pattern modes only — a bitmap
-   * tileset is not a `TilesDoc` and is not in the tileset store at all — so
-   * this is what gates the pixel canvas.
-   */
-  kind: 'metatiles' | 'metabtiles'
+  /** Always a bitmap meta-tile: the resource kind its file is saved as. */
+  kind: 'metabtiles'
   history: History<MetaTileDoc>
   loading: boolean
   error: string | null
   dirty: boolean
-  /**
-   * The file on disk owns its pixels (version 3) — converted here or
-   * elsewhere. This session's version-2 document is then not the file's, and
-   * nothing it holds is saved: writing it would throw the art away.
-   */
-  ownsPixels: boolean
 
   /** Project-relative path of the tileset. Its document lives in the store. */
   tilesetPath: string
@@ -114,14 +89,7 @@ export interface MetaSession {
 
   /** Which frame the canvas is editing. */
   frame: number
-  /**
-   * The cell the last stroke touched, in the meta's own tile coordinates.
-   *
-   * Only SCREEN 1 needs it, and needs it badly: colour there belongs to a group
-   * of eight tiles, so "which colours may I use" has a different answer per
-   * cell. Keying the palette to cell (0,0) would silently drop every pixel
-   * painted into a cell whose tile lives in another group.
-   */
+  /** The cell the last stroke touched, in the meta's own tile coordinates. */
   activeCell: { x: number; y: number }
   tool: TileTool
   /** Rect tool draws an outline unless this is set. */
@@ -172,7 +140,7 @@ export interface MetaSession {
   strokeRole: 'fg' | 'bg'
   strokeActive: boolean
   previewMeta: MetaTileDoc | null
-  previewTiles: TilesDoc | BitmapTilesDoc | null
+  previewTiles: BitmapTilesDoc | null
   stopWatching: (() => void) | null
 }
 
@@ -181,15 +149,13 @@ const sessions = new Map<string, MetaSession>()
 export function metaSession(path: string): MetaSession {
   const existing = sessions.get(path)
   if (existing) return existing
-  const kind = resourceKindOf(path) === 'metabtiles' ? 'metabtiles' : 'metatiles'
   const session = shallowReactive<MetaSession>({
     path,
-    kind,
+    kind: 'metabtiles',
     history: createHistory(createMetaTileDoc('')),
     loading: true,
     error: null,
     dirty: false,
-    ownsPixels: false,
     tilesetPath: '',
     atlas: null,
     tilesetError: null,
@@ -251,22 +217,12 @@ function committed(session: MetaSession): MetaTileDoc {
   return session.history.present
 }
 
-/** The tileset as one `TilesDoc`, or null in a bitmap mode / before it loads. */
-export function tiles(session: MetaSession): TilesDoc | null {
-  if (session.kind !== 'metatiles') return null
-  return (session.previewTiles as TilesDoc | null) ?? useTilesetStore().patternDoc(session.tilesetPath)
-}
-
 /**
- * The bitmap tileset, from the same store.
- *
- * It goes through the store for exactly the reason the pattern one does: the
- * bitmap tileset editor has its own tab and its own undo stack over the same
- * file, so a copy here would mean whichever saved last silently discarded the
- * other's work.
+ * The bitmap tileset, from the tileset store: the bitmap tileset editor has its
+ * own tab and its own undo stack over the same file, so a copy here would mean
+ * whichever saved last silently discarded the other's work.
  */
 export function bitmapTiles(session: MetaSession): BitmapTilesDoc | null {
-  if (session.kind !== 'metabtiles') return null
   return (session.previewTiles as BitmapTilesDoc | null) ?? useTilesetStore().bitmapDoc(session.tilesetPath)
 }
 
@@ -278,11 +234,6 @@ async function load(session: MetaSession): Promise<void> {
       raw = text.trim() ? JSON.parse(text) : {}
     } catch {
       raw = {}
-    }
-    if (session.kind === 'metatiles' && isOwnedMeta(raw)) {
-      session.ownsPixels = true
-      session.error = `${session.path} owns its pixels now — close this tab and open it again to edit it.`
-      return
     }
     const saved = raw as SavedMetaTile
     session.history = createHistory(normalizeMetaTile(raw))
@@ -310,12 +261,6 @@ async function loadTileset(session: MetaSession): Promise<void> {
     return
   }
   try {
-    if (session.kind === 'metatiles') {
-      await useTilesetStore().load(tilesetPath)
-      session.tilesetError = null
-      await replayPersistedReorders(session)
-      return
-    }
     if (resourceKindOf(tilesetPath) === 'btiles') {
       await useTilesetStore().load(tilesetPath)
       session.tilesetError = null
@@ -340,22 +285,6 @@ export async function reloadTileset(session: MetaSession): Promise<void> {
   await loadTileset(session)
 }
 
-/** On open: fold in tileset reorders missed while this file wasn't open, behind one confirm. */
-async function replayPersistedReorders(session: MetaSession): Promise<void> {
-  const pending = pendingReorders(useTilesetStore().reorderLog(session.tilesetPath), session.tilesetReorderSeen)
-  if (!pending.length) return
-  const confirmed = window.confirm(
-    `The tileset "${session.tilesetPath}" was reorganized ${pending.length} time${pending.length === 1 ? '' : 's'} ` +
-      'since this meta-tile was last opened. Renumber the tiles inside it to match?'
-  )
-  if (!confirmed) return
-  let next = doc(session)
-  for (const event of pending) next = remapMetaTiles(next, event.mapping)
-  session.history = createHistory(next)
-  session.tilesetReorderSeen = pending[pending.length - 1].at
-  markDirty(session)
-}
-
 /**
  * Live tileset reorders, while both files happen to be open.
  *
@@ -375,18 +304,7 @@ onTilesReordered((event) => {
   }
 })
 
-/**
- * Every meta open in a tab, with the document as it stands — unsaved strokes
- * included. What the map editor reads before it drops tiles nothing uses: a
- * stroke not yet saved references tiles the file on disk does not, and those
- * must count as used.
- */
-export function openMetaDocs(): { path: string; tilesetPath: string; doc: MetaTileDoc }[] {
-  return [...sessions.values()].map((session) => ({ path: session.path, tilesetPath: session.tilesetPath, doc: doc(session) }))
-}
-
 export async function saveSession(session: MetaSession): Promise<void> {
-  if (session.ownsPixels) return
   // Dead tiles this session minted while experimenting must not reach the file.
   const reclaimed = reclaimOrphans(session)
   const content: SavedMetaTile = { ...committed(session) }
@@ -419,25 +337,13 @@ export function commit(session: MetaSession, next: MetaTileDoc): void {
 // ── the tileset reference ─────────────────────────────────────────────────
 
 /**
- * Points the meta at a tileset.
- *
- * A pattern tileset has to reserve tile 0 before a meta can be transparent, and
- * turning that on for a tileset that already has art in tile 0 is a migration:
- * every index shifts by one. It goes through the same reorder seam a drag
- * reorder does, so open maps and metas renumber and closed ones replay on open.
+ * Points the meta at a tileset, and mirrors the cell geometry the export needs
+ * from it.
  */
 export async function setTileset(session: MetaSession, tilesetPath: string): Promise<void> {
   commit(session, { ...doc(session), tileset: tilesetPath })
   session.tilesetReorderSeen = null
   await loadTileset(session)
-
-  if (session.kind === 'metatiles') {
-    const store = useTilesetStore()
-    const tileset = store.doc(tilesetPath)
-    if (tileset && !tileset.reserveTile0) session.status = 'This tileset does not reserve tile 0 — a meta cannot be transparent until it does.'
-    commit(session, { ...doc(session), cell: null })
-    return
-  }
 
   const bitmap = bitmapTiles(session)
   if (bitmap) {
@@ -456,13 +362,9 @@ export async function setTileset(session: MetaSession, tilesetPath: string): Pro
 }
 
 /**
- * Reserves tile 0 on the referenced tileset, shifting every existing index up
- * by one and publishing the mapping so everything drawn with it follows.
- */
-/**
- * Reserves tile 0 on a *bitmap* tileset.
+ * Reserves tile 0 on the bitmap tileset — the see-through cell of a bitmap meta.
  *
- * Shifts rather than blanks, exactly as the pattern path does: the art in tile
+ * Shifts rather than blanks: the art in tile
  * 0 moves to tile 1 and everything after it follows, so nothing is destroyed.
  * The mapping goes out on the same reorder seam a drag reorder uses, so maps
  * and metas drawn with this tileset renumber — live if they are open, on their
@@ -510,106 +412,22 @@ export function reserveBitmapTile0(session: MetaSession): void {
   session.status = 'Tile 0 reserved.'
 }
 
-export function reserveTile0(session: MetaSession): void {
-  const store = useTilesetStore()
-  const tileset = store.patternDoc(session.tilesetPath)
-  if (!tileset || tileset.reserveTile0) return
-  // A shared tile's index must never move — every meta that references it
-  // means that index specifically — but the shift below moves *everything* up
-  // by one, and the shared region has nowhere to go: it already sits at the
-  // top of the hardware's own 256-tile space. Refused here on purpose, not by
-  // the accident `tiles.length >= MAX_TILES` used to be below: once any
-  // shared tile has ever existed, `.length` reaches 256 regardless of
-  // `count`, so the old check happened to catch this case too, for the wrong
-  // reason — and would also wrongly refuse a mostly-empty banked tileset that
-  // has never held one.
-  if (tileset.sharedTiles > 0) {
-    session.status =
-      'This tileset has shared meta-tile slots at the top of the bank, which a tile-0 shift ' +
-      'cannot renumber without breaking every meta that references them.'
-    return
-  }
-  // A banked tileset (bank overrides with no shared slots yet — the case the
-  // check above does not catch) has the same problem one seam over: the shift
-  // below builds its own `i => i + 1` mapping and publishes it directly
-  // through `appendReorder`/`emitTilesReordered`, without going through
-  // `reorderTiles`/`removeTile` in `shared/msx/tile.ts` — so their `isBanked`
-  // refusal (see the comments there) does not cover this path on its own.
-  // A bank's own override sits at a fixed hardware index and does not shift
-  // with the common tiles under it, and that cannot be fixed by making the
-  // published mapping bank-aware: `replayReorders` (`shared/map-editor.ts`)
-  // replays it onto a map opened later, using whatever `bankTiles` lengths
-  // exist at replay time rather than at emit time, so a "shadowed?" test can
-  // disagree with the one that ran live.
-  if (isBanked(tileset)) {
-    session.status =
-      "Reserving tile 0 renumbers the common tileset, and a bank's own art does not renumber with it — not available on a banked tileset."
-    return
-  }
-  if (tileset.count >= MAX_TILES) {
-    session.status = 'The tileset is full, so tile 0 cannot be shifted out of the way. Free a tile first.'
-    return
-  }
-  const used = tileset.tiles.some((tile) => tile.pattern.some((byte) => byte !== 0))
-  if (
-    used &&
-    !window.confirm(
-      `"${session.tilesetPath}" uses tile 0 as artwork. Reserving it for transparency shifts every ` +
-        'tile up by one. Maps and meta-tiles drawn with it will be renumbered to match. Continue?'
-    )
-  ) {
-    return
-  }
-  // Shift by prepending a genuinely blank tile: every old index i becomes i + 1.
-  // `normalizeTiles` would blank it on the next load anyway; doing it here keeps
-  // the in-memory doc honest, because `tilesetStore.set()` does not normalize.
-  // No truncation: the guard above already refused a bank with no room.
-  const shifted: TilesDoc = {
-    ...tileset,
-    reserveTile0: true,
-    count: tileset.count + 1,
-    tiles: [blankTileEntry(tileset.mode), ...tileset.tiles],
-    flags: [0, ...tileset.flags],
-    blocks: tileset.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => tile + 1) })),
-    // Attached animations' windows move with their tiles, like blocks do.
-    animations: remapAnimBindings(
-      tileset.animations,
-      tileset.tiles.map((_, i) => i + 1)
-    )
-  }
-  // sc1 shares one color pair across 8 tiles, so the shift above moves group
-  // boundaries too: the tile that lands on a new boundary can end up rendered
-  // with the wrong pair unless this re-derives it. A no-op in every other mode.
-  const { doc: rebucketed, lossyTiles } = regroupAfterTile0Shift(shifted)
-  const mapping = tileset.tiles.map((_, i) => i + 1)
-  store.set(session.tilesetPath, { ...rebucketed, tiles: rebucketed.tiles.slice() }, session.path)
-  const event: TilesReorderEvent = { path: session.tilesetPath, mapping, at: Date.now() }
-  store.appendReorder(session.tilesetPath, event)
-  emitTilesReordered(event)
-  session.status =
-    'Tile 0 reserved.' +
-    (lossyTiles.length
-      ? ` ${lossyTiles.length} tile${lossyTiles.length === 1 ? '' : 's'} at a new group boundary lost the color pair it was authored with.`
-      : '')
-}
-
 /** The tileset's own sheet — what the frame strip and the canvas draw a tile from. */
 export function sheet(session: MetaSession): Sheet | null {
   const bitmap = bitmapTiles(session)
   if (bitmap) return bitmapTilesetSheet(bitmap)
   const cell = doc(session).cell
-  if (session.atlas && cell) return atlasSheet(session.atlas, cell)
-  const tileset = tiles(session)
-  return tileset ? tilesetSheet(tileset) : null
+  return session.atlas && cell ? atlasSheet(session.atlas, cell) : null
 }
 
 // ── editing ───────────────────────────────────────────────────────────────
 
-/** The pixel size of one cell — 8×8 in a pattern mode, the tileset's own otherwise. */
+/** The pixel size of one cell — the tileset's own, or the atlas cell's. */
 export function cellSize(session: MetaSession): { width: number; height: number } {
   const bitmap = bitmapTiles(session)
   if (bitmap) return { width: bitmap.width, height: bitmap.height }
-  return { width: TILE_SIZE, height: TILE_SIZE }
+  const cell = doc(session).cell
+  return { width: cell?.width ?? 16, height: cell?.height ?? 16 }
 }
 
 /**
@@ -665,29 +483,9 @@ function extendStroke(session: MetaSession, points: Point[]): void {
     }
   }
 
-  const store = useTilesetStore()
-  if (session.kind === 'metabtiles') {
-    const base = store.bitmapDoc(session.tilesetPath)
-    if (!base) return void noTileset(session)
-    const result = paintBitmapMeta(committed(session), base, session.frame, all, session.color)
-    if (result.refused) {
-      session.status = result.refused
-      session.blocked = result.refused
-      return
-    }
-    session.previewMeta = result.meta
-    session.previewTiles = result.tiles
-    session.strokeAdded = result.added
-    session.blocked = null
-    session.status = ''
-    return
-  }
-
-  const base = store.patternDoc(session.tilesetPath)
+  const base = useTilesetStore().bitmapDoc(session.tilesetPath)
   if (!base) return void noTileset(session)
-  // Deliberately not gated on `reserveTile0`: that buys transparency, not the
-  // right to draw.
-  const result = paintMeta(committed(session), base, session.frame, all, session.color, session.strokeRole)
+  const result = paintBitmapMeta(committed(session), base, session.frame, all, session.color)
   if (result.refused) {
     session.status = result.refused
     session.blocked = result.refused
@@ -697,46 +495,7 @@ function extendStroke(session: MetaSession, points: Point[]): void {
   session.previewTiles = result.tiles
   session.strokeAdded = result.added
   session.blocked = null
-  session.status = result.unanimated
-    ? `${result.unanimated} cell${result.unanimated === 1 ? '' : 's'} showed an attached animation and now ${result.unanimated === 1 ? 'has a still tile of its' : 'have still tiles of their'} own.`
-    : result.dropped
-      ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`
-      : ''
-}
-
-// ── animated tiles ──────────────────────────────────────────────────────────
-
-/**
- * The animations attached to this meta's tileset that a meta can use — the
- * common-set ones; a bank's own art shows in one third of the screen only.
- */
-export function metaAnimations(session: MetaSession): TileAnimBinding[] {
-  return tiles(session)?.animations ?? []
-}
-
-/** The attached animation the cell at (x, y) of the current frame shows, if any. */
-export function animationAtCell(session: MetaSession, x: number, y: number): TileAnimBinding | null {
-  const tileset = tiles(session)
-  return tileset ? animationOfTile(tileset, frameTileAt(doc(session), session.frame, x, y)) : null
-}
-
-/**
- * Makes the cells from (x, y) — by default the cell last painted — show an attached animation, in every
- * frame (`placeAnimationInMeta`). One undo step; the meta then animates
- * wherever it is drawn, every copy in step, with no runtime cost per copy.
- */
-export function placeAnimation(session: MetaSession, path: string, x = session.activeCell.x, y = session.activeCell.y): void {
-  const binding = metaAnimations(session).find((candidate) => candidate.path === path)
-  if (!binding) return
-  const next = placeAnimationInMeta(committed(session), binding, x, y)
-  if (typeof next === 'string') {
-    session.status = next
-    return
-  }
-  commit(session, next)
-  session.status =
-    `Cells from ${x},${y} show ${path.split('/').pop()} in every frame — every copy of this meta animates, ` +
-    "in step, through the tileset's _Animate()."
+  session.status = ''
 }
 
 function noTileset(session: MetaSession): void {
@@ -765,8 +524,7 @@ export function endStroke(session: MetaSession): void {
   if (!meta || !tileset) return
 
   const store = useTilesetStore()
-  const before =
-    session.kind === 'metabtiles' ? store.bitmapDoc(session.tilesetPath) : store.patternDoc(session.tilesetPath)
+  const before = store.bitmapDoc(session.tilesetPath)
   if (before && tileset !== before) {
     store.set(session.tilesetPath, tileset, session.path)
     // The paint result's `added` array tracks newly created tiles regardless of
@@ -813,33 +571,6 @@ export function resize(session: MetaSession, width: number, height: number): voi
   commit(session, resizeMetaPure(doc(session), width, height))
 }
 
-/** The tile under `activeCell`, and the sc1 colour group it belongs to. */
-export function activeGroup(session: MetaSession): number {
-  const tile = frameTileAt(doc(session), session.frame, session.activeCell.x, session.activeCell.y)
-  return tile >> 3
-}
-
-/**
- * Rewrites the colour pair of the group the active cell's tile belongs to.
- *
- * SCREEN 1 only, and it is the one way to use a colour a group does not already
- * spend — the palette offers nothing else, because anything else would just be
- * dropped. It recolours all eight tiles in the group, which is the hardware, so
- * the caller confirms first.
- */
-export function setGroupPair(session: MetaSession, fg: number, bg: number): void {
-  const store = useTilesetStore()
-  const tileset = store.patternDoc(session.tilesetPath)
-  if (!tileset || tileset.mode !== 'sc1') return
-  const group = activeGroup(session)
-  const groupColors = tileset.groupColors.slice()
-  const next = mergeColorByte(fg, bg)
-  if (groupColors[group] === next) return
-  groupColors[group] = next
-  store.set(session.tilesetPath, { ...tileset, groupColors }, session.path)
-  session.status = `Group ${group} recoloured — all 8 tiles in it changed.`
-}
-
 export function toggleFlag(session: MetaSession, bit: number): void {
   if (bit < 0 || bit >= META_FLAG_COUNT) return
   commit(session, { ...doc(session), flags: doc(session).flags ^ (1 << bit) })
@@ -851,8 +582,7 @@ export function toggleFlag(session: MetaSession, bit: number): void {
  */
 export function tileUsage(session: MetaSession): { used: number; total: number; orphans: number } {
   const used = usedTiles(doc(session))
-  const tileset = tiles(session)
-  return { used: used.size, total: tileset?.count ?? 0, orphans: orphansOf(session).length }
+  return { used: used.size, total: bitmapTiles(session)?.count ?? 0, orphans: orphansOf(session).length }
 }
 
 /**
@@ -895,47 +625,18 @@ export function reclaimOrphans(session: MetaSession): number {
   const orphans = orphansOf(session)
   if (!orphans.length) return 0
 
-  if (session.kind === 'metabtiles') {
-    const tileset = store.bitmapDoc(session.tilesetPath)
-    if (!tileset) return 0
-    // Bitmap tilesets do not bank, so all orphans are common and sort descending.
-    const descending = [...orphans].sort((a, b) => b - a)
-    let next = tileset
-    let mapping = Array.from({ length: tileset.count }, (_, i) => i)
-    let reclaimed = 0
-    for (const tile of descending) {
-      const step = removeBitmapTile(next, tile)
-      if (step.doc === next) continue
-      next = step.doc
-      mapping = mapping.map((index) => step.remap[index] ?? 0)
-      reclaimed++
-    }
-    if (next === tileset) return 0
-    publishReclaim(session, next, mapping)
-    return reclaimed
-  }
-
-  const tileset = store.patternDoc(session.tilesetPath)
+  const tileset = store.bitmapDoc(session.tilesetPath)
   if (!tileset) return 0
-
-  // Pattern tilesets may be banked. Shared tiles and common tiles grow in
-  // opposite directions, so must be removed in opposite orders to avoid
-  // renumbering. Shared tiles live at MAX_TILES - sharedTiles down to 255
-  // (growing downward); their newest is the lowest index. Common tiles live
-  // at 0 to count-1 (growing upward); their newest is the highest index.
-  const sharedStart = MAX_TILES - tileset.sharedTiles
-  const shared = orphans.filter((tile) => tile >= sharedStart).sort((a, b) => a - b)
-  const common = orphans.filter((tile) => tile < sharedStart).sort((a, b) => b - a)
-  const toRemove = [...shared, ...common]
-
+  // Bitmap tilesets do not bank, so all orphans are common and sort descending.
+  const descending = [...orphans].sort((a, b) => b - a)
   let next = tileset
-  let mapping = tileset.tiles.map((_, i) => i)
+  let mapping = Array.from({ length: tileset.count }, (_, i) => i)
   let reclaimed = 0
-  for (const tile of toRemove) {
-    const step = removeTile(next, tile)
+  for (const tile of descending) {
+    const step = removeBitmapTile(next, tile)
     if (step.doc === next) continue
     next = step.doc
-    mapping = mapping.map((index) => step.mapping[index] ?? 0)
+    mapping = mapping.map((index) => step.remap[index] ?? 0)
     reclaimed++
   }
   if (next === tileset) return 0
@@ -943,7 +644,7 @@ export function reclaimOrphans(session: MetaSession): number {
   return reclaimed
 }
 
-function publishReclaim(session: MetaSession, next: TilesDoc | BitmapTilesDoc, mapping: number[]): void {
+function publishReclaim(session: MetaSession, next: BitmapTilesDoc, mapping: number[]): void {
   const store = useTilesetStore()
   store.set(session.tilesetPath, next, session.path)
   const event: TilesReorderEvent = { path: session.tilesetPath, mapping, at: Date.now() }
@@ -1008,66 +709,4 @@ export function setFilledRect(session: MetaSession, on: boolean): void {
 export function setBrush(session: MetaSession, radius: number, density: number): void {
   session.brushRadius = Math.max(1, Math.min(16, radius | 0))
   session.density = Math.max(0, Math.min(16, density | 0))
-}
-
-// ── version 2 → 3 ───────────────────────────────────────────────────────────
-
-/**
- * Turns this meta into one that owns its pixels (`meta-owned.ts`), attached to
- * the tileset it referenced **at the tiles it already used** — so every map
- * that placed it keeps drawing exactly what it drew.
- *
- * What does change is said first, behind one confirm: frames become poses
- * every copy shows at once (a window the tileset's `_Animate()` plays, not a
- * per-copy redraw), a cell see-through in only some frames becomes opaque, and
- * a SCREEN 1 meta keeps one colour pair.
- *
- * The meta file is written at once and the tileset saved with it unless it
- * already had unsaved edits of its own, which are the user's to keep or drop —
- * then the status says to save it. Returns true when converted; the tab then
- * re-opens in the pose editor (`setMetaFormat`).
- */
-export async function convertToOwned(session: MetaSession): Promise<boolean> {
-  const tileset = tiles(session)
-  if (session.kind !== 'metatiles' || !tileset || session.ownsPixels) {
-    session.status = 'Its tileset has to be open to copy the art out of it.'
-    return false
-  }
-  const v2 = committed(session)
-  const { meta, cells, partialHoles, lostColors } = metaFromV2(v2, tileset)
-  const changes: string[] = []
-  if (v2.frames.length > 1) {
-    changes.push(
-      `Its ${v2.frames.length} frames become poses that every copy shows at once, played by the tileset's _Animate() — ` +
-        'a game that stepped them per copy through _DrawPlacements(frames) will see them move in step.'
-    )
-  }
-  if (partialHoles) changes.push(`${partialHoles} cell${partialHoles === 1 ? ' is' : 's are'} see-through in only some frames and will be opaque.`)
-  if (lostColors) changes.push('SCREEN 1 keeps one colour pair per meta-tile: cells drawn in other pairs take its first one.')
-  const question =
-    `Make ${session.path.split('/').pop()} own its art? It stays attached to ${session.tilesetPath} at the same tiles, ` +
-    'and can then be attached to other tilesets too.' +
-    (changes.length ? `\n\n${changes.join('\n\n')}` : '')
-  if (!window.confirm(question)) return false
-
-  const name = meta.export?.name || defaultExport(session.path).name
-  const result = attachMigrated(tileset, session.path, meta, name, cells)
-  if (typeof result === 'string') {
-    session.status = result
-    return false
-  }
-  const store = useTilesetStore()
-  const tilesetWasDirty = store.isDirty(session.tilesetPath)
-  store.set(session.tilesetPath, result.doc, session.path)
-  await window.api.invoke('fs:write', { path: session.path, content: serializeResource({ kind: 'metatiles', doc: meta }) })
-  if (!tilesetWasDirty) await store.save(session.tilesetPath)
-  session.ownsPixels = true
-  session.dirty = false
-  useTabsStore().setDirty(session.path, false)
-  session.status = tilesetWasDirty
-    ? `Converted. ${session.tilesetPath} had unsaved edits, so it was not saved — save it to keep the attachment.`
-    : 'Converted.'
-  emitAnimSaved({ path: session.path, doc: meta })
-  setMetaFormat(session.path, 'owned')
-  return true
 }

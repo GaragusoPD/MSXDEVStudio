@@ -13,11 +13,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join, resolve } from 'node:path'
 import { isIgnoredName, resolveRelativePath } from '../../shared/fs-safety'
 import type { ImgRule, MsxProject } from '../../shared/msxproj'
-import { defaultExport, isMetaKind, parseResource, renderResourceFiles,
+import { defaultExport, parseResource, renderResourceFiles,
   sourcePathFor, resourceKindOf, validateResource, type ResourceDoc } from '../../shared/msx/resource'
 import { metaRefFrom, validateMap, type MapDoc } from '../../shared/msx/map'
-import type { MetaTileDoc } from '../../shared/msx/meta-tile'
-import { isOwnedMeta, movingCells, refreshMetas, type LoadedMeta } from '../../shared/msx/meta-owned'
+import { movingCells, refreshMetas, type LoadedMeta } from '../../shared/msx/meta-owned'
 import { isBanked, isMetaPath, MAX_TILES, type TilesDoc } from '../../shared/msx/tile'
 import { animModesCompatible, animRefFrom, withAnimFrame, type TileAnimDoc } from '../../shared/msx/tile-anim'
 import { swSpriteFamily } from '../../shared/msx/swsprite'
@@ -206,12 +205,12 @@ function refreshMapMetas(root: string, resource: ResourceDoc): void {
       if (!abs || !existsSync(abs)) return ref
       try {
         const parsed = parseResource(ref.path, readFileSync(abs, 'utf-8'))
-        if (!isMetaKind(parsed.kind)) return ref
-        if (isOwnedMeta(parsed.doc)) {
+        if (parsed.kind === 'metatiles') {
           const binding = refreshedTileset()?.metas.find((candidate) => candidate.path === ref.path) ?? null
           return metaRefFrom(ref.path, parsed.doc, defaultExport(ref.path).name, binding)
         }
-        return metaRefFrom(ref.path, parsed.doc as MetaTileDoc, defaultExport(ref.path).name)
+        if (parsed.kind === 'metabtiles') return metaRefFrom(ref.path, parsed.doc, defaultExport(ref.path).name)
+        return ref
       } catch {
         return ref
       }
@@ -240,8 +239,8 @@ function refreshTileMetas(root: string, doc: TilesDoc): { doc: TilesDoc; problem
     }
     try {
       const parsed = parseResource(binding.path, readFileSync(abs, 'utf-8'))
-      if (parsed.kind !== 'metatiles' || !isOwnedMeta(parsed.doc)) {
-        loaded.set(binding.path, `${binding.path} is attached as a meta-tile but does not own its pixels — open it to convert it`)
+      if (parsed.kind !== 'metatiles') {
+        loaded.set(binding.path, `${binding.path} is attached as a meta-tile but is not one`)
         continue
       }
       // The window's poses are emitted in the meta's own header, and this

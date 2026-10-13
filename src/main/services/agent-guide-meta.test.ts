@@ -17,7 +17,7 @@ import { normalizeBitmapTiles, sheetCols } from '../../shared/msx/bitmap-tile'
 import { addMetaRef, metaRefFrom, normalizeMap, placeMeta, setLayerIndexed, setPlacementBaked } from '../../shared/msx/map'
 import { normalizeOwnedMeta, resolveMeta } from '../../shared/msx/meta-owned'
 import { createMetaTileDoc } from '../../shared/msx/meta-tile'
-import { paintBitmapMeta, paintMeta } from '../../shared/msx/meta-paint'
+import { paintBitmapMeta } from '../../shared/msx/meta-paint'
 import { defaultExport, renderResourceFiles, type ResourceDoc } from '../../shared/msx/resource'
 import { normalizeTiles } from '../../shared/msx/tile'
 import { agentGuideFiles } from './agent-guide'
@@ -35,14 +35,7 @@ const render = (resource: ResourceDoc, path: string, name: string): string => {
 const cellPoints = (ox: number, oy: number, size: number): { x: number; y: number }[] =>
   Array.from({ length: size }, (_, y) => Array.from({ length: size }, (_, x) => ({ x: ox + x, y: oy + y }))).flat()
 
-/** A painted 2×3 pattern meta named `g_Tree`, exactly as the guide's example. */
-function patternMeta(): ResourceDoc {
-  const tiles = normalizeTiles({ mode: 'sc2', count: 1, reserveTile0: true })
-  const meta = createMetaTileDoc('res/tiles.tiles.json', 2, 3)
-  const painted = paintMeta(meta, tiles, 0, cellPoints(0, 0, 8), 5)
-  return { kind: 'metatiles', doc: { ...painted.meta, flags: 0x01, export: block('g_Tree') } }
-}
-
+/** A pattern map placing one meta, as the guide's example: mirrored with its tiles. */
 function patternMap(): ResourceDoc {
   let map = normalizeMap({ tileset: 'res/tiles.tiles.json', width: 32, height: 24 })
   map = addMetaRef(map, {
@@ -50,8 +43,9 @@ function patternMap(): ResourceDoc {
     name: 'g_Tree',
     width: 2,
     height: 3,
-    frames: 4,
-    flags: 0x01
+    frames: 1,
+    flags: 0x01,
+    cells: [1, 2, 3, 4, 5, 6]
   })
   map = placeMeta(map, 0, 0, 4, 4)
   map = setPlacementBaked(placeMeta(map, 0, 0, 10, 8), 0, 1, true)
@@ -100,17 +94,6 @@ function bitmapMap(): ResourceDoc {
 }
 
 describe('the guide teaches what the exporter emits', () => {
-  it('the pattern meta-tile defines and helper', () => {
-    const text = render(patternMeta(), 'res/tree.meta-tiles.json', 'g_Tree')
-    const emitted = ['G_TREE_META_W', 'G_TREE_META_H', 'G_TREE_CELLS', 'G_TREE_FRAMES', 'G_TREE_FLAGS']
-    for (const symbol of emitted) {
-      expect(text, `${symbol} is emitted`).toContain(`#define ${symbol}`)
-      expect(guide('1'), `${symbol} is taught`).toContain(symbol)
-    }
-    expect(text).toContain('void g_Tree_Draw(u8 x, u8 y, u8 frame)')
-    expect(guide('1')).toContain('g_Tree_Draw(10, 5, 0)')
-  })
-
   it('the placement table, its names and its mirrored flags', () => {
     const text = render(patternMap(), 'res/level.map.json', 'g_Level')
     for (const symbol of ['G_LEVEL_METAS', 'G_LEVEL_PLACEMENTS', 'G_LEVEL_META_G_TREE', 'G_LEVEL_FLAGS_G_TREE']) {
@@ -119,8 +102,8 @@ describe('the guide teaches what the exporter emits', () => {
     }
     // emitC declares tables as `unsigned char`, not the `u8` alias.
     expect(text).toContain('extern const unsigned char g_Level_Placements[];')
-    expect(text).toContain('void g_Level_DrawPlacements(const u8* frames)')
-    expect(guide('1')).toContain('g_Level_DrawPlacements(frames)')
+    expect(text).toContain('void g_Level_DrawPlacements(void)')
+    expect(guide('1')).toContain('g_Level_DrawPlacements();')
     // The guide pairs it with the layer write; that signature must still exist.
     expect(text).toContain('void g_Level_DrawLayer(const u8* layer, u8 x, u8 y)')
     expect(guide('1')).toContain('g_Level_DrawLayer(g_Level_Background, 0, 0)')
@@ -238,8 +221,12 @@ describe('the ROM zero-initialisation trap', () => {
     }
   })
 
-  it('points at it from the placements section too', () => {
-    expect(guide('1')).toContain('If you make `frames` a global, zero it explicitly')
+  it('points at it wherever a helper takes a caller-owned buffer', () => {
+    // A bitmap meta's frame array…
+    expect(guide('2')).toContain('If you make `frames` a global, zero it explicitly')
+    // …and the RAM an indexed layer expands into.
+    expect(guide('1')).toContain('fill it before expanding')
+    expect(guide('1')).toContain('Zero it first, for the same reason.')
   })
 
   it('shows the software-sprite state zeroed, which has the same shape', () => {

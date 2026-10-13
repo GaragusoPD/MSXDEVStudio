@@ -5,7 +5,6 @@ import {
   findOrCreateTile,
   paintBitmapMeta,
   paintGrid,
-  paintMeta,
   sprayPoints,
   usedTiles
 } from './meta-paint'
@@ -88,22 +87,8 @@ describe('findOrCreateTile', () => {
   })
 })
 
-describe('paintMeta', () => {
-  const meta = createMetaTileDoc('t.tiles.json', 2, 1)
-
-  it('paints a pixel by creating a tile and repointing the cell — copy on write', () => {
-    const doc = bank()
-    const result = paintMeta(meta, doc, 0, [{ x: 0, y: 0 }], 5)
-    expect(result.dropped).toBe(0)
-    expect(result.added).toHaveLength(1)
-    expect(frameTileAt(result.meta, 0, 0, 0)).toBe(result.added[0])
-    // Tile 0 is untouched, so nothing else pointing at it has changed.
-    expect(tilePixels(result.tiles, 0)).toEqual(tilePixels(doc, 0))
-  })
-
-  it('leaves the cells the stroke did not touch alone', () => {
-    expect(frameTileAt(paintMeta(meta, bank(), 0, [{ x: 0, y: 0 }], 5).meta, 0, 1, 0)).toBe(0)
-  })
+describe('paintGrid: copy-on-write', () => {
+  const grid = { width: 2, height: 1, tiles: [0, 0] }
 
   it('drops a pixel that would need a third colour in its row, and counts it', () => {
     // Row 0 of tile 1 spends both of its pair: 0x21 is fg 2 / bg 1, pattern 0xf0.
@@ -113,58 +98,30 @@ describe('paintMeta', () => {
       reserveTile0: true,
       tiles: [{ pattern: [], color: [] }, { pattern: [0xf0, 0, 0, 0, 0, 0, 0, 0], color: new Array(8).fill(0x21) }]
     })
-    const seeded = { ...meta, frames: [{ tiles: [1, 0] }] }
-    const result = paintMeta(seeded, doc, 0, [{ x: 0, y: 0 }], 7)
+    const result = paintGrid({ ...grid, tiles: [1, 0] }, doc, [{ x: 0, y: 0 }], 7)
     expect(result.dropped).toBe(1)
     expect(result.added).toEqual([])
-    expect(frameTileAt(result.meta, 0, 0, 0)).toBe(1)
+    expect(result.grid.tiles[0]).toBe(1)
   })
 
   it('refuses the whole stroke when the bank is full, changing nothing', () => {
     const full = bank({ count: 256 })
-    const result = paintMeta(meta, full, 0, [{ x: 0, y: 0 }], 5)
+    const result = paintGrid(grid, full, [{ x: 0, y: 0 }], 5)
     expect(result.refused).toMatch(/256/)
-    expect(result.meta).toBe(meta)
+    expect(result.grid).toBe(grid)
     expect(result.tiles).toBe(full)
   })
 
   it('erasing a whole cell resolves back to tile 0 through ordinary dedup', () => {
-    const painted = paintMeta(meta, bank(), 0, [{ x: 0, y: 0 }], 5)
+    const painted = paintGrid(grid, bank(), [{ x: 0, y: 0 }], 5)
     const cell = Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => ({ x, y }))).flat()
-    expect(frameTileAt(paintMeta(painted.meta, painted.tiles, 0, cell, 0).meta, 0, 0, 0)).toBe(0)
+    expect(paintGrid(painted.grid, painted.tiles, cell, 0).grid.tiles[0]).toBe(0)
   })
 
   it('two cells painted identically share one tile', () => {
-    const result = paintMeta(meta, bank(), 0, [{ x: 0, y: 0 }, { x: 8, y: 0 }], 5)
-    expect(frameTileAt(result.meta, 0, 0, 0)).toBe(frameTileAt(result.meta, 0, 1, 0))
+    const result = paintGrid(grid, bank(), [{ x: 0, y: 0 }, { x: 8, y: 0 }], 5)
+    expect(result.grid.tiles[0]).toBe(result.grid.tiles[1])
     expect(result.added).toHaveLength(1)
-  })
-
-  it('ignores points outside the meta, so a drag off the canvas needs no clamping', () => {
-    expect(paintMeta(meta, bank(), 0, [{ x: 99, y: 99 }, { x: -1, y: 0 }], 5).meta).toBe(meta)
-  })
-
-  it('returns the same meta and tiles by reference when an in-bounds stroke repaints the tile already there', () => {
-    // Points are strictly in bounds (0,0 is cell 0 of a 2x1 meta), so the
-    // off-canvas early return cannot be what makes this pass — that path is
-    // already covered above. This is `pushHistory`'s reference-equal no-op
-    // check: a second, idle stroke must not look like an edit.
-    const first = paintMeta(meta, bank(), 0, [{ x: 0, y: 0 }], 5)
-    const second = paintMeta(first.meta, first.tiles, 0, [{ x: 0, y: 0 }], 5)
-    expect(second.meta).toBe(first.meta)
-    expect(second.tiles).toBe(first.tiles)
-    expect(second.added).toEqual([])
-  })
-
-  it('is a no-op on a frame that does not exist', () => {
-    expect(paintMeta(meta, bank(), 9, [{ x: 0, y: 0 }], 5).meta).toBe(meta)
-  })
-
-  it('paints only the frame it is given', () => {
-    const two = { ...meta, frames: [{ tiles: [0, 0] }, { tiles: [0, 0] }] }
-    const result = paintMeta(two, bank(), 1, [{ x: 0, y: 0 }], 5)
-    expect(frameTileAt(result.meta, 0, 0, 0)).toBe(0)
-    expect(frameTileAt(result.meta, 1, 0, 0)).not.toBe(0)
   })
 })
 

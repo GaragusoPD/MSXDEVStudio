@@ -1,14 +1,11 @@
 /**
- * `*.meta-tiles.json` version 3: a meta-tile that **owns its pixels**.
+ * `*.meta-tiles.json`: a meta-tile that **owns its pixels**.
  *
- * Version 2 (`meta-tile.ts`) is "a named group that owns no pixels" — tile
- * numbers into the one tileset it names. That makes a meta part of its
- * tileset: it cannot be used with another, and its animation is frames of
- * *different tiles*, redrawn per copy through the name table. Version 3 is what
- * an attached animation already is (`tile-anim.ts`): poses stored as tile
- * bytes, no tileset named, attached to as many tilesets as want it. On top of
- * an animation's fields it has a footprint (`holes`, the cells it never
- * writes) and eight gameplay flags.
+ * It is what an attached animation already is (`tile-anim.ts`): poses stored as
+ * tile bytes, no tileset named, attached to as many tilesets as want it. On top
+ * of an animation's fields it has a footprint (`holes`, the cells it never
+ * writes) and eight gameplay flags. `version: 3` because the two formats before
+ * it held tile numbers into one tileset; neither is read any more.
  *
  * Attaching (`resolveMeta`) turns the art into tile numbers in one tileset —
  * `MetaBinding` in `tile.ts`:
@@ -21,14 +18,14 @@
  *   meta's path. Every copy animates in step, on screen or not, for nothing per
  *   copy; a house with a smoking chimney rewrites the chimney, not the house.
  *
- * `.meta-btiles.json` (bitmap) and version-2 `.meta-tiles.json` files keep
- * `meta-tile.ts`'s model and export exactly what they did. A version-2 meta
- * becomes this through `metaFromV2`, which keeps its tiles where they are.
+ * Bitmap meta-tiles (`.meta-btiles.json`) are the other model — references
+ * into one bitmap set, `meta-tile.ts` — because a bitmap mode has no pattern
+ * table to attach a window to.
  */
 
 import { defineName, type EmitTable, type HelperC } from './emitC'
 import { findOrCreateTile, sameEntry } from './meta-paint'
-import { MAX_META_SIZE, type MetaTileDoc } from './meta-tile'
+import { MAX_META_SIZE } from './meta-tile'
 import { isTileMode, type TileMode } from './modes'
 import type { ExportBlock } from './resource'
 import {
@@ -418,77 +415,6 @@ export function refreshMetas(
     doc = result.doc
   }
   return { doc, problems, changed }
-}
-
-// ── version 2 → 3 ───────────────────────────────────────────────────────────
-
-/**
- * A version-2 meta as one that owns its pixels: each cell's art copied out of
- * the tileset it named, pose by pose, and the cells it should keep there.
- *
- * - A cell holding tile 0 in **every** frame was see-through, and is a hole. A
- *   cell that was 0 in only some frames becomes opaque blank art in those —
- *   version 3 has no per-pose holes. `partialHoles` counts them.
- * - Frames were whole redraws of different tiles; they become poses, and the
- *   cells that differ get a window when attached. Durations start at the
- *   default, since a version-2 meta's timing was the game's own loop.
- * - SCREEN 1 keeps one ink/paper pair per meta, as an animation does: the pair
- *   of its first opaque cell's group. `lostColors` says when cells in other
- *   groups were drawn in another.
- *
- * `cells` is frame 0's tile numbers with holes as 0 — attach with them
- * (`attachMigrated`) and every map that drew this meta keeps drawing the
- * same tiles.
- */
-export function metaFromV2(
-  v2: MetaTileDoc,
-  tiles: TilesDoc
-): { meta: OwnedMetaDoc; cells: number[]; partialHoles: number; lostColors: boolean } {
-  const count = v2.width * v2.height
-  const holes = Array.from({ length: count }, (_, i) => v2.frames.every((frame) => (frame.tiles[i] ?? 0) === 0))
-  const partialHoles = holes.filter((hole, i) => !hole && v2.frames.some((frame) => (frame.tiles[i] ?? 0) === 0)).length
-  const art = (tile: number): TileEntry => (tile === 0 ? blankTileEntry(tiles.mode) : fit(tiles.tiles[tile], tiles.mode))
-  const firstTile = v2.frames[0]?.tiles.find((tile, i) => !holes[i] && tile !== 0) ?? 0
-  const pair = tiles.mode === 'sc1' ? (tiles.groupColors[firstTile >> 3] ?? 0xf1) : 0xf1
-  const lostColors =
-    tiles.mode === 'sc1' &&
-    v2.frames.some((frame) => frame.tiles.some((tile, i) => !holes[i] && tile !== 0 && tiles.groupColors[tile >> 3] !== pair))
-  const meta = normalizeOwnedMeta({
-    version: 3,
-    mode: tiles.mode,
-    width: v2.width,
-    height: v2.height,
-    pair,
-    holes,
-    frames: v2.frames.map((frame) => ({
-      duration: DEFAULT_ANIM_DURATION,
-      tiles: Array.from({ length: count }, (_, i) => (holes[i] ? blankTileEntry(tiles.mode) : art(frame.tiles[i] ?? 0)))
-    })),
-    loop: 'loop',
-    flags: v2.flags,
-    export: v2.export
-  })
-  const cells = Array.from({ length: count }, (_, i) => (holes[i] ? 0 : (v2.frames[0]?.tiles[i] ?? 0)))
-  return { meta, cells, partialHoles, lostColors }
-}
-
-/**
- * Attaches a migrated meta keeping the tiles it had: the old numbers go in as
- * the binding's previous cells, and `resolveMeta` keeps every one that still
- * shows its art — which, straight after `metaFromV2`, is every still cell.
- */
-export function attachMigrated(tiles: TilesDoc, path: string, meta: OwnedMetaDoc, name: string, cells: readonly number[]): ResolvedMeta | string {
-  const provisional: MetaBinding = {
-    path,
-    name,
-    width: meta.width,
-    height: meta.height,
-    flags: meta.flags,
-    frames: meta.frames.length,
-    cells: cells.slice()
-  }
-  const seeded = { ...tiles, metas: [...tiles.metas.filter((binding) => binding.path !== path), provisional] }
-  return resolveMeta(seeded, path, meta, name)
 }
 
 // ── export: the meta's own header ────────────────────────────────────────────

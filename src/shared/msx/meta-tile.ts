@@ -1,25 +1,20 @@
 /**
- * `*.meta-tiles.json` / `*.meta-btiles.json`: **one meta-tile** — a design
- * bigger than the hardware's 8×8 cell, authored as a picture and stored as
- * references into a tileset.
+ * `*.meta-btiles.json`: **one bitmap meta-tile** — a design bigger than one tile
+ * of a `.btiles.json` set, authored as a picture and stored as references into
+ * that set.
  *
- * This is the third instance of the pattern CLAUDE.md calls "a named group that
- * owns no pixels": like `TileBlock` and `SpriteCharacter`, a meta holds indices,
- * not art. What is new is that the *editor* presents it as a canvas — painting
- * a pixel resolves, through `meta-paint.ts`, to a tile index the same stroke
- * created or found in the bank. So the invariant survives a pixel-level editor:
- * the meta still owns nothing, and there is still no second copy to keep in
- * sync.
+ * This is the "named group that owns no pixels" pattern CLAUDE.md describes:
+ * like `TileBlock` and `SpriteCharacter`, a bitmap meta holds indices, not art,
+ * and the editor resolves each stroke, through `meta-paint.ts`, to a tile the
+ * same stroke created or found in the set. Bitmap modes have no pattern table
+ * to swap, so its frames are redrawn per copy (`_DrawPlacements(frames, …)`).
  *
- * One file is one meta because a meta is now an object a level *places* — a
- * tree, a door, a coin — not a row in a compression table. Its size is its own,
- * its frames are its own, and its eight gameplay bits are its own, exactly as a
- * tile's are. What a map records is a placement; see `MetaPlacement` in
- * `map.ts`.
+ * A *pattern* meta-tile (`*.meta-tiles.json`) is the other way round: it owns
+ * its pixels and is attached to tilesets — `meta-owned.ts`.
  *
  * Why a hyphen in the suffix: `resourceKindOf` matches by `endsWith` over
- * `RESOURCE_SUFFIXES`, so `foo.meta.tiles.json` would resolve to `tiles` and
- * silently open the wrong editor. `foo.meta-tiles.json` cannot.
+ * `RESOURCE_SUFFIXES`, so `foo.meta.btiles.json` would resolve to `btiles` and
+ * silently open the wrong editor. `foo.meta-btiles.json` cannot.
  */
 
 import { defineName, type HelperC } from './emitC'
@@ -44,10 +39,7 @@ export interface MetaFrame {
 
 export interface MetaTileDoc {
   version: 2
-  /**
-   * Project-relative path of the tileset whose tiles this meta references:
-   * `.tiles.json` for `.meta-tiles.json`, `.btiles.json` for `.meta-btiles.json`.
-   */
+  /** Project-relative path of the `.btiles.json` (or `.screen.json` atlas) whose tiles this meta references. */
   tileset: string
   /** This meta's size in tiles. Every frame is exactly this. */
   width: number
@@ -265,67 +257,17 @@ export function usesTransparentBlit(doc: MetaTileDoc): boolean {
 }
 
 /**
- * The opt-in ready-made C: stamp one frame of this meta into the name table.
- *
- * Written as runs rather than one `VDP_WriteLayout_GM2` over the whole
- * rectangle, because a meta is *transparent* where it holds tile 0 and a name
- * table has no holes — the only way to see through a cell is not to write it.
- * Each row becomes one call per opaque run, which for the usual case (a solid
- * meta) is still one call per row.
- *
- * A poke per cell would be the obvious alternative and is wrong twice:
- * `VDP_Poke_16K` takes `(value, dest)`, and it is 16K addressing only, so it
- * cannot write a SCREEN 4 name table at all.
+ * The opt-in ready-made C: blit one frame of this meta out of the atlas.
+ * Nothing until the meta knows its cell geometry, which it mirrors from its
+ * tileset when the editor opens it.
  */
 export function metaHelperC(doc: MetaTileDoc, name: string): HelperC {
-  const prefix = defineName(name)
-  if (doc.cell) return bitmapMetaHelperC(doc, name, prefix)
-
-  const signature = `void ${name}_Draw(u8 x, u8 y, u8 frame)`
-  return {
-    header: [
-      '',
-      `// ── ${name}: a meta-tile ──────────────────────────────────────────────`,
-      '//',
-      `// Stamps frame \`frame\` at tile column/row (x, y). The meta is`,
-      `// ${doc.width}×${doc.height} tiles${doc.frames.length > 1 ? `, with ${doc.frames.length} frames` : ''}.`,
-      '//',
-      '// Cells holding tile 0 are skipped, so whatever is already on screen',
-      '// shows through them. That is what makes a meta-tile transparent, and it',
-      '// needs the tileset to reserve tile 0.',
-      '//',
-      '// Needs MSXgl\'s VDP module (#include "msxgl.h" before this header) built',
-      '// with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.',
-      '//',
-      '// Example:',
-      `//   ${name}_Draw(10, 5, 0);`,
-      `${signature};`
-    ],
-    source: [
-      '',
-      signature,
-      '{',
-      `\tconst u8* src = ${name} + ((u16)frame * ${prefix}_CELLS);`,
-      `\tfor(u8 row = 0; row < ${prefix}_META_H; ++row)`,
-      '\t{',
-      '\t\tu8 col = 0;',
-      `\t\twhile(col < ${prefix}_META_W)`,
-      '\t\t{',
-      '\t\t\tif(src[col] == 0) { ++col; continue; }',
-      '\t\t\tu8 run = col;',
-      `\t\t\twhile(run < ${prefix}_META_W && src[run] != 0) ++run;`,
-      '\t\t\tVDP_WriteLayout_GM2(src + col, x + col, y + row, run - col, 1);',
-      '\t\t\tcol = run;',
-      '\t\t}',
-      `\t\tsrc += ${prefix}_META_W;`,
-      '\t}',
-      '}'
-    ]
-  }
+  if (!doc.cell) return { header: [], source: [] }
+  return bitmapMetaHelperC(doc, name, defineName(name))
 }
 
 /**
- * The bitmap counterpart: there is no name table, so a meta is stamped as
+ * There is no name table in a bitmap mode, so a meta is stamped as
  * `width × height` copies out of the atlas, one `HMMM` each — the same blit the
  * map's `_DrawRow` uses.
  *

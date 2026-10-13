@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * The meta-tile editor's centre pane: one frame as a picture, at zoom, with the
- * drawing tools.
+ * The bitmap meta-tile editor's centre pane: one frame as a picture, at zoom,
+ * with the drawing tools.
  *
- * Coordinates are the meta's own pixel space — `width*8 × height*8` — and every
+ * Coordinates are the meta's own pixel space — its size times the tileset's
+ * tile size — and every
  * stroke goes to `paint`, which resolves it to tile indices. Nothing here knows
  * that a meta is made of tiles at all, beyond drawing the seams.
  *
@@ -13,12 +14,11 @@
  */
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
-import { tilePixels } from '../../../../shared/msx/tile'
 import { tileImage } from '../../../../shared/msx/bitmap-tile'
 import { frameTileAt } from '../../../../shared/msx/meta-tile'
 import { sprayPoints } from '../../../../shared/msx/meta-paint'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { animationAtCell, beginStroke, bitmapTiles, cellSize, doc, endStroke, paint, tiles, type MetaSession } from './session'
+import { beginStroke, bitmapTiles, cellSize, doc, endStroke, paint, type MetaSession } from './session'
 
 const props = defineProps<{ session: MetaSession }>()
 
@@ -32,7 +32,7 @@ let painting = false
 let role: 'fg' | 'bg' = 'fg'
 
 const meta = computed(() => doc(props.session))
-/** 8×8 in a pattern mode; whatever the bitmap tileset says otherwise. */
+/** Whatever the bitmap tileset says a tile is. */
 const cellPx = computed(() => cellSize(props.session))
 const cols = computed(() => meta.value.width * cellPx.value.width)
 const rows = computed(() => meta.value.height * cellPx.value.height)
@@ -40,7 +40,7 @@ const step = computed(() => Math.max(2, props.session.zoom))
 const width = computed(() => cols.value * step.value)
 const height = computed(() => rows.value * step.value)
 const rgb = computed(() =>
-  paletteToRgb(bitmapTiles(props.session)?.palette ?? tiles(props.session)?.palette ?? null)
+  paletteToRgb(bitmapTiles(props.session)?.palette ?? null)
 )
 
 /**
@@ -52,16 +52,15 @@ const rgb = computed(() =>
  */
 function framePixels(frame: number): Uint8Array {
   const out = new Uint8Array(cols.value * rows.value)
-  const pattern = tiles(props.session)
   const bitmap = bitmapTiles(props.session)
-  if (!pattern && !bitmap) return out
+  if (!bitmap) return out
   const { width: cw, height: ch } = cellPx.value
   for (let cy = 0; cy < meta.value.height; cy++) {
     for (let cx = 0; cx < meta.value.width; cx++) {
       const tile = frameTileAt(meta.value, frame, cx, cy)
       // Tile 0 is the hole: left at index 0 so the checkerboard shows through.
       if (tile === 0) continue
-      const pixels = bitmap ? tileImage(bitmap, tile) : tilePixels(pattern!, tile)
+      const pixels = tileImage(bitmap, tile)
       for (let y = 0; y < ch; y++) {
         out.set(pixels.subarray(y * cw, y * cw + cw), (cy * ch + y) * cols.value + cx * cw)
       }
@@ -179,21 +178,6 @@ watchEffect(() => {
     for (const point of preview.value) context.fillRect(point.x * px, point.y * px, px, px)
     context.globalAlpha = 1
   }
-
-  // Cells showing an attached animation: they animate in the game, every copy
-  // in step, so they are marked rather than looking like still art.
-  context.strokeStyle = 'rgba(120, 230, 140, 0.95)'
-  context.lineWidth = 2
-  context.setLineDash([6, 4])
-  for (let cy = 0; cy < meta.value.height; cy++) {
-    for (let cx = 0; cx < meta.value.width; cx++) {
-      if (!animationAtCell(props.session, cx, cy)) continue
-      const w = cellPx.value.width * px
-      const h = cellPx.value.height * px
-      context.strokeRect(cx * w + 1, cy * h + 1, w - 2, h - 2)
-    }
-  }
-  context.setLineDash([])
 
   if (!props.session.gridVisible) return
   context.lineWidth = 1

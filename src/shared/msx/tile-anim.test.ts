@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   animationFromBlock,
-  animationOfTile,
   attachAnimation,
-  placeAnimationInMeta,
   colorsVary,
   createTileAnimDoc,
   detachAnimation,
@@ -22,7 +20,6 @@ import { normalizeTiles, removeTile, reorderTiles, validateTiles, type TileEntry
 import { defaultExport, parseResource, renderResourceFiles, resourceKindOf, serializeResource } from './resource'
 import { findOrCreateBankTile, findOrCreateTile, paintGrid } from './meta-paint'
 import { placePicture } from './tile-compact'
-import { createMetaTileDoc } from './meta-tile'
 
 /** A tile whose every row is `mark`, ink 15 on paper `paper`. */
 const tile = (mark: number, paper = 1): TileEntry => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf0 | paper) })
@@ -360,33 +357,5 @@ describe('a window is never mistaken for static art', () => {
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) pixels[y * 8 + x] = pose.pattern[y] & (0x80 >> x) ? 15 : 1
     const result = placePicture({ width: 1, height: 1, tiles: [0] }, doc, pixels, 1, 1)
     expect(result.grid.tiles[0]).not.toBe(6)
-  })
-})
-
-describe('animated meta-tiles, through an attached animation', () => {
-  const torch = (): TilesDoc =>
-    attachAnimation(tileset(), 'res/torch.anim-tiles.json', normalizeTileAnim({ width: 2, height: 1, frames: [{}, {}] }), { slot: 4, bank: null, name: 'g_T' })
-
-  it('points the cells at the window in every frame', () => {
-    const meta = { ...createMetaTileDoc('res/main.tiles.json', 2, 2), frames: [{ tiles: [1, 1, 2, 2] }, { tiles: [3, 3, 2, 2] }] }
-    const next = placeAnimationInMeta(meta, torch().animations[0], 0, 0)
-    if (typeof next === 'string') throw new Error(next)
-    expect(next.frames.map((f) => f.tiles)).toEqual([
-      [4, 5, 2, 2],
-      [4, 5, 2, 2]
-    ])
-    expect(animationOfTile(torch(), 5)?.path).toBe('res/torch.anim-tiles.json')
-    expect(animationOfTile(torch(), 6)).toBeNull()
-  })
-
-  it('refuses a window that does not fit', () => {
-    const meta = createMetaTileDoc('res/main.tiles.json', 2, 2)
-    expect(placeAnimationInMeta(meta, torch().animations[0], 1, 0)).toMatch(/does not fit at 1,0/)
-  })
-
-  it("refuses a bank's own window: a meta is drawn on any row", () => {
-    const banked = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[tile(1), tile(2), tile(3)], [], []] })
-    const doc = attachAnimation(banked, PATH, coin(), { slot: 2, bank: 0, name: 'g_X' })
-    expect(placeAnimationInMeta(createMetaTileDoc('x', 1, 1), doc.animations[0], 0, 0)).toMatch(/bank 1's own art/)
   })
 })

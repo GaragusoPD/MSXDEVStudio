@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeOwnedMeta } from './meta-owned'
 import { unpackRlep } from './compress'
 import { defineName, emitBin, emitC } from './emitC'
 import { createMapDoc, normalizeMap } from './map'
@@ -513,57 +514,20 @@ describe('map resource', () => {
 })
 
 describe('meta-tile resource', () => {
+  /** A 2×2 meta that owns its pixels, still, one cell see-through. */
   const tree = (): ResourceDoc => ({
     kind: 'metatiles',
-    doc: normalizeMetaTile({
-      tileset: 'res/tiles.tiles.json',
-      width: 2,
-      height: 2,
-      flags: 0x05,
-      // Frame 1 holds a transparent cell, which is what the run-splitting in
-      // the emitted _Draw exists for.
-      frames: [{ tiles: [1, 2, 3, 4] }, { tiles: [1, 0, 3, 4] }]
-    })
+    doc: normalizeOwnedMeta({ version: 3, mode: 'sc2', width: 2, height: 2, flags: 0x05, holes: [false, true, false, false] })
   })
 
-  it('emits one table at a per-frame stride, and states the geometry and flags', () => {
-    const header = rendered(tree(), 'res/tree.meta-tiles.json', {
-      name: 'g_Tree',
-      format: 'c',
-      out: 'content/tree.h',
-      helpers: true
-    })
-    expect(header).toContain('#define G_TREE_META_W 2')
-    expect(header).toContain('#define G_TREE_META_H 2')
-    expect(header).toContain('#define G_TREE_CELLS 4')
-    expect(header).toContain('#define G_TREE_FRAMES 2')
+  it('states its size and flags, and emits its info as data — its tiles are each tileset’s', () => {
+    const header = rendered(tree(), 'res/tree.meta-tiles.json', { name: 'g_Tree', format: 'c', out: 'content/tree.h', helpers: true })
+    expect(header).toContain('#define G_TREE_W 2')
+    expect(header).toContain('#define G_TREE_H 2')
     expect(header).toContain('#define G_TREE_FLAGS 0x05')
-    expect(header).toContain('#define G_TREE_SIZE 8')
-    expect([...resourceTables(tree())[0].bytes]).toEqual([1, 2, 3, 4, 1, 0, 3, 4])
-  })
-
-  it('draws a frame as runs, skipping the transparent tile', () => {
-    const header = rendered(tree(), 'res/tree.meta-tiles.json', {
-      name: 'g_Tree',
-      format: 'c',
-      out: 'content/tree.h',
-      helpers: true
-    })
-    expect(header).toContain('void g_Tree_Draw(u8 x, u8 y, u8 frame)')
-    expect(header).toContain('const u8* src = g_Tree + ((u16)frame * G_TREE_CELLS);')
-    // A name table has no holes, so transparency is a *skipped write* — which
-    // means a row is one call per opaque run, not one covering the rectangle.
-    expect(header).toContain('if(src[col] == 0) { ++col; continue; }')
-    expect(header).toContain('VDP_WriteLayout_GM2(src + col, x + col, y + row, run - col, 1);')
-  })
-
-  it('omits the helper when the export block does not ask for it', () => {
-    const header = rendered(tree(), 'res/tree.meta-tiles.json', {
-      name: 'g_Tree',
-      format: 'c',
-      out: 'content/tree.h'
-    })
-    expect(header).toContain('#define G_TREE_FRAMES 2')
+    expect(header).toContain('#define G_TREE_MOVING 0')
+    expect([...resourceTables(tree())[0].bytes]).toEqual([2, 2, 0x05])
+    // Nothing to draw itself with: each tileset it is attached to does that.
     expect(header).not.toContain('g_Tree_Draw')
   })
 
@@ -590,8 +554,9 @@ describe('meta-tile resource', () => {
 })
 
 describe('placed meta-tiles on a map', () => {
-  const tree = { path: 'res/tree.meta-tiles.json', name: 'g_Tree', width: 2, height: 3, frames: 4, flags: 0x01 }
-  const coin = { path: 'res/coin.meta-tiles.json', name: 'g_Coin', width: 1, height: 1, frames: 6, flags: 0x02 }
+  // As the map mirrors them: the tiles their attachment to its tileset gives them.
+  const tree = { path: 'res/tree.meta-tiles.json', name: 'g_Tree', width: 2, height: 3, frames: 1, flags: 0x01, cells: [1, 2, 3, 0, 4, 5] }
+  const coin = { path: 'res/coin.meta-tiles.json', name: 'g_Coin', width: 1, height: 1, frames: 1, flags: 0x02, cells: [6] }
 
   const level = (): ResourceDoc => {
     let doc = normalizeMap({ tileset: 'res/tiles.tiles.json', width: 32, height: 24 })
@@ -620,12 +585,13 @@ describe('placed meta-tiles on a map', () => {
     expect(header).toContain('#define G_LEVEL_FLAGS_G_TREE 0x01')
   })
 
-  it('externs each placed meta and builds a table from the mirror', () => {
+  it('draws each meta from the tiles it mirrors, in its own _MetaCells — no other header', () => {
+    const tables = resourceTables(level())
+    expect([...tables.find((table) => table.suffix === '_MetaCells')!.bytes]).toEqual([1, 2, 3, 0, 4, 5, 6])
+    expect([...tables.find((table) => table.suffix === '_MetaCellsAt')!.bytes]).toEqual([0, 0, 6, 0])
     const header = rendered(level(), 'res/level.map.json', block)
-    expect(header).toContain('extern const u8 g_Tree[];')
-    expect(header).toContain('extern const u8 g_Coin[];')
-    expect(header).toContain('{ g_Tree, 2, 3, 6, 4 },')
-    expect(header).toContain('void g_Level_DrawPlacements(const u8* frames)')
+    expect(header).not.toContain('extern const u8 g_Tree[];')
+    expect(header).toContain('void g_Level_DrawPlacements(void)')
   })
 
   it('emits a slot table of width, height and flags, so collision needs no meta header', () => {
@@ -886,9 +852,9 @@ describe('sfx resource', () => {
       // Blank maps/screens legitimately warn until their editor picks a tileset / imports a source.
       const blankStateWarnings: Record<string, string[]> = {
         map: ['No tileset referenced'],
-        // A blank meta has a frame from the moment it exists, so the only
-        // thing it can be missing is the tileset its indices mean anything in.
-        metatiles: ['No tileset referenced'],
+        // A blank bitmap meta has a frame from the moment it exists, so the
+        // only thing it can be missing is the tileset its indices mean anything
+        // in. A pattern one owns its pixels and names none.
         metabtiles: ['No tileset referenced'],
         screen: ['No source image, and nothing drawn yet']
       }

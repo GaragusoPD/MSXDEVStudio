@@ -1,11 +1,12 @@
 /**
- * The emitted meta-tile C, compiled and linked by the **real** MSXgl.
+ * The emitted bitmap meta-tile and banked-tileset C, compiled and linked by the
+ * **real** MSXgl. (Pattern meta-tiles have their own, `meta-owned-build.test.ts`.)
  *
  * Per CLAUDE.md, emitted C is never verified by reading it. This is the only
  * check that catches a helper calling an engine function that does not exist
- * under this configuration, a `msxgl_config.h` default that leaves
- * `VDP_WriteLayout_GM2` out of the build, or a map's `extern` naming a symbol
- * the meta exported under a different name.
+ * under this configuration, a `msxgl_config.h` default that leaves the VDP
+ * commands out of the build, or a map's `extern` naming a symbol the meta
+ * exported under a different name.
  *
  * Skipped when no MSXgl checkout is present (see `__fixtures__/msxgl.ts`).
  * Scratch projects go *beside* the checkout, never `/tmp`: MSXgl renames each
@@ -19,7 +20,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { addMetaRef, normalizeMap, placeMeta, setPlacementBaked } from '../../shared/msx/map'
 import { createBitmapTilesDoc, type BitmapTilesDoc } from '../../shared/msx/bitmap-tile'
 import { createMetaTileDoc, type MetaTileDoc } from '../../shared/msx/meta-tile'
-import { paintBitmapMeta, paintMeta } from '../../shared/msx/meta-paint'
+import { paintBitmapMeta } from '../../shared/msx/meta-paint'
 import { defaultExport, type ResourceDoc } from '../../shared/msx/resource'
 import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
 import { BUILD_TIMEOUT, buildFixture, cleanBuildFixtures, runsBuilds } from './__fixtures__/msxgl-build'
@@ -31,106 +32,8 @@ const cell = (ox: number, oy: number): { x: number; y: number }[] =>
   Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => ({ x: ox + x, y: oy + y }))).flat()
 
 /**
- * The fixture: a SCREEN 2 tileset with tile 0 reserved, a 2×2 meta with two
- * opaque cells and two transparent ones, and a map that places it twice — one
- * live, one baked. Both halves of the transparency path and both kinds of
- * placement, in one build.
- */
-function fixture(): Record<string, ResourceDoc> {
-  let tiles = normalizeTiles({ mode: 'sc2', count: 1, reserveTile0: true })
-  let meta = createMetaTileDoc('res/tree.meta-tiles.json', 2, 2)
-  for (const points of [cell(0, 0), cell(8, 8)]) {
-    const result = paintMeta(meta, tiles, 0, points, 5)
-    meta = result.meta
-    tiles = result.tiles
-  }
-
-  let map = normalizeMap({ tileset: 'res/tiles.tiles.json', width: 32, height: 24 })
-  map = addMetaRef(map, {
-    path: 'res/tree.meta-tiles.json',
-    name: 'g_Tree',
-    width: 2,
-    height: 2,
-    frames: 1,
-    flags: 1
-  })
-  map = placeMeta(map, 0, 0, 4, 4)
-  map = placeMeta(map, 0, 0, 10, 8)
-  map = setPlacementBaked(map, 0, 1, true)
-
-  return {
-    'tiles.tiles': {
-      kind: 'tiles',
-      doc: { ...tiles, export: { ...defaultExport('res/tiles.tiles.json'), name: 'g_Tiles', out: 'content/tiles.h' } }
-    },
-    'tree.meta-tiles': {
-      kind: 'metatiles',
-      doc: {
-        ...meta,
-        flags: 0x01,
-        export: { ...defaultExport('res/tree.meta-tiles.json'), name: 'g_Tree', out: 'content/tree.h', helpers: true }
-      }
-    },
-    'level.map': {
-      kind: 'map',
-      doc: { ...map, export: { ...defaultExport('res/level.map.json'), name: 'g_Level', out: 'content/level.h', helpers: true } }
-    }
-  }
-}
-
-/**
- * Calls every emitted entry point. `main` must actually *use* them: a helper
- * that is declared and never called links fine even when its body references a
- * symbol that does not exist.
- */
-const MAIN = `#include "msxgl.h"
-#include "content/tiles.h"
-#include "content/tree.h"
-#include "content/level.h"
-
-void main(void)
-{
-\tu8 frames[G_LEVEL_METAS];
-\tframes[0] = 0;
-\tVDP_SetMode(VDP_MODE_GRAPHIC2);
-\tVDP_LoadPattern_GM2(g_Tiles_Patterns, G_TILES_PATTERNS_SIZE / 8, 0);
-\tVDP_LoadColor_GM2(g_Tiles_Colors, G_TILES_COLORS_SIZE / 8, 0);
-\tg_Level_DrawLayer(g_Level_Background, 0, 0);
-\tg_Level_DrawPlacements(frames);
-\tg_Tree_Draw(10, 5, 0);
-\twhile(1) { Halt(); }
-}
-`
-
-describe.runIf(runsBuilds)('the emitted meta-tile C builds against real MSXgl', () => {
-  it(
-    'a painted meta and a map that places it, live and baked',
-    () => {
-      const { output, root } = buildFixture({
-        name: 'metatest',
-        template: 'template',
-        machine: '1',
-        resources: fixture(),
-        main: MAIN
-      })
-      // MSXgl reports a failed step in its output as well as its exit code.
-      expect(output).not.toMatch(/\bError:/i)
-      // The failure this test exists for: a helper calling something the engine
-      // does not export links "successfully" until the linker resolves globals.
-      expect(output).not.toMatch(/Undefined Global/i)
-      expect(output).toMatch(/Success/)
-      // A quiet build is not the same as a ROM. Assert the artefact.
-      const rom = join(root, 'out', 'metatest.rom')
-      expect(existsSync(rom), `${rom} should exist`).toBe(true)
-      expect(statSync(rom).size).toBeGreaterThan(1024)
-    },
-    BUILD_TIMEOUT
-  )
-})
-
-/**
- * The bitmap sibling of `fixture()`: a SCREEN 5 atlas, a 2×2 meta painted into
- * it, and a map that places it live and baked. `MapDoc.cell` is what sends
+ * A SCREEN 5 atlas, a 2×2 meta painted into it, and a map that places it live
+ * and baked. `MapDoc.cell` is what sends
  * `placementHelperC` down `bitmapPlacementHelperC`, which until now had never
  * been through a compiler.
  */
@@ -143,9 +46,7 @@ function bitmapFixture(): Record<string, ResourceDoc> {
   // number`, and reassigning a `BitmapTilesDoc` (`number | null`) into it does
   // not typecheck.
   let tiles: BitmapTilesDoc = { ...createBitmapTilesDoc('sc5', 16, 16, 4), transparent: 0 }
-  // First argument is the **tileset**, not the meta's own path. (The pattern
-  // fixture above passes its own path; harmless there because a pattern meta's
-  // export never opens the tileset. Do not copy it here.)
+  // First argument is the **tileset**, not the meta's own path.
   // `cols: 16`, not 4 — it has to equal `sheetCols(tiles)`, which is
   // `SHEET_WIDTH / width` = 256 / 16 (`bitmap-tile.ts:107`). It becomes
   // `G_LEVEL_ATLAS_COLS`, the divisor the blit uses to turn a cell index into
@@ -155,8 +56,8 @@ function bitmapFixture(): Record<string, ResourceDoc> {
     ...createMetaTileDoc('res/tiles.btiles.json', 2, 2, { width: 16, height: 16, cols: 16 }),
     transparent: 0
   }
-  // `cell()` is the 8x8 helper the pattern fixture uses, so this paints the
-  // top-left quarter of each 16x16 cell. That is enough: the point is a cell
+  // `cell()` covers 8x8 dots, so this paints the top-left quarter of each
+  // 16x16 cell. That is enough: the point is a cell
   // that is not tile 0, not a particular picture.
   for (const points of [cell(0, 0), cell(16, 16)]) {
     const result = paintBitmapMeta(meta, tiles, 0, points, 5)

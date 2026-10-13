@@ -351,27 +351,6 @@ opens), keeping every tile that still shows the right art and appending what
 changed — nothing else drawn with the tileset moves. Don't hand-edit a
 \`.tiles.json\`'s \`metas\` list: it is derived.
 
-#### Older meta-tiles, made of one tileset's tiles
-
-A \`.meta-tiles.json\` without \`"version": 3\` (and every \`.meta-btiles.json\`)
-is the older kind: it holds *tile indices* into the one tileset it names, and
-exports one table of its frames end to end. Its frames are redrawn per copy —
-the placements' \`frames\` array below — rather than animated in place. The meta
-editor's *Make it independent* turns one into the kind above, attached to the
-same tileset at the same tiles, so every map keeps drawing what it drew.
-
-\`\`\`c
-#define G_TREE_META_W 2
-#define G_TREE_META_H 3
-#define G_TREE_CELLS  6      // tiles per frame — the table's stride
-#define G_TREE_FRAMES 4
-#define G_TREE_FLAGS  0x01   // what it *means*, your bits to define
-extern const u8 g_Tree[];
-
-// With helpers on. Skips cells holding tile 0, which the tileset must reserve.
-g_Tree_Draw(10, 5, 0);       // frame 0 at tile column 10, row 5
-\`\`\`
-
 ### Placing meta-tiles on a map
 
 A map's grid is still one byte per cell of plain tile indices — that has not
@@ -388,32 +367,23 @@ extern const u8 g_Level_MetaInfo[];     // per slot: width, height, flags — 3 
 extern const u8 g_Level_Placements[];   // slot | baked<<7, x, y — 3 bytes each
 
 // With helpers on:
-u8 frames[G_LEVEL_METAS] = { 0 };              // a local: SDCC really does zero this
 g_Level_DrawLayer(g_Level_Background, 0, 0);   // the grid, one call
-g_Level_DrawPlacements(frames);                // the metas over it
+g_Level_DrawPlacements();                      // the metas over it
 \`\`\`
 
-\`frames[slot]\` is the frame each meta is currently showing. A meta that owns
-its pixels has one — it animates in place through \`_Animate()\`, and the map
-draws it with the tiles its attachment to the map's tileset gives it, mirrored
-into the map's own export. For an older meta, \`frames\` is how its copies
-animate: advance the array and call \`_DrawPlacements\` again, pacing it
-yourself — hold a pose for several frames rather than stepping at 50/60 Hz.
-
-**If you make \`frames\` a global, zero it explicitly** — see rule 4 under
-*Working in this project*. Nothing clears uninitialised RAM on a ROM target, and
-a stray frame index reads past the end of the meta's own table. The helper
-clamps an out-of-range index back to frame 0, so the worst case is a wrong pose
-rather than whatever byte followed in ROM — but a zeroed array is the actual
-fix.
+The map draws each meta with the tiles its attachment to the map's tileset gives
+it, mirrored into the map's own \`_MetaCells\`, so it needs no other header. A
+meta that animates needs no redraw: \`_Animate()\` changes its tiles' art in
+place, wherever they are.
 
 Two kinds of placement, and the difference is where the tiles are:
 
 - **Live** (the default) — the grid under it holds tile 0 and
-  \`_DrawPlacements\` draws it every time. This is the one that can animate.
-- **Baked** — frame 0's tiles were written into the grid by the editor, so
+  \`_DrawPlacements\` draws it every time.
+- **Baked** — its tiles were written into the grid by the editor, so
   \`_DrawLayer\` already drew it and \`_DrawPlacements\` skips it (bit 7 of the
-  slot byte). Costs nothing at runtime; cannot animate. For static scenery.
+  slot byte). Costs nothing at runtime. An animated meta still animates baked:
+  its moving cells are window tiles either way.
 
 Collision still reads the tileset's \`_Flags\`, indexed by tile, for anything in
 the grid. A placement's own \`_FLAGS_\` define is for asking what the *object*
@@ -455,12 +425,13 @@ capped.
 
 A map built from meta-tiles should not store every cell. A layer can be
 **indexed** (the map editor's *tiles / indexed* toggle on the layer): it holds
-meta-tiles that own their pixels, side by side in any mix of sizes, never
-overlapping, and exports **one byte per meta-tile**. A screen of 2×2 metas is
-192 bytes instead of 768.
+meta-tiles only, in any mix of sizes, and exports **one byte per meta-tile**. A
+screen of 2×2 metas is 192 bytes instead of 768. Meta-tiles there may overlap,
+and stack as they were placed — later on top.
 
 \`\`\`c
-extern const u8 g_Level_Terrain[];       // in reading order: slot + 1 per meta, 0 = an empty cell
+extern const u8 g_Level_Terrain[];       // in reading order: slot + 1 per meta, 0 = an empty cell;
+                                         // then slot + 1, x, y per overlay; then 0
 extern const u8 g_Level_MetaCells[];     // each slot's tiles, row-major; 0 is see-through
 extern const u8 g_Level_MetaCellsAt[];   // where each slot starts in _MetaCells, 2 bytes, low first
 
@@ -489,8 +460,12 @@ VDP_WriteLayout_GM2(g_Map, 0, 0, G_LEVEL_W, G_LEVEL_H);
 - The stream ships raw even when the map's tile layers are RLEp-packed:
   \`_Expand\` reads it byte by byte. With packed tile layers, draw the expanded
   buffer with \`VDP_WriteLayout_GM2\` rather than \`_DrawLayer\`, which unpacks.
-- An older meta-tile (made of one tileset's tiles) cannot be on an indexed
-  layer; *Make it independent* first.
+- **Overlaps cost a little.** The byte stream names, at each cell no earlier
+  meta covers, the meta that starts there — so it draws in reading order. A
+  meta that starts inside another's rectangle, or that must be drawn over one
+  that comes later in reading order, is an *overlay* record after the stream
+  (slot + 1, x, y), drawn after it in placing order. Where one of two overlapping
+  metas is see-through, their order does not matter and nothing extra is spent.
 
 ### Animated tiles
 
@@ -537,15 +512,12 @@ generated step copies a pose's colours only when the poses differ in colour
 any per-third recolouring your game does), writes one bank only for a window on
 a bank's own art, and writes SCREEN 1's single pattern table directly. Copies
 that must animate *independently* — each at its own phase, or stopping one at a
-time — need a name-table write per copy: an older meta-tile's frames through
-\`_DrawPlacements(frames)\`, or your own code swapping tile numbers.
+time — need a name-table write per copy: your own code swapping tile numbers.
 
 **An animated meta-tile is a meta-tile with more than one pose** (see
 *Meta-tiles*): its moving cells get a window like this, in every tileset it is
-attached to, and play through the same \`_Animate()\`. An older meta can point
-some of its cells at an attached animation's window instead (the meta editor's
-*Animated tiles* section) — the same effect, every copy in step, **baked
-placements included**.
+attached to, and play through the same \`_Animate()\` — every copy in step,
+**baked placements included**.
 
 Without *Export ready-made C* there is no \`_Animate()\`; the defines above and
 the animation's own \`g_Coin_Patterns\`/\`_Colors\`/\`_Durations\` tables are still
@@ -942,9 +914,11 @@ There is no default — cell 0 is an ordinary picture, so a map that names no
 transparent cell has none, and the Problems panel says so once it has more than
 one layer.
 
-Meta-tiles work in bitmap modes too (\`*.meta-btiles.json\` over a
-\`*.btiles.json\`), painted and placed the same way. The blit differs: there is
-no name table, so the helpers take the atlas position and copy cells out of it.
+Meta-tiles work in bitmap modes too, as their own kind: a \`*.meta-btiles.json\`
+is made of one \`*.btiles.json\` set's tiles — it references them, painted in
+its editor and resolved into the set as you draw — and is placed on maps over
+that set. The blit differs: there is no name table, so the helpers take the
+atlas position and copy cells out of it, and each meta carries its own table.
 
 \`\`\`c
 #define G_ROCK_CELL_W      16
@@ -955,6 +929,14 @@ no name table, so the helpers take the atlas position and copy cells out of it.
 g_Rock_Draw(64, 32, 0, ATLAS_Y);              // one meta, frame 0
 g_Stage_DrawPlacements(frames, ATLAS_Y);      // every live placement
 \`\`\`
+
+A bitmap mode has no pattern table to swap, so a bitmap meta-tile animates per
+copy: \`frames[slot]\` is the frame each one shows — advance it and draw again,
+pacing it yourself. **If you make \`frames\` a global, zero it explicitly** — see
+rule 4 under *Working in this project*. Nothing clears uninitialised RAM on a
+ROM target; the helper clamps an out-of-range index back to frame 0, so the
+worst case is a wrong pose rather than whatever byte followed in ROM, but a
+zeroed array is the actual fix.
 
 Two kinds of transparency, and they compose. A cell holding tile 0 is not
 blitted at all. If the tileset nominates **colour 0** as transparent, the copy

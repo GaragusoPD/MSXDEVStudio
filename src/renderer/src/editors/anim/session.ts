@@ -162,12 +162,6 @@ async function load(session: AnimSession): Promise<void> {
   try {
     const text = await window.api.invoke('fs:read', { path: session.path })
     const raw: unknown = text.trim() ? JSON.parse(text) : {}
-    if (session.kind === 'metatiles' && text.trim() && !isOwnedMeta(raw)) {
-      // A version-2 meta is the other editor's; saving it from here would
-      // throw its tile references away.
-      session.error = `${session.path} references a tileset's tiles — close and reopen the tab to edit it, or convert it there.`
-      return
-    }
     session.history = createHistory<PoseFile>(session.kind === 'metatiles' ? normalizeOwnedMeta(raw) : normalizeTileAnim(raw))
     session.frame = Math.min(session.frame, doc(session).frames.length - 1)
     session.dirty = false
@@ -214,8 +208,8 @@ export async function findAttachments(session: AnimSession): Promise<void> {
 }
 
 export async function saveSession(session: AnimSession): Promise<void> {
-  // Nothing loaded is nothing to save — and for a version-2 meta, saving the
-  // blank document would replace its tile references.
+  // Nothing loaded is nothing to save: writing the blank document over a file
+  // that failed to open would lose it.
   if (session.error) return
   const current = session.history.present
   await window.api.invoke('fs:write', { path: session.path, content: serialize(session) })

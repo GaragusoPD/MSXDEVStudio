@@ -106,8 +106,7 @@ async function createResource(): Promise<void> {
     // Seeded with the chosen mode rather than patched afterwards: `normalize*`
     // is what applies a mode's constraints (SCREEN 3 forces an even tile width
     // and drops the palette), and it only runs on the way in.
-    // A new `.meta-tiles.json` owns its pixels (version 3); the version-2 form
-    // that references one tileset is only ever opened, never created.
+    // A `.meta-tiles.json` is `version: 3`, the one that owns its pixels.
     const seed =
       newKind.value === 'metatiles'
         ? JSON.stringify({ version: 3, mode: newMode.value })

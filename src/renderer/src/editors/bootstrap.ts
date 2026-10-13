@@ -18,7 +18,6 @@ import ExampleViewerTab from './ExampleViewerTab.vue'
 import GitDiffTab from './GitDiffTab.vue'
 import MapEditorTab from './map/MapEditorTab.vue'
 import MetaTileEditorTab from './meta/MetaTileEditorTab.vue'
-import MetaTileRouter from './meta/MetaTileRouter.vue'
 import MonacoEditorTab from './MonacoEditorTab.vue'
 import ProjectSettingsTab from './ProjectSettingsTab.vue'
 import ScreenEditorTab from './screen/ScreenEditorTab.vue'
@@ -101,24 +100,18 @@ registerEditor({
   redo: (path) => btiles.redo(btiles.bitmapTileSession(path))
 })
 
-// Meta-tiles. A `.meta-tiles.json` is one of two formats and the file says
-// which (`meta/format.ts`): one that owns its pixels is edited with the pose
-// editor, a version-2 one that references a tileset with the meta editor. The
-// menu's hooks ask for whichever session the router actually opened — the
-// pose session only exists for a file that owns its pixels. A
-// `.meta-btiles.json` is always the meta editor's. `file-kind.ts` lists the
+// Meta-tiles. A pattern meta-tile owns its pixels and is edited with the pose
+// editor — an animation's canvas and pose strip, plus see-through cells and
+// flags (`anim/session.ts`, `kind: 'metatiles'`). A bitmap meta-tile references
+// its set's tiles and has an editor of its own. `file-kind.ts` lists the
 // hyphenated suffixes first so the longer match wins; they cannot collide with
 // `tiles.json`/`btiles.json` anyway, which is why the hyphen is there.
-const ownedOr = <T>(path: string, owned: (s: anim.AnimSession) => T, refs: (s: meta.MetaSession) => T): T => {
-  const session = anim.existingAnimSession(path)
-  return session ? owned(session) : refs(meta.metaSession(path))
-}
 registerEditor({
   extensions: ['meta-tiles.json'],
-  component: MetaTileRouter,
-  save: (path) => ownedOr(path, anim.saveSession, meta.saveSession),
-  undo: (path) => ownedOr(path, anim.undo, meta.undo),
-  redo: (path) => ownedOr(path, anim.redo, meta.redo)
+  component: AnimTileEditorTab,
+  save: (path) => anim.saveSession(anim.animSession(path)),
+  undo: (path) => anim.undo(anim.animSession(path)),
+  redo: (path) => anim.redo(anim.animSession(path))
 })
 registerEditor({
   extensions: ['meta-btiles.json'],

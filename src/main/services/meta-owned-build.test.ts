@@ -231,10 +231,8 @@ describe.runIf(runsBuilds)('SCREEN 1 meta-tiles build against real MSXgl on an M
 
 void main(void)
 {
-\tu8 frames[G_LEVEL_METAS];
-\tframes[0] = 0;
 \tg_Level_DrawLayer(g_Level_Background, 0, 0);
-\tg_Level_DrawPlacements(frames);
+\tg_Level_DrawPlacements();
 \tg_Tiles_DrawMeta(G_TILES_META_SIGN, 10, 10);
 \tg_Tiles_AnimReset();
 \twhile(1)

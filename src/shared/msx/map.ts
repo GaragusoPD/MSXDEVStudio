@@ -414,7 +414,9 @@ export function validateMap(doc: MapDoc, options: { banked?: boolean } = {}): st
   // map's tileset gives it. Without one there is nothing to draw with, and the
   // only other outcome is a table of zeros that draws nothing at runtime.
   for (const ref of doc.metas) {
-    if (ref.cells && ref.cells.length !== ref.width * ref.height) {
+    // On a pattern map every meta owns its pixels and is drawn with its
+    // attachment's tiles; a bitmap map's metas carry their own tables instead.
+    if (!doc.cell && (!ref.cells || ref.cells.length !== ref.width * ref.height)) {
       problems.push(`"${ref.name}" (${ref.path}) is not attached to ${doc.tileset || 'this map\'s tileset'} — attach it in the tile editor, or place it again from the map editor`)
     }
   }
@@ -773,32 +775,6 @@ export function hasIndexedLayers(doc: MapDoc): boolean {
 }
 
 /**
- * The placement on `layerIndex` a `width × height` meta at (x, y) would
- * overlap, or null. `ignore` leaves one placement out — the one being moved.
- */
-export function overlappingPlacement(
-  doc: MapDoc,
-  layerIndex: number,
-  rect: { x: number; y: number; width: number; height: number },
-  ignore: number | null = null
-): number | null {
-  const layer = doc.layers[layerIndex]
-  if (!layer) return null
-  for (const [index, placement] of layer.placements.entries()) {
-    if (index === ignore) continue
-    const ref = doc.metas[placement.slot]
-    if (!ref) continue
-    const apart =
-      placement.x >= rect.x + rect.width ||
-      rect.x >= placement.x + ref.width ||
-      placement.y >= rect.y + rect.height ||
-      rect.y >= placement.y + ref.height
-    if (!apart) return index
-  }
-  return null
-}
-
-/**
  * Makes a layer indexed, or ordinary again.
  *
  * On: the grid is cleared — an indexed layer is its meta-tiles — and baked
@@ -825,46 +801,167 @@ export function setLayerIndexed(doc: MapDoc, layerIndex: number, on: boolean): M
   return { ...doc, layers }
 }
 
+/** A placement on an indexed layer, with what its encoding needs to know. */
+interface Stacked {
+  placement: MetaPlacement
+  ref: MetaRef
+  /** Its place in the layer's list, which is its place in the stack: later is on top. */
+  z: number
+  /** The map cells it writes — every cell of its rectangle but the see-through ones. */
+  opaque: Set<number>
+}
+
 /**
- * An indexed layer as the game reads it: one byte per meta-tile, any mix of
- * sizes. Walking the cells in reading order, at each cell no earlier meta
- * covers, the byte is the slot + 1 of the meta whose top-left is there — or 0,
- * an empty 1×1 cell, when none is.
+ * How an indexed layer is encoded: which meta-tiles go in the one-byte stream,
+ * and which need a record of their own after it.
  *
- * Unambiguous because a meta's top-left is the first of its cells in reading
- * order, so the decoder always meets it before any cell it covers — and so it
- * knows to skip those. Runs of 0 are what RLEp packs best, though this table
- * ships raw: the expander reads it byte by byte.
+ * The stream walks the cells in reading order and, at each cell no earlier meta
+ * covers, names the meta that starts there — or 0, for an empty cell. That is a
+ * byte a meta, and it draws them in the reading order of their top-left
+ * corners. Two things it cannot say: a meta that starts *inside* another's
+ * rectangle (the walk skips that cell), and a stacking order that disagrees
+ * with reading order where two metas really overlap. Those metas are
+ * **overlays**: a record each after the stream (slot + 1, x, y), drawn after it,
+ * in the order they were placed. So meta-tiles may overlap freely and still
+ * stack exactly as the editor shows them.
+ *
+ * Only opaque overlaps count. Where one of the two is see-through, the order
+ * they are drawn in changes nothing — so the common cases stay a byte a meta:
+ * metas side by side, or one tucked into another's see-through corner.
+ *
+ * Found by moving metas to the overlays until nothing contradicts. Overlays only
+ * ever grow, so it ends, and what it ends on is always right — if not always
+ * the smallest encoding there is.
+ */
+export function indexedLayerPlan(doc: MapDoc, layer: MapLayer): { stream: MetaPlacement[]; overlays: MetaPlacement[] } {
+  const width = doc.width
+  const stacked: Stacked[] = []
+  layer.placements.forEach((placement, z) => {
+    const ref = doc.metas[placement.slot]
+    if (!ref) return
+    const opaque = new Set<number>()
+    for (let r = 0; r < ref.height; r++) {
+      for (let c = 0; c < ref.width; c++) {
+        const x = placement.x + c
+        const y = placement.y + r
+        if (x >= width || y >= doc.height) continue
+        if ((ref.cells?.[r * ref.width + c] ?? 1) !== 0) opaque.add(y * width + x)
+      }
+    }
+    stacked.push({ placement, ref, z, opaque })
+  })
+  // The pairs whose drawing order shows: they share an opaque cell. Lower first.
+  const conflicts: [Stacked, Stacked][] = []
+  for (let i = 0; i < stacked.length; i++) {
+    for (let j = i + 1; j < stacked.length; j++) {
+      const [lower, upper] = [stacked[i], stacked[j]]
+      for (const cell of lower.opaque) {
+        if (!upper.opaque.has(cell)) continue
+        conflicts.push([lower, upper])
+        break
+      }
+    }
+  }
+
+  const overlay = new Set<Stacked>()
+  for (;;) {
+    // Which metas the stream can name, walking it as the decoder will.
+    const starts = new Map<number, Stacked[]>()
+    for (const entry of stacked) {
+      if (overlay.has(entry)) continue
+      const at = entry.placement.y * width + entry.placement.x
+      starts.set(at, [...(starts.get(at) ?? []), entry])
+    }
+    const rank = new Map<Stacked, number>()
+    const cover = new Array<number>(width).fill(0)
+    let moved = false
+    for (let y = 0; y < doc.height; y++) {
+      for (let x = 0; x < width; x++) {
+        const here = starts.get(y * width + x) ?? []
+        if (cover[x]) {
+          // Starts inside another meta's rectangle: the walk never stops here.
+          for (const entry of here) overlay.add(entry)
+          moved ||= here.length > 0
+          continue
+        }
+        if (!here.length) continue
+        const [first, ...rest] = here
+        for (const entry of rest) overlay.add(entry)
+        moved ||= rest.length > 0
+        rank.set(first, rank.size)
+        for (let c = 0; c < first.ref.width && x + c < width; c++) cover[x + c] = Math.max(cover[x + c], first.ref.height)
+      }
+      for (let x = 0; x < width; x++) if (cover[x]) cover[x]--
+    }
+    if (moved) continue
+    // Then the stack: an upper meta drawn before a lower one it overlaps moves
+    // to the overlays, which are drawn after the stream, in placing order.
+    const drawn = (entry: Stacked): number => rank.get(entry) ?? rank.size + entry.z
+    for (const [lower, upper] of conflicts) {
+      if (drawn(upper) > drawn(lower)) continue
+      overlay.add(upper)
+      moved = true
+    }
+    if (moved) continue
+    return {
+      stream: [...rank.keys()].map((entry) => entry.placement),
+      overlays: stacked.filter((entry) => overlay.has(entry)).map((entry) => entry.placement)
+    }
+  }
+}
+
+/** Bytes an overlay's x and y take: one each, or two (low first) on a map wider or taller than 256 tiles. */
+function coordinateBytes(doc: MapDoc): { x: number; y: number } {
+  return { x: doc.width > 256 ? 2 : 1, y: doc.height > 256 ? 2 : 1 }
+}
+
+/**
+ * An indexed layer as the game reads it, in two parts:
+ *
+ * - **the stream**, one byte per meta-tile, any mix of sizes: walking the cells
+ *   in reading order, at each cell no earlier meta covers, the slot + 1 of the
+ *   meta whose top-left is there — or 0, an empty 1×1 cell. Unambiguous because
+ *   a meta's top-left is the first of its cells the walk meets, so the decoder
+ *   always meets it before any cell it covers, and knows to skip those;
+ * - **the overlays**, the meta-tiles the stream cannot carry (`indexedLayerPlan`):
+ *   slot + 1, x, y each, ended by a 0.
+ *
+ * Runs of 0 are what RLEp packs best, though this table ships raw: the expander
+ * reads it byte by byte.
  */
 export function indexedLayerStream(doc: MapDoc, layer: MapLayer): Uint8Array {
   const width = doc.width
-  const covered = new Uint8Array(width * doc.height)
+  const { stream, overlays } = indexedLayerPlan(doc, layer)
   const origin = new Map<number, MetaPlacement>()
-  for (const placement of layer.placements) origin.set(placement.y * width + placement.x, placement)
+  for (const placement of stream) origin.set(placement.y * width + placement.x, placement)
   const out: number[] = []
+  const cover = new Array<number>(width).fill(0)
   for (let y = 0; y < doc.height; y++) {
     for (let x = 0; x < width; x++) {
-      const at = y * width + x
-      if (covered[at]) continue
-      const placement = origin.get(at)
+      if (cover[x]) continue
+      const placement = origin.get(y * width + x)
       const ref = placement && doc.metas[placement.slot]
       if (!placement || !ref) {
         out.push(0)
         continue
       }
       out.push(placement.slot + 1)
-      for (let dy = 0; dy < ref.height && y + dy < doc.height; dy++) {
-        for (let dx = 0; dx < ref.width && x + dx < width; dx++) covered[(y + dy) * width + x + dx] = 1
-      }
+      for (let c = 0; c < ref.width && x + c < width; c++) cover[x + c] = Math.max(cover[x + c], ref.height)
     }
+    for (let x = 0; x < width; x++) if (cover[x]) cover[x]--
   }
+  const bytes = coordinateBytes(doc)
+  const word = (value: number, size: number): number[] => (size === 2 ? [value & 0xff, (value >> 8) & 0xff] : [value & 0xff])
+  for (const placement of overlays) out.push(placement.slot + 1, ...word(placement.x, bytes.x), ...word(placement.y, bytes.y))
+  out.push(0)
   return Uint8Array.from(out)
 }
 
 /**
- * The stream read back into placements — the proof the encoding loses
- * nothing. Walks it exactly as the generated `_Expand` does: a column counter
- * per cell of the row says how many more rows an earlier meta covers it for.
+ * The stream read back into placements, in the order they are drawn — the
+ * proof the encoding loses nothing. Walks it exactly as the generated
+ * `_Expand` does: a counter per column says how many more rows an earlier meta
+ * covers it for; then the overlays, until a 0.
  */
 export function decodeIndexedStream(doc: MapDoc, stream: ArrayLike<number>): MetaPlacement[] {
   const placements: MetaPlacement[] = []
@@ -877,18 +974,31 @@ export function decodeIndexedStream(doc: MapDoc, stream: ArrayLike<number>): Met
       const ref = m ? doc.metas[m - 1] : undefined
       if (!ref) continue
       placements.push({ slot: m - 1, x, y })
-      for (let c = 0; c < ref.width && x + c < doc.width; c++) cover[x + c] = ref.height
+      for (let c = 0; c < ref.width && x + c < doc.width; c++) cover[x + c] = Math.max(cover[x + c], ref.height)
     }
     for (let x = 0; x < doc.width; x++) if (cover[x]) cover[x]--
+  }
+  const bytes = coordinateBytes(doc)
+  const take = (size: number): number => {
+    const low = stream[read++] ?? 0
+    return size === 2 ? low | ((stream[read++] ?? 0) << 8) : low
+  }
+  for (;;) {
+    const m = stream[read++] ?? 0
+    if (!m) break
+    const x = take(bytes.x)
+    const y = take(bytes.y)
+    if (doc.metas[m - 1]) placements.push({ slot: m - 1, x, y })
   }
   return placements
 }
 
 /**
  * What `_Expand` leaves in RAM: the layer's meta-tiles written into `under`
- * (another layer's tiles, or zeros), and which slot + 1 covers each cell it
- * drew. See-through cells and empty ones keep what was under them. Pure, and
- * the same walk as the C — what the tests hold the generated code to.
+ * (another layer's tiles, or zeros), in the order they are drawn, and which
+ * slot + 1 drew each cell last. See-through cells and empty ones keep what was
+ * under them. Pure, and the same walk as the C — what the tests hold the
+ * generated code to.
  */
 export function expandIndexedLayer(
   doc: MapDoc,
@@ -919,39 +1029,26 @@ export function expandIndexedLayer(
  */
 function indexedLayerProblems(doc: MapDoc): string[] {
   const problems: string[] = []
-  doc.layers.forEach((layer, layerIndex) => {
+  doc.layers.forEach((layer) => {
     if (!layer.indexed) return
     const label = `Layer "${layer.name}"`
     if (doc.cell) {
       problems.push(`${label} is indexed, which needs a map drawn through the name table with a pattern tileset`)
       return
     }
-    layer.placements.forEach((placement, index) => {
+    for (const placement of layer.placements) {
       const ref = doc.metas[placement.slot]
-      if (!ref) return
-      if (!ref.cells) {
-        problems.push(
-          `${label}: "${ref.name}" references its tileset's tiles — an indexed layer holds meta-tiles that own their pixels; open it and make it independent`
-        )
+      if (ref && placement.baked) {
+        problems.push(`${label}: "${ref.name}" at ${placement.x},${placement.y} is baked, and an indexed layer has no grid to bake into`)
       }
-      if (placement.baked) problems.push(`${label}: "${ref.name}" at ${placement.x},${placement.y} is baked, and an indexed layer has no grid to bake into`)
-      const other = overlappingPlacement(doc, layerIndex, { x: placement.x, y: placement.y, width: ref.width, height: ref.height }, index)
-      if (other !== null && other > index) {
-        const hit = layer.placements[other]
-        problems.push(
-          `${label}: "${ref.name}" at ${placement.x},${placement.y} overlaps "${doc.metas[hit.slot]?.name}" at ${hit.x},${hit.y} — meta-tiles on an indexed layer cannot overlap`
-        )
-      }
-    })
+    }
   })
-  return [...new Set(problems)]
+  return problems
 }
 
 /**
  * Each slot's tiles, end to end, as the expander reads them — and where each
- * slot starts, two bytes a slot, low first. A slot that references its
- * tileset's tiles (version 2) contributes nothing: it can only be placed, not
- * be part of an indexed layer.
+ * slot starts, two bytes a slot, low first.
  */
 export function metaCellTables(doc: MapDoc): { cells: Uint8Array; at: Uint8Array } {
   const cells: number[] = []
@@ -971,8 +1068,8 @@ export function metaCellTables(doc: MapDoc): { cells: Uint8Array; at: Uint8Array
  * change (`demo_msx1`'s `g_Map`): drawn with the same layout write, read for
  * collision, rewritten when something is taken.
  *
- * Animated meta-tiles need nothing here: their cells are window tiles, so
- * expanding them writes window numbers, and the tileset's `_Animate()` moves
+ * Animated meta-tiles need nothing here: their moving cells are window tiles,
+ * so expanding them writes window numbers, and the tileset's `_Animate()` moves
  * every copy — on screen or scrolled in later.
  */
 export function indexedLayerHelperC(doc: MapDoc, name: string): HelperC {
@@ -981,6 +1078,11 @@ export function indexedLayerHelperC(doc: MapDoc, name: string): HelperC {
   const first = doc.layers.find((layer) => layer.indexed)!
   const xType = doc.width > 255 ? 'u16' : 'u8'
   const yType = doc.height > 255 ? 'u16' : 'u8'
+  const bytes = coordinateBytes(doc)
+  const coordinate = (axis: 'x' | 'y', size: number, type: string): string[] =>
+    size === 2
+      ? [`\t\t${type} ${axis} = *layer++;`, `\t\t${axis} |= (u16)(*layer++) << 8;`]
+      : [`\t\t${type} ${axis} = *layer++;`]
   const signature = `void ${name}_Expand(const u8* layer, u8* tiles, u8* objects)`
   return {
     header: [
@@ -993,9 +1095,10 @@ export function indexedLayerHelperC(doc: MapDoc, name: string): HelperC {
       '// Only the cells a meta-tile draws are written. See-through cells and empty',
       '// ones keep what `tiles` held, so expanding a layer over another one',
       '// composes them: expand the lower layer first, into the same buffer.',
+      '// Meta-tiles that overlap stack as they were placed in the editor.',
       '//',
-      '// `objects`, unless NULL, gets the slot + 1 of the meta-tile covering each',
-      `// cell it draws — ${prefix}_META_<NAME> + 1 — for collision against the object`,
+      '// `objects`, unless NULL, gets the slot + 1 of the meta-tile that drew each',
+      `// cell — ${prefix}_META_<NAME> + 1 — for collision against the object`,
       `// rather than its tiles: ${name}_MetaInfo[(objects[i] - 1) * 3 + 2] is its flags.`,
       '//',
       '// RAM is not cleared at boot on a ROM target: fill `tiles` (and zero',
@@ -1011,42 +1114,58 @@ export function indexedLayerHelperC(doc: MapDoc, name: string): HelperC {
     ],
     source: [
       '',
+      `// Writes meta \`m\` (0-based) with its top-left at offset \`dst\`, skipping see-through cells.`,
+      `static void ${name}_Stamp(u8 m, u16 dst, u8* tiles, u8* objects)`,
+      '{',
+      `\tconst u8* info = ${name}_MetaInfo + (u16)m * 3;`,
+      '\tconst u8 w = info[0];',
+      '\tconst u8 h = info[1];',
+      `\tconst u8* src = ${name}_MetaCells + (${name}_MetaCellsAt[m * 2] | ((u16)${name}_MetaCellsAt[m * 2 + 1] << 8));`,
+      '\tfor(u8 r = 0; r < h; ++r)',
+      '\t{',
+      '\t\tfor(u8 c = 0; c < w; ++c)',
+      '\t\t{',
+      '\t\t\tconst u8 t = src[c];',
+      '\t\t\tif(!t) continue;',
+      '\t\t\ttiles[dst + c] = t;',
+      '\t\t\tif(objects) objects[dst + c] = m + 1;',
+      '\t\t}',
+      '\t\tsrc += w;',
+      `\t\tdst += ${prefix}_W;`,
+      '\t}',
+      '}',
+      '',
       signature,
       '{',
-      `	// Per column: how many more rows an earlier meta-tile covers it for.`,
-      `	u8 cover[${prefix}_W];`,
-      `	for(${xType} x = 0; x < ${prefix}_W; ++x) cover[x] = 0;`,
-      '	u16 row = 0;',
-      `	for(${yType} y = 0; y < ${prefix}_H; ++y)`,
-      '	{',
-      `		for(${xType} x = 0; x < ${prefix}_W; ++x)`,
-      '		{',
-      '			if(cover[x]) continue;',
-      '			u8 m = *layer++;',
-      `			if(m == 0 || m > ${prefix}_METAS) continue;`,
-      '			--m;',
-      `			const u8* info = ${name}_MetaInfo + (u16)m * 3;`,
-      '			const u8 w = info[0];',
-      '			const u8 h = info[1];',
-      `			const u8* src = ${name}_MetaCells + (${name}_MetaCellsAt[m * 2] | ((u16)${name}_MetaCellsAt[m * 2 + 1] << 8));`,
-      '			u16 dst = row + x;',
-      '			for(u8 r = 0; r < h; ++r)',
-      '			{',
-      '				for(u8 c = 0; c < w; ++c)',
-      '				{',
-      '					const u8 t = src[c];',
-      '					if(!t) continue;',
-      '					tiles[dst + c] = t;',
-      '					if(objects) objects[dst + c] = m + 1;',
-      '				}',
-      '				src += w;',
-      `				dst += ${prefix}_W;`,
-      '			}',
-      '			for(u8 c = 0; c < w; ++c) cover[x + c] = h;',
-      '		}',
-      `		for(${xType} x = 0; x < ${prefix}_W; ++x) if(cover[x]) --cover[x];`,
-      `		row += ${prefix}_W;`,
-      '	}',
+      `\t// Per column: how many more rows an earlier meta-tile covers it for.`,
+      `\tu8 cover[${prefix}_W];`,
+      `\tfor(${xType} x = 0; x < ${prefix}_W; ++x) cover[x] = 0;`,
+      '\tu16 row = 0;',
+      `\tfor(${yType} y = 0; y < ${prefix}_H; ++y)`,
+      '\t{',
+      `\t\tfor(${xType} x = 0; x < ${prefix}_W; ++x)`,
+      '\t\t{',
+      '\t\t\tif(cover[x]) continue;',
+      '\t\t\tu8 m = *layer++;',
+      `\t\t\tif(m == 0 || m > ${prefix}_METAS) continue;`,
+      '\t\t\t--m;',
+      `\t\t\t${name}_Stamp(m, row + x, tiles, objects);`,
+      `\t\t\tconst u8* info = ${name}_MetaInfo + (u16)m * 3;`,
+      '\t\t\tfor(u8 c = 0; c < info[0]; ++c)',
+      '\t\t\t\tif(cover[x + c] < info[1]) cover[x + c] = info[1];',
+      '\t\t}',
+      `\t\tfor(${xType} x = 0; x < ${prefix}_W; ++x) if(cover[x]) --cover[x];`,
+      `\t\trow += ${prefix}_W;`,
+      '\t}',
+      '\t// Then the meta-tiles placed over others, in the order they were placed.',
+      '\twhile(1)',
+      '\t{',
+      '\t\tconst u8 m = *layer++;',
+      '\t\tif(m == 0) break;',
+      ...coordinate('x', bytes.x, xType),
+      ...coordinate('y', bytes.y, yType),
+      `\t\tif(m <= ${prefix}_METAS) ${name}_Stamp(m - 1, (u16)y * ${prefix}_W + x, tiles, objects);`,
+      '\t}',
       '}'
     ]
   }
@@ -1273,7 +1392,83 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
   // the placement runtime is the command engine rather than a layout write.
   // A SCREEN 3 map that is *not* 2×2 has neither, and is refused in validateMap.
   if (doc.cell && !isSc3NameTable(doc)) return bitmapPlacementHelperC(doc, name)
+  if (!doc.cell) return patternPlacementHelperC(doc, name)
+  return sc3PlacementHelperC(doc, name)
+}
 
+/**
+ * Placed meta-tiles on a pattern map. Every one owns its pixels, so what it
+ * draws is the tiles its attachment to this map's tileset gives it — the map's
+ * own `_MetaCells` — and it is always the same picture: one that animates does
+ * it in place, through the tileset's `_Animate()`, so there is no frame to
+ * pass and nothing to redraw.
+ *
+ * Through `VDP_WriteVRAM` at the layout address, as `_DrawMeta` does, so a
+ * SCREEN 1 game needs no GM2 mode compiled in for it.
+ */
+function patternPlacementHelperC(doc: MapDoc, name: string): HelperC {
+  const prefix = defineName(name)
+  const count = placementCount(doc)
+  const index = count > 255 ? 'u16' : 'u8'
+  const signature = `void ${name}_DrawPlacements(void)`
+  return {
+    header: [
+      '',
+      `// ── ${name}: placed meta-tiles ────────────────────────────────────────`,
+      '//',
+      `// Draws the ${count} meta-tile${count === 1 ? '' : 's'} this map places, over the layers already on`,
+      '// screen. See-through cells are not written. A meta that animates needs no',
+      "// redraw — the tileset's _Animate() changes its tiles' art in place.",
+      '//',
+      '// Baked placements are skipped: their tiles are already in the layer.',
+      '//',
+      '// Example:',
+      `//   ${name}_DrawLayer(${name}_${pascalName(doc.layers[0]?.name ?? 'background')}, 0, 0);`,
+      `//   ${name}_DrawPlacements();`,
+      `${signature};`
+    ],
+    source: [
+      '',
+      signature,
+      '{',
+      `	const u8* p = ${name}_Placements;`,
+      `	for(${index} i = 0; i < ${prefix}_PLACEMENTS; ++i)`,
+      '	{',
+      '		const u8 slot = *p++;',
+      '		const u8 px = *p++;',
+      '		const u8 py = *p++;',
+      '		if(slot & 0x80) continue;',
+      `		const u8* info = ${name}_MetaInfo + (u16)slot * 3;`,
+      '		const u8 w = info[0];',
+      '		const u8 h = info[1];',
+      `		const u8* src = ${name}_MetaCells + (${name}_MetaCellsAt[slot * 2] | ((u16)${name}_MetaCellsAt[slot * 2 + 1] << 8));`,
+      '		u16 dst = g_ScreenLayoutLow + ((u16)py << 5) + px;',
+      '		for(u8 row = 0; row < h; ++row)',
+      '		{',
+      '			u8 col = 0;',
+      '			while(col < w)',
+      '			{',
+      '				if(src[col] == 0) { ++col; continue; }',
+      '				u8 run = col;',
+      '				while(run < w && src[run] != 0) ++run;',
+      '				VDP_WriteVRAM(src + col, dst + col, g_ScreenLayoutHigh, run - col);',
+      '				col = run;',
+      '			}',
+      '			src += w;',
+      '			dst += 32;',
+      '		}',
+      '	}',
+      '}'
+    ]
+  }
+}
+
+/**
+ * Placed meta-tiles on a SCREEN 3 map over 2×2 blocks: a name-table map, so
+ * they are written like a pattern map's — but its meta-tiles are bitmap ones,
+ * each with its own table of frames, redrawn per copy.
+ */
+function sc3PlacementHelperC(doc: MapDoc, name: string): HelperC {
   const prefix = defineName(name)
   const signature = `void ${name}_DrawPlacements(const u8* frames)`
   return {
@@ -1295,14 +1490,13 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
     ],
     source: [
       '',
-      ...metaTileSources(doc, name),
+      ...doc.metas.map((meta) => `extern const u8 ${meta.name}[];`),
       '',
       "// Mirrored from each meta-tile's own file, so this compiles without",
       '// including their headers.',
       `static const struct { const u8* tiles; u8 w; u8 h; u8 cells; u8 frames; } ${name}_Metas[${prefix}_METAS] = {`,
       ...doc.metas.map(
-        (meta, slot) =>
-          `\t{ ${metaTilesSymbol(meta, name, slot)}, ${meta.width}, ${meta.height}, ${meta.width * meta.height}, ${meta.frames} },`
+        (meta) => `\t{ ${meta.name}, ${meta.width}, ${meta.height}, ${meta.width * meta.height}, ${meta.frames} },`
       ),
       '};',
       '',
@@ -1341,24 +1535,6 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
       '}'
     ]
   }
-}
-
-/**
- * What `_DrawPlacements` reads each meta's tiles from: a version-2 meta's own
- * table, by its symbol, or — for one that owns its pixels and so has no tile
- * numbers of its own — the cells its attachment to this map's tileset gives
- * it, carried in the map's own source.
- */
-function metaTilesSymbol(meta: MetaRef, name: string, slot: number): string {
-  return meta.cells ? `${name}_MetaTiles${slot}` : meta.name
-}
-
-function metaTileSources(doc: MapDoc, name: string): string[] {
-  return doc.metas.map((meta, slot) =>
-    meta.cells
-      ? `static const u8 ${metaTilesSymbol(meta, name, slot)}[] = { ${meta.cells.join(', ')} }; // ${meta.path}, as the tileset shows it`
-      : `extern const u8 ${meta.name}[];`
-  )
 }
 
 /**

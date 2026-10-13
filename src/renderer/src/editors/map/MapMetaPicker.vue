@@ -2,11 +2,10 @@
 /**
  * The map sidebar's lower half: the meta-tiles this map can place.
  *
- * A version-2 meta is offered only over *its* tileset: its cells are tile
- * indices, so one built over a different bank names tiles that either do not
- * exist here or are different art. A meta that owns its pixels is offered to
- * any tileset that can show its mode — attached there already, or attached by
- * picking it.
+ * On a pattern map, every meta-tile in a mode the map's tileset can show is
+ * offered — attached there already, or attached by picking it. On a bitmap map,
+ * only the bitmap metas made of *its* tileset's tiles: their cells are tile
+ * indices, which would name other art anywhere else.
  *
  * Picking one arms the brush; the next click on the canvas places it.
  */

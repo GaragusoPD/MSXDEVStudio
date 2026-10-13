@@ -46,7 +46,6 @@ import {
   type MetaTileDoc
 } from './meta-tile'
 import {
-  isOwnedMeta,
   normalizeOwnedMeta,
   ownedMetaConstants,
   ownedMetaNotes,
@@ -209,9 +208,9 @@ export function isMetaKind(kind: ResourceKind | null): boolean {
 export type ResourceDoc =
   | { kind: 'tiles'; doc: TilesDoc }
   | { kind: 'btiles'; doc: BitmapTilesDoc }
-  // Version 2 references one tileset's tiles; version 3 owns its pixels and is
-  // attached to tilesets (`meta-owned.ts`). The file's own `version` decides.
-  | { kind: 'metatiles'; doc: MetaTileDoc | OwnedMetaDoc }
+  // A pattern meta-tile owns its pixels and is attached to tilesets
+  // (`meta-owned.ts`); a bitmap one references its set's tiles (`meta-tile.ts`).
+  | { kind: 'metatiles'; doc: OwnedMetaDoc }
   | { kind: 'metabtiles'; doc: MetaTileDoc }
   | { kind: 'anim'; doc: TileAnimDoc }
   | { kind: 'sprites'; doc: SpritesDoc }
@@ -273,7 +272,7 @@ export function parseResource(path: string, text: string): ResourceDoc {
     case 'btiles':
       return { kind, doc: normalizeBitmapTiles(raw) }
     case 'metatiles':
-      return { kind, doc: isOwnedMeta(raw) ? normalizeOwnedMeta(raw) : normalizeMetaTile(raw) }
+      return { kind, doc: normalizeOwnedMeta(raw) }
     case 'metabtiles':
       return { kind, doc: normalizeMetaTile(raw) }
     case 'anim':
@@ -314,7 +313,7 @@ export function validateResource(resource: ResourceDoc): string[] {
     case 'btiles':
       return validateBitmapTiles(resource.doc)
     case 'metatiles':
-      return isOwnedMeta(resource.doc) ? validateOwnedMeta(resource.doc) : validateMetaTile(resource.doc)
+      return validateOwnedMeta(resource.doc)
     case 'metabtiles':
       return validateMetaTile(resource.doc)
     case 'anim':
@@ -455,9 +454,9 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       return tables
     }
     case 'metatiles':
+      return ownedMetaTables(resource.doc)
     case 'metabtiles': {
       const { doc } = resource
-      if (isOwnedMeta(doc)) return ownedMetaTables(doc)
       // One table, no suffix: a meta-tile is nothing but its frames, so
       // `g_Tree[]` reads better than `g_Tree_Frames[]`.
       return [
@@ -532,7 +531,9 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
           comment: 'Per meta slot: width, height, flags — three bytes each, indexed by a placement\'s slot'
         })
       }
-      if (indexed && resource.doc.metas.length) {
+      // What a pattern map draws its meta-tiles with — placed or expanded. A
+      // bitmap map's meta-tiles carry their own tables.
+      if (!resource.doc.cell && resource.doc.metas.length && (placementCount(resource.doc) || indexed)) {
         const { cells, at } = metaCellTables(resource.doc)
         tables.push(
           {
@@ -776,11 +777,9 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
       break
     }
     case 'metatiles':
+      notes.push(...ownedMetaNotes(resource.doc))
+      break
     case 'metabtiles':
-      if (isOwnedMeta(resource.doc)) {
-        notes.push(...ownedMetaNotes(resource.doc))
-        break
-      }
       notes.push(
         `Tileset: ${resource.doc.tileset}`,
         `Size: ${resource.doc.width}×${resource.doc.height} tiles (${metaCells(resource.doc)} bytes per frame)`,
@@ -965,9 +964,8 @@ function resourceConstants(
       })
     ]
   }
-  if (isMetaKind(resource.kind)) {
-    return isOwnedMeta(resource.doc) ? ownedMetaConstants(resource.doc, name) : metaConstants(resource.doc as MetaTileDoc, name)
-  }
+  if (resource.kind === 'metatiles') return ownedMetaConstants(resource.doc, name)
+  if (resource.kind === 'metabtiles') return metaConstants(resource.doc, name)
   if (resource.kind === 'anim') return tileAnimConstants(resource.doc, name)
   if (resource.kind === 'tiles') {
     const { doc } = resource
@@ -1055,11 +1053,11 @@ function resourceCode(
   if (resource.kind === 'swsprites') {
     return resource.doc.sprites.length ? swSpriteHelperC(resource.doc, name) : NO_CODE
   }
-  // No emptiness guard, unlike a tileset's blocks: a meta always has a frame,
-  // so there is always something to draw. A meta that owns its pixels has no
-  // tile numbers of its own to draw with — each tileset it is attached to
-  // draws it (`_DrawMeta`), and its window is that tileset's `_Animate()`.
-  if (isMetaKind(resource.kind)) return isOwnedMeta(resource.doc) ? NO_CODE : metaHelperC(resource.doc as MetaTileDoc, name)
+  // A pattern meta-tile has no tile numbers of its own to draw with: each
+  // tileset it is attached to draws it (`_DrawMeta`), and its window is that
+  // tileset's `_Animate()`. A bitmap one blits itself out of its atlas.
+  if (resource.kind === 'metatiles') return NO_CODE
+  if (resource.kind === 'metabtiles') return metaHelperC(resource.doc, name)
   if (resource.kind === 'tiles') {
     const { doc } = resource
     const blocks = doc.blocks.length ? tileHelperC(doc, name) : NO_CODE

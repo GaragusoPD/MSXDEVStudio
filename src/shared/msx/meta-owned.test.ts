@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  attachMigrated,
   createOwnedMeta,
   detachMeta,
   isOwnedMeta,
-  metaFromV2,
   metaWindowAnim,
   movingCells,
   normalizeOwnedMeta,
@@ -20,7 +18,6 @@ import {
 } from './meta-owned'
 import { blankTileEntry, normalizeTiles, removeTile, validateTiles, type TileEntry, type TilesDoc } from './tile'
 import { parseResource, renderResourceFiles, serializeResource } from './resource'
-import { createMetaTileDoc } from './meta-tile'
 import { metaRefFrom, normalizeMap, addMetaRef, placeMeta, placementHelperC, validateMap } from './map'
 import { tileAnimHelperC } from './tile-anim'
 
@@ -84,11 +81,14 @@ describe('the version-3 document', () => {
     expect(validateOwnedMeta(doc)).toEqual([])
   })
 
-  it('is read by version: a `.meta-tiles.json` without one is still a version-2 meta', () => {
-    const v3 = parseResource(TREE, serializeResource({ kind: 'metatiles', doc: tree() }))
-    expect(isOwnedMeta(v3.doc)).toBe(true)
-    const v2 = parseResource(TREE, JSON.stringify(createMetaTileDoc('res/main.tiles.json', 2, 2)))
-    expect(isOwnedMeta(v2.doc)).toBe(false)
+  it('is what every `.meta-tiles.json` is read as — an older file opens blank at its own size', () => {
+    const owned = parseResource(TREE, serializeResource({ kind: 'metatiles', doc: tree() }))
+    expect(isOwnedMeta(owned.doc)).toBe(true)
+    const older = parseResource(TREE, JSON.stringify({ version: 2, tileset: 'res/main.tiles.json', width: 3, height: 1, frames: [{ tiles: [4, 5, 6] }] }))
+    expect(older.kind).toBe('metatiles')
+    const doc = older.doc as OwnedMetaDoc
+    expect(isOwnedMeta(doc)).toBe(true)
+    expect([doc.width, doc.height]).toEqual([3, 1])
   })
 
   it('takes any size up to 16 a side, unlike an animation window', () => {
@@ -258,37 +258,6 @@ describe('detaching, and renumbering under an attached meta', () => {
   })
 })
 
-describe('version 2 → 3', () => {
-  it('copies the art out of the tileset and keeps the tiles the meta pointed at', () => {
-    const tiles = tileset(8)
-    const v2 = { ...createMetaTileDoc('res/main.tiles.json', 2, 2), frames: [{ tiles: [5, 0, 6, 5] }], flags: 3 }
-    const { meta, cells } = metaFromV2(v2, tiles)
-    expect(meta.holes).toEqual([false, true, false, false])
-    expect(meta.frames[0].tiles[0].pattern[0]).toBe(5)
-    expect(meta.flags).toBe(3)
-    const attached = attachMigrated(tiles, TREE, meta, 'g_Tree', cells)
-    if (typeof attached === 'string') throw new Error(attached)
-    expect(attached.binding.cells).toEqual([5, 0, 6, 5])
-    expect(attached.doc.count).toBe(8)
-  })
-
-  it('turns frames of different tiles into poses, and the cells that differ into a window', () => {
-    const tiles = tileset(8)
-    const v2 = { ...createMetaTileDoc('res/main.tiles.json', 2, 1), frames: [{ tiles: [1, 7] }, { tiles: [2, 7] }] }
-    const { meta, cells } = metaFromV2(v2, tiles)
-    expect(movingCells(meta)).toEqual([0])
-    const attached = attachMigrated(tiles, TORCH, meta, 'g_Torch', cells)
-    if (typeof attached === 'string') throw new Error(attached)
-    expect(attached.binding.cells[1]).toBe(7)
-    expect(attached.doc.animations[0].slot).toBe(8)
-  })
-
-  it('says when a cell was see-through in only some frames', () => {
-    const v2 = { ...createMetaTileDoc('res/main.tiles.json', 1, 1), frames: [{ tiles: [0] }, { tiles: [4] }] }
-    expect(metaFromV2(v2, tileset()).partialHoles).toBe(1)
-  })
-})
-
 describe('export', () => {
   it('a tileset states its metas as data: info, cells, and an index each', () => {
     let doc = attach(tileset(8), TREE, tree(), 'g_Tree')
@@ -326,8 +295,10 @@ describe('a map placing a meta that owns its pixels', () => {
     let map = normalizeMap({ tileset: 'res/main.tiles.json', width: 32, height: 24 })
     map = placeMeta(addMetaRef(map, ref), 0, 0, 3, 3)
     expect(validateMap(map)).toEqual([])
+    const files = renderResourceFiles({ kind: 'map', doc: map }, 'res/level.map.json', { name: 'g_Level', format: 'c', out: 'content/level.h', helpers: true })
+    expect(files.source).toMatch(new RegExp(`g_Level_MetaCells\\[\\] =\\n\\{\\n\\t${doc.metas[0].cells.map((cell) => `0x${cell.toString(16).toUpperCase().padStart(2, '0')}`).join(', ')}`))
     const c = placementHelperC(map, 'g_Level').source.join('\n')
-    expect(c).toContain(`static const u8 g_Level_MetaTiles0[] = { ${doc.metas[0].cells.join(', ')} };`)
+    expect(c).toContain('void g_Level_DrawPlacements(void)')
     expect(c).not.toContain('extern const u8 g_Tree[]')
   })
 

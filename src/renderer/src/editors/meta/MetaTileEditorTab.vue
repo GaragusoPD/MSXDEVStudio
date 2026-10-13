@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * The `*.meta-tiles.json` / `*.meta-btiles.json` editor.
+ * The `*.meta-btiles.json` editor: a bitmap meta-tile.
  *
- * A meta-tile is one design bigger than the hardware's 8×8 cell — a tree, a
- * door, a coin — painted here as a picture and stored as references into a
- * tileset. Painting resolves each stroke to tile indices, creating tiles in the
- * referenced `.tiles.json` as it goes (see `shared/msx/meta-paint.ts`), which is
- * how a thing that owns no pixels gets a pixel editor.
+ * One design bigger than a tile of a `.btiles.json` set — a tree, a door, a
+ * rock — painted here as a picture and stored as references into that set.
+ * Painting resolves each stroke to tile indices, creating tiles in the set as
+ * it goes (see `shared/msx/meta-paint.ts`), which is how a thing that owns no
+ * pixels gets a pixel editor. (A pattern meta-tile owns its pixels and is
+ * edited with the pose editor instead.)
  *
  * This file is a shell: the canvas, the frame strip and the side panel are their
  * own components, and every mutation is a call into `./session`.
@@ -26,7 +27,6 @@ import {
   bitmapTiles,
   canRedo,
   canUndo,
-  convertToOwned,
   doc,
   metaSession,
   pruneMetaSessions,
@@ -65,12 +65,8 @@ const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'spray', icon: 'blur_on', title: 'Spray (ordered dither)' }
 ]
 
-/** Both kinds paint now; a meta with no tileset yet has nothing to paint into. */
-const paintable = computed(() =>
-  session.value.kind === 'metatiles'
-    ? Boolean(session.value.tilesetPath) && !session.value.tilesetError
-    : Boolean(bitmapTiles(session.value))
-)
+/** A meta with no tileset yet has nothing to paint into. */
+const paintable = computed(() => Boolean(bitmapTiles(session.value)))
 
 async function save(): Promise<void> {
   await saveSession(session.value)
@@ -114,20 +110,6 @@ watch(
       class="banner error"
     >
       {{ session.error }}
-    </p>
-    <p
-      v-else-if="session.kind === 'metatiles' && !session.loading && session.tilesetPath"
-      class="banner convert"
-    >
-      This meta-tile is made of {{ session.tilesetPath.split('/').pop() }}'s tiles, so it can only be used with
-      that tileset, and its frames redraw each copy.
-      <button
-        type="button"
-        title="Copy its art into the file, keep it attached to this tileset at the same tiles, and make its frames poses every copy shows at once"
-        @click="convertToOwned(session)"
-      >
-        Make it independent
-      </button>
     </p>
 
     <header class="toolbar">
@@ -363,12 +345,6 @@ watch(
   color: #ffb0b0;
 }
 
-.banner.convert {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: #1e2a36;
-}
 
 .statusbar {
   padding: 4px 10px;

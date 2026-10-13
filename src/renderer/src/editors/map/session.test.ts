@@ -10,7 +10,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createBitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
-import { createMetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { normalizeOwnedMeta, resolveMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import {
   blankTileEntry,
@@ -83,32 +83,33 @@ let files: Record<string, string>
 let pushed: Record<string, ((payload: unknown) => void)[]>
 const settled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
-/** A meta file, optionally with an export block naming its table. */
-function metaFile(exported: boolean, width = 2, height = 3): string {
-  const base = createMetaTileDoc(TILES, width, height)
-  return serializeResource({
-    kind: 'metatiles',
-    doc: {
-      ...base,
-      frames: [{ tiles: new Array(width * height).fill(1) }],
-      flags: 0x01,
-      export: exported ? defaultExport(META) : null
-    }
+/**
+ * A meta-tile, optionally with an export block naming its table. Every cell
+ * the same art, which attaching to the blank 4-tile tileset makes tile 4 — a
+ * bar whose edge columns are paper, so a dab in paint mode changes it.
+ */
+function meta(exported: boolean, width = 2, height = 3, holes: boolean[] = []): OwnedMetaDoc {
+  return normalizeOwnedMeta({
+    version: 3,
+    mode: 'sc2',
+    width,
+    height,
+    holes,
+    frames: [{ tiles: new Array(width * height).fill({ pattern: new Array(8).fill(0x7e), color: new Array(8).fill(0xf1) }), duration: 1 }],
+    flags: 0x01,
+    export: exported ? defaultExport(META) : null
   })
 }
 
-/** Like `metaFile`, but with the middle-left cell transparent. */
-function holedMetaFile(): string {
-  const base = createMetaTileDoc(TILES, 2, 3)
-  return serializeResource({
-    kind: 'metatiles',
-    doc: {
-      ...base,
-      frames: [{ tiles: [1, 1, 0, 1, 1, 1] }],
-      flags: 0x01,
-      export: defaultExport(META)
-    }
-  })
+function metaFile(exported: boolean, width = 2, height = 3): string {
+  return serializeResource({ kind: 'metatiles', doc: meta(exported, width, height) })
+}
+
+/** The blank tileset with `attached` attached, as a map saved earlier left it. */
+function attachedTilesFile(attached: OwnedMetaDoc): string {
+  const result = resolveMeta(normalizeTiles({ mode: 'sc2', count: 4 }), META, attached, attached.export?.name || defaultExport(META).name)
+  if (typeof result === 'string') throw new Error(result)
+  return serializeResource({ kind: 'tiles', doc: result.doc })
 }
 
 beforeEach(() => {
@@ -366,6 +367,7 @@ describe('the mirror is refreshed from the files', () => {
       metas: [{ path: META, name: 'g_Stale', width: 2, height: 3, frames: 1, flags: 0 }],
       layers: [{ name: 'background', placements: [{ slot: 0, x: 0, y: 0 }] }]
     })
+    files[TILES] = attachedTilesFile(meta(true))
     files[META] = metaFile(true, 4, 4)
 
     const session = await openMap()
@@ -408,21 +410,21 @@ describe('baking a placement into the layer', () => {
     setBaked(session, true)
 
     expect(doc(session).layers[0].placements[0].baked).toBe(true)
-    // The meta is 2x3 of tile 1 (see metaFile), stamped at 2,2.
-    expect(cell(session, 2, 2)).toBe(1)
-    expect(cell(session, 3, 4)).toBe(1)
+    // The meta is 2x3 of tile 4 once attached (see `meta`), stamped at 2,2.
+    expect(cell(session, 2, 2)).toBe(4)
+    expect(cell(session, 3, 4)).toBe(4)
     // Outside it, untouched.
     expect(cell(session, 1, 2)).toBe(0)
   })
 
   it('leaves transparent cells alone, so a hole stays a hole', async () => {
-    // A meta whose middle-left cell is transparent.
-    files[META] = holedMetaFile()
+    // A meta whose middle-left cell is see-through.
+    files[META] = serializeResource({ kind: 'metatiles', doc: meta(true, 2, 3, [false, false, true, false, false, false]) })
     const session = await placed()
     setBaked(session, true)
 
-    expect(cell(session, 2, 2)).toBe(1)
-    // The hole: tile 0 in the meta must not be written into the grid.
+    expect(cell(session, 2, 2)).toBe(4)
+    // The hole: a see-through cell must not be written into the grid.
     expect(cell(session, 2, 3)).toBe(0)
   })
 
@@ -456,12 +458,13 @@ describe('baking a placement into the layer', () => {
       metas: [{ path: META, name: 'g_Stale', width: 1, height: 1, frames: 1, flags: 0 }],
       layers: [{ name: 'background', placements: [{ slot: 0, x: 2, y: 2 }] }]
     })
+    files[TILES] = attachedTilesFile(meta(true))
     const session = await openMap()
     selectPlacementAt(session, 2, 2)
     setBaked(session, true)
 
     // All six cells of the real 2x3 meta, not one cell of the remembered 1x1.
-    expect(cell(session, 3, 4)).toBe(1)
+    expect(cell(session, 3, 4)).toBe(4)
   })
 })
 
