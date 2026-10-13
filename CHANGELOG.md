@@ -7,6 +7,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-13
+
 ### Meta-tiles as their own entities, and maps indexed by them
 
 A meta-tile now owns its pixels, the way an animation does, and is attached to
