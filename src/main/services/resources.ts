@@ -17,7 +17,8 @@ import { defaultExport, isMetaKind, parseResource, renderResourceFiles,
   sourcePathFor, resourceKindOf, validateResource, type ResourceDoc } from '../../shared/msx/resource'
 import { metaRefFrom, validateMap, type MapDoc } from '../../shared/msx/map'
 import type { MetaTileDoc } from '../../shared/msx/meta-tile'
-import { isBanked, MAX_TILES, type TilesDoc } from '../../shared/msx/tile'
+import { isOwnedMeta, movingCells, refreshMetas, type LoadedMeta } from '../../shared/msx/meta-owned'
+import { isBanked, isMetaPath, MAX_TILES, type TilesDoc } from '../../shared/msx/tile'
 import { animModesCompatible, animRefFrom, withAnimFrame, type TileAnimDoc } from '../../shared/msx/tile-anim'
 import { swSpriteFamily } from '../../shared/msx/swsprite'
 
@@ -105,17 +106,36 @@ function upToDate(input: string, out: string, options: ExportOptions, dependenci
 
 /**
  * The other files a resource's export reads, as absolute paths: the metas a
- * map mirrors, the animations a tileset plays. What `upToDate` must also be
- * newer than.
+ * map mirrors, the animations and meta-tiles a tileset has attached. What
+ * `upToDate` must also be newer than.
+ *
+ * A map that places meta-tiles also depends on its tileset and on everything
+ * attached *there*: a meta that owns its pixels is drawn with the tiles its
+ * attachment resolves to, and that resolution reads the tileset and every meta
+ * attached before it (`refreshMetas` goes in order, and each may add tiles).
  */
 function exportDependencies(root: string, resource: ResourceDoc): string[] {
-  const paths =
-    resource.kind === 'map'
-      ? resource.doc.metas.map((ref) => ref.path)
-      : resource.kind === 'tiles'
-        ? resource.doc.animations.map((binding) => binding.path)
-        : []
-  return paths.map((path) => insideRoot(root, path)).filter((path): path is string => path !== null)
+  const attached = (doc: TilesDoc): string[] => [...doc.animations.map((b) => b.path), ...doc.metas.map((b) => b.path)]
+  let paths: string[] = []
+  if (resource.kind === 'tiles') paths = attached(resource.doc)
+  if (resource.kind === 'map' && resource.doc.metas.length) {
+    paths = resource.doc.metas.map((ref) => ref.path)
+    const tileset = readTileset(root, resource.doc.tileset)
+    if (tileset) paths.push(resource.doc.tileset, ...attached(tileset))
+  }
+  return [...new Set(paths)].map((path) => insideRoot(root, path)).filter((path): path is string => path !== null)
+}
+
+/** A pattern tileset as its file says, or null when it is not one or cannot be read. */
+function readTileset(root: string, path: string): TilesDoc | null {
+  const abs = insideRoot(root, path)
+  if (!abs || !existsSync(abs)) return null
+  try {
+    const parsed = parseResource(path, readFileSync(abs, 'utf-8'))
+    return parsed.kind === 'tiles' ? parsed.doc : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -169,6 +189,16 @@ export function generatedSourceModules(root: string): string[] {
  */
 function refreshMapMetas(root: string, resource: ResourceDoc): void {
   if (resource.kind !== 'map' || !resource.doc.metas.length) return
+  // Read and refreshed once, and only if some meta owns its pixels: its tiles
+  // are what its attachment there resolves to *now*, by the same refresh the
+  // tileset's own export runs — so the two headers agree on every number.
+  let tileset: TilesDoc | null | undefined
+  const refreshedTileset = (): TilesDoc | null => {
+    if (tileset !== undefined) return tileset
+    const read = readTileset(root, (resource.doc as MapDoc).tileset)
+    tileset = read ? refreshTileset(root, read).doc : null
+    return tileset
+  }
   resource.doc = {
     ...resource.doc,
     metas: resource.doc.metas.map((ref) => {
@@ -177,12 +207,63 @@ function refreshMapMetas(root: string, resource: ResourceDoc): void {
       try {
         const parsed = parseResource(ref.path, readFileSync(abs, 'utf-8'))
         if (!isMetaKind(parsed.kind)) return ref
+        if (isOwnedMeta(parsed.doc)) {
+          const binding = refreshedTileset()?.metas.find((candidate) => candidate.path === ref.path) ?? null
+          return metaRefFrom(ref.path, parsed.doc, defaultExport(ref.path).name, binding)
+        }
         return metaRefFrom(ref.path, parsed.doc as MetaTileDoc, defaultExport(ref.path).name)
       } catch {
         return ref
       }
     })
   }
+}
+
+/**
+ * Re-reads every meta-tile attached to a tileset and re-resolves its tiles —
+ * the build's half of the rule the tile editor follows on load. Through the
+ * shared `refreshMetas`, so an export and an open editor resolve the same
+ * meta to the same numbers.
+ *
+ * A meta that is missing or cannot be attached fails the export: its tiles
+ * would be whatever the tileset file last recorded, and a map drawn with them
+ * would show the old art with no sign anything was wrong.
+ */
+function refreshTileMetas(root: string, doc: TilesDoc): { doc: TilesDoc; problems: string[] } {
+  if (!doc.metas.length) return { doc, problems: [] }
+  const loaded = new Map<string, LoadedMeta>()
+  for (const binding of doc.metas) {
+    const abs = insideRoot(root, binding.path)
+    if (!abs || !existsSync(abs)) {
+      loaded.set(binding.path, `Meta-tile ${binding.path} is attached but missing — restore it, or detach it in the tile editor`)
+      continue
+    }
+    try {
+      const parsed = parseResource(binding.path, readFileSync(abs, 'utf-8'))
+      if (parsed.kind !== 'metatiles' || !isOwnedMeta(parsed.doc)) {
+        loaded.set(binding.path, `${binding.path} is attached as a meta-tile but does not own its pixels — open it to convert it`)
+        continue
+      }
+      // The window's poses are emitted in the meta's own header, and this
+      // tileset's _Animate() names them: no header, no link.
+      if (movingCells(parsed.doc).length && !parsed.doc.export?.out) {
+        loaded.set(binding.path, `${binding.path} animates, and its poses are written to its own header — give it an export target`)
+        continue
+      }
+      loaded.set(binding.path, { meta: parsed.doc, name: parsed.doc.export?.name || defaultExport(binding.path).name })
+    } catch (error) {
+      loaded.set(binding.path, `Couldn't read meta-tile ${binding.path}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const { doc: refreshed, problems } = refreshMetas(doc, loaded)
+  return { doc: refreshed, problems }
+}
+
+/** Everything attached to a tileset, re-read: its metas first (they may move windows), then its animations. */
+function refreshTileset(root: string, doc: TilesDoc): { doc: TilesDoc; problems: string[] } {
+  const metas = refreshTileMetas(root, doc)
+  const anims = refreshAnimBindings(root, metas.doc)
+  return { doc: anims.doc, problems: [...metas.problems, ...anims.problems] }
 }
 
 /**
@@ -197,12 +278,14 @@ function refreshMapMetas(root: string, resource: ResourceDoc): void {
  * generated C names the animation's tables, and a stale mirror would export
  * cleanly and then fail to link.
  */
-function refreshTileAnims(root: string, resource: ResourceDoc): string[] {
-  if (resource.kind !== 'tiles' || !resource.doc.animations.length) return []
+function refreshAnimBindings(root: string, tiles: TilesDoc): { doc: TilesDoc; problems: string[] } {
+  if (!tiles.animations.length) return { doc: tiles, problems: [] }
   const problems: string[] = []
   const loaded = new Map<string, TileAnimDoc>()
-  let doc = resource.doc
+  let doc = tiles
   const animations = doc.animations.map((binding) => {
+    // A meta-tile's window: `refreshTileMetas` has already brought it up to date.
+    if (isMetaPath(binding.path)) return binding
     const abs = insideRoot(root, binding.path)
     if (!abs || !existsSync(abs)) {
       problems.push(`Animation ${binding.path} is attached but missing — restore it, or detach it in the tile editor`)
@@ -230,8 +313,7 @@ function refreshTileAnims(root: string, resource: ResourceDoc): string[] {
     const anim = loaded.get(binding.path)
     if (anim) doc = withAnimFrame(doc, binding, anim)
   }
-  resource.doc = doc
-  return problems
+  return { doc, problems }
 }
 
 /**
@@ -357,12 +439,17 @@ export function exportResourceFile(root: string, relative: string, options: Expo
     // stale sizes, and "this placement hangs off the map" must be judged
     // against the meta as it is now.
     refreshMapMetas(root, resource)
-    const animProblems = refreshTileAnims(root, resource)
+    let attachedProblems: string[] = []
+    if (resource.kind === 'tiles') {
+      const refreshed = refreshTileset(root, resource.doc)
+      resource.doc = refreshed.doc
+      attachedProblems = refreshed.problems
+    }
 
     const problems =
       resource.kind === 'map'
         ? validateMap(resource.doc, mapValidateOptions(root, resource.doc))
-        : [...animProblems, ...validateResource(resource)]
+        : [...attachedProblems, ...validateResource(resource)]
     if (problems.length) return { ...base, out: block.out, message: problems.join('; ') }
 
     const files = renderResourceFiles(resource, relative, block)

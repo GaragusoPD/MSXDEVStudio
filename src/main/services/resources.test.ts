@@ -10,6 +10,7 @@ import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
 import { defaultExport, serializeResource } from '../../shared/msx/resource'
 import { normalizeTileAnim } from '../../shared/msx/tile-anim'
 import { createMetaTileDoc } from '../../shared/msx/meta-tile'
+import { normalizeOwnedMeta } from '../../shared/msx/meta-owned'
 import { normalizeMap } from '../../shared/msx/map'
 import { normalizeSwSprites, type SwMode } from '../../shared/msx/swsprite'
 import { BuildService, type BuildDeps } from './build-service'
@@ -192,6 +193,8 @@ describe('exports that read other files', () => {
     expect(exportResourceFile(root, 'res/level.map.json').status).toBe('converted')
     for (const file of ['res/level.map.json', 'content/level_map.h', 'content/level_map.c']) setTime(root, file, 1_000_000)
     setTime(root, 'res/rock.meta-tiles.json', 1_000_000)
+    // A map that places metas also reads its tileset — see the test below.
+    setTime(root, TILESET, 1_000_000)
     expect(exportResourceFile(root, 'res/level.map.json').status).toBe('skipped')
 
     // A second frame, saved in the meta editor; the map file is not touched.
@@ -200,6 +203,141 @@ describe('exports that read other files', () => {
     setTime(root, 'res/rock.meta-tiles.json', 2_000_000)
     expect(exportResourceFile(root, 'res/level.map.json').status).toBe('converted')
     expect(readFileSync(join(root, 'content/level_map.c'), 'utf-8')).toContain('{ g_RockMetatiles, 1, 1, 1, 2 },')
+  })
+})
+
+describe('meta-tiles that own their pixels, exported from the files alone', () => {
+  const TILESET = 'res/main.tiles.json'
+  const ROCK = 'res/rock.meta-tiles.json'
+  const LEVEL = 'res/level.map.json'
+  const setTime = (root: string, relative: string, seconds: number): void => utimesSync(join(root, relative), seconds, seconds)
+  const entry = (mark: number): { pattern: number[]; color: number[] } => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf1) })
+
+  /** A 2×1 rock, its right half see-through; or, with `poses`, a left half that changes. */
+  function writeRock(root: string, mark = 0x81, poses = 1, out: string | null = 'content/rock_meta.h'): void {
+    const doc = normalizeOwnedMeta({
+      version: 3,
+      mode: 'sc2',
+      width: 2,
+      height: 1,
+      holes: [false, true],
+      frames: Array.from({ length: poses }, (_, pose) => ({ tiles: [entry(mark + pose), entry(0)] })),
+      flags: 1,
+      export: out ? { ...defaultExport(ROCK), out } : null
+    })
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(join(root, ROCK), serializeResource({ kind: 'metatiles', doc }), 'utf-8')
+  }
+
+  /** A tileset with the rock attached — and, on disk, whatever cells it was given. */
+  function writeTilesetWithRock(root: string, cells: number[] = [3, 0]): void {
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: [entry(0), entry(1), entry(2), entry(0x81)],
+      metas: [{ path: ROCK, name: 'g_RockMeta', width: 2, height: 1, flags: 1, frames: 1, cells }],
+      export: { ...defaultExport(TILESET), helpers: true }
+    })
+    writeFileSync(join(root, TILESET), serializeResource({ kind: 'tiles', doc }), 'utf-8')
+  }
+
+  function writeLevel(root: string): void {
+    const map = normalizeMap({
+      tileset: TILESET,
+      width: 4,
+      height: 4,
+      // Stale on purpose: a version-2 shaped mirror, no cells.
+      metas: [{ path: ROCK, name: 'g_RockMeta', width: 2, height: 1, frames: 1, flags: 1 }],
+      layers: [{ name: 'bg', data: new Array(16).fill(1), placements: [{ slot: 0, x: 1, y: 1 }] }],
+      export: { ...defaultExport(LEVEL), helpers: true }
+    })
+    writeFileSync(join(root, LEVEL), serializeResource({ kind: 'map', doc: map }), 'utf-8')
+  }
+
+  it("the tileset states the meta's tiles, as the meta's art resolves them now", () => {
+    const root = scratch('owned-tiles')
+    writeRock(root, 0x99)
+    writeTilesetWithRock(root)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+    const source = readFileSync(join(root, 'content/main_tiles.c'), 'utf-8')
+    // Tile 3 no longer shows the rock; the export gives it a new tile 4 holding 0x99.
+    expect(source).toMatch(/g_MainTiles_MetaCells\[\] =\n\{\n\t0x04, 0x00,/)
+    expect(source).toMatch(/(\t0x99, \/\* #\.\.##\.\.# \*\/\n){8}/)
+    expect(readFileSync(join(root, 'content/main_tiles.h'), 'utf-8')).toContain('#define G_MAINTILES_META_ROCK 0')
+  })
+
+  it("a map draws the meta with the same tiles the tileset's export gave it", () => {
+    const root = scratch('owned-map')
+    writeRock(root, 0x99)
+    writeTilesetWithRock(root)
+    writeLevel(root)
+    expect(exportResourceFile(root, LEVEL).status).toBe('converted')
+    const source = readFileSync(join(root, 'content/level_map.c'), 'utf-8')
+    expect(source).toContain('static const u8 g_LevelMap_MetaTiles0[] = { 4, 0 };')
+    expect(source).not.toContain('extern const u8 g_RockMeta[]')
+  })
+
+  it('re-exports the map when only the tileset changed', () => {
+    const root = scratch('owned-map-dep')
+    writeRock(root)
+    writeTilesetWithRock(root)
+    writeLevel(root)
+    expect(exportResourceFile(root, LEVEL).status).toBe('converted')
+    for (const file of [TILESET, ROCK, LEVEL, 'content/level_map.h', 'content/level_map.c']) setTime(root, file, 1_000_000)
+    expect(exportResourceFile(root, LEVEL).status).toBe('skipped')
+    setTime(root, TILESET, 2_000_000)
+    expect(exportResourceFile(root, LEVEL).status).toBe('converted')
+  })
+
+  it('re-exports the tileset when only the meta changed', () => {
+    const root = scratch('owned-tiles-dep')
+    writeRock(root)
+    writeTilesetWithRock(root)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+    for (const file of [TILESET, ROCK, 'content/main_tiles.h', 'content/main_tiles.c']) setTime(root, file, 1_000_000)
+    expect(exportResourceFile(root, TILESET).status).toBe('skipped')
+    writeRock(root, 0x7e)
+    setTime(root, ROCK, 2_000_000)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+  })
+
+  it('an animated meta gives the tileset a window its _Animate() plays from the meta’s header', () => {
+    const root = scratch('owned-anim')
+    writeRock(root, 0x81, 3)
+    writeTilesetWithRock(root)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+    const source = readFileSync(join(root, 'content/main_tiles.c'), 'utf-8')
+    expect(source).toContain('extern const u8 g_RockMetatiles_Patterns[];')
+    expect(exportResourceFile(root, ROCK).status).toBe('converted')
+    expect(readFileSync(join(root, 'content/rock_meta.c'), 'utf-8')).toContain('g_RockMetatiles_Patterns[]')
+  })
+
+  it('fails when an animated meta has nowhere to write its poses', () => {
+    const root = scratch('owned-anim-noexport')
+    writeRock(root, 0x81, 3, null)
+    writeTilesetWithRock(root)
+    const result = exportResourceFile(root, TILESET)
+    expect(result.status).toBe('failed')
+    expect(result.message).toMatch(/animates, and its poses are written to its own header/)
+  })
+
+  it('fails, naming the file, when an attached meta is missing', () => {
+    const root = scratch('owned-missing')
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeTilesetWithRock(root)
+    const result = exportResourceFile(root, TILESET)
+    expect(result.status).toBe('failed')
+    expect(result.message).toContain('res/rock.meta-tiles.json is attached but missing')
+  })
+
+  it('a map placing a meta its tileset does not have attached says so', () => {
+    const root = scratch('owned-unattached')
+    writeRock(root)
+    writeFileSync(join(root, TILESET), serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 4 }) }), 'utf-8')
+    writeLevel(root)
+    const result = exportResourceFile(root, LEVEL)
+    expect(result.status).toBe('failed')
+    expect(result.message).toMatch(/is not attached to res\/main\.tiles\.json/)
   })
 })
 

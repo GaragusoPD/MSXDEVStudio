@@ -129,6 +129,27 @@ describe('compactTileset', () => {
   })
 })
 
+describe('compactTileset with meta-tiles attached', () => {
+  const blank = (): TileEntry => ({ pattern: new Array(TILE_SIZE).fill(0), color: new Array(TILE_SIZE).fill(0) })
+  const mark = (value: number): TileEntry => ({ pattern: new Array(TILE_SIZE).fill(value), color: new Array(TILE_SIZE).fill(0xf1) })
+
+  it('keeps every tile an attached meta shows, renumbers its cells, and never packs one onto tile 0', () => {
+    // Tile 0 unused and unreserved; tiles 1-2 unused; 3 and 4 are the meta's,
+    // 4 an opaque blank identical to tile 0.
+    const doc = normalizeTiles({
+      mode: 'sc2',
+      count: 5,
+      tiles: [blank(), mark(1), mark(2), mark(3), blank()],
+      metas: [{ path: 'res/rock.meta-tiles.json', name: 'g_Rock', width: 3, height: 1, flags: 0, frames: 1, cells: [3, 0, 4] }]
+    })
+    const result = compactTileset(doc, [], { merge: true })
+    expect(result.refused).toBeUndefined()
+    expect(result.doc.count).toBe(3)
+    expect(result.doc.metas[0].cells).toEqual([1, 0, 2])
+    expect(result.doc.tiles[1].pattern[0]).toBe(3)
+  })
+})
+
 describe('cellEntry', () => {
   it('turns an empty cell into the canonical blank', () => {
     const cell = cellEntry(new Uint8Array(64), 'sc2')

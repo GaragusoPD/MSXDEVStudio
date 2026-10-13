@@ -81,8 +81,16 @@ export interface TileAnimDoc {
   export: ExportBlock | null
 }
 
+/**
+ * What a document of poses has in common, whichever file it lives in: an
+ * animation (`*.anim-tiles.json`) or a meta-tile that owns its pixels
+ * (`OwnedMetaDoc`, `meta-owned.ts`). The pose helpers below take this, so the
+ * meta editor paints, previews and exports poses with the animation's code.
+ */
+export type PoseDoc = Omit<TileAnimDoc, 'version'>
+
 /** Tiles in one pose — the stride of the exported tables, in tiles. */
-export function animDocCells(doc: TileAnimDoc): number {
+export function animDocCells(doc: PoseDoc): number {
   return doc.width * doc.height
 }
 
@@ -93,7 +101,8 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number): n
 
 const byte = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? (value | 0) & 0xff : 0)
 
-function decodeEntry(raw: unknown, mode: TileMode): TileEntry {
+/** One stored tile, padded to eight rows; white on black where colours are missing. */
+export function decodeTileEntry(raw: unknown, mode: TileMode): TileEntry {
   const entry = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<TileEntry>
   const pattern: number[] = []
   const color: number[] = []
@@ -118,7 +127,7 @@ export function normalizeTileAnim(raw: unknown): TileAnimDoc {
     return {
       // Resized to the document's own geometry: the exported table is read at
       // a fixed stride, so one odd frame would shift every frame after it.
-      tiles: Array.from({ length: cells }, (_, i) => decodeEntry(f.tiles?.[i], mode)),
+      tiles: Array.from({ length: cells }, (_, i) => decodeTileEntry(f.tiles?.[i], mode)),
       duration: clampInt(f.duration, 1, MAX_ANIM_DURATION, DEFAULT_ANIM_DURATION)
     }
   })
@@ -159,7 +168,7 @@ export function validateTileAnim(doc: TileAnimDoc): string[] {
  * may have recoloured one third on purpose (`demo_msx1`'s HUD coin). When the
  * poses agree, copying the colours would undo that every step for nothing.
  */
-export function colorsVary(doc: TileAnimDoc): boolean {
+export function colorsVary(doc: PoseDoc): boolean {
   if (doc.mode === 'sc1') return false
   const first = doc.frames[0]?.tiles ?? []
   return doc.frames.some((frame) =>
@@ -172,10 +181,14 @@ export function animModesCompatible(animMode: TileMode, tilesetMode: TileMode): 
   return animMode === 'sc1' ? tilesetMode === 'sc1' : tilesetMode !== 'sc1'
 }
 
-/** The animation's own name from its path — `res/coin.anim-tiles.json` → `coin`. */
+/**
+ * The animation's own name from its path — `res/coin.anim-tiles.json` → `coin`.
+ * A meta-tile's window is attached under the meta's path, so its suffix goes
+ * too: `res/torch.meta-tiles.json` → `torch`.
+ */
 export function animBaseName(path: string): string {
   const file = path.split(/[\\/]/).pop() ?? path
-  return file.replace(/\.anim-tiles\.json$/i, '')
+  return file.replace(/\.(anim|meta)-tiles\.json$/i, '')
 }
 
 /**
@@ -186,7 +199,7 @@ export function animBaseName(path: string): string {
  */
 export function animRefFrom(
   path: string,
-  anim: TileAnimDoc,
+  anim: PoseDoc,
   fallbackName: string,
   where: { slot: number; bank: number | null }
 ): TileAnimBinding {
@@ -212,7 +225,7 @@ export function animRefFrom(
  * overrides — the art the window actually shows. sc1 colours belong to the
  * slot's group and are left alone.
  */
-export function withAnimFrame(tiles: TilesDoc, binding: TileAnimBinding, anim: TileAnimDoc, frame = 0): TilesDoc {
+export function withAnimFrame(tiles: TilesDoc, binding: TileAnimBinding, anim: PoseDoc, frame = 0): TilesDoc {
   const pose = anim.frames[frame] ?? anim.frames[0]
   if (!pose) return tiles
   const cells = Math.min(animCells(binding), pose.tiles.length)
@@ -338,7 +351,7 @@ export function animationFromBlock(
  * tile editor's own stroke functions and draws with `tilePixels`, so the
  * two-colours-per-row rule is the tile editor's answer, not a second copy.
  */
-export function frameTiles(doc: TileAnimDoc, frame: number): TilesDoc {
+export function frameTiles(doc: PoseDoc, frame: number): TilesDoc {
   const pose = doc.frames[frame] ?? doc.frames[0]
   const cells = animDocCells(doc)
   return normalizeTiles({
@@ -350,7 +363,7 @@ export function frameTiles(doc: TileAnimDoc, frame: number): TilesDoc {
 }
 
 /** Writes a painted pose back from its scratch tileset (`frameTiles`). */
-export function withFrameTiles(doc: TileAnimDoc, frame: number, painted: TilesDoc): TileAnimDoc {
+export function withFrameTiles<T extends PoseDoc>(doc: T, frame: number, painted: TilesDoc): T {
   if (!doc.frames[frame]) return doc
   const frames = doc.frames.slice()
   frames[frame] = {
@@ -372,7 +385,7 @@ export function withFrameTiles(doc: TileAnimDoc, frame: number, painted: TilesDo
  * (not in sc1, which has none per tile), and one duration byte per pose. Data,
  * so it is there whether or not anything generates C over it.
  */
-export function tileAnimTables(doc: TileAnimDoc): EmitTable[] {
+export function tileAnimTables(doc: PoseDoc): EmitTable[] {
   const patterns: number[] = []
   const colors: number[] = []
   for (const frame of doc.frames) {

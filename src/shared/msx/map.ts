@@ -13,6 +13,9 @@ import { defineName, type HelperC } from './emitC'
 // Type-only, so it erases: `meta-tile.ts` takes `MapCell` from here the same
 // way, and neither import exists at runtime.
 import type { MetaTileDoc } from './meta-tile'
+// Type-only as well: a meta that owns its pixels, and its attachment to a tileset.
+import type { OwnedMetaDoc } from './meta-owned'
+import type { MetaBinding } from './tile'
 import type { ExportBlock } from './resource'
 
 
@@ -45,6 +48,16 @@ export interface MetaRef {
    * Bitmap maps only, and mirrored for the reason everything else here is.
    */
   masked?: boolean
+  /**
+   * Set for a meta that owns its pixels (`*.meta-tiles.json` version 3): the
+   * tile each cell shows in *this map's tileset* — its `MetaBinding.cells`,
+   * 0 for a see-through cell. Such a meta has no tile numbers of its own to
+   * `extern`, so the map carries these and draws from them.
+   *
+   * Empty when the meta is not attached to the map's tileset, which
+   * `validateMap` refuses to export.
+   */
+  cells?: number[]
 }
 
 /**
@@ -254,7 +267,7 @@ function normalizeMetaRefs(raw: unknown): MetaRef[] {
     Number.isFinite(Number(value)) && Number(value) >= 1 ? Number(value) | 0 : fallback
   return raw.slice(0, MAX_MAP_METAS).map((entry) => {
     const ref = (typeof entry === 'object' && entry !== null ? entry : {}) as Partial<MetaRef>
-    return {
+    const out: MetaRef = {
       path: String(ref.path ?? ''),
       name: String(ref.name ?? 'meta'),
       width: at(ref.width, 1),
@@ -262,6 +275,9 @@ function normalizeMetaRefs(raw: unknown): MetaRef[] {
       frames: at(ref.frames, 1),
       flags: (Number(ref.flags) || 0) & 0xff
     }
+    if (ref.masked === true) out.masked = true
+    if (Array.isArray(ref.cells)) out.cells = ref.cells.map((tile) => (Number(tile) || 0) & 0xff)
+    return out
   })
 }
 
@@ -382,6 +398,15 @@ export function validateMap(doc: MapDoc, options: { banked?: boolean } = {}): st
       `A banked tileset needs a map exactly ${SCREEN_ROWS} rows tall — this one is ${doc.height}. ` +
         'Width is free: banks are picked by row, so horizontal scrolling is fine.'
     )
+  }
+
+  // A meta that owns its pixels is drawn from the tiles its attachment to this
+  // map's tileset gives it. Without one there is nothing to draw with, and the
+  // only other outcome is a table of zeros that draws nothing at runtime.
+  for (const ref of doc.metas) {
+    if (ref.cells && ref.cells.length !== ref.width * ref.height) {
+      problems.push(`"${ref.name}" (${ref.path}) is not attached to ${doc.tileset || 'this map\'s tileset'} — attach it in the tile editor, or place it again from the map editor`)
+    }
   }
 
   // A placement's *origin* is inside the grid — `placeMeta` and
@@ -729,7 +754,25 @@ function bitmapOverlayC(doc: MapDoc, name: string, prefix: string): HelperC {
  * renders. Both used to build this independently, which is how they came to
  * disagree about the one field that has to match a real C symbol.
  */
-export function metaRefFrom(path: string, meta: MetaTileDoc, fallbackName: string): MetaRef {
+export function metaRefFrom(
+  path: string,
+  meta: MetaTileDoc | OwnedMetaDoc,
+  fallbackName: string,
+  binding?: MetaBinding | null
+): MetaRef {
+  if (meta.version === 3) {
+    // Its tiles are the attachment's, and it animates through the tileset's
+    // window rather than by frame, so to the map it is always one frame.
+    return {
+      path,
+      name: meta.export?.name || fallbackName,
+      width: meta.width,
+      height: meta.height,
+      frames: 1,
+      flags: meta.flags,
+      cells: binding && binding.width === meta.width && binding.height === meta.height ? binding.cells.slice() : []
+    }
+  }
   return {
     path,
     // Its own export block first; the name it *will* take otherwise. Never one
@@ -918,14 +961,14 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
     ],
     source: [
       '',
-      ...doc.metas.map((meta) => `extern const u8 ${meta.name}[];`),
+      ...metaTileSources(doc, name),
       '',
       "// Mirrored from each meta-tile's own file, so this compiles without",
       '// including their headers.',
       `static const struct { const u8* tiles; u8 w; u8 h; u8 cells; u8 frames; } ${name}_Metas[${prefix}_METAS] = {`,
       ...doc.metas.map(
-        (meta) =>
-          `\t{ ${meta.name}, ${meta.width}, ${meta.height}, ${meta.width * meta.height}, ${meta.frames} },`
+        (meta, slot) =>
+          `\t{ ${metaTilesSymbol(meta, name, slot)}, ${meta.width}, ${meta.height}, ${meta.width * meta.height}, ${meta.frames} },`
       ),
       '};',
       '',
@@ -964,6 +1007,24 @@ export function placementHelperC(doc: MapDoc, name: string): HelperC {
       '}'
     ]
   }
+}
+
+/**
+ * What `_DrawPlacements` reads each meta's tiles from: a version-2 meta's own
+ * table, by its symbol, or — for one that owns its pixels and so has no tile
+ * numbers of its own — the cells its attachment to this map's tileset gives
+ * it, carried in the map's own source.
+ */
+function metaTilesSymbol(meta: MetaRef, name: string, slot: number): string {
+  return meta.cells ? `${name}_MetaTiles${slot}` : meta.name
+}
+
+function metaTileSources(doc: MapDoc, name: string): string[] {
+  return doc.metas.map((meta, slot) =>
+    meta.cells
+      ? `static const u8 ${metaTilesSymbol(meta, name, slot)}[] = { ${meta.cells.join(', ')} }; // ${meta.path}, as the tileset shows it`
+      : `extern const u8 ${meta.name}[];`
+  )
 }
 
 /**

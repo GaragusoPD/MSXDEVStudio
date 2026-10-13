@@ -42,6 +42,18 @@ import {
   validateMetaTile,
   type MetaTileDoc
 } from './meta-tile'
+import {
+  isOwnedMeta,
+  normalizeOwnedMeta,
+  ownedMetaConstants,
+  ownedMetaNotes,
+  ownedMetaTables,
+  tilesetMetaConstants,
+  tilesetMetaHelperC,
+  tilesetMetaTables,
+  validateOwnedMeta,
+  type OwnedMetaDoc
+} from './meta-owned'
 import { MODES } from './modes'
 import {
   normalizeTileAnim,
@@ -194,7 +206,9 @@ export function isMetaKind(kind: ResourceKind | null): boolean {
 export type ResourceDoc =
   | { kind: 'tiles'; doc: TilesDoc }
   | { kind: 'btiles'; doc: BitmapTilesDoc }
-  | { kind: 'metatiles'; doc: MetaTileDoc }
+  // Version 2 references one tileset's tiles; version 3 owns its pixels and is
+  // attached to tilesets (`meta-owned.ts`). The file's own `version` decides.
+  | { kind: 'metatiles'; doc: MetaTileDoc | OwnedMetaDoc }
   | { kind: 'metabtiles'; doc: MetaTileDoc }
   | { kind: 'anim'; doc: TileAnimDoc }
   | { kind: 'sprites'; doc: SpritesDoc }
@@ -256,6 +270,7 @@ export function parseResource(path: string, text: string): ResourceDoc {
     case 'btiles':
       return { kind, doc: normalizeBitmapTiles(raw) }
     case 'metatiles':
+      return { kind, doc: isOwnedMeta(raw) ? normalizeOwnedMeta(raw) : normalizeMetaTile(raw) }
     case 'metabtiles':
       return { kind, doc: normalizeMetaTile(raw) }
     case 'anim':
@@ -296,6 +311,7 @@ export function validateResource(resource: ResourceDoc): string[] {
     case 'btiles':
       return validateBitmapTiles(resource.doc)
     case 'metatiles':
+      return isOwnedMeta(resource.doc) ? validateOwnedMeta(resource.doc) : validateMetaTile(resource.doc)
     case 'metabtiles':
       return validateMetaTile(resource.doc)
     case 'anim':
@@ -387,6 +403,9 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
             .join(', ')}`
         })
       }
+      // Data, with or without helper C: a game can draw an attached meta, or
+      // read its flags, from these alone.
+      tables.push(...tilesetMetaTables(doc))
       return tables
     }
     case 'btiles': {
@@ -435,6 +454,7 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
     case 'metatiles':
     case 'metabtiles': {
       const { doc } = resource
+      if (isOwnedMeta(doc)) return ownedMetaTables(doc)
       // One table, no suffix: a meta-tile is nothing but its frames, so
       // `g_Tree[]` reads better than `g_Tree_Frames[]`.
       return [
@@ -651,6 +671,9 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
       if (resource.doc.animations.length) {
         notes.push(`Animations: ${resource.doc.animations.map((binding) => `${binding.path} at ${binding.slot}`).join(', ')}`)
       }
+      if (resource.doc.metas.length) {
+        notes.push(`Meta-tiles: ${resource.doc.metas.map((binding) => `${binding.path} ${binding.width}×${binding.height}`).join(', ')}`)
+      }
       break
     case 'btiles': {
       const sheet = sheetPixels(resource.doc)
@@ -714,6 +737,10 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
     }
     case 'metatiles':
     case 'metabtiles':
+      if (isOwnedMeta(resource.doc)) {
+        notes.push(...ownedMetaNotes(resource.doc))
+        break
+      }
       notes.push(
         `Tileset: ${resource.doc.tileset}`,
         `Size: ${resource.doc.width}×${resource.doc.height} tiles (${metaCells(resource.doc)} bytes per frame)`,
@@ -898,7 +925,9 @@ function resourceConstants(
       })
     ]
   }
-  if (isMetaKind(resource.kind)) return metaConstants(resource.doc as MetaTileDoc, name)
+  if (isMetaKind(resource.kind)) {
+    return isOwnedMeta(resource.doc) ? ownedMetaConstants(resource.doc, name) : metaConstants(resource.doc as MetaTileDoc, name)
+  }
   if (resource.kind === 'anim') return tileAnimConstants(resource.doc, name)
   if (resource.kind === 'tiles') {
     const { doc } = resource
@@ -916,6 +945,7 @@ function resourceConstants(
     return [
       ...bankDefines,
       ...tilesetAnimConstants(doc, name),
+      ...tilesetMetaConstants(doc, name),
       ...blockPlacements(doc).flatMap((placement) => {
         const id = `${prefix}_${defineName(placement.name)}`
         return [
@@ -986,8 +1016,10 @@ function resourceCode(
     return resource.doc.sprites.length ? swSpriteHelperC(resource.doc, name) : NO_CODE
   }
   // No emptiness guard, unlike a tileset's blocks: a meta always has a frame,
-  // so there is always something to draw.
-  if (isMetaKind(resource.kind)) return metaHelperC(resource.doc as MetaTileDoc, name)
+  // so there is always something to draw. A meta that owns its pixels has no
+  // tile numbers of its own to draw with — each tileset it is attached to
+  // draws it (`_DrawMeta`), and its window is that tileset's `_Animate()`.
+  if (isMetaKind(resource.kind)) return isOwnedMeta(resource.doc) ? NO_CODE : metaHelperC(resource.doc as MetaTileDoc, name)
   if (resource.kind === 'tiles') {
     const { doc } = resource
     const blocks = doc.blocks.length ? tileHelperC(doc, name) : NO_CODE
@@ -996,7 +1028,7 @@ function resourceCode(
     // VDP_LoadColor_GM2 directly, exactly as it does today (see agent-guide.ts).
     const load = isBanked(doc) ? bankLoadHelperC(doc, name) : NO_CODE
     // Additive: a tileset with nothing attached emits exactly what it did.
-    return joinHelpers(blocks, load, tileAnimHelperC(doc, name))
+    return joinHelpers(blocks, load, tileAnimHelperC(doc, name), tilesetMetaHelperC(doc, name))
   }
   // Unlike pattern tiles, this is worth emitting with no blocks at all: the
   // upload and the single-tile blit are the whole reason a bitmap tileset can

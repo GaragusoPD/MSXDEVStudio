@@ -88,12 +88,17 @@ export const sameEntry = (a: TileEntry, b: TileEntry): boolean =>
  * `pair` is the sc1 group colour the tile must live under; ignored in the other
  * modes, where colour travels per row in `entry.color`.
  *
+ * `never0` keeps the answer off tile 0 even when tile 0 holds that art — what
+ * an attached meta-tile asks for, since 0 in its cells means see-through
+ * (`MetaBinding`). An opaque blank cell then gets a blank tile of its own.
+ *
  * Null means the bank is full. 256 tiles is a hardware ceiling, not a policy.
  */
 export function findOrCreateTile(
   doc: TilesDoc,
   entry: TileEntry,
-  pair?: number
+  pair?: number,
+  options: { never0?: boolean } = {}
 ): { doc: TilesDoc; index: number } | null {
   const sc1 = doc.mode === 'sc1'
   // When a tileset is banked, shared tiles live at the top (255 down) and fall
@@ -107,6 +112,10 @@ export function findOrCreateTile(
   for (let i = 0; i < searchLimit; i++) {
     const candidate = doc.tiles[i]
     if (!candidate || windows.has(i) || !sameEntry(candidate, entry)) continue
+    if (options.never0 && i === 0) continue
+    // One index has to mean one picture in every bank: a common tile some bank
+    // shows its own art over would change as the meta moves down the screen.
+    if (i < doc.count && doc.bankTiles.some((bank) => bank[i] && !sameEntry(bank[i], candidate))) continue
     // In sc1 the pattern is only half the picture: identical bits under
     // different pairs are different artwork.
     if (sc1 && doc.groupColors[i >> SC1_SHIFT] !== pair) continue

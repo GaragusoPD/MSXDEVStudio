@@ -87,6 +87,52 @@ export interface TilesDoc {
    * were their own resource. See `TileAnimBinding`.
    */
   animations: TileAnimBinding[]
+
+  /**
+   * Meta-tiles attached to this tileset (`*.meta-tiles.json` version 3, which
+   * own their pixels), each resolved into tile numbers here. Empty in every
+   * file written before meta-tiles were their own entities. See `MetaBinding`.
+   */
+  metas: MetaBinding[]
+}
+
+/**
+ * A meta-tile attached to a tileset: the tile each of its cells shows *in this
+ * tileset*. The meta owns its pixels and names no tileset, so attaching is what
+ * turns its art into numbers a name table can hold — and the same meta can be
+ * attached to several tilesets, each with its own numbers.
+ *
+ * - A **see-through** cell (the meta's `holes`) is 0, and only then: a meta's
+ *   art never resolves to tile 0, so a 0 here always means "skip this write" —
+ *   the convention every meta draw already follows.
+ * - A **still** cell is a tile holding its art, shared with any identical tile
+ *   already in the set (`findOrCreateTile`).
+ * - A cell that **changes between poses** is a slot of the meta's window: an
+ *   ordinary `TileAnimBinding` filed under the meta's path, which the tileset's
+ *   `_Animate()` plays like any attached animation.
+ *
+ * `cells` is derived data, as everything on a binding is: the tile editor
+ * re-resolves it from the meta file on load, and the exporter before every
+ * export, through one `resolveMeta` (`meta-owned.ts`).
+ */
+export interface MetaBinding {
+  /** Project-relative path of the `.meta-tiles.json`. */
+  path: string
+  /** The meta's export symbol — what comments and the window's C name. */
+  name: string
+  width: number
+  height: number
+  /** The meta's eight gameplay bits, for the tileset's meta table. */
+  flags: number
+  /** Poses, mirrored; more than one means the meta has a window. */
+  frames: number
+  /** `width * height` tile numbers, row-major; 0 is a see-through cell. */
+  cells: number[]
+}
+
+/** True for the path of a meta-tile file — a window filed under one belongs to that meta. */
+export function isMetaPath(path: string): boolean {
+  return /\.meta-tiles\.json$/i.test(path)
 }
 
 /** How an animation runs past its last pose. */
@@ -340,8 +386,64 @@ export function normalizeTiles(raw: unknown): TilesDoc {
     export: (input.export as ExportBlock | undefined) ?? null,
     bankTiles,
     sharedTiles,
-    animations: normalizeAnimBindings(input.animations, bankTiles.some((bank) => bank.length > 0))
+    animations: normalizeAnimBindings(input.animations, bankTiles.some((bank) => bank.length > 0)),
+    metas: normalizeMetaBindings(input.metas)
   }
+}
+
+/** Meta-tiles are capped at 16 tiles a side; see `MAX_META_SIZE` in `meta-tile.ts`. */
+const MAX_META_SIDE = 16
+
+/**
+ * Reads attached meta-tiles back. An entry without a path means nothing and
+ * goes; a cell list of the wrong length is padded or cut to the meta's size —
+ * with see-through cells, which the next refresh resolves from the meta file.
+ */
+function normalizeMetaBindings(raw: unknown): MetaBinding[] {
+  if (!Array.isArray(raw)) return []
+  const int = (value: unknown, min: number, max: number, fallback: number): number => {
+    const n = Math.round(Number(value))
+    return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback
+  }
+  const out: MetaBinding[] = []
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const input = entry as Partial<MetaBinding>
+    const path = String(input.path ?? '')
+    if (!path || out.some((binding) => binding.path === path)) continue
+    const width = int(input.width, 1, MAX_META_SIDE, 1)
+    const height = int(input.height, 1, MAX_META_SIDE, 1)
+    out.push({
+      path,
+      name: String(input.name ?? ''),
+      width,
+      height,
+      flags: int(input.flags, 0, 0xff, 0),
+      frames: int(input.frames, 1, 255, 1),
+      cells: Array.from({ length: width * height }, (_, i) => int(input.cells?.[i], 0, MAX_TILES - 1, 0))
+    })
+  }
+  return out
+}
+
+/**
+ * Follows a renumbering with every attached meta's cells. A see-through 0
+ * stays 0; a cell whose tile was dropped becomes 0 too, and the next refresh
+ * (`resolveMeta`) gives it a tile again from the meta's own art — so a delete
+ * cannot leave a meta pointing at whatever slid into the gap.
+ */
+export function remapMetaBindings(bindings: readonly MetaBinding[], mapping: readonly number[]): MetaBinding[] {
+  return bindings.map((binding) => ({
+    ...binding,
+    cells: binding.cells.map((tile) => (tile === 0 ? 0 : (mapping[tile] ?? 0)))
+  }))
+}
+
+/** Every tile an attached meta shows — what compaction must keep. Windows included. */
+export function metaCellSlots(doc: TilesDoc): Set<number> {
+  const slots = new Set<number>()
+  for (const binding of doc.metas) for (const tile of binding.cells) if (tile !== 0) slots.add(tile)
+  return slots
 }
 
 /** Animation windows are capped at 16 cells; see `MAX_ANIM_CELLS` in `tile-anim.ts`. */
@@ -1145,13 +1247,14 @@ export function removeTile(doc: TilesDoc, index: number): { doc: TilesDoc; mappi
   }
 }
 
-/** Rewrites every tile reference inside the document itself — blocks, and attached animations' windows. */
+/** Rewrites every tile reference inside the document itself — blocks, attached animations' windows and attached metas' cells. */
 function applyTileMapping(doc: TilesDoc, mapping: readonly number[]): TilesDoc {
-  if (!doc.blocks.length && !doc.animations.length) return doc
+  if (!doc.blocks.length && !doc.animations.length && !doc.metas.length) return doc
   return {
     ...doc,
     blocks: doc.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => mapping[tile] ?? 0) })),
-    animations: remapAnimBindings(doc.animations, mapping)
+    animations: remapAnimBindings(doc.animations, mapping),
+    metas: remapMetaBindings(doc.metas, mapping)
   }
 }
 
@@ -1383,6 +1486,7 @@ export function validateTiles(doc: TilesDoc): string[] {
   })
 
   problems.push(...animWindowProblems(doc))
+  problems.push(...metaBindingProblems(doc))
 
   if (doc.palette) {
     if (doc.mode !== 'sc4') problems.push(`${doc.mode} uses the fixed TMS9918A palette; palette must be null`)
@@ -1434,6 +1538,27 @@ export function animWindowProblems(doc: TilesDoc): string[] {
     }
   })
   return [...new Set(problems)]
+}
+
+/**
+ * What would make an attached meta draw something other than its art: a cell
+ * list that does not cover the meta, or a cell pointing at a tile this set does
+ * not hold in every bank. A meta is drawn on any row, so on a banked tileset
+ * its tiles are the common range or the shared region — never a bank's own.
+ */
+export function metaBindingProblems(doc: TilesDoc): string[] {
+  const problems: string[] = []
+  const sharedStart = MAX_TILES - doc.sharedTiles
+  for (const binding of doc.metas) {
+    const label = `Meta-tile ${binding.name || binding.path}`
+    if (binding.cells.length !== binding.width * binding.height) {
+      problems.push(`${label}: ${binding.cells.length} cells for ${binding.width}×${binding.height}`)
+      continue
+    }
+    const outside = binding.cells.find((tile) => tile !== 0 && tile >= doc.count && !(isBanked(doc) && tile >= sharedStart))
+    if (outside !== undefined) problems.push(`${label}: tile ${outside} is past the tileset's ${doc.count} tiles`)
+  }
+  return problems
 }
 
 /**

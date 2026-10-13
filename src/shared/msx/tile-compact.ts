@@ -26,6 +26,8 @@
 
 import {
   animWindowSlots,
+  metaCellSlots,
+  remapMetaBindings,
   animWindowSlotsIn,
   bankTilePixels,
   remapAnimBindings,
@@ -105,12 +107,18 @@ export function compactTileset(
   const end = Math.min(doc.count, sharedStart)
   const keep = new Set<number>()
   for (const tile of used) if (tile >= 0 && tile < end) keep.add(tile)
-  if (doc.reserveTile0) keep.add(0)
+  // With metas attached, tile 0 stays tile 0 whatever it holds: 0 in a meta's
+  // cells means see-through, so no meta tile may be packed down onto it.
+  if (doc.reserveTile0 || doc.metas.length) keep.add(0)
   for (const block of doc.blocks) for (const tile of block.tiles) if (tile < end) keep.add(tile)
   // Attached means wanted, even before any map shows it — and a window is the
   // animation's frame 0, not art that may merge with a look-alike.
   const windows = animWindowSlots(doc)
   for (const tile of windows) if (tile < end) keep.add(tile)
+  // An attached meta's tiles likewise — and they never merge: a meta's opaque
+  // blank cell folded into a blank tile 0 would turn see-through.
+  const metaTiles = metaCellSlots(doc)
+  for (const tile of metaTiles) if (tile < end) keep.add(tile)
   // A tileset needs at least one tile, and tile 0 is what a dropped reference falls back to.
   if (!keep.size) keep.add(0)
 
@@ -119,7 +127,7 @@ export function compactTileset(
   if (options.merge) {
     const seen = new Map<string, number>()
     for (let i = 0; i < end; i++) {
-      if (!keep.has(i) || windows.has(i)) continue
+      if (!keep.has(i) || windows.has(i) || metaTiles.has(i)) continue
       const key = `${pixelKey(tilePixels(doc, i))}|${doc.flags[i] ?? 0}`
       const first = seen.get(key)
       if (first === undefined) seen.set(key, i)
@@ -181,7 +189,8 @@ export function compactTileset(
     flags,
     groupColors: sc1 ? groupColors : [],
     blocks: doc.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => mapping[tile] ?? 0) })),
-    animations: remapAnimBindings(doc.animations, mapping)
+    animations: remapAnimBindings(doc.animations, mapping),
+    metas: remapMetaBindings(doc.metas, mapping)
   })
 
   // The contract, checked rather than trusted: every tile still in use draws
