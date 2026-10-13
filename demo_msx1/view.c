@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-//  Everything that reaches the name table: the view, the HUD, the coin spin.
+//  Everything that reaches the name table: the view and the HUD.
 // ─────────────────────────────────────────────────────────────────────────────
 #include "demo.h"
 
@@ -16,8 +16,6 @@ u8  g_Back[VIEW_W * VIEW_H];
 /** One row of the composed view, so a scroll step is still one VDP write per row. */
 u8  g_Row[VIEW_W];
 
-u8  g_CoinPhase;   // which pose of the spin is in the pattern table
-u8  g_CoinTick;
 u8  g_DoorOpen;
 
 /**
@@ -94,27 +92,4 @@ void DrawHUD()
 		// fall from 10 to 9, and a leftover digit there would be a lie.
 		VDP_Poke_16K(g_Back[3], g_ScreenLayoutLow + 3);
 	}
-}
-
-/**
- * Advances the coin spin. The map is not touched: the four poses are the cells
- * of the tileset's `coin_spin` block, and this copies the chosen pose's eight
- * pattern bytes over tile T_COIN's slot. VDP_LoadPattern_GM2 writes all three
- * SCREEN 2 banks, so that is 24 bytes a step to turn every coin on screen —
- * against 8 bytes *per coin* if each one were re-pointed at another tile, and
- * without a single name-table write.
- *
- * Patterns only, because every pose shares the coin slot's colours (0xB5 on
- * every row). Recolour a pose and this must copy its colour bytes too
- * (VDP_LoadColor_GM2) — which also writes the top third, so InitGame()'s HUD
- * recolouring of T_COIN would have to be redone after it.
- */
-void SpinCoins()
-{
-	if (++g_CoinTick < COIN_RATE) return;
-	g_CoinTick = 0;
-	if (++g_CoinPhase >= COIN_POSES) g_CoinPhase = 0;
-
-	u8 pose = g_Tiles_Blocks[G_TILES_COIN_SPIN_BASE + g_CoinPhase];
-	VDP_LoadPattern_GM2(g_Tiles_Patterns + ((u16)pose * 8), 1, T_COIN);
 }

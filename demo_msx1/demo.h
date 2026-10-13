@@ -61,18 +61,15 @@
 // Tile indices, matching the order of res/tiles.tiles.json. Only the ones the code
 // draws with are named; what a tile *does* is a flag, not an index.
 #define T_SKY        0
-#define T_COIN       6           // for the HUD icon, and the slot the spin animates
-#define T_TRANS      39          // carries flag 8: the backdrop shows here instead
+#define T_COIN       6           // for the HUD icon, and the slot coin.anim-tiles.json is attached to
+// Carries flag 8: the backdrop shows here instead. Read out of its 1x1 block
+// rather than written down, so re-ordering the tileset cannot break it.
+#define T_TRANS      (g_Tiles_Blocks[G_TILES_TRANS_BASE])
 #define T_DIGIT_0    16          // digits live at 16..25, so tile = T_DIGIT_0 + value
 
 // Where the level's door stands, so the open one can be stamped over it.
 #define DOOR_COL     60
 #define DOOR_ROW     18
-
-// The coin spin: the block's cells are the poses, in order. Holding each for a
-// few frames is what makes it read as a turn rather than a flicker.
-#define COIN_POSES   G_TILES_COIN_SPIN_W
-#define COIN_RATE    10
 
 // The tile editor's eight flag squares, as this game reads them. Set flag 1 on
 // a tile and it becomes solid, anywhere it appears in any map; nothing here
@@ -159,8 +156,6 @@ extern i16 g_VelY;          // 1/8th pixels per frame
 extern u8  g_OnGround;
 extern u8  g_CamX;          // leftmost visible column, in tiles
 extern u8  g_Frame;
-extern u8  g_CoinPhase;     // which pose of the spin is currently in the pattern table
-extern u8  g_CoinTick;
 extern u8  g_DoorOpen;
 extern u8  g_FaceLeft;      // which way the player is drawn facing
 
@@ -184,7 +179,6 @@ void OpenDoor();
 void DrawBackdropTop();
 void DrawView();
 void DrawHUD();
-void SpinCoins();
 
 // player.c
 void MoveX(i16 dx);

@@ -19,7 +19,8 @@ guide](../docs/resources.md):
 
 | Resource | Editor | Exports | Used for |
 |---|---|---|---|
-| `res/tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, and two **blocks** — a 4x1 coin-spin strip and a 1x2 open doorway |
+| `res/tiles.tiles.json` | Tile editor | `g_Tiles_Patterns`, `g_Tiles_Colors`, `g_Tiles_Flags`, `g_Tiles_Blocks` + `g_Tiles_DrawBlock()`, `g_Tiles_AnimReset()`, `g_Tiles_Animate()` | SCREEN 2 tiles: terrain, coins, scenery, digits 0-9 for the HUD, the flags that say which are solid, two **blocks** — a 1x2 open doorway and a 1x1 `trans` naming the transparent tile — and the coin spin **attached** at tile 6 |
+| `res/coin.anim-tiles.json` | Animation editor | `g_CoinAnim_Patterns`, `g_CoinAnim_Colors`, `g_CoinAnim_Durations` | The coin spin: four 1x1 poses, ten frames each, looping. Played by `g_Tiles_Animate()` |
 | `res/player.sprites.json` | Sprite editor | `g_PlayerSprites_Patterns`, `g_PlayerSprites_Colors`, `g_PlayerSprites_Layout` + `g_PlayerSprites_SetMeta()` | A 16x16 character in mode 1, six poses, each drawn by **three superposed planes** — black line art in front, two colour planes behind — so it can have three colours. Mirrored at run time to face left |
 | `res/level.map.json` | Map editor | `g_LevelMap_Background` | A 64x12 map, two screens wide and half a screen tall — the bottom half, where the level actually is. One byte per cell, **RLEp-compressed**: 768 cells in 86 bytes |
 | `res/background.map.json` | Map editor | `g_BackgroundMap_Sky` | A 32x24 backdrop — one screen, pinned to the screen, drawn behind the level wherever a tile is flagged transparent. 768 cells in 127 bytes |
@@ -34,7 +35,7 @@ explain. It is split into chapters rather than one long file:
 |---|---|---|
 | `demo.h` | ~200 | The shared vocabulary: tile indices, flags, physics constants, and which file owns which global |
 | `level.c` | ~95 | The level in RAM — `TileAt`, collision, the camera, the door |
-| `view.c` | ~115 | Everything that reaches the name table — the composed view, the HUD, the coin spin |
+| `view.c` | ~95 | Everything that reaches the name table — the composed view and the HUD |
 | `player.c` | ~140 | Moving, falling, collecting, and turning around |
 | `screens.c` | ~100 | The title picture and the text screens either side of the game |
 | `main.c` | ~250 | Setup, and the loop that drives the rest |
@@ -145,10 +146,13 @@ What the code demonstrates:
   the editor shows per character. The walk is a six step cycle (`g_WalkCycle` in
   `main.c`) rather than two poses flipping back and forth, which is the
   difference between a stride and a flicker.
-- **Animation through the pattern table.** The coins turn without the map being
-  touched at all. The four poses are the cells of a 4x1 block in the tileset —
-  a design drawn on one canvas rather than as four separate tiles — and
-  `SpinCoins()` copies one pose's eight pattern bytes over the coin tile's slot.
+- **An animated tile, attached.** The coins turn without the map being touched
+  at all. The spin is its own resource, `res/coin.anim-tiles.json` — four poses
+  and how long each is held — *attached* to the tileset at tile 6, the slot the
+  coin cells already show. The poses live in the animation's ROM table rather
+  than as tiles, which is four tileset slots this demo no longer spends, and the
+  exporter generates `g_Tiles_Animate()`: called once per frame, it copies the
+  next pose's eight pattern bytes over tile 6 when its time is up.
   `VDP_LoadPattern_GM2` writes all three SCREEN 2 banks, so a step costs 24
   bytes and turns *every* coin on screen, the HUD icon included, because the
   name table still says "tile 6" in all those places. Re-pointing each coin at

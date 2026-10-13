@@ -39,3 +39,25 @@ for (const demo of ['demo_msx1', 'demo_msx2']) {
     }
   })
 }
+
+describe("demo_msx1's coin spin", () => {
+  const root = join(process.cwd(), 'demo_msx1')
+
+  it('copies patterns only, so the HUD coin keeps its top-third colours', () => {
+    // InitGame() recolours tile 6's top-third colour entry for the HUD. A colour
+    // write mirrors into all three thirds, so the generated step must not make
+    // one: every pose shares the coin's colours, and the exporter knows it.
+    const source = readFileSync(join(root, 'content/tiles.c'), 'utf-8')
+    expect(source).toContain('VDP_LoadPattern_GM2(g_CoinAnim_Patterns + (u16)frame * 8, 1, 6);')
+    expect(source).not.toContain('LoadColor')
+  })
+
+  it("is attached at the slot the coin cells and the HUD draw, and the C reads the transparent tile by name", () => {
+    const tiles = parseResource('res/tiles.tiles.json', readFileSync(join(root, 'res/tiles.tiles.json'), 'utf-8'))
+    if (tiles.kind !== 'tiles') throw new Error('not a tileset')
+    expect(tiles.doc.animations.map((binding) => [binding.path, binding.slot])).toEqual([['res/coin.anim-tiles.json', 6]])
+    const trans = tiles.doc.blocks.find((block) => block.name === 'trans')!
+    expect(tiles.doc.flags[trans.tiles[0]] & 0x80).toBe(0x80)
+    expect(readFileSync(join(root, 'demo.h'), 'utf-8')).toContain('#define T_TRANS      (g_Tiles_Blocks[G_TILES_TRANS_BASE])')
+  })
+})

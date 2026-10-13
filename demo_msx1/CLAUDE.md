@@ -23,7 +23,7 @@ Or open `demo.msxproj` in MSXDEVStudio and press Run.
 |---|---|
 | `demo.h` | The shared vocabulary: tile indices, flags, physics constants, and which file owns which global |
 | `level.c` | The level in RAM — `TileAt`, collision, the camera, the door |
-| `view.c` | Everything that reaches the name table — the composed view, the HUD, the coin spin |
+| `view.c` | Everything that reaches the name table — the composed view and the HUD |
 | `player.c` | Moving, falling, collecting, turning around |
 | `screens.c` | The title picture and the text screens either side of the game |
 | `main.c` | Setup, and the loop that drives the rest |
@@ -43,7 +43,8 @@ include `content/tiles.h` while only `content/tiles.c` defines the arrays.
 
 | File | Exports | Used for |
 |---|---|---|
-| `res/tiles.tiles.json` | `g_Tiles_Patterns/_Colors/_Flags/_Blocks` + `g_Tiles_DrawBlock()` | Terrain, coins, scenery, HUD digits, solidity flags, a 4×1 coin-spin block and a 1×2 open doorway |
+| `res/tiles.tiles.json` | `g_Tiles_Patterns/_Colors/_Flags/_Blocks` + `g_Tiles_DrawBlock()`, `g_Tiles_AnimReset()`/`_Animate()` | Terrain, coins, scenery, HUD digits, solidity flags, a 1×2 open doorway, a 1×1 `trans` block naming the transparent tile — and the coin spin attached at tile 6 |
+| `res/coin.anim-tiles.json` | `g_CoinAnim_Patterns/_Colors/_Durations` | The coin spin: four 1×1 poses held 10 frames each, looping. Played by `g_Tiles_Animate()`; the game never reads these tables itself |
 | `res/player.sprites.json` | `g_PlayerSprites_Patterns/_Colors/_Layout` + `g_PlayerSprites_SetMeta()` | 16×16 character, mode 1, six poses, **three superposed planes** each |
 | `res/level.map.json` | `g_LevelMap_Background` | 64×12 level, RLEp-compressed (768 cells → 86 bytes) |
 | `res/background.map.json` | `g_BackgroundMap_Sky` | 32×24 backdrop pinned to the screen |
@@ -79,17 +80,24 @@ the level only occupies rows `LEVEL_TOP`..24 (above is backdrop, written once by
 rows with no transparent cell. Anything that widens either undoes the budget —
 the README has the measured frame counts.
 
-**Animate the pattern, not the map.** `SpinCoins()` copies one pose's 8 pattern
-bytes over the coin tile's slot with `VDP_LoadPattern_GM2`, which writes all
-three SCREEN 2 banks: 24 bytes turns *every* coin, on screen or not, HUD
-included. Re-pointing cells would cost a name-table write per coin per step.
+**Animate the pattern, not the map.** The coin spin is `res/coin.anim-tiles.json`,
+an animation *attached* to the tileset at tile 6 — the slot every coin cell and
+the HUD icon already show. Its poses live only in the animation's own ROM table,
+not in the tileset. `InitGame()` calls `g_Tiles_AnimReset()` once the tiles are
+in VRAM (RAM is not cleared on a ROM target, and it shows the first pose), and
+the loop calls `g_Tiles_Animate()` once per frame: on the frames a pose changes
+it copies that pose's 8 pattern bytes over tile 6 with `VDP_LoadPattern_GM2`,
+which writes all three SCREEN 2 banks — 24 bytes turn *every* coin, on screen
+or not. Re-pointing cells would cost a name-table write per coin per step. To
+change the spin, edit the animation, not C: speed, poses and loop mode are all
+in that file.
 
-It copies the pattern **only**, and that is correct only because all four poses
-(tiles 32-35) share the coin slot's colours, `0xB5` on every row. A tile's
-colours live in a separate table; recolour a pose in the tile editor and
-`SpinCoins()` must also copy its 8 colour bytes (`VDP_LoadColor_GM2`) — and
-that call writes all three thirds, so it would undo the HUD coin's top-third
-recolouring (below) every step unless that is redone after it.
+The generated step copies patterns **only**, because all four poses share the
+coin's colours, `0xB5` on every row — the exporter checks. Recolour one pose
+and the step starts copying colours too (`VDP_LoadColor_GM2`), which writes all
+three thirds and would undo the HUD coin's top-third recolouring (below) on
+every pose change. Keep the poses' colours identical, or redo that recolouring
+after `g_Tiles_Animate()`.
 
 **SCREEN 2 has three colour tables, one per third of the screen.** The same
 pattern can look different depending on where it sits. `InitGame()` exploits

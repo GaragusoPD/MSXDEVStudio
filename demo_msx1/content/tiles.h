@@ -4,38 +4,45 @@
 // Generation parameters:
 //  - Source: res/tiles.tiles.json
 //  - Mode: SCREEN 2 (GRAPHIC 2)
-//  - Tiles: 68
-//  - Blocks: coin_spin 4×1, door_open 1×2, building 2×2, pine tree 2×2, big_cloud 3×1
+//  - Tiles: 64
+//  - Blocks: door_open 1×2, building 2×2, pine tree 2×2, big_cloud 3×1, coin 1×1, trans 1×1
 //  - Flagged tiles: 12
+//  - Animations: res/coin.anim-tiles.json at 6
 
 #pragma once
 
-#define G_TILES_COIN_SPIN_BASE 0
-#define G_TILES_COIN_SPIN_W 4
-#define G_TILES_COIN_SPIN_H 1
-#define G_TILES_DOOR_OPEN_BASE 4
+#define G_TILES_ANIMS 1
+#define G_TILES_ANIM_COIN 0
+#define G_TILES_ANIM_COIN_SLOT 6
+#define G_TILES_DOOR_OPEN_BASE 0
 #define G_TILES_DOOR_OPEN_W 1
 #define G_TILES_DOOR_OPEN_H 2
-#define G_TILES_BUILDING_BASE 6
+#define G_TILES_BUILDING_BASE 2
 #define G_TILES_BUILDING_W 2
 #define G_TILES_BUILDING_H 2
-#define G_TILES_PINE_TREE_BASE 10
+#define G_TILES_PINE_TREE_BASE 6
 #define G_TILES_PINE_TREE_W 2
 #define G_TILES_PINE_TREE_H 2
-#define G_TILES_BIG_CLOUD_BASE 14
+#define G_TILES_BIG_CLOUD_BASE 10
 #define G_TILES_BIG_CLOUD_W 3
 #define G_TILES_BIG_CLOUD_H 1
+#define G_TILES_COIN_BASE 13
+#define G_TILES_COIN_W 1
+#define G_TILES_COIN_H 1
+#define G_TILES_TRANS_BASE 14
+#define G_TILES_TRANS_W 1
+#define G_TILES_TRANS_H 1
 
-#define G_TILES_PATTERNS_SIZE 544
+#define G_TILES_PATTERNS_SIZE 512
 extern const unsigned char g_Tiles_Patterns[];
 
-#define G_TILES_COLORS_SIZE 544
+#define G_TILES_COLORS_SIZE 512
 extern const unsigned char g_Tiles_Colors[];
 
-#define G_TILES_FLAGS_SIZE 68
+#define G_TILES_FLAGS_SIZE 64
 extern const unsigned char g_Tiles_Flags[];
 
-#define G_TILES_BLOCKS_SIZE 17
+#define G_TILES_BLOCKS_SIZE 15
 extern const unsigned char g_Tiles_Blocks[];
 
 
@@ -44,5 +51,30 @@ extern const unsigned char g_Tiles_Blocks[];
 // with VDP_USE_MODE_G2 or VDP_USE_MODE_G3.
 //
 // Example:
-//   g_Tiles_DrawBlock(10, 5, G_TILES_COIN_SPIN_BASE, G_TILES_COIN_SPIN_W, G_TILES_COIN_SPIN_H);
+//   g_Tiles_DrawBlock(10, 5, G_TILES_DOOR_OPEN_BASE, G_TILES_DOOR_OPEN_W, G_TILES_DOOR_OPEN_H);
 void g_Tiles_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h);
+
+// ── g_Tiles: attached animations ─────────────────────────────────────
+//
+// Plays the 1 animation attached to this tileset by rewriting their
+// tiles' patterns in VRAM: every cell showing them animates, on screen or
+// not, and no name-table byte is written.
+//
+// Call _AnimReset() once the tileset is in VRAM — it also shows every
+// first pose — then _Animate() once per frame (after Halt(), say). RAM is
+// not cleared at boot on a ROM target, so do not skip the reset.
+//
+// Example:
+//   g_Tiles_AnimReset();
+//   while(1)
+//   {
+//       Halt();
+//       g_Tiles_Animate();
+//       ...
+//   }
+void g_Tiles_AnimReset(void);
+void g_Tiles_Animate(void);
+
+// Holds an animation on the pose it shows (on = FALSE) or lets it run
+// again. `anim` is one of the G_TILES_ANIM_* indices.
+void g_Tiles_AnimSetActive(u8 anim, bool on);

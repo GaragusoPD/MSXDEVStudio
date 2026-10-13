@@ -8,7 +8,11 @@
 //  exported to the headers included below:
 //
 //    res/tiles.tiles.json    -> content/tiles.h   (g_Tiles_Patterns / _Colors,
-//                                            _Blocks + g_Tiles_DrawBlock)
+//                                            _Blocks + g_Tiles_DrawBlock,
+//                                            g_Tiles_AnimReset / _Animate)
+//    res/coin.anim-tiles.json -> content/coin_anim.h (g_CoinAnim_Patterns, the
+//                                            spin's four poses — played by
+//                                            g_Tiles_Animate, not read here)
 //    res/player.sprites.json -> content/player_sprites.h  (g_PlayerSprites_Patterns / _Colors,
 //                                            _Layout + g_PlayerSprites_SetMeta)
 //    res/level.map.json      -> content/level_map.h   (g_LevelMap_Background, 64x12 cells
@@ -20,11 +24,12 @@
 //
 //  Five of MSXDEVStudio's editor features carry their weight here:
 //
-//    * The coins spin without the map being touched. The four poses are a 4x1
-//      *block* in the tileset — a multi-tile design drawn on one canvas — and
-//      the game copies one pose's eight pattern bytes over the coin's tile.
-//      Every coin on screen turns at once, for 24 bytes a step, because the
-//      name table still says "tile 6" everywhere.
+//    * The coins spin without the map being touched. The spin is an
+//      *animation* resource attached to the tileset at tile 6: its four poses
+//      live in ROM, not in the tileset, and the generated g_Tiles_Animate()
+//      copies the current pose's eight pattern bytes over tile 6 when it is
+//      time. Every coin on screen turns at once, for 24 bytes a step, because
+//      the name table still says "tile 6" everywhere.
 //    * The player is several superposed hardware sprites, which is the only way
 //      to get a multi-colour character on an MSX1: plane 0 is the line art, the
 //      colour planes sit behind it. The sprite editor holds every plane and its
@@ -52,7 +57,7 @@
 //
 //    demo.h     what everything agrees on, and who owns which global
 //    level.c    the level in RAM — read it, collide with it, scroll it
-//    view.c     everything that reaches the name table — view, HUD, coin spin
+//    view.c     everything that reaches the name table — view and HUD
 //    player.c   the character — move, jump, collect, turn around
 //    screens.c  the title picture and the credits
 //    main.c     setup, and the loop that drives the rest
@@ -144,9 +149,12 @@ void InitGame()
 	g_OnGround  = 1;
 	g_CamX      = 0;
 	g_Frame     = 0;
-	g_CoinPhase = 0;
-	g_CoinTick  = 0;
 	g_DoorOpen  = 0;
+
+	// The coin spin's timers live in RAM, which a ROM does not clear at boot,
+	// and the title screen's tiles have just been replaced by the game's:
+	// start every attached animation from its first pose.
+	g_Tiles_AnimReset();
 
 	// The backdrop's own rows go up once: they do not scroll, so the redraw on
 	// a camera step never has to touch them again.
@@ -180,7 +188,7 @@ void PlayGame()
 
 		ApplyGravity();
 		CollectCoins();
-		SpinCoins();
+		g_Tiles_Animate();          // the coin spin; VRAM only when a pose changes
 		if (!g_DoorOpen && (g_Remaining == 0)) OpenDoor();
 		bool scrolled = UpdateCamera();
 
