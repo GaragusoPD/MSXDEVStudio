@@ -60,6 +60,8 @@ describe('agentGuideFiles', () => {
       expect(text).toContain('`.anim-tiles.json`')
       expect(text).toContain('g_MyTiles_AnimReset();')
       expect(text).toContain('g_MyTiles_Animate();')
+      expect(text).toContain('g_MyTiles_AnimRestart(G_MYTILES_ANIM_DOOR);')
+      expect(text).toContain('g_MyTiles_AnimGetFrame(G_MYTILES_ANIM_DOOR)')
     }
   })
 

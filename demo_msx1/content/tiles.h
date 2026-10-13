@@ -14,6 +14,7 @@
 #define G_TILES_ANIMS 1
 #define G_TILES_ANIM_COIN 0
 #define G_TILES_ANIM_COIN_SLOT 6
+#define G_TILES_ANIM_COIN_FRAMES 4
 #define G_TILES_DOOR_OPEN_BASE 0
 #define G_TILES_DOOR_OPEN_W 1
 #define G_TILES_DOOR_OPEN_H 2
@@ -75,6 +76,17 @@ void g_Tiles_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h);
 void g_Tiles_AnimReset(void);
 void g_Tiles_Animate(void);
 
-// Holds an animation on the pose it shows (on = FALSE) or lets it run
-// again. `anim` is one of the G_TILES_ANIM_* indices.
+// `anim` below is one of the G_TILES_ANIM_* indices.
+//
+// Holds an animation on the pose it shows (on = FALSE), or lets it run on
+// from there (TRUE) — the time already spent on that pose is kept.
 void g_Tiles_AnimSetActive(u8 anim, bool on);
+
+// Starts one animation over from its first pose, shown at once, leaving
+// the others where they are. What replays a play-once animation (a door
+// opening, a chest popping) when its event comes round again.
+void g_Tiles_AnimRestart(u8 anim);
+
+// The pose an animation is showing, 0-based — to time a sound or a hitbox
+// to a pose. Its last pose is G_TILES_ANIM_<NAME>_FRAMES - 1.
+u8 g_Tiles_AnimGetFrame(u8 anim);

@@ -213,3 +213,44 @@ ${LOAD_GM2}
     BUILD_TIMEOUT
   )
 })
+
+describe.runIf(runsBuilds)('restarting one animation and reading its pose builds against real MSXgl', () => {
+  it(
+    'a looping coin and a play-once door, the door restarted on its own',
+    () => {
+      const coin = anim('coin', 'sc2', 1, 4, () => 0xb5)
+      const door = anim('door', 'sc2', 1, 3, () => 0x45, 'once')
+      let tiles = normalizeTiles({ mode: 'sc2', count: 8 })
+      tiles = attachAnimation(tiles, 'res/coin.anim-tiles.json', coin, { slot: 2, bank: null, name: 'g_Coin' })
+      tiles = attachAnimation(tiles, 'res/door.anim-tiles.json', door, { slot: 4, bank: null, name: 'g_Door' })
+      const { output, root } = buildFixture({
+        name: 'animrestart',
+        template: 'template',
+        machine: '1',
+        resources: resources(tiles, { coin, door }),
+        // Each frame writes both poses into the first two name-table cells, so
+        // an emulator can read them back; at frame 50 only the door restarts.
+        main: `#include "msxgl.h"
+#include "content/tiles.h"
+
+void main(void)
+{
+\tu8 count = 0;
+${LOAD_GM2}
+\tg_Tiles_AnimReset();
+\twhile(1)
+\t{
+\t\tHalt();
+\t\tg_Tiles_Animate();
+\t\tif(++count == 50) g_Tiles_AnimRestart(G_TILES_ANIM_DOOR);
+\t\tVDP_Poke_16K(g_Tiles_AnimGetFrame(G_TILES_ANIM_COIN), g_ScreenLayoutLow + 0);
+\t\tVDP_Poke_16K(g_Tiles_AnimGetFrame(G_TILES_ANIM_DOOR), g_ScreenLayoutLow + 1);
+\t}
+}
+`
+      })
+      expectRom(output, root, 'animrestart')
+    },
+    BUILD_TIMEOUT
+  )
+})

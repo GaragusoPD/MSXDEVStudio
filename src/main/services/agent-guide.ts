@@ -438,8 +438,17 @@ while(1)
     g_MyTiles_Animate();             // once per frame; writes VRAM only when a
     ...                              // pose changes, at its own pace
 }
-g_MyTiles_AnimSetActive(G_MYTILES_ANIM_COIN, FALSE);   // hold it where it is
+g_MyTiles_AnimSetActive(G_MYTILES_ANIM_COIN, FALSE);   // pause: holds the pose it shows
+g_MyTiles_AnimSetActive(G_MYTILES_ANIM_COIN, TRUE);    // resume from there, mid-pose
+g_MyTiles_AnimRestart(G_MYTILES_ANIM_DOOR);            // that one from pose 0, the rest untouched
+if(g_MyTiles_AnimGetFrame(G_MYTILES_ANIM_DOOR) == G_MYTILES_ANIM_DOOR_FRAMES - 1)
+    OpenDoorForReal();                                 // its last pose is on screen
 \`\`\`
+
+\`_AnimReset()\` restarts *every* animation; \`_AnimRestart(anim)\` restarts one, and
+is what replays a **play-once** animation (a door, a chest) when its event
+comes round again — a finished play-once animation holds its last pose, and
+\`_AnimSetActive(…, TRUE)\` alone does not replay it.
 
 **Change the timing or the poses in the animation file, not in C.** The
 generated step copies a pose's colours only when the poses differ in colour

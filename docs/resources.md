@@ -502,8 +502,15 @@ while(1)
     Halt();
     g_Tiles_Animate();    // each animation at its own pace; VRAM only on a pose change
 }
-g_Tiles_AnimSetActive(G_TILES_ANIM_COIN, FALSE);   // hold one where it is
+g_Tiles_AnimSetActive(G_TILES_ANIM_COIN, FALSE);   // pause one where it is
+g_Tiles_AnimSetActive(G_TILES_ANIM_COIN, TRUE);    // …and resume it, mid-pose
+g_Tiles_AnimRestart(G_TILES_ANIM_DOOR);            // one from its first pose, the rest untouched
+u8 pose = g_Tiles_AnimGetFrame(G_TILES_ANIM_DOOR); // 0 … G_TILES_ANIM_DOOR_FRAMES - 1
 ```
+
+`_AnimRestart()` is how a **play-once** animation plays again: once finished it
+holds its last pose until restarted. `_AnimGetFrame()` lets the game time a
+sound or a hitbox to a pose.
 
 It rewrites the window's patterns, so every coin animates at once, on screen or
 not, for 24 bytes a step in SCREEN 2 — and copies colours only when the poses

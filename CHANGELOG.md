@@ -7,6 +7,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **`g_Tiles_AnimRestart(anim)`** starts one animation over from its first
+  pose — shown at once — leaving the others where they are. It is what replays
+  a play-once animation (a door, a chest) when its event comes round again;
+  `_AnimReset()` still restarts them all.
+- **`g_Tiles_AnimGetFrame(anim)`** reads which pose an animation is showing, so
+  the game can time a sound or a hitbox to it, and the tileset header gains
+  `G_<TILESET>_ANIM_<NAME>_FRAMES` to compare it with. Booted in openMSX: a
+  restarted play-once door replays 0 → 1 → 2 while a looping coin keeps its
+  phase, and both reads match the pattern in VRAM.
+
 ## [0.2.0] - 2026-10-13
 
 ### Animated tiles

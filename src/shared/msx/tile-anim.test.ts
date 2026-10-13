@@ -263,7 +263,8 @@ describe('the generated C', () => {
     expect(tilesetAnimConstants(doc, 'g_Tiles')).toEqual([
       '#define G_TILES_ANIMS 1',
       '#define G_TILES_ANIM_COIN 0',
-      '#define G_TILES_ANIM_COIN_SLOT 6'
+      '#define G_TILES_ANIM_COIN_SLOT 6',
+      '#define G_TILES_ANIM_COIN_FRAMES 4'
     ])
     const text = code(doc)
     expect(text).toContain('static const u8* const g_Tiles_AnimDurations[G_TILES_ANIMS] = { g_Coin_Durations };')
@@ -272,6 +273,18 @@ describe('the generated C', () => {
     expect(text).toContain('void g_Tiles_AnimSetActive(u8 anim, bool on)')
     // A garbage frame index from uncleared RAM is clamped, not followed.
     expect(text).toContain('if(f > last) f = 0;')
+  })
+
+  it('restarts one animation without touching the others, and reads a pose back', () => {
+    const text = code(attachAnimation(tileset(), PATH, coin(), { slot: 6, bank: null, name: 'g_X' }))
+    expect(text).toContain('void g_Tiles_AnimRestart(u8 anim);')
+    expect(text).toContain('u8 g_Tiles_AnimGetFrame(u8 anim);')
+    // Restart is the per-animation half of Reset, and shows pose 0 at once.
+    const restart = text.slice(text.indexOf('void g_Tiles_AnimRestart(u8 anim)\n{'))
+    expect(restart).toMatch(/if\(anim >= G_TILES_ANIMS\) return;[\s\S]*g_Tiles_AnimShow\(anim, 0\);/)
+    expect(text).toContain('for(u8 i = 0; i < G_TILES_ANIMS; ++i) g_Tiles_AnimRestart(i);')
+    // The getter clamps exactly as _Animate() does.
+    expect(text).toContain('return f < g_Tiles_AnimLength[anim] ? f : 0;')
   })
 })
 

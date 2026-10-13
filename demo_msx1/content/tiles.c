@@ -610,15 +610,18 @@ static void g_Tiles_AnimShow(u8 anim, u8 frame)
 	}
 }
 
+void g_Tiles_AnimRestart(u8 anim)
+{
+	if(anim >= G_TILES_ANIMS) return;
+	g_Tiles_AnimFrame[anim] = 0;
+	g_Tiles_AnimTick[anim] = 0;
+	g_Tiles_AnimState[anim] = 1;
+	g_Tiles_AnimShow(anim, 0);
+}
+
 void g_Tiles_AnimReset(void)
 {
-	for(u8 i = 0; i < G_TILES_ANIMS; ++i)
-	{
-		g_Tiles_AnimFrame[i] = 0;
-		g_Tiles_AnimTick[i] = 0;
-		g_Tiles_AnimState[i] = 1;
-		g_Tiles_AnimShow(i, 0);
-	}
+	for(u8 i = 0; i < G_TILES_ANIMS; ++i) g_Tiles_AnimRestart(i);
 }
 
 void g_Tiles_Animate(void)
@@ -652,4 +655,12 @@ void g_Tiles_AnimSetActive(u8 anim, bool on)
 	if(anim >= G_TILES_ANIMS) return;
 	if(on) g_Tiles_AnimState[anim] |= 1;
 	else g_Tiles_AnimState[anim] &= ~1;
+}
+
+u8 g_Tiles_AnimGetFrame(u8 anim)
+{
+	if(anim >= G_TILES_ANIMS) return 0;
+	const u8 f = g_Tiles_AnimFrame[anim];
+	// The same clamp _Animate() applies, so the two never disagree.
+	return f < g_Tiles_AnimLength[anim] ? f : 0;
 }

@@ -412,7 +412,9 @@ export function tilesetAnimConstants(doc: TilesDoc, name: string): string[] {
     `#define ${prefix}_ANIMS ${doc.animations.length}`,
     ...doc.animations.flatMap((binding, index) => {
       const id = `${prefix}_ANIM_${defineName(animBaseName(binding.path))}`
-      return [`#define ${id} ${index}`, `#define ${id}_SLOT ${binding.slot}`]
+      // _FRAMES too, so "is it on its last pose?" against _AnimGetFrame() needs
+      // no second header.
+      return [`#define ${id} ${index}`, `#define ${id}_SLOT ${binding.slot}`, `#define ${id}_FRAMES ${binding.frames}`]
     })
   ]
 }
@@ -497,9 +499,20 @@ export function tileAnimHelperC(doc: TilesDoc, name: string): HelperC {
       `void ${name}_AnimReset(void);`,
       `void ${name}_Animate(void);`,
       '',
-      `// Holds an animation on the pose it shows (on = FALSE) or lets it run`,
-      `// again. \`anim\` is one of the ${prefix}_ANIM_* indices.`,
-      `void ${name}_AnimSetActive(u8 anim, bool on);`
+      `// \`anim\` below is one of the ${prefix}_ANIM_* indices.`,
+      '//',
+      '// Holds an animation on the pose it shows (on = FALSE), or lets it run on',
+      '// from there (TRUE) — the time already spent on that pose is kept.',
+      `void ${name}_AnimSetActive(u8 anim, bool on);`,
+      '',
+      '// Starts one animation over from its first pose, shown at once, leaving',
+      '// the others where they are. What replays a play-once animation (a door',
+      '// opening, a chest popping) when its event comes round again.',
+      `void ${name}_AnimRestart(u8 anim);`,
+      '',
+      '// The pose an animation is showing, 0-based — to time a sound or a hitbox',
+      `// to a pose. Its last pose is ${prefix}_ANIM_<NAME>_FRAMES - 1.`,
+      `u8 ${name}_AnimGetFrame(u8 anim);`
     ],
     source: [
       '',
@@ -526,15 +539,18 @@ export function tileAnimHelperC(doc: TilesDoc, name: string): HelperC {
       '\t}',
       '}',
       '',
+      `void ${name}_AnimRestart(u8 anim)`,
+      '{',
+      `\tif(anim >= ${count}) return;`,
+      `\t${name}_AnimFrame[anim] = 0;`,
+      `\t${name}_AnimTick[anim] = 0;`,
+      `\t${name}_AnimState[anim] = 1;`,
+      `\t${name}_AnimShow(anim, 0);`,
+      '}',
+      '',
       `void ${name}_AnimReset(void)`,
       '{',
-      `\tfor(u8 i = 0; i < ${count}; ++i)`,
-      '\t{',
-      `\t\t${name}_AnimFrame[i] = 0;`,
-      `\t\t${name}_AnimTick[i] = 0;`,
-      `\t\t${name}_AnimState[i] = 1;`,
-      `\t\t${name}_AnimShow(i, 0);`,
-      '\t}',
+      `\tfor(u8 i = 0; i < ${count}; ++i) ${name}_AnimRestart(i);`,
       '}',
       '',
       `void ${name}_Animate(void)`,
@@ -568,6 +584,14 @@ export function tileAnimHelperC(doc: TilesDoc, name: string): HelperC {
       `\tif(anim >= ${count}) return;`,
       `\tif(on) ${name}_AnimState[anim] |= 1;`,
       `\telse ${name}_AnimState[anim] &= ~1;`,
+      '}',
+      '',
+      `u8 ${name}_AnimGetFrame(u8 anim)`,
+      '{',
+      `\tif(anim >= ${count}) return 0;`,
+      `\tconst u8 f = ${name}_AnimFrame[anim];`,
+      '\t// The same clamp _Animate() applies, so the two never disagree.',
+      `\treturn f < ${name}_AnimLength[anim] ? f : 0;`,
       '}'
     ]
   }
