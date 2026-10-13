@@ -17,7 +17,9 @@ import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { defaultExport, type ResourceDoc } from '../../shared/msx/resource'
-import { attachAnimation, normalizeTileAnim, type TileAnimDoc } from '../../shared/msx/tile-anim'
+import { attachAnimation, normalizeTileAnim, placeAnimationInMeta, type TileAnimDoc } from '../../shared/msx/tile-anim'
+import { addMetaRef, normalizeMap, placeMeta, setPlacementBaked } from '../../shared/msx/map'
+import { createMetaTileDoc } from '../../shared/msx/meta-tile'
 import { normalizeTiles, type TileEntry, type TilesDoc } from '../../shared/msx/tile'
 import { BUILD_TIMEOUT, buildFixture, cleanBuildFixtures, runsBuilds } from './__fixtures__/msxgl-build'
 
@@ -142,4 +144,72 @@ describe.runIf(runsBuilds)('the emitted tile-animation C builds against real MSX
       BUILD_TIMEOUT
     )
   }
+})
+
+describe.runIf(runsBuilds)('an animated meta-tile builds against real MSXgl', () => {
+  it(
+    "a meta whose top row is an animation's window, placed live and baked",
+    () => {
+      // Two poses that differ in shape *and* colour, so the step copies both.
+      const flame = anim('flame', 'sc2', 2, 2, (pose) => (pose ? 0x96 : 0xa6))
+      let tiles = normalizeTiles({
+        mode: 'sc2',
+        count: 4,
+        reserveTile0: true,
+        tiles: [entry(0, 0), entry(0, 0), entry(0, 0), entry(0xff, 0xe1)]
+      })
+      tiles = attachAnimation(tiles, 'res/flame.anim-tiles.json', flame, { slot: 1, bank: null, name: 'g_Flame' })
+      let torch = { ...createMetaTileDoc('res/tiles.tiles.json', 2, 2), frames: [{ tiles: [0, 0, 3, 3] }] }
+      const placed = placeAnimationInMeta(torch, tiles.animations[0], 0, 0)
+      if (typeof placed === 'string') throw new Error(placed)
+      torch = placed
+
+      let map = normalizeMap({ tileset: 'res/tiles.tiles.json', width: 32, height: 24 })
+      map = addMetaRef(map, { path: 'res/torch.meta-tiles.json', name: 'g_Torch', width: 2, height: 2, frames: 1, flags: 0 })
+      map = placeMeta(map, 0, 0, 4, 4)
+      map = placeMeta(map, 0, 0, 10, 8)
+      map = setPlacementBaked(map, 0, 1, true)
+      // Baking writes the meta's cells into the grid — the editor's job, done by hand here.
+      const data = map.layers[0].data.slice()
+      ;[1, 2, 3, 3].forEach((tile, i) => (data[(8 + (i >> 1)) * 32 + 10 + (i & 1)] = tile))
+      map = { ...map, layers: [{ ...map.layers[0], data }] }
+
+      const out = resources(tiles, { flame })
+      out['torch.meta-tiles'] = {
+        kind: 'metatiles',
+        doc: { ...torch, export: { ...defaultExport('res/torch.meta-tiles.json'), name: 'g_Torch', out: 'content/torch.h', helpers: true } }
+      }
+      out['level.map'] = {
+        kind: 'map',
+        doc: { ...map, export: { ...defaultExport('res/level.map.json'), name: 'g_Level', out: 'content/level.h', helpers: true } }
+      }
+      const { output, root } = buildFixture({
+        name: 'animmeta',
+        template: 'template',
+        machine: '1',
+        resources: out,
+        main: `#include "msxgl.h"
+#include "content/tiles.h"
+#include "content/level.h"
+
+void main(void)
+{
+\tu8 frames[G_LEVEL_METAS];
+\tframes[0] = 0;
+${LOAD_GM2}
+\tg_Level_DrawLayer(g_Level_Background, 0, 0);
+\tg_Level_DrawPlacements(frames);
+\tg_Tiles_AnimReset();
+\twhile(1)
+\t{
+\t\tHalt();
+\t\tg_Tiles_Animate();
+\t}
+}
+`
+      })
+      expectRom(output, root, 'animmeta')
+    },
+    BUILD_TIMEOUT
+  )
 })

@@ -20,6 +20,7 @@
  */
 
 import { defineName, type EmitTable, type HelperC } from './emitC'
+import type { MetaTileDoc } from './meta-tile'
 import { isTileMode, type TileMode } from './modes'
 import type { ExportBlock } from './resource'
 import {
@@ -570,4 +571,44 @@ export function tileAnimHelperC(doc: TilesDoc, name: string): HelperC {
       '}'
     ]
   }
+}
+
+/**
+ * Points a meta's cells at an attached animation's window, from cell (x, y), in
+ * **every** frame — the way to make an animated meta-tile with this resource.
+ *
+ * The meta then animates wherever it is drawn, every copy in step, at no cost
+ * per copy: a placement (live or baked) writes the window's tile numbers into
+ * the name table, and `_Animate()` changes what those tiles look like. The
+ * meta's own frames are the other kind of animation — per copy, through
+ * `_DrawPlacements` — and the two compose: a frame can change the rest of the
+ * design while these cells keep turning.
+ *
+ * Every frame, because a cell that pointed at the window in one frame and not
+ * the next would flicker in and out of the animation as the meta steps.
+ *
+ * Refused, with the reason, for a bank's own window — a meta is drawn on any
+ * row, and that art exists in one third of the screen only — and for a window
+ * that does not fit inside the meta from (x, y).
+ */
+export function placeAnimationInMeta(meta: MetaTileDoc, binding: TileAnimBinding, x: number, y: number): MetaTileDoc | string {
+  if (binding.bank !== null) {
+    return `${animBaseName(binding.path)} is bank ${binding.bank + 1}'s own art, which only that third of the screen shows — a meta-tile can be drawn on any row. Attach it to the common set instead.`
+  }
+  if (x < 0 || y < 0 || x + binding.width > meta.width || y + binding.height > meta.height) {
+    return `${animBaseName(binding.path)} is ${binding.width}×${binding.height} tiles and does not fit at ${x},${y} in this ${meta.width}×${meta.height} meta.`
+  }
+  const frames = meta.frames.map((frame) => {
+    const tiles = frame.tiles.slice()
+    for (let dy = 0; dy < binding.height; dy++) {
+      for (let dx = 0; dx < binding.width; dx++) tiles[(y + dy) * meta.width + x + dx] = binding.slot + dy * binding.width + dx
+    }
+    return { tiles }
+  })
+  return { ...meta, frames }
+}
+
+/** The common-set animation a tile index belongs to, if any — what a meta cell pointing at it animates with. */
+export function animationOfTile(tiles: TilesDoc, index: number): TileAnimBinding | null {
+  return tiles.animations.find((binding) => binding.bank === null && index >= binding.slot && index < binding.slot + animCells(binding)) ?? null
 }

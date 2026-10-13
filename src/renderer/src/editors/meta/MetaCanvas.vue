@@ -18,7 +18,7 @@ import { tileImage } from '../../../../shared/msx/bitmap-tile'
 import { frameTileAt } from '../../../../shared/msx/meta-tile'
 import { sprayPoints } from '../../../../shared/msx/meta-paint'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { beginStroke, bitmapTiles, cellSize, doc, endStroke, paint, tiles, type MetaSession } from './session'
+import { animationAtCell, beginStroke, bitmapTiles, cellSize, doc, endStroke, paint, tiles, type MetaSession } from './session'
 
 const props = defineProps<{ session: MetaSession }>()
 
@@ -179,6 +179,21 @@ watchEffect(() => {
     for (const point of preview.value) context.fillRect(point.x * px, point.y * px, px, px)
     context.globalAlpha = 1
   }
+
+  // Cells showing an attached animation: they animate in the game, every copy
+  // in step, so they are marked rather than looking like still art.
+  context.strokeStyle = 'rgba(120, 230, 140, 0.95)'
+  context.lineWidth = 2
+  context.setLineDash([6, 4])
+  for (let cy = 0; cy < meta.value.height; cy++) {
+    for (let cx = 0; cx < meta.value.width; cx++) {
+      if (!animationAtCell(props.session, cx, cy)) continue
+      const w = cellPx.value.width * px
+      const h = cellPx.value.height * px
+      context.strokeRect(cx * w + 1, cy * h + 1, w - 2, h - 2)
+    }
+  }
+  context.setLineDash([])
 
   if (!props.session.gridVisible) return
   context.lineWidth = 1

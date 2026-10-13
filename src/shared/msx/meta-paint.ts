@@ -44,6 +44,7 @@ import { metaCells, setFrameTile, type MetaTileDoc } from './meta-tile'
 import { BAYER4 } from './quantize'
 import type { Point } from '../tile-editor'
 import {
+  animWindowSlotsIn,
   bankCapacityLeft,
   bankTileAt,
   blankTileEntry,
@@ -67,6 +68,8 @@ export interface PaintMetaResult {
   dropped: number
   /** Set when nothing could be done at all; `meta` and `tiles` come back unchanged. */
   refused?: string
+  /** Cells that showed an attached animation and now have a static tile — see `PaintGridResult`. */
+  unanimated?: number
 }
 
 /** `SC1_GROUP` is 8, so the group of tile `i` is `i >> 3`. */
@@ -98,9 +101,12 @@ export function findOrCreateTile(
   // no shared tiles, so the upper bound is moot there — `doc.count <= MAX_TILES`
   // always, and the extra iterations cost nothing.
   const searchLimit = isBanked(doc) ? MAX_TILES : doc.count
+  // An animation's window looks like its frame 0, but it is not that art: it
+  // animates. Static art found there would start moving in the game.
+  const windows = animWindowSlotsIn(doc, null)
   for (let i = 0; i < searchLimit; i++) {
     const candidate = doc.tiles[i]
-    if (!candidate || !sameEntry(candidate, entry)) continue
+    if (!candidate || windows.has(i) || !sameEntry(candidate, entry)) continue
     // In sc1 the pattern is only half the picture: identical bits under
     // different pairs are different artwork.
     if (sc1 && doc.groupColors[i >> SC1_SHIFT] !== pair) continue
@@ -172,11 +178,14 @@ export function findOrCreateBankTile(
   const sc1 = doc.mode === 'sc1'
   const sharedStart = MAX_TILES - doc.sharedTiles
   const own = doc.bankTiles[bank] ?? []
+  // See `findOrCreateTile`: a window is animated art, never a match.
+  const windows = animWindowSlotsIn(doc, bank)
   for (let i = 0; i < MAX_TILES; i++) {
     // Only a slot something actually fills is a real match — `bankTileAt`
     // answers `blankTileEntry` for every slot past the bank, the common range
     // and the shared region, and a blank probe would match all of them.
     if (!own[i] && i >= doc.count && i < sharedStart) continue
+    if (windows.has(i)) continue
     if (!sameEntry(bankTileAt(doc, bank, i), entry)) continue
     if (sc1 && doc.groupColors[i >> SC1_SHIFT] !== pair) continue
     return { doc, index: i }
@@ -273,6 +282,12 @@ export interface PaintGridResult {
   refusedBank?: number | null
   /** Tiles this stroke rewrote in place, one per slot touched. Always present; empty under `fork`. */
   tileEdits: TileEdit[]
+  /**
+   * Cells that showed an attached animation and now have a static tile of
+   * their own — what painting over an animated cell does, in either write
+   * mode, since a window's art belongs to the animation.
+   */
+  unanimated: number
 }
 
 export interface PaintOptions {
@@ -326,13 +341,14 @@ export function paintGrid(
     if (list) list.push(point)
     else byCell.set(key, [point])
   }
-  if (!byCell.size) return { grid, tiles, added: [], dropped: 0, tileEdits: [] }
+  if (!byCell.size) return { grid, tiles, added: [], dropped: 0, tileEdits: [], unanimated: 0 }
 
   let nextTiles = tiles
   let nextCells: number[] | null = null
   const added: number[] = []
   const tileEdits: TileEdit[] = []
   let dropped = 0
+  let unanimated = 0
 
   for (const key of byCell.keys()) {
     const cellPoints = byCell.get(key)!
@@ -358,7 +374,10 @@ export function paintGrid(
     // Reserved tile 0 is locked blank and `normalizeTiles` re-blanks it on load,
     // so an in-place write there vanishes on the next open — and until then
     // shows in every transparent cell of every map. Fork instead.
-    const editable = options.write === 'edit' && !(currentTile === 0 && nextTiles.reserveTile0)
+    // A window is the animation's art, rewritten from it before every export:
+    // an in-place edit would vanish at the next build. Fork it too.
+    const animated = animWindowSlotsIn(nextTiles, bank).has(currentTile)
+    const editable = options.write === 'edit' && !(currentTile === 0 && nextTiles.reserveTile0) && !animated
     if (editable) {
       // An edit has to land where this row's bank actually READS. When the bank
       // overrides the index, `tiles[index]` is art the bank never shows, so
@@ -435,6 +454,7 @@ export function paintGrid(
         added: [],
         dropped: 0,
         tileEdits: [],
+        unanimated: 0,
         refusedBank: bank,
         refused:
           bank === null
@@ -468,6 +488,7 @@ export function paintGrid(
     if (found.index !== currentTile) {
       if (!nextCells) nextCells = grid.tiles.slice()
       nextCells[key] = found.index
+      if (animated) unanimated++
     }
   }
 
@@ -476,7 +497,8 @@ export function paintGrid(
     tiles: nextTiles,
     added,
     dropped,
-    tileEdits
+    tileEdits,
+    unanimated
   }
 }
 
@@ -517,11 +539,11 @@ export function paintMeta(
   // `setFrameTile` used to make it. `dropped` still travels — an all-dropped
   // stroke reported its count before and must keep doing so.
   if (result.grid.tiles === frameTiles.tiles)
-    return { meta, tiles: result.tiles, added: result.added, dropped: result.dropped }
+    return { meta, tiles: result.tiles, added: result.added, dropped: result.dropped, unanimated: result.unanimated }
 
   const frames = meta.frames.slice()
   frames[frame] = { tiles: result.grid.tiles }
-  return { meta: { ...meta, frames }, tiles: result.tiles, added: result.added, dropped: result.dropped }
+  return { meta: { ...meta, frames }, tiles: result.tiles, added: result.added, dropped: result.dropped, unanimated: result.unanimated }
 }
 
 /**

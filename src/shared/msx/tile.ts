@@ -418,6 +418,22 @@ export function animWindowSlots(doc: TilesDoc): Set<number> {
   return slots
 }
 
+/**
+ * The window slots a stroke or a search *in this view* must leave alone: every
+ * common-set window, plus — in a bank's view — that bank's own. An allocator
+ * that "finds" one would point static art at a tile that animates; one that
+ * rewrote one in place would lose the edit to the animation's frame 0 at the
+ * next export.
+ */
+export function animWindowSlotsIn(doc: TilesDoc, bank: number | null): Set<number> {
+  const slots = new Set<number>()
+  for (const binding of doc.animations) {
+    if (binding.bank !== null && binding.bank !== bank) continue
+    for (let i = 0; i < animCells(binding); i++) slots.add(binding.slot + i)
+  }
+  return slots
+}
+
 /** Clamps a block list to the grid limits and to tiles that actually exist. */
 function normalizeBlocks(raw: unknown, count: number): TileBlock[] {
   if (!Array.isArray(raw)) return []

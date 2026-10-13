@@ -1145,6 +1145,12 @@ export function endPaint(session: MapSession): void {
   if (droppedBaked) {
     session.selectedPlacement = null
     session.status = `Painted over ${droppedBaked} baked meta-tile${droppedBaked === 1 ? '' : 's'} — their placement records were dropped.`
+  } else if (result.unanimated) {
+    // Either write mode: a window's art is the animation's, so painting over an
+    // animated cell gives it a still tile of its own instead.
+    session.status =
+      `${result.unanimated} cell${result.unanimated === 1 ? '' : 's'} showed an attached animation and now ` +
+      `${result.unanimated === 1 ? 'has a still tile of its' : 'have still tiles of their'} own.`
   } else {
     session.status = result.dropped
       ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`

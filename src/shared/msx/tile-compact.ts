@@ -26,6 +26,7 @@
 
 import {
   animWindowSlots,
+  animWindowSlotsIn,
   bankTilePixels,
   remapAnimBindings,
   blankTileEntry,
@@ -322,8 +323,12 @@ export function placePicture(
     const sharedStart = MAX_TILES - doc.sharedTiles
     const own = bank === null ? [] : (doc.bankTiles[bank] ?? [])
     const limit = bank === null ? doc.count : MAX_TILES
+    // A window draws its animation's first pose but animates: a picture cell
+    // matched to it would move in the game.
+    const windows = animWindowSlotsIn(doc, bank)
     for (let i = limit - 1; i >= 0; i--) {
       if (bank !== null && !own[i] && i >= doc.count && i < sharedStart) continue
+      if (windows.has(i)) continue
       const art = bank === null ? tilePixels(doc, i) : bankTilePixels(doc, bank, i)
       known.set(`${bank ?? '-'}|${pixelKey(art)}`, i)
     }

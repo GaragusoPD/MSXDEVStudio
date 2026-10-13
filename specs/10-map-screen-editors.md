@@ -353,6 +353,18 @@ emits its layers as before, plus `_Placements` (three bytes each) with `_METAS`,
 `_DrawPlacements(frames)`, which `extern`s each meta's symbol and skips the baked
 entries.
 
+**Animated metas, two ways.** A meta's own *frames* animate each copy on its
+own, through `_DrawPlacements(frames)` — name-table writes per copy, so only live
+placements move. A meta can also show an *attached animation*
+(`*.anim-tiles.json`, see Spec 08): the editor's *Animated tiles* section points
+cells at an animation window in every frame (`placeAnimationInMeta`), and since
+the tileset's `_Animate()` rewrites the window's patterns, every copy animates
+in step — baked ones too — for no work per copy. The two compose. Painting over
+an animated cell forks it to a still tile; every allocator (`findOrCreateTile`,
+`findOrCreateBankTile`, `placePicture`) skips window slots, and the map's `edit`
+mode forks a window cell rather than rewrite it, because a window's art is
+rewritten from the animation before every export.
+
 **Stage 2** brings pixel painting and placement to the bitmap and multicolour
 modes. Until then `.meta-btiles.json` shares the document shape and exports a
 `_Draw` that blits out of the atlas, but has no pixel editor and no map

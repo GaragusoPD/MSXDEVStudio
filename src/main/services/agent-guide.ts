@@ -449,6 +449,15 @@ a bank's own art, and writes SCREEN 1's single pattern table directly. Copies
 that must animate *independently* — each at its own phase, or stopping one at a
 time — are animated meta-tiles (below), not this.
 
+**A meta-tile can use an animation too.** The meta editor's *Animated tiles*
+section points some of its cells at an attached animation's window, in every
+frame. Those cells then turn wherever the meta is drawn — every copy in step,
+**baked placements included**, since a baked meta is just those tile numbers in
+the grid — for no work per copy: \`_Animate()\` alone moves them. A meta's own
+frames (\`_DrawPlacements(frames)\`) are the per-copy kind, and the two combine:
+a torch can have a steady flame from an animation and a frame of its own for
+being lit or not.
+
 Without *Export ready-made C* there is no \`_Animate()\`; the defines above and
 the animation's own \`g_Coin_Patterns\`/\`_Colors\`/\`_Durations\` tables are still
 there, and the manual version below is what the generated one does.

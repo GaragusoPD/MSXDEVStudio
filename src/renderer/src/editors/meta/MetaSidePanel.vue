@@ -4,7 +4,7 @@
  * reservation the whole feature rests on), the meta's size in tiles, its eight
  * gameplay flags, the palette, how full the bank is, and the export block.
  */
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { MSX1_PALETTE_GRB, paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { MAX_META_SIZE, META_FLAG_COUNT } from '../../../../shared/msx/meta-tile'
 import { MAX_TILES, colorByteAt, splitColorByte } from '../../../../shared/msx/tile'
@@ -16,6 +16,8 @@ import {
   compact,
   doc,
   frameTileAt,
+  metaAnimations,
+  placeAnimation,
   reserveBitmapTile0,
   reserveTile0,
   resize,
@@ -30,6 +32,17 @@ import {
 
 const props = defineProps<{ session: MetaSession }>()
 const resourcesStore = useResourcesStore()
+
+// Where "Place" puts an animation. Typed, because a click on the canvas paints;
+// it follows the cell the last stroke touched, the usual answer.
+const placeAt = ref({ x: 0, y: 0 })
+watch(
+  () => props.session.activeCell,
+  (cell) => {
+    placeAt.value = { ...cell }
+  },
+  { immediate: true }
+)
 
 const meta = computed(() => doc(props.session))
 const tileset = computed(() => tiles(props.session))
@@ -292,6 +305,70 @@ function setupExport(): void {
       </button>
     </section>
 
+    <section v-if="session.kind === 'metatiles' && tileset">
+      <h3>Animated tiles</h3>
+      <p class="hint">
+        A meta animates two ways. Its own <strong>frames</strong> (below the canvas) animate each copy
+        separately — the game steps them. An <strong>animation</strong> attached to the tileset
+        animates every copy at once, live or baked, for no work per copy: place it here and those
+        cells show it in every frame.
+      </p>
+      <ul
+        v-if="metaAnimations(session).length"
+        class="animations"
+      >
+        <li
+          v-for="binding in metaAnimations(session)"
+          :key="binding.path"
+        >
+          <span>{{ binding.path.split('/').pop()?.replace('.anim-tiles.json', '') }}</span>
+          <span class="dims">{{ binding.width }}×{{ binding.height }}</span>
+          <button
+            type="button"
+            :disabled="binding.bank !== null"
+            :title="
+              binding.bank !== null
+                ? `Bank ${binding.bank + 1}'s own art — a meta can be drawn on any row`
+                : `Point the cells from ${placeAt.x},${placeAt.y} at it, in every frame`
+            "
+            @click="placeAnimation(session, binding.path, placeAt.x, placeAt.y)"
+          >
+            Place
+          </button>
+        </li>
+      </ul>
+      <div
+        v-if="metaAnimations(session).length"
+        class="place-at"
+      >
+        <span>at cell</span>
+        <input
+          v-model.number="placeAt.x"
+          type="number"
+          min="0"
+          :max="meta.width - 1"
+          title="Column, in tiles"
+        >
+        <input
+          v-model.number="placeAt.y"
+          type="number"
+          min="0"
+          :max="meta.height - 1"
+          title="Row, in tiles"
+        >
+      </div>
+      <p
+        v-else
+        class="hint"
+      >
+        Nothing is attached to {{ meta.tileset.split('/').pop() }} yet — attach an animation in the
+        tile editor's <strong>Animations</strong> panel, then place it here.
+      </p>
+      <p class="hint">
+        Animated cells are outlined on the canvas; painting over one gives it a still tile of its own.
+      </p>
+    </section>
+
     <section>
       <h3>Export</h3>
       <template v-if="meta.export">
@@ -356,6 +433,34 @@ function setupExport(): void {
 
 section {
   margin-bottom: 18px;
+}
+
+.animations {
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.animations li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.place-at {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.place-at input {
+  width: 44px;
+}
+
+.animations .dims {
+  opacity: 0.7;
 }
 
 h3 {

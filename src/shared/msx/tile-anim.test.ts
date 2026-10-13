@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   animationFromBlock,
+  animationOfTile,
   attachAnimation,
+  placeAnimationInMeta,
   colorsVary,
   createTileAnimDoc,
   detachAnimation,
@@ -18,6 +20,9 @@ import {
 } from './tile-anim'
 import { normalizeTiles, removeTile, reorderTiles, validateTiles, type TileEntry, type TilesDoc } from './tile'
 import { defaultExport, parseResource, renderResourceFiles, resourceKindOf, serializeResource } from './resource'
+import { findOrCreateBankTile, findOrCreateTile, paintGrid } from './meta-paint'
+import { placePicture } from './tile-compact'
+import { createMetaTileDoc } from './meta-tile'
 
 /** A tile whose every row is `mark`, ink 15 on paper `paper`. */
 const tile = (mark: number, paper = 1): TileEntry => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf0 | paper) })
@@ -305,5 +310,70 @@ describe('the export path, from files alone', () => {
   it('is its own kind, not a tileset', () => {
     expect(resourceKindOf('res/coin.anim-tiles.json')).toBe('anim')
     expect(defaultExport('res/coin.anim-tiles.json')).toEqual({ name: 'g_CoinAnim', format: 'c', out: 'content/coin_anim.h' })
+  })
+})
+
+describe('a window is never mistaken for static art', () => {
+  // Tile 6 holds the coin's first pose: the exact bytes a static coin would have.
+  const attached = (): TilesDoc => attachAnimation(tileset(), PATH, coin(), { slot: 6, bank: null, name: 'g_X' })
+  const firstPose = (): TileEntry => coin().frames[0].tiles[0]
+
+  it('find-or-create appends a new tile rather than reuse the window', () => {
+    const doc = attached()
+    const found = findOrCreateTile(doc, firstPose())!
+    expect(found.index).not.toBe(6)
+    expect(found.index).toBe(doc.count)
+  })
+
+  it("a bank's search skips the bank's own window and every common one", () => {
+    const banked = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[tile(1), tile(2), tile(3)], [], []] })
+    const doc = attachAnimation(banked, PATH, coin(), { slot: 2, bank: 0, name: 'g_X' })
+    expect(findOrCreateBankTile(doc, 0, firstPose())!.index).not.toBe(2)
+  })
+
+  it('an edit stroke on an animated cell forks it instead of rewriting the window, and says so', () => {
+    const doc = attached()
+    const result = paintGrid({ width: 2, height: 1, tiles: [6, 0] }, doc, [{ x: 0, y: 0 }], 9, 'fg', { write: 'edit' })
+    expect(result.tileEdits).toEqual([])
+    expect(result.tiles.tiles[6]).toEqual(doc.tiles[6])
+    expect(result.grid.tiles[0]).not.toBe(6)
+    expect(result.unanimated).toBe(1)
+  })
+
+  it('an imported picture is not matched to a window', () => {
+    const doc = attached()
+    const pixels = new Uint8Array(64)
+    const pose = firstPose()
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) pixels[y * 8 + x] = pose.pattern[y] & (0x80 >> x) ? 15 : 1
+    const result = placePicture({ width: 1, height: 1, tiles: [0] }, doc, pixels, 1, 1)
+    expect(result.grid.tiles[0]).not.toBe(6)
+  })
+})
+
+describe('animated meta-tiles, through an attached animation', () => {
+  const torch = (): TilesDoc =>
+    attachAnimation(tileset(), 'res/torch.anim-tiles.json', normalizeTileAnim({ width: 2, height: 1, frames: [{}, {}] }), { slot: 4, bank: null, name: 'g_T' })
+
+  it('points the cells at the window in every frame', () => {
+    const meta = { ...createMetaTileDoc('res/main.tiles.json', 2, 2), frames: [{ tiles: [1, 1, 2, 2] }, { tiles: [3, 3, 2, 2] }] }
+    const next = placeAnimationInMeta(meta, torch().animations[0], 0, 0)
+    if (typeof next === 'string') throw new Error(next)
+    expect(next.frames.map((f) => f.tiles)).toEqual([
+      [4, 5, 2, 2],
+      [4, 5, 2, 2]
+    ])
+    expect(animationOfTile(torch(), 5)?.path).toBe('res/torch.anim-tiles.json')
+    expect(animationOfTile(torch(), 6)).toBeNull()
+  })
+
+  it('refuses a window that does not fit', () => {
+    const meta = createMetaTileDoc('res/main.tiles.json', 2, 2)
+    expect(placeAnimationInMeta(meta, torch().animations[0], 1, 0)).toMatch(/does not fit at 1,0/)
+  })
+
+  it("refuses a bank's own window: a meta is drawn on any row", () => {
+    const banked = normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[tile(1), tile(2), tile(3)], [], []] })
+    const doc = attachAnimation(banked, PATH, coin(), { slot: 2, bank: 0, name: 'g_X' })
+    expect(placeAnimationInMeta(createMetaTileDoc('x', 1, 1), doc.animations[0], 0, 0)).toMatch(/bank 1's own art/)
   })
 })

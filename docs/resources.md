@@ -510,6 +510,12 @@ not, for 24 bytes a step in SCREEN 2 — and copies colours only when the poses
 differ in colour. Coins that must turn independently are animated meta-tiles
 instead.
 
+A **meta-tile can show an animation** as well: in the meta editor's *Animated
+tiles* section, place an attached animation at a cell and those cells point at
+its window in every frame. Every copy of the meta then animates through
+`g_Tiles_Animate()` alone — live or baked placements alike, for no work per
+copy. The meta's own frames still animate each copy separately on top of that.
+
 **Software sprites** (MSX2, `VDP_USE_COMMAND`) — characters drawn *into* the
 screen, so the per-scanline sprite limit does not apply. The fragments are
 exported as one strip; upload it once, then restore and draw each object:

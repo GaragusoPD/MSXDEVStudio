@@ -12,7 +12,8 @@ MSX1 demo moved onto it as the proof.
 ## Decisions
 
 1. **Per-copy animation reuses animated meta-tiles.** No second placement
-   system.
+   system. A meta can also *show* an attached animation (cells pointing at its
+   window), which animates every copy in step — the two kinds compose.
 2. **"Screens" means tiled screens** — a tileset plus a map. The bitmap
    `.screen.json` phase is dropped.
 3. **One `_Animate()` per tileset.** A game shows one tileset at a time.

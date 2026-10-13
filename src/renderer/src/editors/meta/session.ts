@@ -45,6 +45,7 @@ import {
   removeTile,
   remapAnimBindings,
   TILE_SIZE,
+  type TileAnimBinding,
   type TilesDoc
 } from '../../../../shared/msx/tile'
 import type { BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
@@ -70,6 +71,7 @@ import {
 } from '../../../../shared/history'
 import { pendingReorders, samePath, type Point } from '../../../../shared/map-editor'
 import { emitTilesReordered, onTilesReordered, type TileTool, type TilesReorderEvent } from '../../../../shared/tile-editor'
+import { animationOfTile, placeAnimationInMeta } from '../../../../shared/msx/tile-anim'
 import { useTabsStore } from '../../stores/tabsStore'
 import { watchResourceFile } from '../external-changes'
 import { useTilesetStore } from '../../stores/tilesetStore'
@@ -679,9 +681,46 @@ function extendStroke(session: MetaSession, points: Point[]): void {
   session.previewTiles = result.tiles
   session.strokeAdded = result.added
   session.blocked = null
-  session.status = result.dropped
-    ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`
-    : ''
+  session.status = result.unanimated
+    ? `${result.unanimated} cell${result.unanimated === 1 ? '' : 's'} showed an attached animation and now ${result.unanimated === 1 ? 'has a still tile of its' : 'have still tiles of their'} own.`
+    : result.dropped
+      ? `${result.dropped} pixel${result.dropped === 1 ? '' : 's'} dropped: colour limit`
+      : ''
+}
+
+// ── animated tiles ──────────────────────────────────────────────────────────
+
+/**
+ * The animations attached to this meta's tileset that a meta can use — the
+ * common-set ones; a bank's own art shows in one third of the screen only.
+ */
+export function metaAnimations(session: MetaSession): TileAnimBinding[] {
+  return tiles(session)?.animations ?? []
+}
+
+/** The attached animation the cell at (x, y) of the current frame shows, if any. */
+export function animationAtCell(session: MetaSession, x: number, y: number): TileAnimBinding | null {
+  const tileset = tiles(session)
+  return tileset ? animationOfTile(tileset, frameTileAt(doc(session), session.frame, x, y)) : null
+}
+
+/**
+ * Makes the cells from (x, y) — by default the cell last painted — show an attached animation, in every
+ * frame (`placeAnimationInMeta`). One undo step; the meta then animates
+ * wherever it is drawn, every copy in step, with no runtime cost per copy.
+ */
+export function placeAnimation(session: MetaSession, path: string, x = session.activeCell.x, y = session.activeCell.y): void {
+  const binding = metaAnimations(session).find((candidate) => candidate.path === path)
+  if (!binding) return
+  const next = placeAnimationInMeta(committed(session), binding, x, y)
+  if (typeof next === 'string') {
+    session.status = next
+    return
+  }
+  commit(session, next)
+  session.status =
+    `Cells from ${x},${y} show ${path.split('/').pop()} in every frame — every copy of this meta animates, ` +
+    "in step, through the tileset's _Animate()."
 }
 
 function noTileset(session: MetaSession): void {
