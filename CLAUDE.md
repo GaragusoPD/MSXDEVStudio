@@ -39,7 +39,7 @@ A design bigger than the hardware's unit is modelled the same way every time —
 - **`TileBlock`** (`msx/tile.ts`) — `width × height` references into the tile bank. Structurally `map-editor.ts`'s `Stamp`, deliberately, so a block can be handed to `applyStamp` unchanged. sc1 blocks are group-aligned (`SC1_GROUP`) because eight tiles share one FG/BG pair there. The tile grid's marquee is the *same* type, built on the fly by `selectionBlock()` — selecting a rectangle is all it takes to edit those tiles as one image, and `blockFromTiles` is what names one when the user wants to keep it. Both pickers wrap to their pane (`fitColumns`), so the column count a selection is read against is measured, not fixed: it lives on the tile session and `setColumns` collapses a stale marquee when it changes.
 - **`SpriteCharacter.cols/rows` + `SpriteLayer.cx/cy`** (`msx/sprite.ts`) — a metasprite. `compositePixel` works in *character* space and each plane only answers for its own cell, so one composite serves canvas, thumbnails and filmstrip. `MAX_LAYERS` is the OR-color stack **per cell**, not per character.
 - **`ScreenFragment`** (`msx/screen.ts`) — a rectangle of the converted bitmap. Exported as one side-by-side strip, which is what lets a single `HMMC` upload every software-sprite frame.
-- **`MetaTileDoc`** (`msx/meta-tile.ts`) — one file, one design, with its own size, animation frames and eight gameplay flags. The only group with a *pixel* editor, and the invariant survives it: `meta-paint.ts` resolves each stroke **copy-on-write** into the referenced tileset — derive what the cell would look like, find-or-create that tile in the bank, repoint the cell. The bank is append-only, so painting a meta can never change what a map drawn with the same tileset looks like, and the dedup is free because "find" is half the operation. Its cost is orphans after undo, which an explicit Compact reclaims; it only removes tiles the session itself created, because reachability across closed files is not knowable. The hardware limit is not reimplemented — `paintPixel` decides, against a scratch one-tile doc.
+- **`MetaTileDoc`** (`msx/meta-tile.ts`) — a *version-2* `.meta-tiles.json`, and every `.meta-btiles.json`: one file, one design, with its own size, animation frames and eight gameplay flags, as tile numbers into the one tileset it names. (New pattern metas own their pixels instead — below.) The only group with a *pixel* editor, and the invariant survives it: `meta-paint.ts` resolves each stroke **copy-on-write** into the referenced tileset — derive what the cell would look like, find-or-create that tile in the bank, repoint the cell. The bank is append-only, so painting a meta can never change what a map drawn with the same tileset looks like, and the dedup is free because "find" is half the operation. Its cost is orphans after undo, which an explicit Compact reclaims; it only removes tiles the session itself created, because reachability across closed files is not knowable. The hardware limit is not reimplemented — `paintPixel` decides, against a scratch one-tile doc.
 
 **Animated tiles are the deliberate exception: an animation owns its pixels.**
 `*.anim-tiles.json` (`msx/tile-anim.ts`) stores its poses as tile bytes, because
@@ -49,9 +49,28 @@ slots whose art is the animation's frame 0 — derived data, refreshed from the
 animation by the tile editor and before every export through one
 `animRefFrom`. The generated `_Animate()` copies poses over the window, so every
 cell showing it animates without a name-table write; per-copy animation stays
-animated meta-tiles.
+a version-2 meta's frames.
 
-Tile 0 is the seam that makes a group *transparent*: `TilesDoc.reserveTile0` locks it all-blank, and a meta cell holding 0 is a **skipped write**, which is the only see-through a name table has. Off in every pre-existing file, because tile 0 is real art in `demo_msx1`. A map *places* metas (`MapLayer.placements`, over a mirrored `MapDoc.metas`) beside its ordinary tile grid rather than indexing them instead of tiles; `baked` trades the runtime draw for grid bytes.
+**So do meta-tiles, from version 3** (`msx/meta-owned.ts`, `OwnedMetaDoc`): an
+animation's poses plus a footprint (`holes`) and flags, naming no tileset, so
+one meta can be attached to several. Attaching (`TilesDoc.metas`,
+`MetaBinding`) is one `resolveMeta`, used by the tile editor, the map editor and
+the exporter alike: see-through cells are 0 (and a meta's art never resolves to
+tile 0, so 0 always means skip), still cells find-or-create their art, and the
+cells that change between poses get a window filed in `TilesDoc.animations`
+under the meta's path — so `_Animate()`, compaction, window protection and the
+reorder remap all apply to it unchanged. A refresh keeps every tile that still
+shows the right art and appends what changed, which is what makes two refreshes
+of the same files agree. The exporter runs it before exporting a tileset **and**
+before exporting any map drawn with it (`refreshTileset` in
+`main/services/resources.ts`), because a map mirrors a v3 meta's cells
+(`MetaRef.cells`) and has to agree with the tileset on every number. The
+`.meta-tiles.json` suffix covers both versions, so a tab is routed by reading the
+file first (`editors/meta/format.ts`): v3 opens in the pose editor
+(`editors/anim`, `session.kind === 'metatiles'`), v2 in the meta editor, and each
+refuses to save over the other's format.
+
+Tile 0 is the seam that makes a group *transparent*: `TilesDoc.reserveTile0` locks it all-blank, and a meta cell holding 0 is a **skipped write**, which is the only see-through a name table has. Off in every pre-existing file, because tile 0 is real art in `demo_msx1`. A map *places* metas (`MapLayer.placements`, over a mirrored `MapDoc.metas`) beside its ordinary tile grid; `baked` trades the runtime draw for grid bytes. An **indexed** layer (`MapLayer.indexed`) is the other way round: its placements — v3 metas, never overlapping — *are* its content, exported as one byte per meta in reading order (`indexedLayerStream`; slot + 1, or 0 for an empty cell) and expanded by the game into a RAM tile map (`_Expand`). `decodeIndexedStream`/`expandIndexedLayer` walk it exactly as the C does, and are what the tests hold the C to. Its metas are not in `_Placements`; its stream is never RLEp-packed, whatever the map's other layers are.
 
 Deleting or reordering tiles renumbers blocks and flags through the same Spec 10 remap seam maps use (`reorderTiles`/`removeTile` → `TilesReorderEvent`).
 

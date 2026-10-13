@@ -1,85 +1,71 @@
 # Meta-tiles: designs bigger than a cell
 
 The VDP's unit is an 8×8 cell. Almost nothing in a game is 8×8. A tree is
-2×3 cells, a door is 2×3, a coin is 1×1 but has four poses, and every one of
-them is something you think about as *one thing* while the hardware insists on
-seeing twelve.
+2×3 cells, a door is 2×3, a torch is 2×3 with a flame that flickers, and every
+one of them is something you think about as *one thing* while the hardware
+insists on seeing six.
 
-A **meta-tile** is that one thing, kept as a resource: its own size in tiles,
-its own animation frames, its own gameplay flags. You paint it as a picture, and
-you drop it on a map next to the tiles you painted by hand.
+A **meta-tile** is that one thing, kept as a resource: its own art, its own
+poses, the cells it leaves see-through, its own gameplay flags. You draw it once,
+attach it to the tilesets that should have it, and build levels out of it —
+dropped next to tiles you painted by hand, or as whole layers made of nothing
+else, at one byte per meta-tile.
 
-**MSXDEVStudio resources:** a `.meta-tiles.json` over a `.tiles.json`, and a
-`.map.json` that places it · **Machine:** MSX1 and up (SCREEN 1, 2 or 4)
+**MSXDEVStudio resources:** a `.meta-tiles.json`, a `.tiles.json` it is attached
+to, and a `.map.json` that places it · **Machine:** MSX1 and up (SCREEN 1, 2 or 4)
 
-## A meta-tile owns no pixels
+## A meta-tile owns its pixels, and is attached to tilesets
 
-This is the part worth understanding before you draw anything, because it
-explains everything else.
+A meta-tile stores its art — every pose, as tile bytes — in its own file, and
+names no tileset. That is what makes it an independent thing: the same tree can
+be used with the level's tileset and the title screen's, and editing it is
+editing one file.
 
-A meta-tile stores **tile indices**, not art — the same way a tileset's named
-blocks do. The editor shows you a canvas and lets you draw on it, and every
-stroke is resolved, immediately, into tiles:
+A name table cannot show art, only tile numbers. So a meta-tile is **attached**
+to a tileset, and attaching gives it numbers there:
 
-1. Work out which 8×8 cell the pixel landed in.
-2. Take that cell's current tile, apply the stroke to a copy of it.
-3. Look for a tile in the bank that already looks exactly like that. If one
-   exists, point the cell at it. If not, append it and point the cell there.
+- A cell that looks the same in every pose becomes an ordinary tile — and if the
+  tileset already has a tile that looks exactly like it, that one, so two metas
+  with the same brick cost one tile.
+- A **see-through** cell gets nothing: it is never written when the meta is
+  drawn (below).
+- The cells that **change between poses** get a *window*: a few consecutive tiles
+  the tileset's `_Animate()` rewrites with each pose in turn, exactly as an
+  attached animation's (see *Animated tiles* in [Resources](../resources.md)). Every copy of the meta
+  animates in step, on screen or not, and costs nothing per copy — and only the
+  cells that move are rewritten, so a house with a smoking chimney rewrites the
+  chimney, not the house.
 
-Three things follow, and they are the whole design:
+Edit the meta later and every tileset it is attached to follows: tiles that
+still show the right art are kept, what changed is added, and nothing else drawn
+with the tileset moves.
 
-- **Painting a meta grows the tileset.** That is not a side effect, it is the
-  mechanism. Open the tile editor after drawing and you will see the tiles your
-  strokes created.
-- **Painting a meta can never damage a map.** Existing tiles are never edited in
-  place and never renumbered, so a map drawn with tile 12 still has tile 12.
-- **Identical cells cost one tile.** Draw a brick in two cells of the same meta
-  and the bank grows by one, not two. Draw the same brick in a second meta
-  tomorrow and it grows by nothing.
+## See-through cells
 
-## Tile 0 is the hole
-
-A name table has no transparency. Every cell holds a tile index and the VDP
+A name table has no transparency. Every cell holds a tile number and the VDP
 draws it; there is no value meaning "nothing here". The only way to see through
 a cell is for the game **not to write it**.
 
-So meta-tiles reserve tile 0 for that. A tileset opts in — side panel →
-**Reserve tile 0** — and after that:
-
-- tile 0 is locked blank and drawn as a checkerboard, in the tile editor and in
-  the meta editor both;
-- a meta cell holding 0 is skipped when the meta is stamped, so the background
-  shows through;
-- the eraser is simply "paint colour 0": erase a whole cell and it resolves back
-  to tile 0 through the same dedup as everything else.
-
-If the tileset already uses tile 0 as artwork — a solid block, say — reserving
-it has to shift every index up by one, and every map drawn with that tileset is
-renumbered to match. The editor tells you and asks first. Reserving it on a
-tileset you have just created is free, and new tilesets do it automatically.
+So a meta-tile marks the cells it should not write. In the editor, the hatched
+**see-through** button turns clicks into toggles: click a cell and it is drawn
+hatched, and from then on it is skipped in every pose — whatever is already on
+screen, or on the layer underneath, shows there. The cell's art stays in the
+file, so toggling it back loses nothing.
 
 ## Drawing one
 
-Create a `meta-tiles` resource from the Resources panel, point it at a tileset,
-and set its size — 2×3 for a tree, say.
+Create a `meta-tiles` resource from the Resources panel in the mode your tileset
+uses — SCREEN 2 and 4 store the same bytes, so either attaches to either — and
+set its size in the side panel: 2×3 for a tree, say, up to 16×16.
 
-The tools are the tile editor's, plus one: **pencil**, **line**, **rectangle**,
-**fill** and **spray**. Spray is an ordered dither rather than random scatter,
-keyed to the canvas coordinates, so overlapping passes agree about the pixels
-they share and a slow drag builds one clean texture instead of mottle. Its
-density slider is the threshold.
-
-**Erase** is the button beside them, and it is a *colour*, not a sixth tool — it
-selects the transparent index. So it composes: erase with the pencil, erase a
-straight line, erase with a spray of holes.
-
-Fill crosses tile seams. You drew one shape, not four.
+The tools are the tile editor's: **pencil**, **line**, **rectangle** and
+**fill**. Fill crosses tile seams; you drew one shape, not six.
 
 ### Two colours per row, and which button picks which
 
-SCREEN 2 and 4 hold two colours per 8×1 pixel row — an ink and a paper. SCREEN 1
-holds two per *group of eight tiles*. That is the whole constraint, and the
-mouse button is how you say which one you are setting:
+SCREEN 2 and 4 hold two colours per 8×1 pixel row — an ink and a paper. That is
+the whole constraint, and the mouse button is how you say which one you are
+setting:
 
 - **Left button** paints with the current colour as that row's **ink**.
 - **Right button** paints it as the row's **paper**.
@@ -89,130 +75,193 @@ role changes with it. That is not the editor being destructive; it is what a
 two-colour row means. Pick a third colour and it replaces the ink (or the
 paper), rather than being refused.
 
-In SCREEN 1 the palette only offers the two colours the clicked cell's group
-already spends, since a group of eight tiles shares one pair. To use a third,
-change the pair explicitly in the side panel — it recolours all eight tiles, and
-the editor says so before it does it.
+SCREEN 1 holds one pair per group of eight tiles, so a SCREEN 1 meta is drawn in
+one pair, chosen in the side panel; attaching it puts its tiles in a group of
+that pair.
 
-### Frames
+### Poses
 
 The strip along the bottom is the animation. **Duplicate** copies the current
-frame, which is usually what you want — a walk cycle starts from a pose, not
-from a blank canvas. **Onion skin** shows the previous frame underneath, faint,
-so the next one can be lined up against it.
+pose, which is usually what you want — a flicker starts from a flame, not from a
+blank canvas. Each pose has its own duration in frames (VBlanks: 50 a second on
+a European MSX, 60 on a Japanese one), and the side panel picks **loop**,
+**ping-pong** or **play once**, with a preview that steps exactly as the
+generated code will.
 
-There is no per-frame duration. Timing is the game's decision, exactly as it is
-for hardware sprites.
+The side panel also says what animating costs: how many tiles change between
+poses — the size of the window each tileset gives the meta — and how many bytes
+of VRAM one pose change writes.
 
-### What reaches the tileset, and when
+### Flags
 
-A stroke is resolved **once, when you let go of the button** — not per pointer
-sample. A drag that passed through forty intermediate shapes contributes only
-the tiles its final shape needs, and counts as one undo step.
+Eight squares in the side panel: what the meta *means* to your game — solid, a
+door, a hazard — independent of the flags on the tiles it is drawn with.
 
-Redrawing still leaves tiles behind: paint a cell three different ways and the
-first two versions are in the bank, referenced by nothing. **Saving reclaims
-them automatically**, and the status bar says how many went. There is a
-**Compact unused tiles** button in the side panel for doing it sooner.
+## Attaching it
 
-Either way, only tiles *this editing session* created and no longer uses are
-removed. That looks over-cautious until you consider the alternative: a tile
-used solely by a map you do not happen to have open is indistinguishable, from
-here, from an orphan, and removing it would silently change a level you were not
-even looking at.
+Two ways, and they do the same thing:
+
+- In the **tile editor**, the side panel's *Meta-tiles* section: pick the meta,
+  press **Attach**. The status line says which tiles move, if any.
+- On a **map**, just place it (below): a meta that is not attached to the map's
+  tileset yet is attached when you pick it.
+
+Detaching leaves its tiles in the tileset as ordinary art, so nothing already
+drawn with them changes.
 
 ## Placing one on a map
 
-Open a map over the same tileset. The left sidebar is now two pickers: **tiles
-above, meta-tiles below**. Only metas drawn over *this* map's tileset appear —
-one built over a different bank names tiles that mean something else here, and
-placing it would paint garbage.
+Open a map. The left sidebar is two pickers: **tiles above, meta-tiles below**.
+Every meta-tile in the tileset's mode is offered; a dashed one is not attached
+yet, and picking it attaches it.
 
 Pick one and click. Click a placed meta to select it, drag to move it, Delete to
 remove it.
 
 ### Live or baked
 
-Every placement is one of two things, and the difference is where the tiles are.
+Every placement on an ordinary layer is one of two things, and the difference is
+where the tiles are.
 
 **Live** is the default. The grid under the meta holds tile 0, and the game
-draws the meta from the placement table every time it draws the screen. It costs
-a few writes per screen, it updates when you edit the meta, and it is the only
-kind that can animate.
+draws the meta from the placement table every time it draws the screen.
 
-**Baked** — tick *Bake into the layer* — writes frame 0's tiles into the grid.
-The ordinary layer write then draws it, so it costs **nothing** at runtime. It
-cannot animate, and painting a tile inside it drops its record: the grid no
-longer holds what the record claims, and a receipt that lies is worse than no
-receipt.
+**Baked** — tick *Bake into the layer* — writes the meta's tiles into the grid.
+The ordinary layer write then draws it, so it costs **nothing** at runtime.
+Painting a tile inside it drops its record: the grid no longer holds what the
+record claims.
 
-Rule of thumb: bake the scenery, leave the things that move alone.
+An animated meta animates either way: its moving cells are window tiles, and it
+is the tiles' *art* that `_Animate()` changes, not the grid.
+
+## Indexed layers: a level made of meta-tiles
+
+A level built from meta-tiles should not store every cell. Click a layer's
+**tiles** label in the map's side panel and it becomes **indexed**: a layer of
+meta-tiles and nothing else.
+
+- Meta-tiles sit side by side, in any mix of sizes. They cannot overlap — put
+  anything that overlaps on another layer.
+- Painting tiles on an indexed layer is refused; its grid is not exported at all.
+- It exports **one byte per meta-tile**. A screen of 2×2 blocks is 192 bytes
+  instead of 768, and a long wall of 4×1 bricks is a quarter of that again. The
+  side panel shows the count against what a tile layer would cost.
+
+The game expands it once into a tile map in RAM, and from there it is any map:
+drawn with the same layout write, read for collision, rewritten when something
+is collected. That RAM is the price — the map's width × height in bytes — and
+the side panel says it too.
 
 ## Using it from C
 
-A meta-tile exports one table, its frames end to end:
+The tileset a meta is attached to exports where its tiles are, by name, and with
+*Export ready-made C* ticked, draws it:
 
 ```c
-#define G_TREE_META_W 2
-#define G_TREE_META_H 3
-#define G_TREE_CELLS  6      // tiles per frame — the table's stride
-#define G_TREE_FRAMES 4
-#define G_TREE_FLAGS  0x01   // your bits, your meaning
-extern const u8 g_Tree[];
+#define G_TILES_METAS        3
+#define G_TILES_META_TREE    0
+#define G_TILES_META_TORCH   1
 
-g_Tree_Draw(10, 5, 0);       // frame 0 at tile column 10, row 5
+g_Tiles_DrawMeta(G_TILES_META_TORCH, 10, 5);   // top-left at column 10, row 5
 ```
 
-`_Draw` writes each row as runs of non-transparent cells rather than one
-rectangle, because a cell holding tile 0 has to be skipped. For a solid meta
-that is still one `VDP_WriteLayout_GM2` per row.
+An animated meta is played by the tileset's own animation player — reset once
+the tiles are in VRAM, step it every frame — and has an index of its own there:
 
-A map that places meta-tiles exports the placement table beside its layers:
+```c
+g_Tiles_AnimReset();
+while(1)
+{
+	Halt();
+	g_Tiles_Animate();
+	...
+}
+g_Tiles_AnimSetActive(G_TILES_ANIM_TORCH, FALSE);   // snuff that one torch type
+```
+
+A map that places meta-tiles on an ordinary layer exports the placement table
+beside its layers:
 
 ```c
 #define G_LEVEL_METAS        2
 #define G_LEVEL_PLACEMENTS   12
 #define G_LEVEL_META_G_TREE  0      // a name per meta
 #define G_LEVEL_FLAGS_G_TREE 0x01   // mirrored, so you need no other header
-extern const u8 g_Level_Placements[];   // slot | baked<<7, x, y
 
 u8 frames[G_LEVEL_METAS] = { 0 };
 g_Level_DrawLayer(g_Level_Background, 0, 0);   // the grid, one call
 g_Level_DrawPlacements(frames);                // the live metas over it
 ```
 
-To animate, advance `frames[slot]` and call `_DrawPlacements` again. Pace it
-yourself — hold each pose for several frames from a counter in the VBlank loop,
-rather than rewriting VRAM at 50/60 Hz:
+(`frames` is for older meta-tiles, whose frames are redrawn per copy; a meta
+that owns its pixels animates in place and ignores it.)
+
+An indexed layer is expanded first, over whatever is under it:
 
 ```c
-if(++tick >= 8)
+u8 g_Map[G_LEVEL_W * G_LEVEL_H];       // RAM is not cleared at boot:
+u8 g_Objects[G_LEVEL_W * G_LEVEL_H];   // fill both before expanding
+
+for(u16 i = 0; i < G_LEVEL_W * G_LEVEL_H; ++i)
 {
-	tick = 0;
-	frames[G_LEVEL_META_G_COIN] = (frames[G_LEVEL_META_G_COIN] + 1) % G_COIN_FRAMES;
-	g_Level_DrawPlacements(frames);
+	g_Map[i] = g_Level_Background[i];   // the layer underneath
+	g_Objects[i] = 0;
 }
+g_Level_Expand(g_Level_Terrain, g_Map, g_Objects);
+VDP_WriteLayout_GM2(g_Map, 0, 0, G_LEVEL_W, G_LEVEL_H);
 ```
 
-Baked placements are skipped by `_DrawPlacements`, so a level full of baked
-scenery and three animated coins pays for three.
+See-through and empty cells keep what was in `g_Map`, which is how layers
+compose. For a map wider than the screen, draw the view a row at a time from the
+buffer:
+
+```c
+for(u8 row = 0; row < 24; ++row)
+	VDP_WriteVRAM(g_Map + row * G_LEVEL_W + scroll, g_ScreenLayoutLow + row * 32, g_ScreenLayoutHigh, 32);
+```
+
+A torch that scrolls into view is already animating: its tiles are the window's.
 
 ### Collision
 
 Two independent sets of flags, and neither overrides the other:
 
-- The **tileset's** `_Flags`, indexed by tile, for anything in the grid. This is
-  what a walking character tests. Baked meta-tiles are in the grid, so their
-  tiles answer here like any others.
-- A **meta's** `_FLAGS`, for asking what the *object* is — is this one a door,
-  is it a hazard — while walking the placement table. Mirrored into the map's
-  own header so you do not need to include every meta's.
+- The **tileset's** `_Flags`, indexed by tile, for anything in the grid or the
+  expanded map. This is what a walking character tests.
+- A **meta's** flags, for asking what the *object* is. On an indexed layer,
+  `g_Objects[i]` is the slot + 1 of the meta covering cell `i` (0 for none), and
+  `g_Level_MetaInfo[(g_Objects[i] - 1) * 3 + 2]` is its flags. For placements,
+  the map's own header mirrors them as `G_LEVEL_FLAGS_<NAME>`.
 
-## Bitmap and multicolour modes
+## Older meta-tiles, and bitmap ones
 
-Everything above applies to a `.meta-btiles.json` over a `.btiles.json` — same
-editor, same frames, same placement — with three differences the hardware
-forces.
+Before meta-tiles owned their pixels, one was made of a single tileset's tiles:
+it stored tile numbers, and its editor resolved every stroke into that tileset
+as you painted. Such a `.meta-tiles.json` still opens in that editor — with its
+spray tool, onion skin and **Compact unused tiles** — and still exports exactly
+what it did:
+
+```c
+#define G_TREE_META_W 2
+#define G_TREE_META_H 3
+#define G_TREE_CELLS  6      // tiles per frame — the table's stride
+#define G_TREE_FRAMES 4
+#define G_TREE_FLAGS  0x01
+extern const u8 g_Tree[];
+
+g_Tree_Draw(10, 5, 0);       // frame 0 at tile column 10, row 5
+```
+
+Its frames are redrawn per copy through `_DrawPlacements(frames)`, and its
+see-through cells are the ones holding tile 0, which the tileset must reserve. It
+cannot go on an indexed layer. **Make it independent**, in the banner above its
+canvas, copies its art into the file and attaches it to the same tileset **at
+the same tiles** — every map that placed it keeps drawing exactly what it drew.
+
+### Bitmap and multicolour modes
+
+A `.meta-btiles.json` over a `.btiles.json` is always this older kind — same
+editor, same frames, same placement — with three differences the hardware forces.
 
 **Nothing gets dropped.** Every pixel in a bitmap mode carries its own colour,
 so there is no two-per-row rule and no status-bar count. Draw what you like.

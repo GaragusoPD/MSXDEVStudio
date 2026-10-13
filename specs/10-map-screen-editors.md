@@ -365,6 +365,23 @@ an animated cell forks it to a still tile; every allocator (`findOrCreateTile`,
 mode forks a window cell rather than rewrite it, because a window's art is
 rewritten from the animation before every export.
 
+**Version 3: meta-tiles own their pixels** (`meta-owned.ts`; design
+`docs/superpowers/specs/2026-10-13-indexed-meta-maps-design.md`). A pattern-mode
+meta now stores poses as tile bytes, plus see-through cells (`holes`) and flags,
+names no tileset, and is *attached* to tilesets (`TilesDoc.metas`): still cells
+find-or-create their art (never tile 0, so 0 always means skip), and the cells
+that change between poses get a window in `TilesDoc.animations` under the meta's
+path, played by the tileset's `_Animate()`. A map mirrors a v3 meta's cells in
+this tileset (`MetaRef.cells`) and `_DrawPlacements` draws from that copy. The
+version-2 shape above stays for existing files and for `.meta-btiles.json`, with
+an explicit *Make it independent* that keeps a converted meta at its tiles.
+
+**Indexed layers** (`MapLayer.indexed`) are the map indexed by meta-tiles after
+all — but as a layer kind beside tile layers, not instead of them: v3 metas only,
+any mix of sizes, never overlapping, exported as one byte per meta in reading
+order (slot + 1, 0 for an empty cell), with `_MetaCells`/`_MetaCellsAt` and
+(helpers on) `_Expand(layer, tiles, objects)` into a RAM tile map.
+
 **Stage 2** brings pixel painting and placement to the bitmap and multicolour
 modes. Until then `.meta-btiles.json` shares the document shape and exports a
 `_Draw` that blits out of the atlas, but has no pixel editor and no map

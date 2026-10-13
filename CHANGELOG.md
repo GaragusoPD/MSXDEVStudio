@@ -7,6 +7,50 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Meta-tiles as their own entities, and maps indexed by them
+
+A meta-tile now owns its pixels, the way an animation does, and is attached to
+tilesets rather than made of one tileset's tiles. Maps built from meta-tiles can
+store them one byte each.
+
+#### Added
+
+- **Meta-tiles that own their pixels** (`.meta-tiles.json` version 3, what the
+  Resources panel now creates). Poses, see-through cells and eight flags live in
+  the file, edited with the animation editor's canvas and pose strip plus a
+  see-through tool and flag squares, at any size up to 16×16 tiles. One pose is
+  a still meta; more, and it animates.
+- **Attaching** a meta-tile to a tileset (the tile editor's *Meta-tiles* panel,
+  or placing it on a map) gives it tiles there: still cells share any identical
+  art, see-through cells are skipped, and the cells that change between poses
+  get a window the tileset's `_Animate()` rewrites — every copy animates in
+  step, on screen or not, for nothing per copy, and only what moves costs VRAM
+  writes. The same meta can be attached to several tilesets.
+- The tileset's header states what is attached: `G_<TILESET>_METAS`,
+  `G_<TILESET>_META_<NAME>`, `_MetaInfo` and `_MetaCells`, and with helpers on,
+  `_DrawMeta(meta, x, y)`. An animated meta is an animation there too, with its
+  own `_ANIM_<NAME>` for `_AnimSetActive`/`_AnimRestart`/`_AnimGetFrame`.
+- **Indexed layers.** A map layer can be indexed: meta-tiles only, any mix of
+  sizes, never overlapping, exported as one byte per meta-tile in reading order
+  — a screen of 2×2 metas is 192 bytes instead of 768. With helpers on,
+  `_Expand(layer, tiles, objects)` writes it into a tile map in RAM over
+  whatever is there (so layers compose), and optionally which object covers
+  each cell. Animated meta-tiles keep animating, including ones a scrolling view
+  reaches later. Booted in openMSX: a 64-wide level of mixed-size metas, both
+  torches animating before and after the view scrolls.
+- **Make it independent** converts an older meta-tile in place: its art is
+  copied into the file and it stays attached to its tileset at the same tiles,
+  so every map keeps drawing what it drew.
+
+#### Changed
+
+- A map that places meta-tiles now re-exports when its tileset changes, since a
+  meta's tiles are resolved there.
+- An attached meta-tile's tiles are kept by *Remove unused tiles*, and never
+  merged into look-alikes.
+- `docs/resources.md` no longer describes the meta-tile *set* model, which was
+  removed before 0.1.
+
 ### Added
 
 - **`g_Tiles_AnimRestart(anim)`** starts one animation over from its first

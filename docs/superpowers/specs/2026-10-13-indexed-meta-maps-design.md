@@ -1,8 +1,53 @@
 # Meta-tiles as attached entities, and maps indexed by them — design
 
 **Date:** 2026-10-13
-**Status:** proposed, awaiting approval. Nothing here is implemented.
+**Status:** phases 1 and 2 implemented; phase 3 (SCREEN 3) not started. See
+*As built* for where the implementation differs from the proposal below.
 **Builds on:** `2026-10-13-tile-animations-design.md` (attached animations).
+
+## As built
+
+The proposal below is kept as written; these are the places the code went
+another way, each for a reason found while building it.
+
+- **The window covers only the cells that move**, not the whole meta. A house
+  with a smoking chimney rewrites the chimney. The window is an ordinary
+  `TilesDoc.animations` entry filed under the meta's path, so `_Animate()`,
+  `_AnimRestart()`, compaction, window protection and the reorder remap needed
+  no second code path; `MetaBinding` has no `window` field.
+- **See-through is 0, and a meta's art never resolves to tile 0** (the
+  allocator's `never0`), with or without `reserveTile0`. That keeps the
+  convention every meta draw already had — 0 is a skipped write — instead of a
+  0xFF sentinel that would collide with tile 255.
+- **A refresh keeps what still fits**: a still cell keeps its tile while that
+  tile still shows its art, a window keeps its slot while it is the right size.
+  That is what makes the editor's and the exporter's refreshes agree, and what
+  keeps a converted meta at its old tiles. One `resolveMeta` serves the tile
+  editor, the map editor and the exporter, which refreshes a tileset before
+  exporting it *and* before exporting a map drawn with it.
+- **An indexed layer's bytes are slots into the map's own `metas` list**, not
+  the tileset's meta order. The map mirrors each slot's tiles (`MetaRef.cells`)
+  and exports them (`_MetaCells`, `_MetaCellsAt`), so detaching or reordering
+  metas in a tileset renumbers nothing in any map, and no meta reorder log was
+  needed. The tileset still exports its own `_MetaInfo`/`_MetaCells` and
+  `_DrawMeta()` for drawing a meta outside a map.
+- **Version-2 meta-tiles were kept, not migrated on open.** They open in the
+  editor they were made with and export exactly as before; *Make it
+  independent* converts one explicitly (decision 2's recommendation). Bitmap
+  meta-tiles are version 2 by nature. Only version-3 metas can be on an indexed
+  layer.
+- **The stream is never RLEp-packed**, even when the map's tile layers are:
+  `_Expand(layer, tiles, objects)` reads it byte by byte.
+- Decision 1 (merge `.anim-tiles.json` into meta-tiles) was not taken as a file
+  format change; the code is shared instead — one pose editor opens both, and a
+  meta is an animation's poses plus holes and flags. *Attach again* for
+  independent copies is not built: a binding is keyed by the meta's path.
+
+Verified: pure round trips of mixed sizes against the C's walk, the export
+rendered from files alone, real MSXgl builds of every entry point (SCREEN 2 on
+an MSX1, SCREEN 1 on an MSX2), and an openMSX boot of a scrolling indexed level
+whose torches — one on screen, one scrolled in — show the window's tiles while
+the window's patterns step through their ping-pong.
 
 ## Why
 

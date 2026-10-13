@@ -14,7 +14,8 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeProject } from '../../shared/msxproj'
 import { normalizeBitmapTiles, sheetCols } from '../../shared/msx/bitmap-tile'
-import { addMetaRef, normalizeMap, placeMeta, setPlacementBaked } from '../../shared/msx/map'
+import { addMetaRef, metaRefFrom, normalizeMap, placeMeta, setLayerIndexed, setPlacementBaked } from '../../shared/msx/map'
+import { normalizeOwnedMeta, resolveMeta } from '../../shared/msx/meta-owned'
 import { createMetaTileDoc } from '../../shared/msx/meta-tile'
 import { paintBitmapMeta, paintMeta } from '../../shared/msx/meta-paint'
 import { defaultExport, renderResourceFiles, type ResourceDoc } from '../../shared/msx/resource'
@@ -160,6 +161,62 @@ describe('the guide teaches what the exporter emits', () => {
 
   it('states the 128-meta cap the slot byte actually imposes', () => {
     expect(guide('1')).toContain('128')
+  })
+})
+
+describe('the guide teaches meta-tiles that own their pixels as the exporter emits them', () => {
+  const entry = (mark: number) => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf1) })
+  /** A 2×2 torch whose top row moves, exported as `g_Torch`. */
+  const torch = normalizeOwnedMeta({
+    version: 3,
+    mode: 'sc2',
+    width: 2,
+    height: 2,
+    flags: 2,
+    frames: [0x18, 0x3c].map((mark) => ({ tiles: [entry(mark), entry(mark), entry(0xff), entry(0xff)], duration: 6 })),
+    export: block('g_Torch')
+  })
+  const tileset = (() => {
+    const attached = resolveMeta(normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: true }), 'res/torch.meta-tiles.json', torch, 'g_Torch')
+    if (typeof attached === 'string') throw new Error(attached)
+    return attached.doc
+  })()
+
+  it("the tileset's meta table, _DrawMeta, and the meta's window as an animation", () => {
+    const text = render({ kind: 'tiles', doc: tileset }, 'res/mytiles.tiles.json', 'g_MyTiles')
+    for (const symbol of ['G_MYTILES_METAS', 'G_MYTILES_META_TORCH', 'G_MYTILES_ANIM_TORCH']) {
+      expect(text, `${symbol} is emitted`).toContain(`#define ${symbol}`)
+      expect(guide('1'), `${symbol} is taught`).toContain(symbol)
+    }
+    for (const table of ['g_MyTiles_MetaInfo', 'g_MyTiles_MetaCells']) {
+      expect(text).toContain(`extern const unsigned char ${table}[];`)
+      expect(guide('1')).toContain(table)
+    }
+    expect(text).toContain('void g_MyTiles_DrawMeta(u8 meta, u8 x, u8 y);')
+    expect(guide('1')).toContain('g_MyTiles_DrawMeta(G_MYTILES_META_TORCH, 10, 5)')
+  })
+
+  it("the meta's own header", () => {
+    const text = render({ kind: 'metatiles', doc: torch }, 'res/torch.meta-tiles.json', 'g_Torch')
+    for (const symbol of ['G_TORCH_W', 'G_TORCH_H', 'G_TORCH_FLAGS', 'G_TORCH_MOVING']) {
+      expect(text, `${symbol} is emitted`).toContain(`#define ${symbol}`)
+      expect(guide('1'), `${symbol} is taught`).toContain(symbol.replace(/_(H|FLAGS)$/, ''))
+    }
+    expect(text).toContain('extern const unsigned char g_Torch_Patterns[];')
+    expect(guide('1')).toContain('g_Torch_Patterns')
+  })
+
+  it('an indexed layer, its tables and _Expand', () => {
+    let map = normalizeMap({ tileset: 'res/mytiles.tiles.json', width: 32, height: 24, layers: [{ name: 'background' }, { name: 'terrain' }] })
+    map = addMetaRef(map, metaRefFrom('res/torch.meta-tiles.json', torch, 'g_Torch', tileset.metas[0]))
+    map = setLayerIndexed(placeMeta(map, 1, 0, 4, 4), 1, true)
+    const text = render({ kind: 'map', doc: map }, 'res/level.map.json', 'g_Level')
+    for (const table of ['g_Level_Terrain', 'g_Level_MetaCells', 'g_Level_MetaCellsAt']) {
+      expect(text).toContain(`extern const unsigned char ${table}[];`)
+      expect(guide('1')).toContain(table)
+    }
+    expect(text).toContain('void g_Level_Expand(const u8* layer, u8* tiles, u8* objects);')
+    expect(guide('1')).toContain('g_Level_Expand(g_Level_Terrain, g_Map, NULL)')
   })
 })
 
