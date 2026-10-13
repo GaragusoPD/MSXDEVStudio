@@ -338,14 +338,34 @@ async function replayPersistedReorders(session: MetaSession): Promise<void> {
   markDirty(session)
 }
 
-/** Live tileset reorders, while both files happen to be open. */
+/**
+ * Live tileset reorders, while both files happen to be open.
+ *
+ * `appended` names tiles by number too, and Compact removes exactly those
+ * numbers — left in the old numbering it would reclaim whatever tile moved
+ * into the slot. A tile the renumbering dropped (mapped to 0 from anything but
+ * 0) is no longer this session's to reclaim.
+ */
 onTilesReordered((event) => {
   for (const session of sessions.values()) {
     if (!samePath(session.tilesetPath, event.path)) continue
     commit(session, remapMetaTiles(doc(session), event.mapping))
+    session.appended = session.appended
+      .map((tile) => (tile === 0 ? 0 : (event.mapping[tile] ?? tile)))
+      .filter((tile, i) => tile !== 0 || session.appended[i] === 0)
     session.tilesetReorderSeen = event.at
   }
 })
+
+/**
+ * Every meta open in a tab, with the document as it stands — unsaved strokes
+ * included. What the map editor reads before it drops tiles nothing uses: a
+ * stroke not yet saved references tiles the file on disk does not, and those
+ * must count as used.
+ */
+export function openMetaDocs(): { path: string; tilesetPath: string; doc: MetaTileDoc }[] {
+  return [...sessions.values()].map((session) => ({ path: session.path, tilesetPath: session.tilesetPath, doc: doc(session) }))
+}
 
 export async function saveSession(session: MetaSession): Promise<void> {
   // Dead tiles this session minted while experimenting must not reach the file.

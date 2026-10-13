@@ -1,24 +1,52 @@
 <script setup lang="ts">
 /**
  * The map editor's paint-mode sidebar: the colour to paint with, the write
- * mode, and the tile budget. Three readouts of session state and three
- * setters. Every decision — what a stroke resolves to, whether a colour is
+ * mode, the tile budget, and the tileset housekeeping (import a picture,
+ * remove unused tiles, recalculate). Readouts of session state and calls into
+ * it. Every decision — what a stroke resolves to, whether a colour is
  * legal on a row, what the budget says — lives in `session.ts`, which is
  * tested; this file is not, so it holds none.
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
+import { isBanked, TILE_SIZE } from '../../../../shared/msx/tile'
+import type { ScreenMode } from '../../../../shared/msx/modes'
+import ImportImageDialog from '../../components/ImportImageDialog.vue'
+import type { ImportResult } from '../../composables/useImageImport'
 import {
   declinePromotion,
+  doc,
+  importPicture,
   paintBudgetLabel,
   PROMOTION_PROMPT,
   promoteToBanked,
+  rebuildBanks,
+  removeUnusedTiles,
   setPaintColor,
   setPaintWrite,
   type MapSession
 } from './session'
 
 const props = defineProps<{ session: MapSession }>()
+
+const banked = computed(() => (props.session.tileset ? isBanked(props.session.tileset) : false))
+const importing = ref(false)
+/** One housekeeping action at a time: each reads the project before it asks. */
+const busy = ref(false)
+
+async function run(action: () => Promise<void> | void): Promise<void> {
+  if (busy.value) return
+  busy.value = true
+  try {
+    await action()
+  } finally {
+    busy.value = false
+  }
+}
+
+function onImported(result: ImportResult, _file: File | null, mode: ScreenMode): void {
+  void run(() => importPicture(props.session, result, mode))
+}
 
 /** The tileset's own palette — programmable on V9938, the fixed MSX1 set otherwise — read as the tile editor reads it. */
 const rgb = computed(() => paletteToRgb(props.session.tileset?.palette ?? null))
@@ -90,6 +118,51 @@ const budget = computed(() => paintBudgetLabel(props.session))
       </p>
     </section>
 
+    <section>
+      <h3>Tiles</h3>
+      <div class="actions">
+        <button
+          type="button"
+          :disabled="busy"
+          title="Convert a picture to this tileset's mode and place it on the active layer, from the top-left corner."
+          @click="importing = true"
+        >
+          Import image…
+        </button>
+        <template v-if="!banked">
+          <button
+            type="button"
+            :disabled="busy"
+            title="Delete the tiles no map or meta-tile in the project uses. Every file drawn with this tileset is renumbered to match."
+            @click="run(() => removeUnusedTiles(session))"
+          >
+            Remove unused tiles
+          </button>
+          <button
+            type="button"
+            :disabled="busy"
+            title="Remove unused tiles and merge tiles that draw the same pixels into one."
+            @click="run(() => removeUnusedTiles(session, true))"
+          >
+            Recalculate tiles
+          </button>
+        </template>
+        <button
+          v-else
+          type="button"
+          :disabled="busy"
+          title="Repack the three banks from what this screen shows: unused tiles go, identical ones merge."
+          @click="run(() => rebuildBanks(session))"
+        >
+          Rebuild banks
+        </button>
+      </div>
+      <p class="hint">
+        Painting adds tiles as it goes and never gives one back. These tidy up:
+        nothing on screen changes, only how many tiles it costs.
+      </p>
+    </section>
+
     <!-- Raised once by a refused stroke (`offerPromotion`); either button clears it. -->
     <section
       v-if="session.promptPromote"
@@ -115,6 +188,17 @@ const budget = computed(() => paintBudgetLabel(props.session))
         </button>
       </div>
     </section>
+
+    <ImportImageDialog
+      v-if="importing && session.tileset"
+      :mode="session.tileset.mode"
+      :fit-width="doc(session).width * TILE_SIZE"
+      :fit-height="doc(session).height * TILE_SIZE"
+      :standalone="false"
+      lock-mode
+      @close="importing = false"
+      @imported="onImported"
+    />
   </div>
 </template>
 
@@ -182,6 +266,26 @@ section {
   border-color: var(--color-accent);
   background: var(--color-accent);
   color: #ffffff;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.actions button {
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  font-size: 11px;
+  text-align: left;
+}
+
+.actions button:disabled {
+  opacity: 0.5;
 }
 
 .hint {

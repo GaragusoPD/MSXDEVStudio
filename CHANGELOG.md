@@ -38,6 +38,17 @@ change to the export: a painted screen is still a `*.tiles.json` and a
   the screen into three banks of 256. It refuses — and says why — on a map
   that is not 32×24, one with more than one layer, one that places
   meta-tiles, or a SCREEN 1 tileset. Declining is remembered for the session.
+- **Remove unused tiles, and Recalculate.** The paint sidebar's *Tiles*
+  section deletes the tiles nothing in the project draws with (every map and
+  meta-tile over the tileset is checked, open or closed) and, with
+  *Recalculate tiles*, merges tiles that draw the same pixels. Nothing on
+  screen changes; other files drawn with the tileset are renumbered to match.
+  On a banked screen the one button is *Rebuild banks*, which repacks the
+  three banks from what the screen shows.
+- **Import image… onto a tiled screen.** Converts a picture to the tileset's
+  mode and places it on the active layer, reusing tiles the tileset already
+  has. When it does not fit, it frees the tiles only the replaced cells used,
+  and failing that offers to switch a 32×24 screen to banked.
 
 #### Two things worth knowing before you use them
 
@@ -56,6 +67,10 @@ change to the export: a painted screen is still a `*.tiles.json` and a
   The prompt says all of this before you accept, and a tile-editor tab open
   on the same tileset starts its undo history over at that point so it
   cannot undo the switch out from under the map.
+- **Removing or merging tiles restarts the map's undo history.** It
+  renumbers the tileset, and the files that followed the renumbering cannot
+  be taken back with it. The editor asks first. An image import is still an
+  ordinary undo step, even when it had to free tiles to fit.
 
 ### SCREEN 2/4 tile banks
 

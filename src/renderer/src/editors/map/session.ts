@@ -52,14 +52,16 @@ import {
 } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
-import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { normalizeMetaTile, remapMetaTiles, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
 import {
   paintGrid,
   sameEntry,
   sprayPoints,
+  usedTiles,
   type PaintGridResult,
   type TileEdit
 } from '../../../../shared/msx/meta-paint'
+import { compactTileset, composePicture, pictureExtent, placePicture, type Picture } from '../../../../shared/msx/tile-compact'
 import { defaultExport, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { screenPixels } from '../../../../shared/msx/screen'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
@@ -74,6 +76,7 @@ import {
   eraseCells,
   floodPoints,
   normalizeSelection,
+  pendingReorders,
   paintValue,
   pushHistory,
   redo as redoHistory,
@@ -95,12 +98,15 @@ import {
 // `toolPoints` under an alias: `map-editor` exports a cell-space one of the
 // same name (imported above), and the two take different arguments.
 import {
+  emitTilesReordered,
   fillPoints,
   onTilesReordered,
   toolPoints as pixelToolPoints,
-  type TileTool
+  type TileTool,
+  type TilesReorderEvent
 } from '../../../../shared/tile-editor'
 import { bankBudgetLabel } from '../tile/session'
+import { openMetaDocs } from '../meta/session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
@@ -1210,9 +1216,22 @@ function offerPromotion(session: MapSession, result: PaintGridResult): void {
  */
 export function promotionBlocker(session: MapSession): string | null {
   const tileset = session.tileset
-  const current = doc(session)
   if (!tileset || !canPaint(session)) return 'This map has no pattern tileset to bank.'
   if (isBanked(tileset)) return 'This tileset is already banked.'
+  return repackBlocker(session)
+}
+
+/**
+ * Why this screen cannot be repacked into three banks from what it shows — the
+ * shared half of `promotionBlocker`, also asked by a banked screen's rebuild
+ * and by an image import that needs banks to fit. Everything that makes a
+ * render-and-repack lose information is here; whether the tileset is banked
+ * *already* is the caller's question.
+ */
+export function repackBlocker(session: MapSession): string | null {
+  const tileset = session.tileset
+  const current = doc(session)
+  if (!tileset || !canPaint(session)) return 'This map has no pattern tileset to bank.'
   if (tileset.mode === 'sc1') return 'SCREEN 1 has one pattern table, so it cannot be banked — that is SCREEN 2/4 only.'
   if (current.width !== 32 || current.height !== SCREEN_ROWS) {
     return (
@@ -1246,10 +1265,12 @@ export function canPromoteToBanked(session: MapSession): boolean {
  * indices and draws them against the new banks, which is wrong art, not a
  * rewrite.
  */
-export const PROMOTION_PROMPT =
-  `This screen is out of tiles. Switch to banked (three banks of ${MAX_TILES})? ` +
+const BANKING_CONSEQUENCES =
   'This renumbers every tile in the tileset: any other map or meta-tile drawn with it will show ' +
-  'wrong art until it is repainted, and the tileset\'s named blocks and tile flags are cleared. ' +
+  "wrong art until it is repainted, and the tileset's named blocks and tile flags are cleared."
+
+export const PROMOTION_PROMPT =
+  `This screen is out of tiles. Switch to banked (three banks of ${MAX_TILES})? ${BANKING_CONSEQUENCES} ` +
   'The stroke that hit the limit is not kept — draw it again afterwards.'
 
 /** The user said no. Once per session: the next refused stroke does not re-ask. */
@@ -1292,26 +1313,50 @@ export function promoteToBanked(session: MapSession): void {
     session.status = blocker
     return
   }
-  const tileset = session.tileset!
+  const { width, height, indices } = renderMapPixels(doc(session), session.tileset!, session.activeLayer)
+  const counts = repackBanked(session, indices, width, height)
+  if (counts) session.status = `Switched to banked — ${counts}. Draw the last stroke again.`
+}
+
+/**
+ * Replaces the tileset with three banks packed from `indices` (a 256×192
+ * picture of the whole screen) and points the active layer at them. The
+ * mechanism behind promotion, a banked screen's rebuild and an image import
+ * that needs banks to fit; the caller has already asked `repackBlocker`.
+ *
+ * A shared meta-tile region, which only a tileset that is banked already can
+ * have, is handed to the packer and survives at its own indices — a meta names
+ * those tiles by number, and nothing here has the right to move them. Each
+ * bank's own art is capped beneath it.
+ *
+ * Returns the status line's description of the result, or null when there was
+ * nothing to repack.
+ */
+function repackBanked(session: MapSession, indices: ArrayLike<number>, width: number, height: number): string | null {
+  const tileset = session.tileset
   const current = doc(session)
   const layer = current.layers[session.activeLayer]
-  if (!layer) return
+  if (!tileset || !layer) return null
 
-  const { width, height, indices } = renderMapPixels(current, tileset, session.activeLayer)
-  const packed = packBankedTiles(indices, width, height, tileset.mode)
+  const sharedStart = MAX_TILES - tileset.sharedTiles
+  const shared = isBanked(tileset) ? tileset.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(tileset.mode)) : []
+  const packed = packBankedTiles(indices, width, height, tileset.mode, { shared })
+  const budget = MAX_TILES - packed.doc.sharedTiles
 
   const reserve = tileset.reserveTile0
   const unplaced = packed.unplaced.slice()
   const bankTiles = packed.doc.bankTiles.map((bank) =>
-    reserve ? [blankTileEntry(tileset.mode), ...bank].slice(0, MAX_TILES) : bank
+    reserve ? [blankTileEntry(tileset.mode), ...bank].slice(0, budget) : bank
   )
   const data = packed.layout.map((index, cell) => {
     if (!reserve) return index
-    if (layer.data[cell] === 0) return 0
+    // An empty cell stays the see-through tile 0 rather than whatever blank
+    // the packer numbered first in its band.
+    if (layer.data[cell] === 0 && isBlankCell(indices, width, cell)) return 0
     const shifted = index + 1
-    if (shifted < MAX_TILES) return shifted
-    // The 257th tile the shift pushed out. Placed as tile 0 and counted, the
-    // way the packer itself treats a cell it has no room for.
+    if (shifted < budget) return shifted
+    // The tile the shift pushed past the budget. Placed as tile 0 and counted,
+    // the way the packer itself treats a cell it has no room for.
     unplaced[bankForRow(Math.floor(cell / current.width))]++
     return 0
   })
@@ -1333,13 +1378,35 @@ export function promoteToBanked(session: MapSession): void {
   // `metas: []` as `setTileset` does: a meta picked but not yet placed (the
   // blocker only refuses placements) names tiles by the old numbering.
   session.history = createHistory({ doc: { ...current, layers, metas: [] } })
-  session.selection = null
   markDirty(session)
-  // Everything else on the session that names a tile by number. No precedent
-  // covers these (`setTileset` clears only metas and placements); they stand
-  // on the defect itself: the brush and clipboard would stamp old indices as
-  // bank art on the next click, `brushBlock` indexes a `blocks` that is now
-  // empty, and the picker's highlight points at art that moved.
+  forgetTileNumbers(session)
+
+  const counts = merged.bankTiles.map((bank) => bank.length).join('/')
+  const short = unplaced.reduce((sum, count) => sum + count, 0)
+  return `${counts} tiles in banks 1-3` + (short ? `, ${short} cells could not be placed` : '')
+}
+
+/** Whether cell `cell` of a `width`-dot-wide picture is every dot colour 0. */
+function isBlankCell(indices: ArrayLike<number>, width: number, cell: number): boolean {
+  const cols = width / TILE_SIZE
+  const ox = (cell % cols) * TILE_SIZE
+  const oy = Math.floor(cell / cols) * TILE_SIZE
+  for (let y = 0; y < TILE_SIZE; y++) {
+    for (let x = 0; x < TILE_SIZE; x++) if (indices[(oy + y) * width + ox + x]) return false
+  }
+  return true
+}
+
+/**
+ * After the tileset was renumbered wholesale, drops everything on the session
+ * that names a tile by number. No precedent covers these (`setTileset` clears
+ * only metas and placements); they stand on the defect itself: the brush and
+ * clipboard would stamp old indices as new art on the next click,
+ * `brushBlock` indexes a `blocks` that may now be empty, and the picker's
+ * highlight points at art that moved.
+ */
+function forgetTileNumbers(session: MapSession): void {
+  session.selection = null
   session.brush = singleStamp(0)
   session.brushBlock = null
   session.brushMeta = null
@@ -1347,13 +1414,6 @@ export function promoteToBanked(session: MapSession): void {
   session.pickerActive = 0
   session.pickerSelection = [0]
   session.selectedPlacement = null
-
-  const counts = merged.bankTiles.map((bank) => bank.length).join('/')
-  const short = unplaced.reduce((sum, count) => sum + count, 0)
-  session.status =
-    `Switched to banked — ${counts} tiles in banks 1-3.` +
-    (short ? ` ${short} cells could not be placed.` : '') +
-    ' Draw the last stroke again.'
 }
 
 /**
@@ -1366,6 +1426,326 @@ export function paintBudgetLabel(session: MapSession): string {
   if (!tileset) return ''
   if (!isBanked(tileset)) return `tiles: ${tileset.count}/${MAX_TILES}`
   return tileset.bankTiles.map((_, bank) => bankBudgetLabel(tileset, bank)).join('   ')
+}
+
+// ── tileset housekeeping: remove, merge, rebuild, import ─────────────────
+
+/**
+ * Every tile anything drawn with this map's tileset uses, apart from this map —
+ * the other maps and meta-tiles in the project, open or not.
+ *
+ * An open tab's document wins over its file, since a stroke not yet saved
+ * references tiles the file does not. A closed file is read in whatever
+ * numbering it was saved in, so the reorders it has not replayed yet are
+ * replayed here first, from the store's log — read raw, a closed map would
+ * protect the tiles its *old* numbers now name and leave its own to be
+ * dropped.
+ *
+ * Null, with the status set, when a file over this tileset cannot be read: a
+ * tile's only user might be in it, and "unused" is not a guess this makes.
+ */
+async function tilesUsedElsewhere(session: MapSession): Promise<{ used: Set<number>; users: string[] } | null> {
+  const tilesetPath = doc(session).tileset
+  const store = useTilesetStore()
+  const log = store.reorderLog(tilesetPath)
+  const used = new Set<number>()
+  const users: string[] = []
+  const counted = new Set<string>([session.path])
+  const take = (path: string, tiles: Iterable<number>): void => {
+    counted.add(path)
+    users.push(path)
+    for (const tile of tiles) used.add(tile)
+  }
+  const mapTiles = (map: MapDoc): number[] => map.layers.flatMap((layer) => (layer.kind === 'tiles' ? layer.data : []))
+
+  for (const other of sessions.values()) {
+    if (other === session || !samePath(doc(other).tileset, tilesetPath)) continue
+    take(other.path, mapTiles(doc(other)))
+  }
+  for (const meta of openMetaDocs()) {
+    if (!samePath(meta.tilesetPath, tilesetPath)) continue
+    take(meta.path, usedTiles(meta.doc))
+  }
+
+  for (const entry of useResourcesStore().entries) {
+    if ((entry.kind !== 'map' && entry.kind !== 'metatiles') || counted.has(entry.path)) continue
+    let raw: (MapDoc | MetaTileDoc) & { tilesetReorderSeen?: number }
+    try {
+      raw = JSON.parse(await window.api.invoke('fs:read', { path: entry.path }))
+    } catch (error) {
+      session.status = `Couldn't read ${entry.path} to check which tiles it uses: ${String(error)}`
+      return null
+    }
+    const seen = typeof raw.tilesetReorderSeen === 'number' ? raw.tilesetReorderSeen : null
+    if (entry.kind === 'map') {
+      const map = normalizeMap(raw)
+      if (map.cell !== null || !samePath(map.tileset, tilesetPath)) continue
+      take(entry.path, mapTiles(replayReorders(map, log, seen).doc))
+    } else {
+      let meta = normalizeMetaTile(raw)
+      if (!samePath(meta.tileset, tilesetPath)) continue
+      for (const event of pendingReorders(log, seen)) meta = remapMetaTiles(meta, event.mapping)
+      take(entry.path, usedTiles(meta))
+    }
+  }
+  return { used, users }
+}
+
+/** The tiles this map's own tile layers use, leaving out the cells `skip` names on the active layer. */
+function tilesUsedHere(session: MapSession, skip?: (cell: number) => boolean): Set<number> {
+  const used = new Set<number>()
+  doc(session).layers.forEach((layer, index) => {
+    if (layer.kind !== 'tiles') return
+    layer.data.forEach((tile, cell) => {
+      if (index === session.activeLayer && skip?.(cell)) return
+      used.add(tile)
+    })
+  })
+  return used
+}
+
+/**
+ * Publishes a renumbered tileset the way a tile-editor delete does: the
+ * document through the store, the mapping on the reorder seam — live for the
+ * maps and metas that are open (this one included, via the listener above),
+ * logged for the ones that are not.
+ *
+ * This map's history restarts afterwards. Every earlier step names cells in
+ * the old numbering, and the seam has no way to take a renumbering back for
+ * the files that already followed it, so an undo across it would draw the
+ * wrong art. Same rule as promotion.
+ */
+function publishRenumbered(session: MapSession, next: TilesDoc, mapping: number[]): void {
+  const store = useTilesetStore()
+  const path = doc(session).tileset
+  publishTileset(session, next)
+  const event: TilesReorderEvent = { path, mapping, at: Date.now() }
+  store.appendReorder(path, event)
+  emitTilesReordered(event)
+  session.history = createHistory({ doc: doc(session) })
+  markDirty(session)
+  forgetTileNumbers(session)
+}
+
+/** What the tileset housekeeping buttons may do on this map, or why not. Null means go. */
+export function housekeepingBlocker(session: MapSession): string | null {
+  if (!session.tileset || !canPaint(session)) return 'This map has no pattern tileset.'
+  if (session.paintActive || session.preview) return 'Finish the stroke first.'
+  return null
+}
+
+/**
+ * Removes the tiles nothing uses and, with `merge`, folds together tiles that
+ * draw the same pixels — the cleanup painting needs, since a stroke drawn over
+ * or undone leaves its tiles behind and two strokes can mint the same art.
+ *
+ * "Nothing" is the whole project: every map and meta-tile over this tileset
+ * is read (`tilesUsedElsewhere`) and their tiles are kept, and the renumbering
+ * reaches all of them through the reorder seam, so no other file changes how
+ * it looks. Asks first, because it renumbers and this map's undo history
+ * restarts.
+ *
+ * A banked tileset cannot be renumbered that way — a bank's art sits at fixed
+ * hardware indices — so on one this rebuilds the banks from the screen
+ * instead (`rebuildBanks`), which removes and merges in one step.
+ */
+export async function removeUnusedTiles(session: MapSession, merge = false): Promise<void> {
+  const blocker = housekeepingBlocker(session)
+  if (blocker) {
+    session.status = blocker
+    return
+  }
+  if (isBanked(session.tileset!)) {
+    rebuildBanks(session)
+    return
+  }
+  const elsewhere = await tilesUsedElsewhere(session)
+  if (!elsewhere) return
+  // Re-read after the await: the tileset or the map may have moved on.
+  const tileset = session.tileset
+  if (!tileset || housekeepingBlocker(session)) return
+  const used = tilesUsedHere(session)
+  for (const tile of elsewhere.used) used.add(tile)
+  const result = compactTileset(tileset, used, { merge })
+  if (result.refused) {
+    session.status = result.refused
+    return
+  }
+  if (result.doc === tileset) {
+    session.status = merge ? 'No unused or duplicate tiles.' : 'No unused tiles.'
+    return
+  }
+  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+  const ask = [
+    result.removed ? `remove ${plural(result.removed, 'unused tile')}` : '',
+    result.merged ? `merge ${plural(result.merged, 'duplicate')}` : ''
+  ]
+    .filter(Boolean)
+    .join(' and ')
+  const done = [
+    result.removed ? `Removed ${plural(result.removed, 'unused tile')}` : '',
+    result.merged ? `${result.removed ? 'merged' : 'Merged'} ${plural(result.merged, 'duplicate')}` : ''
+  ]
+    .filter(Boolean)
+    .join(' and ')
+  const users = elsewhere.users.length
+  const others = users
+    ? ` ${plural(users, 'other file')} drawn with this tileset ${users === 1 ? 'is' : 'are'} renumbered to match and keep ${users === 1 ? 'its' : 'their'} art.`
+    : ''
+  const question = `${ask[0].toUpperCase()}${ask.slice(1)}? The tileset is renumbered.${others} This map's undo history starts over.`
+  if (!window.confirm(question)) return
+  publishRenumbered(session, result.doc, result.mapping)
+  session.status = `${done} — ${result.doc.count} tiles left.`
+}
+
+/**
+ * Repacks a banked screen's three banks from what the screen shows: unused
+ * art goes, identical art in a bank becomes one tile, and the shared meta-tile
+ * region stays where it is. Asks first — every bank index changes, so any
+ * other map drawn with this tileset would show wrong art, and the tileset's
+ * flags and named blocks are cleared, both naming tiles by number.
+ */
+export function rebuildBanks(session: MapSession): void {
+  const blocker = housekeepingBlocker(session) ?? repackBlocker(session)
+  if (blocker) {
+    session.status = blocker
+    return
+  }
+  if (!isBanked(session.tileset!)) {
+    session.status = 'This tileset is not banked.'
+    return
+  }
+  if (!window.confirm(REBUILD_PROMPT)) return
+  const { width, height, indices } = renderMapPixels(doc(session), session.tileset!, session.activeLayer)
+  const counts = repackBanked(session, indices, width, height)
+  if (counts) session.status = `Rebuilt — ${counts}.`
+}
+
+const REBUILD_CONSEQUENCES =
+  'Every bank index changes: any other map drawn with this tileset will show wrong art until it is ' +
+  "repainted, the tileset's named blocks and tile flags are cleared, and this map's undo history starts over."
+
+export const REBUILD_PROMPT =
+  'Rebuild the three banks from this screen? Unused tiles are dropped and identical ones merged. ' + REBUILD_CONSEQUENCES
+
+/**
+ * Puts a converted picture (`ImportImageDialog`'s result) onto the active
+ * layer, from the top-left corner, as tiles in this map's tileset.
+ *
+ * Tiles are found or appended exactly as painting does — matched by the pixels
+ * they draw, in the row's own bank on a banked tileset — so in the common case
+ * the import is one ordinary undo step and nothing is renumbered. When the
+ * tileset is too full for that, in order:
+ *
+ * 1. Unbanked: the tiles only the overwritten cells used are given back first
+ *    (the project-wide `removeUnusedTiles` rule, with those cells left out),
+ *    which renumbers — so it asks, and the undo history restarts.
+ * 2. Still no room, on a SCREEN 2/4 screen that could be banked, or one that
+ *    is banked already: offers to repack the screen, picture included, into
+ *    three banks.
+ * 3. Otherwise refuses, saying how far it got. Nothing is half-imported.
+ */
+export async function importPicture(session: MapSession, picture: Picture, mode: string): Promise<void> {
+  const blocker = housekeepingBlocker(session)
+  if (blocker) {
+    session.status = blocker
+    return
+  }
+  const tileset = session.tileset!
+  if (mode !== tileset.mode) {
+    session.status = `The image was converted for ${mode.toUpperCase()}, and this tileset is ${tileset.mode.toUpperCase()}.`
+    return
+  }
+  const current = doc(session)
+  const layer = current.layers[session.activeLayer]
+  if (!layer || layer.kind !== 'tiles') return
+
+  const base = renderMapPixels(current, tileset, session.activeLayer)
+  const pixels = composePicture(base, picture)
+  const { cols, rows } = pictureExtent(current, picture)
+  const covered = (cell: number): boolean => cell % current.width < cols && Math.floor(cell / current.width) < rows
+  const bankOf = paintBankOf(session) ?? undefined
+  const grid = { width: current.width, height: current.height, tiles: layer.data }
+
+  const direct = placePicture(grid, tileset, pixels, cols, rows, { bankOf })
+  if (!direct.refused) {
+    if (direct.tiles !== tileset) publishTileset(session, direct.tiles)
+    commitLayer(session, direct.grid.tiles, covered)
+    session.status = importReport(cols, rows, direct)
+    return
+  }
+
+  if (!isBanked(tileset)) {
+    const elsewhere = await tilesUsedElsewhere(session)
+    if (!elsewhere) return
+    if (session.tileset !== tileset || doc(session) !== current) {
+      session.status = 'The map changed while the import was checking the project — import again.'
+      return
+    }
+    const used = tilesUsedHere(session, covered)
+    for (const tile of elsewhere.used) used.add(tile)
+    const freed = compactTileset(tileset, used)
+    if (!freed.refused && freed.doc !== tileset) {
+      const remapped = { ...grid, tiles: layer.data.map((tile) => freed.mapping[tile] ?? tile) }
+      const placed = placePicture(remapped, freed.doc, pixels, cols, rows)
+      if (!placed.refused) {
+        const others = elsewhere.users.length ? ' Other files drawn with this tileset are renumbered to match.' : ''
+        if (
+          !window.confirm(
+            `To make room, ${freed.removed} tile${freed.removed === 1 ? '' : 's'} only the replaced cells used ` +
+              `will be removed and the tileset renumbered.${others} This map's undo history starts over. Import?`
+          )
+        ) {
+          return
+        }
+        // The renumbering restarts the history at the renumbered map; the
+        // import is then an ordinary step on top of it, undoable like any
+        // other — the cells `placed` computed are in the new numbering.
+        publishRenumbered(session, freed.doc, freed.mapping)
+        publishTileset(session, placed.tiles)
+        commitLayer(session, placed.grid.tiles, covered)
+        session.status = importReport(cols, rows, placed) + ` Freed ${freed.removed} unused.`
+        return
+      }
+    }
+  }
+
+  // Banks are the last resort: they need the whole 32×24 screen repacked.
+  const repack = repackBlocker(session)
+  if (repack !== null) {
+    session.status = `${direct.refused} ${repack}`
+    return
+  }
+  const prompt = isBanked(tileset)
+    ? `${direct.refused} Rebuild the three banks from the screen with the picture on it? ${REBUILD_CONSEQUENCES}`
+    : `${direct.refused} Switch this screen to banked (three banks of ${MAX_TILES}) and import it there? ${BANKING_CONSEQUENCES}`
+  if (!window.confirm(prompt)) {
+    session.status = direct.refused
+    return
+  }
+  const counts = repackBanked(session, pixels, base.width, base.height)
+  if (counts) session.status = `Imported ${cols}×${rows} cells into banks — ${counts}.`
+}
+
+/** One undoable step replacing the active layer's cells, dropping baked placements the import covered. */
+function commitLayer(session: MapSession, data: number[], covered: (cell: number) => boolean): void {
+  const current = doc(session)
+  const layer = current.layers[session.activeLayer]
+  const layers = current.layers.slice()
+  layers[session.activeLayer] = { ...layer, data }
+  const points: Point[] = []
+  data.forEach((_, cell) => {
+    if (covered(cell)) points.push({ x: cell % current.width, y: Math.floor(cell / current.width) })
+  })
+  const { doc: next } = withoutBakedAt({ ...current, layers }, session.activeLayer, points)
+  commit(session, next)
+}
+
+function importReport(cols: number, rows: number, result: { added: number; lossy: number }): string {
+  return (
+    `Imported ${cols}×${rows} cells — ${result.added} new tile${result.added === 1 ? '' : 's'}` +
+    (result.lossy ? `, ${result.lossy} cell${result.lossy === 1 ? '' : 's'} simplified to fit the colour rule.` : '.')
+  )
 }
 
 // ── selection / clipboard ───────────────────────────────────────────────

@@ -171,6 +171,40 @@ tileset shows wrong art until it is repainted**: nothing emits a
 their files are untouched, and their old-numbering cells are simply drawn
 against bank art. The prompt says so before the user accepts.
 
+**Tileset housekeeping.** Painting allocates as it goes and never gives a
+tile back: a stroke drawn over, undone or repainted leaves its old tiles
+behind, and two strokes can mint the same art twice. The paint sidebar's
+*Tiles* section closes that loop (`shared/msx/tile-compact.ts`, pure; wired in
+`map/session.ts`). "The same tile" means the same **pixels**, not bytes — ink
+on an all-ones pattern and paper on an all-zero one draw alike.
+
+- **Remove unused tiles** (`removeUnusedTiles`) and **Recalculate tiles**
+  (`removeUnusedTiles(session, true)`, which also merges duplicates) run
+  `compactTileset`. "Unused" is project-wide: `tilesUsedElsewhere` reads every
+  map and meta-tile over the tileset — an open tab's document over its file,
+  a closed file after replaying the reorders it has not seen — and refuses
+  outright if one cannot be read. A reserved tile 0, every tile a named block
+  references and the shared meta-tile region are always kept; tiles that look
+  alike but carry different flags are never merged. SCREEN 1 survivors are
+  placed group-aware, so no tile lands under another colour pair, and every
+  kept tile is checked to draw what it drew before. The mapping goes out on
+  the reorder seam, so every map and meta follows; this map's undo history
+  restarts (the seam cannot take a renumbering back). It asks first.
+- **Rebuild banks** (`rebuildBanks`) is the banked equivalent, since a bank's
+  art sits at fixed hardware indices the seam cannot renumber: render the
+  screen and repack it with `packBankedTiles`, the shared region handed in so
+  it keeps its indices. Same blockers as promotion (`repackBlocker`, which
+  `promotionBlocker` now delegates to), same consequences, asked first.
+- **Import image…** (`importPicture`) opens the shared import dialog locked to
+  the tileset's mode and fitted to the map, and places the result on the
+  active layer from the top-left. Tiles are found (by pixels) or appended
+  exactly as a fork stroke does — bank-local on a banked tileset — so in the
+  common case it is one ordinary undo step. If the tileset is too full: an
+  unbanked one first gives back the tiles only the overwritten cells used
+  (asks; renumbers; the import is still its own undo step on top), then, on a
+  screen `repackBlocker` allows, it offers to repack the screen with the
+  picture into banks. Otherwise it refuses, all or nothing.
+
 **What edit mode does to the shared tileset's undo.** The tileset store's
 rebase rule — adopt an outside change as a new present — was loss-free only
 while painting appended. Now that a stroke can rewrite a tile in place and a

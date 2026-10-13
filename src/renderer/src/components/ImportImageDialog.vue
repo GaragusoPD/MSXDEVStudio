@@ -14,10 +14,15 @@ import { useProjectStore } from '../stores/projectStore'
 import { useResourcesStore } from '../stores/resourcesStore'
 import Icon from './Icon.vue'
 
-const props = withDefaults(defineProps<{ mode?: ScreenMode; standalone?: boolean; fitWidth?: number; fitHeight?: number }>(), {
-  mode: 'sc2',
-  standalone: true
-})
+/** `lockMode`: the target already has a mode (a map's tileset), so converting for another one could only be refused. */
+const props = withDefaults(
+  defineProps<{ mode?: ScreenMode; standalone?: boolean; fitWidth?: number; fitHeight?: number; lockMode?: boolean }>(),
+  {
+    mode: 'sc2',
+    standalone: true,
+    lockMode: false
+  }
+)
 /** `file`/`mode` are extra (Spec 10): the screen editor needs the picked file's own bytes (to
  *  copy into the project as `source`) and which mode the dialog actually converted to, since
  *  the dropdown lets the user change it away from the `mode` prop. Existing single-arg
@@ -184,7 +189,10 @@ function use(): void {
         </label>
         <label>
           <span>Target mode</span>
-          <select v-model="importer.options.mode">
+          <select
+            v-model="importer.options.mode"
+            :disabled="lockMode"
+          >
             <option
               v-for="id in MODE_IDS"
               :key="id"
