@@ -7,6 +7,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-13
+
 ### Painting a tiled screen
 
 A SCREEN 1/2/4 screen — a tileset plus a map — can now be painted in pixels,
