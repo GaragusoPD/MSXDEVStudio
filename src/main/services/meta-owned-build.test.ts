@@ -5,7 +5,8 @@
  * links fine whatever its body names.
  *
  * - An indexed level: `_Expand()` over a tile layer in RAM, mixed sizes, a
- *   see-through cell, an animated torch on screen and one that only scrolls
+ *   see-through cell, meta-tiles stacked over each other (streamed, and as
+ *   overlay records), an animated torch on screen and one that only scrolls
  *   in later; the tileset's `_Animate()` driving the torches' window, and
  *   `_DrawMeta()` for a HUD. This is the ROM the openMSX pass boots
  *   (MSXDEVSTUDIO_KEEP_SCRATCH=1 keeps it).
@@ -17,7 +18,7 @@
 import { existsSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { addMetaRef, metaRefFrom, normalizeMap, placeMeta, setLayerIndexed, type MapDoc } from '../../shared/msx/map'
+import { addMetaRef, expandIndexedLayer, indexedLayerPlan, metaRefFrom, normalizeMap, placeMeta, setLayerIndexed, type MapDoc } from '../../shared/msx/map'
 import { normalizeOwnedMeta, resolveMeta, type OwnedMetaDoc } from '../../shared/msx/meta-owned'
 import { defaultExport, type ResourceDoc } from '../../shared/msx/resource'
 import { normalizeTiles, type TileEntry, type TilesDoc } from '../../shared/msx/tile'
@@ -111,10 +112,20 @@ describe.runIf(runsBuilds)('an indexed level of meta-tiles builds against real M
       // Torch A on screen from the start; torch B at x=50, on screen only once
       // the view scrolls 32 tiles right. Rocks and bricks between them.
       for (const [slot, x, y] of [
-        [1, 4, 10], [1, 50, 10], [0, 8, 14], [0, 40, 14], [2, 12, 16], [2, 16, 16], [2, 44, 16], [0, 20, 4]
+        [1, 4, 10], [1, 50, 10], [0, 8, 14], [0, 40, 14], [2, 12, 16], [2, 16, 16], [2, 44, 16], [0, 20, 4],
+        // Overlaps, each on top of what it covers. A brick across torch A's
+        // middle row: reading order already stacks it right, so it streams.
+        // A rock whose top-left torch A covers, and one over the first brick
+        // that reading order would put underneath it: both overlays.
+        [2, 3, 11], [0, 5, 12], [0, 13, 15]
       ] as const) {
         map = placeMeta(map, 1, slot, x, y)
       }
+      const plan = indexedLayerPlan(map, map.layers[1])
+      expect(plan.overlays.map((p) => [p.x, p.y])).toEqual([
+        [5, 12],
+        [13, 15]
+      ])
 
       const resources: Record<string, ResourceDoc> = {
         'tiles.tiles': { kind: 'tiles', doc: tiles },
@@ -161,6 +172,8 @@ void main(void)
 \t// tile numbers an emulator can read back from the name table.
 \tVDP_Poke_16K(g_Objects[10 * G_LEVEL_W + 4], g_ScreenLayoutLow + 23 * 32 + 10);
 \tVDP_Poke_16K(g_Objects[14 * G_LEVEL_W + 9], g_ScreenLayoutLow + 23 * 32 + 11);
+\t// ...and the rock stacked over torch A's foot: the rock's, not the torch's.
+\tVDP_Poke_16K(g_Objects[12 * G_LEVEL_W + 5], g_ScreenLayoutLow + 23 * 32 + 12);
 \tg_Tiles_AnimReset();
 \tu8 scroll = 0;
 \tu16 frame = 0;
@@ -181,9 +194,25 @@ void main(void)
       expectRom(output, root, 'indexedlevel')
       if (process.env.MSXDEVSTUDIO_KEEP_SCRATCH) {
         // What the openMSX pass checks the name table and patterns against.
+        // The view's 22 rows of name table at both scroll positions, as the
+        // editor's own expansion draws them.
+        const { tiles: expanded, objects } = expandIndexedLayer(map, map.layers[1], map.layers[0].data)
+        const view = (scroll: number): number[][] =>
+          Array.from({ length: 22 }, (_, row) => expanded.slice(row * 64 + scroll, row * 64 + scroll + 32))
         writeFileSync(
           join(root, 'expected.json'),
-          JSON.stringify({ metas: tiles.metas, windows: tiles.animations, count: tiles.count }, null, 2)
+          JSON.stringify(
+            {
+              metas: tiles.metas,
+              windows: tiles.animations,
+              count: tiles.count,
+              objects: [objects[10 * 64 + 4], objects[14 * 64 + 9], objects[12 * 64 + 5]],
+              view0: view(0),
+              view32: view(32)
+            },
+            null,
+            2
+          )
         )
       }
     },
