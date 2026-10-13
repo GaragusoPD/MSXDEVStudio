@@ -103,6 +103,11 @@ void DrawHUD()
  * SCREEN 2 banks, so that is 24 bytes a step to turn every coin on screen —
  * against 8 bytes *per coin* if each one were re-pointed at another tile, and
  * without a single name-table write.
+ *
+ * Patterns only, because every pose shares the coin slot's colours (0xB5 on
+ * every row). Recolour a pose and this must copy its colour bytes too
+ * (VDP_LoadColor_GM2) — which also writes the top third, so InitGame()'s HUD
+ * recolouring of T_COIN would have to be redone after it.
  */
 void SpinCoins()
 {

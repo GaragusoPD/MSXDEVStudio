@@ -7,6 +7,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent guide's tile-animation example copied the pattern but not the
+  colours.** In SCREEN 2/4 a tile's colours live in their own table, so a pose
+  in different colours showed its shape in the previous pose's colours. The
+  example now copies both (`VDP_LoadColor_GM2`, and `VDP_LoadBankColor_GM2` on a
+  banked tileset), says when the colour copy can be skipped and what it
+  overwrites, and covers SCREEN 1, which has one pattern table and no per-tile
+  colours. New projects pick this up in their generated `CLAUDE.md`/`AGENTS.md`;
+  `demo_msx1` notes why its own coin spin copies patterns only.
+
 ## [0.1.2] - 2026-10-13
 
 ### Painting a tiled screen

@@ -428,17 +428,46 @@ or not *Export ready-made C* is on:
 \`\`\`c
 // _Blocks[G_MYTILES_COIN_BASE + n] is pose n's own pattern-table index. The
 // map's coin cells hold pose 0's index (_Blocks[G_MYTILES_COIN_BASE]) — rewrite
-// that slot's pattern, never the cell, to animate every coin at once.
-VDP_LoadPattern_GM2(g_MyTiles_Patterns + g_MyTiles_Blocks[G_MYTILES_COIN_BASE + step] * 8,
-                     1, g_MyTiles_Blocks[G_MYTILES_COIN_BASE]);
+// that slot, never the cell, to animate every coin at once.
+const u8 slot = g_MyTiles_Blocks[G_MYTILES_COIN_BASE];
+const u8 pose = g_MyTiles_Blocks[G_MYTILES_COIN_BASE + step];
+VDP_LoadPattern_GM2(g_MyTiles_Patterns + pose * 8, 1, slot);
+VDP_LoadColor_GM2(g_MyTiles_Colors + pose * 8, 1, slot);
 \`\`\`
 
-That is 8 bytes into each of the three banks — 24 bytes, once — and every cell
-holding that pattern index animates, including the ones scrolled off screen.
-Re-pointing cells costs a name-table write per copy per step and leaves
-off-screen ones behind. The catch is that it is all-or-nothing: *every* cell
-showing that index animates, so anything that must hold still needs its own
-tile.
+**Copy the colours too.** In SCREEN 2/4 a tile is two 8-byte records — its
+pattern (which dots are ink) *and* its colours (the ink/paper pair of each
+row) — and they live in separate tables. Copying only the pattern draws the new
+pose's shape in the *old* pose's colours: harmless while every pose happens to
+share them, wrong the moment one doesn't. If you know they all share colours you
+may drop the second call and save half the cost; the moment a pose is recoloured
+in the tile editor, that shortcut becomes a bug nothing reports.
+
+That is 8 pattern + 8 colour bytes into each of the three banks — 48 bytes, once
+— and every cell holding that pattern index animates, including the ones
+scrolled off screen. Re-pointing cells costs a name-table write per copy per
+step and leaves off-screen ones behind. The catch is that it is all-or-nothing:
+*every* cell showing that index animates, so anything that must hold still
+needs its own tile.
+
+\`VDP_LoadColor_GM2\` writes all three thirds of the colour table. If your game
+deliberately recolours one third by hand (an icon that needs a different paper
+in the HUD), the colour copy overwrites that every step — either redo the
+recolouring after it, or keep the poses' colours identical and copy patterns
+only.
+
+**SCREEN 1 is the exception.** It has one pattern table, not three, and a tile
+has no colours of its own — eight consecutive tiles share one colour byte. Copy
+the pose's 8 pattern bytes straight into that table; every pose then shows in
+the colours of the *slot's* group, so draw the poses for that pair:
+
+\`\`\`c
+${
+  msx1
+    ? `VDP_WriteVRAM_16K(g_MyTiles_Patterns + pose * 8, g_ScreenPatternLow + slot * 8, 8);`
+    : `VDP_WriteVRAM(g_MyTiles_Patterns + pose * 8, g_ScreenPatternLow + slot * 8, g_ScreenPatternHigh, 8);`
+}
+\`\`\`
 
 A hand-picked literal (\`#define COIN_TILE 20\`) would compile and behave the
 same way — until the next tile reorder, which renumbers a map and \`_Blocks\`
@@ -457,6 +486,7 @@ Load only the bank that owns it instead — the index inside that bank's own
 
 \`\`\`c
 VDP_LoadBankPattern_GM2(g_MyTiles_Bank0_Patterns + (base + step) * 8, 1, 0, base);
+VDP_LoadBankColor_GM2(g_MyTiles_Bank0_Colors + (base + step) * 8, 1, 0, base);
 \`\`\`
 
 Pace it yourself — hold each pose for several frames (a counter in the VBlank

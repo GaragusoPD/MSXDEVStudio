@@ -84,6 +84,13 @@ bytes over the coin tile's slot with `VDP_LoadPattern_GM2`, which writes all
 three SCREEN 2 banks: 24 bytes turns *every* coin, on screen or not, HUD
 included. Re-pointing cells would cost a name-table write per coin per step.
 
+It copies the pattern **only**, and that is correct only because all four poses
+(tiles 32-35) share the coin slot's colours, `0xB5` on every row. A tile's
+colours live in a separate table; recolour a pose in the tile editor and
+`SpinCoins()` must also copy its 8 colour bytes (`VDP_LoadColor_GM2`) — and
+that call writes all three thirds, so it would undo the HUD coin's top-third
+recolouring (below) every step unless that is redone after it.
+
 **SCREEN 2 has three colour tables, one per third of the screen.** The same
 pattern can look different depending on where it sits. `InitGame()` exploits
 this to recolour pattern 6's top-third entry for the HUD coin without touching

@@ -38,8 +38,20 @@ describe('agentGuideFiles', () => {
 
   it('animates the pattern, not the map', () => {
     for (const machine of ['1', '2']) {
-      expect(guide(machine)).toContain('VDP_LoadPattern_GM2(g_MyTiles_Patterns +')
+      expect(guide(machine)).toContain('VDP_LoadPattern_GM2(g_MyTiles_Patterns + pose * 8, 1, slot);')
     }
+  })
+
+  it('copies a pose\'s colours along with its pattern', () => {
+    // SCREEN 2/4 keep a tile's colours in a table of their own: copying only the
+    // pattern draws the new pose's shape in the old pose's colours.
+    for (const machine of ['1', '2']) {
+      const text = guide(machine)
+      expect(text).toContain('VDP_LoadColor_GM2(g_MyTiles_Colors + pose * 8, 1, slot);')
+      expect(text).toContain('VDP_LoadBankColor_GM2(g_MyTiles_Bank0_Colors + (base + step) * 8, 1, 0, base);')
+    }
+    expect(guide('1')).toContain('VDP_WriteVRAM_16K(g_MyTiles_Patterns + pose * 8, g_ScreenPatternLow + slot * 8, 8);')
+    expect(guide('2')).toContain('g_ScreenPatternHigh, 8);')
   })
 
   it('follows the machine into the right sprite mode', () => {
