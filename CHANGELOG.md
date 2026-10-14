@@ -9,6 +9,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **Import sheet…** — cells from an asset-pack sheet (a PNG of tiles or
+  animation frames on a grid, the kind sold on itch.io) into a tileset, a map,
+  an animated tile, a meta-tile or a sprite sheet. The pixel scale, the
+  transparent colour and the grid — cell size, margin, gap — are guessed from
+  the image and can be corrected; a key colour is picked by clicking the
+  background. Pick cells by click, drag, Shift- and Ctrl-click; each row can
+  become its own animation or character. Sprites drawn in several colours are
+  split into stacked planes, per line in mode 2, and the result says how many
+  sprites a line of the character crosses. From the Resources panel, or from
+  the tile, map, pose and sprite editors for their own file.
+
 - **Select, move, cut, copy, paste and delete in the screen and map editors.**
   A new Select tool drags a rectangle — by the dot on a screen, by the cell on
   a map — and dragging inside it moves it (Ctrl+drag copies). What you move or

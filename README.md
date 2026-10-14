@@ -52,6 +52,9 @@ shipped in 1983.
 
 - **Tile editor** for SCREEN 1, 2 and 4 pattern modes, with per-row and
   per-group colors, and PNG import that converts an image into a tileset.
+  Asset-pack **sheets** import too: pick the cells of a PNG of tiles or frames —
+  gaps, margins, 2× art and a background colour handled — and send them to a
+  tileset, a map, an animated tile, a meta-tile or a sprite.
   Designs bigger than one tile — a door, a tree, a boss face — are drawn on
   **one canvas** as a named block, not as loose 8x8 cells you assemble in your
   head.

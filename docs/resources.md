@@ -266,6 +266,54 @@ frame, press Play to hear it. Start from a preset, or import `.afx`/`.afb`
 files from AYFX Editor. An effect's position in the list is the id you pass to
 `ayFX_PlayBank()`, so reordering renumbers them.
 
+## Importing a sheet
+
+Asset packs — the PNGs sold on itch.io and the like — come as **sheets**: tiles
+or animation frames on a grid, often with a margin and a gap between cells,
+often drawn at 2× or 3×, often on a flat background colour rather than real
+transparency. **Import sheet…** reads one of those and sends the cells you pick
+to a resource. Open it from the Resources panel, or from the tile, map, pose or
+sprite editor, which open it with their own file as the destination.
+
+1. **Pick the PNG.** The importer guesses the rest from the image — the **pixel
+   scale** (how many sheet pixels make one MSX dot), the **transparent colour**
+   (the PNG's alpha, or the background colour its corners share), and the
+   **grid**: cell size, margin and gap. Every guess is a field you can correct;
+   *Guess* reads them again.
+2. **Set the transparent colour** if the guess missed it: *Pick*, then click
+   the background. Alpha is always honoured too. *±* allows a little noise.
+3. **Pick the cells**: click one, drag over several, Shift+click to extend,
+   Ctrl+click to add or remove one. They are taken in reading order, which is
+   the order sheets are drawn in; empty cells are skipped unless you say
+   otherwise.
+4. **Choose where they go**, and check the result: the converted cells,
+   animated when they are frames, with what the conversion cost.
+
+| Into | Each cell becomes | Transparent dots |
+|---|---|---|
+| **Tileset** | Its 8×8 tiles, shared with any the tileset already has, and a **block** — so a 16×16 tile is one stamp on a map. A new tileset can also get a map laying the cells out as on the sheet. | Colour 0; a fully transparent tile is tile 0 when the tileset reserves it, as new ones do. |
+| **Map** | The selection floats over the map like an imported picture; drag it and press Enter. Its tiles are made in the map's tileset where it lands. | See-through: the map shows. |
+| **Animated tile** | A pose. The cell is the window, up to 16 tiles. | Colour 0. |
+| **Meta-tile** | A pose, up to 16×16 tiles. | A tile empty in every pose is a see-through cell. |
+| **Sprites** | A frame of a character; a frame bigger than a sprite is a metasprite grid. | Sprite colour 0. |
+
+For the animated kinds, **a file per row** (a character per row, for sprites)
+turns idle, walk and jump rows into separate animations in one import, named
+after the file and numbered. **Trim** cuts sprite frames to the box that holds
+the content of all of them — so a 20×24 figure in 32×32 cells is a 2×2
+metasprite only where it has to be — and meta-tiles to whole tiles of it.
+
+A sprite plane has one colour: per sprite in mode 1, per line in mode 2. The
+importer stacks planes for a figure drawn in several colours, up to **Max
+planes**, and gives any colour past that the nearest one kept. In mode 2 it
+hands out colours line by line, so a figure with six colours but never more
+than two on one line costs two planes. The result says how many sprites one line
+of the character crosses, against the 4 (MSX1) or 8 (MSX2) the VDP shows.
+
+Into an existing file the import is one undo step in that file's editor, which
+it opens; a new file is never written over one that exists. The dialog stays
+open afterwards, so the next row of the sheet can go somewhere else.
+
 ## Exporting
 
 Every editor has an **Export** block in its side panel:

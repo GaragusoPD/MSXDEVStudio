@@ -1,11 +1,39 @@
 # Importing sprite sheets and tilesets — design
 
 **Date:** 2026-10-14
-**Status:** proposed with the defaults below; phase 1 in progress.
+**Status:** phase 1 implemented with the defaults below — see *As built*.
+Phase 2 (bitmap modes) not started.
 **Scope:** one importer for the asset sheets people buy or download (itch.io
 packs and the like) — a PNG of tiles or animation frames on a grid — that cuts
 it into cells, takes a transparent colour, and sends the cells you pick to a
 resource: a tileset, a map, an animated tile, a meta-tile, or a sprite.
+
+## As built
+
+- **The grid guess** takes, in order: a common cell size whose every boundary
+  falls on empty lines (frames edge to edge on a transparent background); a
+  period whose gaps all fall on empty lines and fill the sheet exactly,
+  preferring the one with something in the most cells, then more gaps, equal
+  margins at both ends and figures centred in their cells — on a transparent
+  background the space beside a narrow figure passes for a gutter otherwise;
+  a strip of square frames; the commonest tile size. Each stays a field.
+- **A meta-tile's trim snaps to whole tiles** of the sheet's grid; a sprite's
+  is to the dot. Trimming a 16×16 coin to its 9×9 content and padding back to
+  tiles moved it off the grid it was drawn on and made a see-through cell of a
+  tile the coin covered.
+- **An untouched destination is replaced, not appended to**: a new file's
+  blank pose or blank sprite is a placeholder, not art. Its flags and export
+  settings are kept.
+- **Adding poses to a meta-tile** keeps a cell see-through only if the new
+  poses leave it empty too. SCREEN 1 poses joining a file take its ink and
+  paper.
+- **The dialog stays open** after an import and the editors' own status lines
+  report it, so a sheet's rows can go to several places in one sitting.
+- Verified: pure tests of the cutting and every destination (sprite frames
+  against the VDP composite, 20 random figures); the wiring against stubbed
+  files; the real app, each destination driven through the dialog; and an
+  imported mode-2 metasprite built with the real MSXgl and booted in openMSX,
+  where every dot of each frame matches the editor's composite.
 
 ## Why
 
