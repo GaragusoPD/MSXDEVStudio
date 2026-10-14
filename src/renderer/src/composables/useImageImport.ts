@@ -7,7 +7,7 @@
  * panel uses it standalone until they exist.
  */
 
-import { onUnmounted, reactive, ref, watch, type Ref } from 'vue'
+import { onUnmounted, reactive, ref, toRaw, watch, type Ref } from 'vue'
 import type { LossReport, PaletteChoice, DitherMode } from '../../../shared/msx/quantize'
 import { MODES, type ScreenMode } from '../../../shared/msx/modes'
 import type { Rgb } from '../../../shared/msx/palette'
@@ -99,7 +99,7 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
   const error = ref<string | null>(null)
   const options = reactive<ImportOptions>({
     mode: initial.mode ?? 'sc2',
-    palette: initial.palette ?? 'optimized',
+    palette: Array.isArray(initial.palette) ? [...initial.palette] : (initial.palette ?? 'optimized'),
     dither: initial.dither ?? 'none'
   })
 
@@ -139,12 +139,15 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
     // The worker consumes the buffer, so hand it a copy: the source stays live
     // for the "before" preview and for the next option change.
     const data = image.data.slice().buffer as ArrayBuffer
+    // `toRaw`: a locked palette is an array, and through the reactive proxy
+    // it is a Proxy — which structured clone refuses to post.
+    const raw = toRaw(options)
     const request: QuantizeRequest = {
       id: pending,
       width: image.width,
       height: image.height,
       data,
-      options: { ...options }
+      options: { ...raw, palette: Array.isArray(raw.palette) ? [...toRaw(raw.palette)] : raw.palette }
     }
     worker.postMessage(request, [data])
   }

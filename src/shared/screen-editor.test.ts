@@ -27,7 +27,10 @@ import {
   redo,
   retouchFillPoints,
   setPaletteEntry,
+  flattenScreen,
+  isBlankScreen,
   setRetouchPixel,
+  setScreenPixels,
   undo
 } from './screen-editor'
 
@@ -311,5 +314,66 @@ describe('paintScreen', () => {
     expect(paintScreen(doc, [{ x: 1, y: 1 }], 4)).toBe(doc)
     // And a point outside the picture is ignored rather than throwing.
     expect(paintScreen(doc, [{ x: 999, y: 999 }], 4)).toBe(doc)
+  })
+})
+
+/**
+ * A move or a paste writes a whole region at once, and has to land in the same
+ * place a pencil stroke would — or a converted picture loses it on the next
+ * reconversion, and a drawn one grows a retouch list it never needed.
+ */
+describe('setScreenPixels', () => {
+  function drawn(): ScreenDoc {
+    return { ...normalizeScreen({ mode: 'sc3' }), converted: blankConverted('sc3') }
+  }
+
+  it('writes a drawing straight into the picture', () => {
+    const doc = drawn()
+    const next = screenPixels(doc)!.indices
+    next[2 * 64 + 3] = 9
+    const out = setScreenPixels(doc, next)
+    expect(out.retouch).toEqual([])
+    expect(decodeIndices(out.converted!.indices)[2 * 64 + 3]).toBe(9)
+    expect(setScreenPixels(out, next)).toBe(out)
+  })
+
+  it('records a conversion as retouch, and forgets a pixel put back to what the conversion says', () => {
+    const doc = { ...drawn(), source: 'art/title.png' }
+    const next = screenPixels(doc)!.indices
+    next[0] = 5
+    next[1] = 6
+    const moved = setScreenPixels(doc, next)
+    expect(moved.retouch).toEqual([0, 0, 5, 1, 0, 6])
+    expect(decodeIndices(moved.converted!.indices)[0]).toBe(0)
+    // Moving it back restores the conversion's own pixel, so the entry goes.
+    next[0] = 0
+    expect(setScreenPixels(moved, next).retouch).toEqual([1, 0, 6])
+  })
+
+  it('refuses a buffer of the wrong size rather than writing a garbled picture', () => {
+    const doc = drawn()
+    expect(setScreenPixels(doc, new Uint8Array(3))).toBe(doc)
+  })
+})
+
+describe('flattenScreen', () => {
+  it('bakes the retouch into the picture and forgets the source', () => {
+    const doc = paintRetouch({ ...normalizeScreen({ mode: 'sc3' }), converted: blankConverted('sc3'), source: 'a.png' }, [{ x: 1, y: 1 }], 4)
+    const flat = flattenScreen(doc)
+    expect(flat.source).toBe('')
+    expect(flat.retouch).toEqual([])
+    expect(screenPixels(flat)!.indices).toEqual(screenPixels(doc)!.indices)
+  })
+
+  it('leaves a drawing alone', () => {
+    const doc = { ...normalizeScreen({ mode: 'sc3' }), converted: blankConverted('sc3') }
+    expect(flattenScreen(doc)).toBe(doc)
+  })
+
+  it('knows a blank screen from a drawn one', () => {
+    const doc = { ...normalizeScreen({ mode: 'sc3' }), converted: blankConverted('sc3') }
+    expect(isBlankScreen(normalizeScreen({ mode: 'sc3' }))).toBe(true)
+    expect(isBlankScreen(doc)).toBe(true)
+    expect(isBlankScreen(paintScreen(doc, [{ x: 0, y: 0 }], 1))).toBe(false)
   })
 })

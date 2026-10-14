@@ -2,8 +2,9 @@
 import type { MaterialSymbol } from '@material-symbols/font-400'
 /**
  * Spec 10 A — the `.map.json` editor tab: tile picker, map canvas
- * (stamp/fill/rect/erase, rect-select + copy/paste, flags mode, layer
- * visibility, zoom/grid/screen-outline), and undo/redo.
+ * (stamp/fill/rect/erase, select + move/cut/copy/paste, flags mode, layer
+ * visibility, zoom/grid/screen-outline), and undo/redo. Every shortcut of the
+ * map editor is here, on the window, so none of them fires twice.
  *
  * Registered for the `map.json` compound extension in `editors/bootstrap.ts`,
  * so the explorer opens maps here instead of in Monaco.
@@ -20,17 +21,24 @@ import MapSidePanel from './MapSidePanel.vue'
 import Icon from '../../components/Icon.vue'
 import { isTypingTarget } from '../../commands'
 import {
+  cancelFloat,
   canPaint,
   canRedo,
   canUndo,
+  clearSelection,
   copySelection,
+  cutSelection,
+  deleteSelectedPlacement,
   deleteSelection,
   doc,
+  dropFloat,
   mapSession,
+  nudgeSelection,
   pasteClipboard,
   pruneMapSessions,
   redo,
   saveSession,
+  selectAll,
   setMode,
   setPaintTool,
   setTool,
@@ -47,8 +55,23 @@ const TOOLS: { id: MapTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'stamp', icon: 'edit', title: 'Stamp — drag to paint the picked tile(s)' },
   { id: 'fill', icon: 'format_color_fill', title: 'Fill (flood)' },
   { id: 'rect', icon: 'rectangle', title: 'Rectangle' },
-  { id: 'erase', icon: 'ink_eraser', title: 'Erase' }
+  { id: 'erase', icon: 'ink_eraser', title: 'Erase' },
+  {
+    id: 'select',
+    icon: 'select',
+    title:
+      'Select — drag a rectangle, then drag inside it to move it with the meta-tiles on it (Ctrl+drag copies). ' +
+      'Arrows nudge it, Enter places it, Esc takes it back; Ctrl+X/C/V, Delete'
+  }
 ]
+
+/** The arrow keys' step, in cells: one, or eight with Shift. */
+const NUDGE: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1]
+}
 
 /**
  * The pixel tools, the meta editor's list verbatim — same icons, same names —
@@ -87,10 +110,11 @@ function onKeydown(event: KeyboardEvent): void {
   // Typing a filename in a side panel is not an editor shortcut.
   if (isTypingTarget(event)) return
   const active = session.value
-  // The cell shortcuts follow their buttons: Copy/Paste/Delete are hidden in
-  // paint mode, so the keys sit out too — a hidden control with a live
+  // The cell shortcuts follow their buttons: Cut/Copy/Paste/Delete are hidden
+  // in paint mode, so the keys sit out too — a hidden control with a live
   // shortcut is an asymmetry nobody can explain from the screen. Undo/redo
-  // stay, as their buttons do.
+  // stay, as their buttons do, and so does whatever handles a float: an
+  // imported picture floats in paint mode too, and needs placing.
   const cells = active.mode === 'tiles'
   if (event.ctrlKey) {
     const key = event.key.toLowerCase()
@@ -103,11 +127,33 @@ function onKeydown(event: KeyboardEvent): void {
       redo(active)
     } else if (key === 'c' && cells) {
       copySelection(active)
+    } else if (key === 'x' && cells) {
+      cutSelection(active)
     } else if (key === 'v' && cells) {
       pasteClipboard(active)
+    } else if (key === 'a' && cells) {
+      event.preventDefault()
+      selectAll(active)
     }
-  } else if ((event.key === 'Delete' || event.key === 'Backspace') && cells) {
-    deleteSelection(active)
+    return
+  }
+  const step = NUDGE[event.key]
+  if (step && (active.float || (cells && active.tool === 'select' && active.selection))) {
+    event.preventDefault()
+    const size = event.shiftKey ? 8 : 1
+    nudgeSelection(active, step[0] * size, step[1] * size)
+  } else if (event.key === 'Enter' && active.float) {
+    event.preventDefault()
+    void dropFloat(active)
+  } else if (event.key === 'Escape') {
+    if (active.float) cancelFloat(active)
+    else if (cells) clearSelection(active)
+  } else if (event.key === 'Delete' || event.key === 'Backspace') {
+    // A selected meta-tile first: it is the more specific of the two things
+    // a Delete could mean, and the one the user clicked last.
+    if (active.float) deleteSelection(active)
+    else if (cells && active.selectedPlacement !== null) deleteSelectedPlacement(active)
+    else if (cells) deleteSelection(active)
   }
 }
 
@@ -202,27 +248,52 @@ onMounted(() => void resourcesStore.refresh())
           <span class="sep" />
           <button
             type="button"
+            title="Cut the selection (Ctrl+X)"
+            :disabled="!session.selection"
+            @click="cutSelection(session)"
+          >
+            <Icon name="content_cut" />
+          </button>
+          <button
+            type="button"
             title="Copy the selection (Ctrl+C)"
             :disabled="!session.selection"
             @click="copySelection(session)"
           >
-            Copy
+            <Icon name="content_copy" />
           </button>
           <button
             type="button"
-            title="Paste as the stamp brush (Ctrl+V)"
+            title="Paste — it floats until you drag it into place and press Enter (Ctrl+V)"
             :disabled="!session.clipboard"
             @click="pasteClipboard(session)"
           >
-            Paste
+            <Icon name="content_paste" />
           </button>
           <button
             type="button"
-            title="Clear the selection (Delete)"
+            title="Clear the selection to tile 0 (Delete)"
             :disabled="!session.selection"
             @click="deleteSelection(session)"
           >
-            Delete
+            <Icon name="delete" />
+          </button>
+        </template>
+        <!-- A float can be an imported picture in paint mode too, so these sit outside the tiles-only group. -->
+        <template v-if="session.float">
+          <button
+            type="button"
+            title="Put it down here (Enter)"
+            @click="dropFloat(session)"
+          >
+            Place
+          </button>
+          <button
+            type="button"
+            title="Take it back (Esc)"
+            @click="cancelFloat(session)"
+          >
+            Cancel
           </button>
         </template>
 

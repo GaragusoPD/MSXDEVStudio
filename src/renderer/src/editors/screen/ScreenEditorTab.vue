@@ -9,12 +9,12 @@
  * `editors/bootstrap.ts`, so the explorer opens screens here instead of in
  * Monaco. Conversion itself runs in the renderer (Spec 07's rule — main can't
  * decode PNGs); `ImportImageDialog` + its quantize worker do the heavy work,
- * this tab just persists the result.
+ * and the result floats over the canvas until it is dragged into place.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
-import type { ScreenMode } from '../../../../shared/msx/modes'
+import { isBlankScreen } from '../../../../shared/screen-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import ScreenCanvas from './ScreenCanvas.vue'
@@ -24,16 +24,24 @@ import Icon from '../../components/Icon.vue'
 import {
   canRedo,
   canUndo,
+  cancelFloat,
   clearRetouchAction,
+  clearSelection,
+  copySelection,
+  cutSelection,
+  deleteSelection,
   doc,
-  importSource,
+  dropFloat,
+  importImage,
+  nudgeSelection,
+  pasteClipboard,
   pruneScreenSessions,
   redo,
   saveSession,
   screenSession,
+  selectAll,
   startBlank,
-  undo,
-  type ScreenSession
+  undo
 } from './session'
 
 const tabsStore = useTabsStore()
@@ -59,23 +67,57 @@ async function exportNow(): Promise<void> {
   await resourcesStore.exportOne(session.value.path)
 }
 
-async function onImported(result: ImportResult, file: File | null, mode: ScreenMode): Promise<void> {
-  await importSource(session.value, result, file, mode)
+function onImported(result: ImportResult): void {
+  importImage(session.value, result)
   importVisible.value = false
+}
+
+/** The arrow keys' step, in pixels: one, or a character cell with Shift. */
+const NUDGE: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1]
 }
 
 function onKeydown(event: KeyboardEvent): void {
   // Typing a filename in a side panel is not an editor shortcut.
   if (isTypingTarget(event)) return
-  if (!event.ctrlKey) return
-  const key = event.key.toLowerCase()
-  // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.
-  if (key === 'z' && !event.shiftKey) {
+  const active = session.value
+  if (event.ctrlKey) {
+    const key = event.key.toLowerCase()
+    // Ctrl+S is EditorArea's, for every tab kind — see `commands.ts`.
+    if (key === 'z' && !event.shiftKey) {
+      event.preventDefault()
+      undo(active)
+    } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+      event.preventDefault()
+      redo(active)
+    } else if (key === 'c') {
+      copySelection(active)
+    } else if (key === 'x') {
+      cutSelection(active)
+    } else if (key === 'v') {
+      pasteClipboard(active)
+    } else if (key === 'a') {
+      event.preventDefault()
+      selectAll(active)
+    }
+    return
+  }
+  const step = NUDGE[event.key]
+  if (step && active.tool === 'select' && (active.float || active.selection)) {
     event.preventDefault()
-    undo(session.value)
-  } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+    const size = event.shiftKey ? 8 : 1
+    nudgeSelection(active, step[0] * size, step[1] * size)
+  } else if (event.key === 'Delete' || event.key === 'Backspace') {
+    deleteSelection(active)
+  } else if (event.key === 'Enter' && active.float) {
     event.preventDefault()
-    redo(session.value)
+    dropFloat(active)
+  } else if (event.key === 'Escape') {
+    if (active.float) cancelFloat(active)
+    else clearSelection(active)
   }
 }
 
@@ -90,9 +132,6 @@ watch(
   { immediate: true }
 )
 
-function sourceButtonLabel(active: ScreenSession): string {
-  return doc(active).source ? 'Replace source image…' : 'Import source image…'
-}
 </script>
 
 <template>
@@ -107,17 +146,69 @@ function sourceButtonLabel(active: ScreenSession): string {
       <div class="toolbar">
         <button
           type="button"
+          title="Convert an image and paste it onto the screen — drag it into place before it lands"
           @click="importVisible = true"
         >
-          {{ sourceButtonLabel(session) }}
+          Import image…
         </button>
         <button
+          v-if="doc(session).source"
           type="button"
           title="Drop every retouch pixel, back to the raw conversion"
           @click="clearRetouchAction(session)"
         >
           Clear retouch
         </button>
+
+        <span class="sep" />
+        <button
+          type="button"
+          title="Cut the selection (Ctrl+X)"
+          :disabled="!session.selection && !session.float"
+          @click="cutSelection(session)"
+        >
+          <Icon name="content_cut" />
+        </button>
+        <button
+          type="button"
+          title="Copy the selection (Ctrl+C)"
+          :disabled="!session.selection && !session.float"
+          @click="copySelection(session)"
+        >
+          <Icon name="content_copy" />
+        </button>
+        <button
+          type="button"
+          title="Paste — it floats until you drag it into place and press Enter (Ctrl+V)"
+          :disabled="!session.clipboard"
+          @click="pasteClipboard(session)"
+        >
+          <Icon name="content_paste" />
+        </button>
+        <button
+          type="button"
+          title="Clear the selection to colour 0 (Delete)"
+          :disabled="!session.selection && !session.float"
+          @click="deleteSelection(session)"
+        >
+          <Icon name="delete" />
+        </button>
+        <template v-if="session.float">
+          <button
+            type="button"
+            title="Put the floating pixels down here (Enter)"
+            @click="dropFloat(session)"
+          >
+            Place
+          </button>
+          <button
+            type="button"
+            title="Take the floating pixels back (Esc)"
+            @click="cancelFloat(session)"
+          >
+            Cancel
+          </button>
+        </template>
 
         <span class="sep" />
         <button
@@ -176,11 +267,11 @@ function sourceButtonLabel(active: ScreenSession): string {
         <template v-if="doc(session).mode === 'sc3'">
           SCREEN 3 is 64×48 blocks of 4×4 dots with no colour clash, on any machine —
           draw here with the pencil, line, rectangle and fill tools, or import an image
-          and it is reduced to fit. Cut named fragments for software-sprite frames.
+          and it is reduced to fit. Name fragments for software-sprite frames.
         </template>
         <template v-else>
-          Bitmap screens are for the MSX2 modes (SCREEN 5–12): import a source image,
-          then retouch the conversion with the pencil/fill tools and palette panel.
+          Bitmap screens are for the MSX2 modes (SCREEN 5–12): import an image and drag it
+          into place, then retouch it with the pencil/fill tools and palette panel.
           For MSX1 full-screen art, either switch this to SCREEN 3 and draw, or draw a
           tileset in the tile editor and place it in a map — a 32×24 map is one screen.
         </template>
@@ -227,12 +318,18 @@ function sourceButtonLabel(active: ScreenSession): string {
       </p>
     </template>
 
+    <!-- The screen has a mode and a size; the picture is converted into both,
+         and to the colours already on it unless the user picks otherwise. -->
     <ImportImageDialog
       v-if="importVisible"
       :mode="doc(session).mode"
       :fit-width="doc(session).width"
       :fit-height="doc(session).height"
       :standalone="false"
+      lock-mode
+      :current-palette="doc(session).converted?.palette ?? null"
+      :prefer-current="!isBlankScreen(doc(session))"
+      use-label="Place this image"
       @close="importVisible = false"
       @imported="onImported"
     />

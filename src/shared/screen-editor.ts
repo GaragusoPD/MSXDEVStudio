@@ -99,6 +99,62 @@ export function paintScreen(doc: ScreenDoc, points: readonly Point[], color: num
   return { ...doc, converted: { ...doc.converted, indices: encodeIndices(indices) } }
 }
 
+/**
+ * Makes the picture show `next` — a whole `width × height` index buffer, as
+ * `screenPixels` would return it — through the same channel a pencil stroke
+ * uses (`paintScreen`'s rule): straight into `converted` on a drawing, as
+ * retouch pixels on a conversion, so a moved or pasted region survives
+ * re-running the conversion like any other stroke does.
+ *
+ * On a conversion only the pixels that differ from what is shown are touched,
+ * and a pixel put back to what the conversion itself says loses its retouch
+ * entry rather than gaining one — so moving something there and back again
+ * leaves the file as it was. Built in one pass with an index, because a moved
+ * region is tens of thousands of pixels and `setRetouchPixel` scans the list.
+ */
+export function setScreenPixels(doc: ScreenDoc, next: Uint8Array): ScreenDoc {
+  const shown = screenPixels(doc)
+  if (!doc.converted || !shown || next.length !== shown.indices.length) return doc
+  const { width } = doc.converted
+  if (!doc.source) {
+    if (next.every((value, i) => value === shown.indices[i])) return doc
+    return { ...doc, retouch: [], converted: { ...doc.converted, indices: encodeIndices(next) } }
+  }
+  const base = decodeIndices(doc.converted.indices)
+  const entries = new Map<number, number>()
+  for (let i = 0; i + 2 < doc.retouch.length; i += 3) entries.set(doc.retouch[i + 1] * width + doc.retouch[i], doc.retouch[i + 2])
+  let changed = false
+  for (let at = 0; at < next.length; at++) {
+    if (next[at] === shown.indices[at]) continue
+    changed = true
+    if (next[at] === base[at]) entries.delete(at)
+    else entries.set(at, next[at])
+  }
+  if (!changed) return doc
+  const retouch: number[] = []
+  for (const [at, color] of entries) retouch.push(at % width, Math.floor(at / width), color)
+  return { ...doc, retouch }
+}
+
+/**
+ * Turns a conversion into a drawing: the retouch baked into the picture and
+ * the source forgotten. What pasting an imported image onto a screen does
+ * first — the result is no longer what any one source converts to, so there
+ * is nothing left to re-run.
+ */
+export function flattenScreen(doc: ScreenDoc): ScreenDoc {
+  const shown = screenPixels(doc)
+  if (!doc.converted || !shown) return doc.source ? { ...doc, source: '' } : doc
+  if (!doc.source && !doc.retouch.length) return doc
+  return { ...doc, source: '', retouch: [], converted: { ...doc.converted, indices: encodeIndices(shown.indices) } }
+}
+
+/** True when there is no picture yet, or every pixel of it is colour 0 — nothing a new palette would repaint. */
+export function isBlankScreen(doc: ScreenDoc): boolean {
+  const shown = screenPixels(doc)
+  return !shown || shown.indices.every((value) => value === 0)
+}
+
 /** 4-connected flood over the doc's currently rendered pixels (conversion + retouch already applied). */
 export function retouchFillPoints(doc: ScreenDoc, start: Point): Point[] {
   const pixels = screenPixels(doc)

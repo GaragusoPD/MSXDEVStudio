@@ -9,11 +9,13 @@ import {
   clearRect,
   copyRect,
   createHistory,
+  dropMapFloat,
   eraseCells,
   floodPoints,
   normalizeSelection,
   paintValue,
   pendingReorders,
+  placementsInside,
   pushHistory,
   redo,
   removeLayer,
@@ -26,9 +28,11 @@ import {
   toggleLayerVisible,
   toolPoints,
   undo,
+  withoutBakedIn,
   type MapEntry,
   type Stamp
 } from './map-editor'
+import { liftFloat } from './floating'
 
 /** A `width`×`height` map with one background layer, all cells 0. */
 function mapDoc(width = 4, height = 4, tileset = 'art/main.tiles.json'): MapDoc {
@@ -156,6 +160,78 @@ describe('rectangular select + copy/paste', () => {
     doc = paintValue(doc, 0, [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }], 9)
     const cleared = clearRect(doc, 0, { x: 0, y: 0, width: 2, height: 2 })
     expect(cleared.layers[0].data.every((v) => v === 0)).toBe(true)
+  })
+})
+
+describe('floating selection on a map', () => {
+  /** A 6×4 map with tiles 1..4 in its top-left 2×2 and two 1×1 metas: one inside that block, one outside. */
+  function placed(baked = false): MapDoc {
+    return normalizeMap({
+      tileset: 'art/main.tiles.json',
+      width: 6,
+      height: 4,
+      metas: [{ path: 'res/a.meta-tiles.json', name: 'a', width: 1, height: 1 }],
+      layers: [
+        {
+          name: 'bg',
+          kind: 'tiles',
+          visible: true,
+          data: [1, 2, 0, 0, 0, 0, 3, 4, 0, 0, 0, 0, ...new Array(12).fill(0)],
+          placements: [
+            { slot: 0, x: 1, y: 1, baked },
+            { slot: 0, x: 4, y: 0, baked }
+          ]
+        }
+      ]
+    })
+  }
+
+  it('moves the tiles and every meta-tile wholly inside the selection with them', () => {
+    const doc = placed()
+    const float = { ...liftFloat(doc.layers[0].data, 6, 4, { x: 0, y: 0, width: 2, height: 2 }), x: 3, y: 2 }
+    const { doc: next, lost } = dropMapFloat(doc, 0, float)
+    expect(lost).toBe(0)
+    expect(next.layers[0].data.slice(0, 2)).toEqual([0, 0])
+    expect(next.layers[0].data.slice(2 * 6 + 3, 2 * 6 + 5)).toEqual([1, 2])
+    expect(next.layers[0].data.slice(3 * 6 + 3, 3 * 6 + 5)).toEqual([3, 4])
+    expect(next.layers[0].placements).toEqual([
+      { slot: 0, x: 4, y: 3 },
+      { slot: 0, x: 4, y: 0 }
+    ])
+    expect(placementsInside(doc, 0, { x: 0, y: 0, width: 2, height: 2 })).toEqual([0])
+  })
+
+  it('carries tiles only on a copy-drag, like the clipboard', () => {
+    const doc = placed()
+    const float = { ...liftFloat(doc.layers[0].data, 6, 4, { x: 0, y: 0, width: 2, height: 2 }, true), x: 3, y: 2 }
+    const { doc: next } = dropMapFloat(doc, 0, float)
+    expect(next.layers[0].data[0]).toBe(1)
+    expect(next.layers[0].placements).toEqual(doc.layers[0].placements)
+  })
+
+  it('removes a carried meta-tile whose corner lands off the map, and says so', () => {
+    const doc = placed()
+    // As far right as the canvas lets it go: one column still on the map, the meta's column past the edge.
+    const float = { ...liftFloat(doc.layers[0].data, 6, 4, { x: 0, y: 0, width: 2, height: 2 }), x: 5, y: 0 }
+    const { doc: next, lost } = dropMapFloat(doc, 0, float)
+    expect(lost).toBe(1)
+    expect(next.layers[0].placements).toEqual([{ slot: 0, x: 4, y: 0 }])
+  })
+
+  it('keeps the record of a baked meta-tile it carries, and drops the ones it writes over', () => {
+    const doc = placed(true)
+    // Lands on the second meta's cell: (4,0) is inside the 2×2 the float now covers at (3,0).
+    const float = { ...liftFloat(doc.layers[0].data, 6, 4, { x: 0, y: 0, width: 2, height: 2 }), x: 3, y: 0 }
+    const { doc: next, dropped } = dropMapFloat(doc, 0, float)
+    expect(dropped).toBe(1)
+    expect(next.layers[0].placements).toEqual([{ slot: 0, x: 4, y: 1, baked: true }])
+  })
+
+  it('drops the baked records a cleared rectangle wiped, and only those', () => {
+    const doc = placed(true)
+    const cleared = clearRect(doc, 0, { x: 4, y: 0, width: 1, height: 1 })
+    expect(cleared.layers[0].placements).toEqual([{ slot: 0, x: 1, y: 1, baked: true }])
+    expect(withoutBakedIn(doc, 0, [{ x: 5, y: 3, width: 1, height: 1 }]).dropped).toBe(0)
   })
 })
 

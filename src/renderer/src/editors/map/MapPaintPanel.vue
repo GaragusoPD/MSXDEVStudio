@@ -16,7 +16,7 @@ import type { ImportResult } from '../../composables/useImageImport'
 import {
   declinePromotion,
   doc,
-  importPicture,
+  floatPicture,
   paintBudgetLabel,
   PROMOTION_PROMPT,
   promoteToBanked,
@@ -44,8 +44,9 @@ async function run(action: () => Promise<void> | void): Promise<void> {
   }
 }
 
+/** The picture floats over the map; dropping it is what turns it into tiles (`dropFloat`). */
 function onImported(result: ImportResult, _file: File | null, mode: ScreenMode): void {
-  void run(() => importPicture(props.session, result, mode))
+  floatPicture(props.session, result, mode)
 }
 
 /** The tileset's own palette — programmable on V9938, the fixed MSX1 set otherwise — read as the tile editor reads it. */
@@ -124,7 +125,7 @@ const budget = computed(() => paintBudgetLabel(props.session))
         <button
           type="button"
           :disabled="busy"
-          title="Convert a picture to this tileset's mode and place it on the active layer, from the top-left corner."
+          title="Convert a picture to this tileset's mode and drag it into place on the active layer — it becomes tiles when you drop it (Enter, or click outside it)."
           @click="importing = true"
         >
           Import image…
@@ -196,6 +197,7 @@ const budget = computed(() => paintBudgetLabel(props.session))
       :fit-height="doc(session).height * TILE_SIZE"
       :standalone="false"
       lock-mode
+      use-label="Place this image"
       @close="importing = false"
       @imported="onImported"
     />

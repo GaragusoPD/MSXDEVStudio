@@ -13,32 +13,42 @@
  * Paint mode is a second input path with its own component, `MapPaintLayer`,
  * mounted over the canvas only while it is live. The cell handlers below step
  * aside whenever the mode is not `'tiles'`, so the two can never both fire.
+ *
+ * A float is the exception to both: it is handled here first, in either mode,
+ * and the paint layer stands down while one exists — an imported picture
+ * floats in paint mode, and a click there has to place it, not paint under it.
+ * The keyboard shortcuts live in `MapEditorTab.vue`, on the window, once.
  */
 import { computed, ref, watch, watchEffect } from 'vue'
 import { SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
+import { TILE_SIZE } from '../../../../shared/msx/tile'
 import { MODES } from '../../../../shared/msx/modes'
 import { type Point } from '../../../../shared/map-editor'
 import { rectPoints } from '../../../../shared/tile-editor'
 import { metaThumbnail } from './sheet'
 import MapPaintLayer from './MapPaintLayer.vue'
+import { rectContains } from '../../../../shared/floating'
+import type { Picture } from '../../../../shared/msx/tile-compact'
 import {
   bankSheetOffset,
   clearSelection,
-  copySelection,
-  deleteSelection,
-  deleteSelectedPlacement,
+  displayDoc,
   dragPoints,
   doc,
+  dropFloat,
   fillAt,
   finishDrag,
+  liftSelection,
+  mapFloatRect,
   metaRowOffsets,
+  moveFloatTo,
   movePlacementTo,
   painting,
   paintDrag,
-  pasteClipboard,
   placeMetaAt,
   selectPlacementAt,
   setSelection,
+  setViewOrigin,
   sheet,
   type MapSession
 } from './session'
@@ -55,6 +65,10 @@ let origin: Point | null = null
 let last: Point | null = null
 let selecting = false
 let selectAnchor: Point | null = null
+/** Set while a float is being dragged: where in it the pointer took hold. */
+let floatGrab: Point | null = null
+/** Whether the pointer is over something the select tool would drag — the cursor says so. */
+const overSelection = ref(false)
 
 /**
  * One screenful, in map cells — what the outline overlay steps by. A name-table
@@ -77,19 +91,52 @@ const screenSpan = computed(() => {
   return { cols: tiles.cols, rows: tiles.rows }
 })
 
-function cellAt(event: PointerEvent): Point {
+/** The cell under the pointer, unclamped: a captured drag can leave the canvas, and a float may follow it off the edge. */
+function rawCellAt(event: PointerEvent): Point {
   const rect = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
   const current = doc(props.session)
-  const x = Math.floor(((event.clientX - rect.left) / rect.width) * current.width)
-  const y = Math.floor(((event.clientY - rect.top) / rect.height) * current.height)
+  return {
+    x: Math.floor(((event.clientX - rect.left) / rect.width) * current.width),
+    y: Math.floor(((event.clientY - rect.top) / rect.height) * current.height)
+  }
+}
+
+function cellAt(event: PointerEvent): Point {
+  const current = doc(props.session)
+  const { x, y } = rawCellAt(event)
   return { x: Math.min(current.width - 1, Math.max(0, x)), y: Math.min(current.height - 1, Math.max(0, y)) }
 }
 
 function onDown(event: PointerEvent): void {
-  if (props.session.mode !== 'tiles') return
   const cell = cellAt(event)
+  const float = props.session.float
+  // A float takes the press in either mode: inside it, a grab; outside, it
+  // lands — and that is all the click does, so it never paints under it.
+  if (float) {
+    ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
+    if (rectContains(mapFloatRect(float), cell)) {
+      floatGrab = { x: cell.x - float.x, y: cell.y - float.y }
+      return
+    }
+    void dropFloat(props.session)
+    if (props.session.mode !== 'tiles' || props.session.tool !== 'select') return
+  }
+  if (props.session.mode !== 'tiles') return
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
   if (event.shiftKey) {
+    selecting = true
+    selectAnchor = cell
+    setSelection(props.session, cell, cell)
+    return
+  }
+  // The select tool: inside the selection, lift it (a copy with Ctrl or Alt)
+  // and drag; anywhere else, start a new one.
+  if (props.session.tool === 'select') {
+    const selection = props.session.selection
+    if (!props.session.float && selection && rectContains(selection, cell) && liftSelection(props.session, event.ctrlKey || event.altKey)) {
+      floatGrab = { x: cell.x - selection.x, y: cell.y - selection.y }
+      return
+    }
     selecting = true
     selectAnchor = cell
     setSelection(props.session, cell, cell)
@@ -123,6 +170,16 @@ function onDown(event: PointerEvent): void {
 }
 
 function onMove(event: PointerEvent): void {
+  if (floatGrab) {
+    const at = rawCellAt(event)
+    moveFloatTo(props.session, { x: at.x - floatGrab.x, y: at.y - floatGrab.y })
+    return
+  }
+  const float = props.session.float
+  if (float || props.session.tool === 'select') {
+    const rect = float ? mapFloatRect(float) : props.session.selection
+    overSelection.value = rect !== null && rectContains(rect, cellAt(event))
+  }
   if (props.session.mode !== 'tiles') return
   const cell = cellAt(event)
   if (selecting && selectAnchor) {
@@ -142,7 +199,11 @@ function onMove(event: PointerEvent): void {
   last = cell
 }
 
-function onUp(): void {
+function onUp(event: PointerEvent): void {
+  if (floatGrab) {
+    floatGrab = null
+    return
+  }
   if (props.session.mode !== 'tiles') return
   if (draggingPlacement) {
     draggingPlacement = false
@@ -150,6 +211,12 @@ function onUp(): void {
     return
   }
   if (selecting) {
+    // With the select tool, a click is "select nothing"; Shift+click keeps
+    // its old meaning, the one cell.
+    const cell = cellAt(event)
+    if (props.session.tool === 'select' && !event.shiftKey && selectAnchor && cell.x === selectAnchor.x && cell.y === selectAnchor.y) {
+      clearSelection(props.session)
+    }
     selecting = false
     selectAnchor = null
     return
@@ -178,24 +245,51 @@ watch(
     grab = null
     selecting = false
     selectAnchor = null
+    floatGrab = null
   }
 )
 
-function onKeydown(event: KeyboardEvent): void {
-  // Cell shortcuts, like the cell pointer handlers above: they sit out in paint
-  // mode, where the toolbar hides their buttons (`MapEditorTab.vue` guards its
-  // window-level copies the same way).
-  if (props.session.mode !== 'tiles') return
-  if (!event.ctrlKey) {
-    if ((event.key === 'Delete' || event.key === 'Backspace') && props.session.selectedPlacement !== null) {
-      deleteSelectedPlacement(props.session)
-    } else if (event.key === 'Delete' || event.key === 'Backspace') deleteSelection(props.session)
-    else if (event.key === 'Escape') clearSelection(props.session)
-    return
+/**
+ * Keeps the session's idea of what is in view current, so a paste or an
+ * import appears where the user is looking rather than at a corner they may
+ * have scrolled far away from. The pane's padding is the 12px before cell 0.
+ */
+function onScroll(event: Event): void {
+  const pane = event.currentTarget as HTMLElement
+  const zoom = props.session.zoom
+  // The first cell wholly in view, so a paste starts where it can be seen whole.
+  setViewOrigin(props.session, {
+    x: Math.max(0, Math.ceil((pane.scrollLeft - 12) / zoom)),
+    y: Math.max(0, Math.ceil((pane.scrollTop - 12) / zoom))
+  })
+}
+
+/**
+ * A floating picture, drawn once into a canvas of its own and then scaled onto
+ * the map at wherever the float stands — rebuilt only when the picture itself
+ * changes, not on every step of a drag. Index 0 is see-through, as it will be
+ * when the picture lands.
+ */
+let pictureCache: { picture: Picture; canvas: HTMLCanvasElement } | null = null
+function pictureCanvas(picture: Picture, rgb: readonly { r: number; g: number; b: number }[]): HTMLCanvasElement | null {
+  if (pictureCache?.picture === picture) return pictureCache.canvas
+  const element = document.createElement('canvas')
+  element.width = picture.width
+  element.height = picture.height
+  const ctx = element.getContext('2d')
+  if (!ctx) return null
+  const image = ctx.createImageData(picture.width, picture.height)
+  for (let i = 0; i < picture.width * picture.height; i++) {
+    const index = picture.indices[i] ?? 0
+    const color = rgb[index] ?? { r: 255, g: 0, b: 255 }
+    image.data[i * 4] = color.r
+    image.data[i * 4 + 1] = color.g
+    image.data[i * 4 + 2] = color.b
+    image.data[i * 4 + 3] = index === 0 ? 0 : 255
   }
-  const key = event.key.toLowerCase()
-  if (key === 'c') copySelection(props.session)
-  else if (key === 'v') pasteClipboard(props.session)
+  ctx.putImageData(image, 0, 0)
+  pictureCache = { picture, canvas: element }
+  return element
 }
 
 const stage = computed(() => {
@@ -206,7 +300,9 @@ const stage = computed(() => {
 watchEffect(() => {
   const element = canvas.value
   if (!element) return
-  const current = doc(props.session)
+  // The map with any floating block of cells already dropped in, so a move
+  // looks exactly as it will once it lands.
+  const current = displayDoc(props.session)
   const zoom = props.session.zoom
   element.width = current.width * zoom
   element.height = current.height * zoom
@@ -269,6 +365,20 @@ watchEffect(() => {
     })
   }
 
+  const floating = props.session.float
+  if (floating?.kind === 'picture') {
+    const art = pictureCanvas(floating.picture, floating.rgb)
+    if (art) {
+      ctx.drawImage(
+        art,
+        floating.x * zoom,
+        floating.y * zoom,
+        (floating.picture.width * zoom) / TILE_SIZE,
+        (floating.picture.height * zoom) / TILE_SIZE
+      )
+    }
+  }
+
   if (rectPreview.value.length) {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.35)'
     for (const p of rectPreview.value) ctx.fillRect(p.x * zoom, p.y * zoom, zoom, zoom)
@@ -308,10 +418,12 @@ watchEffect(() => {
     }
   }
 
-  if (props.session.selection) {
-    const s = props.session.selection
+  // A float is outlined where it stands — off the edge too, where the canvas clips it.
+  const outline = floating ? mapFloatRect(floating) : props.session.selection
+  if (outline) {
+    const s = outline
     ctx.setLineDash([4, 4])
-    ctx.strokeStyle = '#ffffff'
+    ctx.strokeStyle = floating ? '#ffd24e' : '#ffffff'
     ctx.lineWidth = 2
     ctx.strokeRect(s.x * zoom + 1, s.y * zoom + 1, s.width * zoom - 2, s.height * zoom - 2)
     ctx.setLineDash([])
@@ -323,7 +435,7 @@ watchEffect(() => {
   <div
     class="canvas-pane"
     tabindex="0"
-    @keydown="onKeydown"
+    @scroll="onScroll"
   >
     <div
       class="stage"
@@ -332,6 +444,7 @@ watchEffect(() => {
       <canvas
         ref="canvas"
         class="map-canvas"
+        :class="{ movable: overSelection && (session.float !== null || session.tool === 'select') }"
         @pointerdown="onDown"
         @pointermove="onMove"
         @pointerup="onUp"
@@ -344,7 +457,7 @@ watchEffect(() => {
         they agree about which maps offer it and when.
       -->
       <MapPaintLayer
-        v-if="painting(session)"
+        v-if="painting(session) && !session.float"
         :session="session"
       />
     </div>
@@ -371,5 +484,9 @@ watchEffect(() => {
   border: 1px solid var(--color-border);
   touch-action: none;
   cursor: crosshair;
+}
+
+.map-canvas.movable {
+  cursor: move;
 }
 </style>

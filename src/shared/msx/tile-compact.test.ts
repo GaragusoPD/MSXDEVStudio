@@ -180,7 +180,14 @@ describe('cellEntry', () => {
 
 describe('pictures', () => {
   it('pictureExtent covers partial cells and clips to the grid', () => {
-    expect(pictureExtent({ width: 4, height: 4 }, { width: 12, height: 40, indices: [] })).toEqual({ cols: 2, rows: 4 })
+    expect(pictureExtent({ width: 4, height: 4 }, { width: 12, height: 40, indices: [] })).toEqual({ x: 0, y: 0, cols: 2, rows: 4 })
+  })
+
+  it('pictureExtent starts where the picture was dropped and clips at every edge', () => {
+    const picture = { width: 24, height: 16, indices: [] }
+    expect(pictureExtent({ width: 10, height: 10 }, picture, { x: 3, y: 2 })).toEqual({ x: 3, y: 2, cols: 3, rows: 2 })
+    expect(pictureExtent({ width: 10, height: 10 }, picture, { x: 8, y: 9 })).toEqual({ x: 8, y: 9, cols: 2, rows: 1 })
+    expect(pictureExtent({ width: 10, height: 10 }, picture, { x: -2, y: -1 })).toEqual({ x: 0, y: 0, cols: 1, rows: 1 })
   })
 
   it('composePicture keeps the base where the picture does not reach', () => {
@@ -189,6 +196,20 @@ describe('pictures', () => {
     expect(out[0]).toBe(3)
     expect(out[4]).toBe(7)
     expect(out[16 * 2]).toBe(7)
+  })
+
+  it('composePicture lays the picture at an offset, clipped, and lets the see-through value show the base', () => {
+    const base = { width: 16, height: 8, indices: new Uint8Array(128).fill(7) }
+    const indices = new Uint8Array([3, 0, 3, 3])
+    const out = composePicture(base, { width: 2, height: 2, indices }, { x: 15, y: 7 }, 0)
+    // Only the top-left dot of the picture lands on the base.
+    expect(out[7 * 16 + 15]).toBe(3)
+    expect([...out].filter((v) => v === 3)).toHaveLength(1)
+    const holes = composePicture(base, { width: 2, height: 2, indices }, { x: 4, y: 2 }, 0)
+    expect(holes[2 * 16 + 4]).toBe(3)
+    expect(holes[2 * 16 + 5]).toBe(7)
+    // Without a see-through value, 0 is just a colour.
+    expect(composePicture(base, { width: 2, height: 2, indices }, { x: 4, y: 2 })[2 * 16 + 5]).toBe(0)
   })
 })
 
@@ -226,6 +247,18 @@ describe('placePicture', () => {
     const grid = { width: 3, height: 1, tiles: [9, 9, 9] }
     const result = placePicture(grid, tiles, solid(3, 1, () => 4), 2, 1)
     expect(result.grid.tiles[2]).toBe(9)
+  })
+
+  it('places the block at the origin it is given, and nowhere else', () => {
+    const tiles = normalizeTiles({ mode: 'sc2', count: 1 })
+    const grid = { width: 4, height: 3, tiles: new Array(12).fill(9) }
+    // The whole-grid rendering: cell (2,1) solid 5, everything else 0.
+    const pic = solid(4, 3, (cx, cy) => (cx === 2 && cy === 1 ? 5 : 0))
+    const result = placePicture(grid, tiles, pic, 1, 1, { origin: { x: 2, y: 1 } })
+    expect(result.refused).toBeUndefined()
+    expect(result.added).toBe(1)
+    expect(result.grid.tiles.filter((t) => t !== 9)).toHaveLength(1)
+    expect(tilePixels(result.tiles, result.grid.tiles[1 * 4 + 2]).every((v) => v === 5)).toBe(true)
   })
 
   it('is all or nothing when the tileset runs out', () => {

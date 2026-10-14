@@ -14,6 +14,11 @@
  * sibling key on the saved `.map.json`, read/written around `normalizeMap`).
  * Live reorders (while both files happen to be open) are applied immediately
  * via `onTilesReordered`, one subscription for every open map session.
+ *
+ * The selection can float (`shared/floating.ts`): a moved block of cells, a
+ * paste, or an imported picture waiting to be dragged to where it lands. It
+ * stays on the session, off the undo stack, until it is dropped as one step;
+ * `displayDoc` is what the canvas draws meanwhile.
  */
 
 import { shallowReactive } from 'vue'
@@ -72,6 +77,8 @@ import {
 import { compactTileset, composePicture, pictureExtent, placePicture, type Picture } from '../../../../shared/msx/tile-compact'
 import { defaultExport, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { screenPixels } from '../../../../shared/msx/screen'
+import type { Rgb } from '../../../../shared/msx/palette'
+import { clampFloat, clipRect, floatRect, liftFloat, placeFloat, type Float } from '../../../../shared/floating'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
 import {
   addLayer as addLayerPure,
@@ -81,6 +88,7 @@ import {
   clearRect,
   copyRect,
   createHistory,
+  dropMapFloat,
   eraseCells,
   floodPoints,
   normalizeSelection,
@@ -175,7 +183,7 @@ export interface MapSession {
   activeLayer: number
   tool: MapTool
   filledRect: boolean
-  /** The stamp the stamp/paste tool places; `brushTile` is what fill/rect/flood use (its top-left tile). */
+  /** The stamp the stamp tool places; `brushTile` is what fill/rect/flood use (its top-left tile). */
   brush: Stamp
   /** Index into the tileset's `blocks` when the brush came from a named block; null when it came from the picker. */
   brushBlock: number | null
@@ -206,7 +214,14 @@ export interface MapSession {
   gridVisible: boolean
   screenOutline: boolean
   selection: Rect | null
-
+  /**
+   * What floats over the active layer until it is dropped: lifted cells (a
+   * move), the clipboard (a paste), or a converted picture (an import, which
+   * only turns into tiles when it lands). Never part of `doc()`.
+   */
+  float: MapFloat | null
+  /** The cell at the top-left of the visible part of the canvas — where a paste or an import first appears. */
+  viewOrigin: Point
 
   status: string
   /**
@@ -289,6 +304,8 @@ export function mapSession(path: string): MapSession {
     gridVisible: true,
     screenOutline: true,
     selection: null,
+    float: null,
+    viewOrigin: { x: 0, y: 0 },
     status: '',
     preview: null,
     mode: 'tiles',
@@ -698,6 +715,11 @@ onTilesReordered((event) => {
     const { doc: next } = replayReorders(doc(session), [event], null)
     commit(session, next)
     session.tilesetReorderSeen = event.at
+    // A floating block holds tile numbers too, and it lands in the new numbering.
+    const float = session.float
+    if (float?.kind === 'cells') {
+      session.float = { ...float, clip: { ...float.clip, values: Array.from(float.clip.values, (tile) => event.mapping[tile] ?? tile) } }
+    }
   }
 })
 
@@ -753,6 +775,9 @@ onMetaRemoved((event) => {
 provideOpenMaps(() => [...sessions.values()].map((session) => ({ path: session.path, doc: doc(session) })))
 
 export async function saveSession(session: MapSession): Promise<void> {
+  // What is on the canvas is what gets saved — a float left hanging would be
+  // in the picture the user saw and not in the file.
+  await dropFloat(session)
   const content: SavedMap = { ...doc(session) }
   if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
   await window.api.invoke('fs:write', { path: session.path, content: serializeResource({ kind: 'map', doc: content }) })
@@ -794,6 +819,8 @@ export function commit(session: MapSession, next: MapDoc, tileEdits?: TileEdit[]
  * be set separately and forgotten.
  */
 export async function setTileset(session: MapSession, tilesetPath: string): Promise<void> {
+  // A floating block is tile numbers in the old tileset; it lands before they change meaning.
+  await dropFloat(session)
   const kind = resourceKindOf(tilesetPath)
   const bitmap = kind === 'screen' || kind === 'btiles'
   const current = doc(session)
@@ -955,7 +982,9 @@ export function metaRowOffsets(session: MapSession, baseRow: number | null, heig
 
 // ── tool state ───────────────────────────────────────────────────────────
 
+/** Leaving the select tool puts down whatever floats, so a moved block never outlives the tool that moves it. */
 export function setTool(session: MapSession, tool: MapTool): void {
+  if (tool !== 'select') void dropFloat(session)
   session.tool = tool
 }
 
@@ -965,6 +994,9 @@ export function pickTile(session: MapSession, index: number, indices: number[], 
   session.brush = stamp
   session.brushBlock = null
   session.brushMeta = null
+  // Picking something to paint with is asking to paint: the select tool would
+  // turn the next click into a selection instead.
+  if (session.tool === 'select') setTool(session, 'stamp')
 }
 
 /** The blocks of whichever tileset is loaded. Both kinds carry the same type. */
@@ -986,8 +1018,8 @@ export function pickBlock(session: MapSession, index: number): void {
   session.pickerActive = block.tiles[0] ?? 0
   session.pickerSelection = [...new Set(block.tiles)]
   session.brushBlock = index
-  // Same as pasting: the brush is loaded, now the user clicks to place it.
-  session.tool = 'stamp'
+  // The brush is loaded; now the user clicks to place it.
+  setTool(session, 'stamp')
 }
 
 // ── painting on the map canvas ───────────────────────────────────────────
@@ -1071,6 +1103,7 @@ export function dragPoints(tool: 'stamp' | 'erase' | 'rect', from: Point, to: Po
  * bookkeeping on the mode change (`MapCanvas.vue`).
  */
 export function setMode(session: MapSession, mode: 'tiles' | 'paint'): void {
+  void dropFloat(session)
   finishDrag(session)
   endPaint(session)
   session.mode = mode
@@ -1106,6 +1139,7 @@ export function painting(session: MapSession): boolean {
 }
 
 export function setPaintTool(session: MapSession, tool: TileTool): void {
+  void dropFloat(session)
   session.paintTool = tool
 }
 
@@ -1793,7 +1827,10 @@ export const REBUILD_PROMPT =
 
 /**
  * Puts a converted picture (`ImportImageDialog`'s result) onto the active
- * layer, from the top-left corner, as tiles in this map's tileset.
+ * layer with its top-left at cell `at`, as tiles in this map's tileset. The
+ * editor reaches it by dropping the float `floatPicture` makes; `transparent`
+ * is the index that leaves the screen under it alone (the import's see-through
+ * pixels, 0). Resolves to whether the picture landed.
  *
  * Tiles are found or appended exactly as painting does — matched by the pixels
  * they draw, in the row's own bank on a banked tileset — so in the common case
@@ -1808,49 +1845,61 @@ export const REBUILD_PROMPT =
  *    three banks.
  * 3. Otherwise refuses, saying how far it got. Nothing is half-imported.
  */
-export async function importPicture(session: MapSession, picture: Picture, mode: string): Promise<void> {
+export async function importPicture(
+  session: MapSession,
+  picture: Picture,
+  mode: string,
+  at: Point = { x: 0, y: 0 },
+  transparent: number | null = null
+): Promise<boolean> {
   const blocker = housekeepingBlocker(session)
   if (blocker) {
     session.status = blocker
-    return
+    return false
   }
   const tileset = session.tileset!
   if (mode !== tileset.mode) {
     session.status = `The image was converted for ${mode.toUpperCase()}, and this tileset is ${tileset.mode.toUpperCase()}.`
-    return
+    return false
   }
   const current = doc(session)
   const layer = current.layers[session.activeLayer]
-  if (!layer || layer.kind !== 'tiles') return
+  if (!layer || layer.kind !== 'tiles') return false
 
   const base = renderMapPixels(current, tileset, session.activeLayer)
-  const pixels = composePicture(base, picture)
-  const { cols, rows } = pictureExtent(current, picture)
-  const covered = (cell: number): boolean => cell % current.width < cols && Math.floor(cell / current.width) < rows
+  const pixels = composePicture(base, picture, { x: at.x * TILE_SIZE, y: at.y * TILE_SIZE }, transparent)
+  const { x: x0, y: y0, cols, rows } = pictureExtent(current, picture, at)
+  if (!cols || !rows) return false
+  const origin = { x: x0, y: y0 }
+  const covered = (cell: number): boolean => {
+    const cx = cell % current.width
+    const cy = Math.floor(cell / current.width)
+    return cx >= x0 && cy >= y0 && cx < x0 + cols && cy < y0 + rows
+  }
   const bankOf = paintBankOf(session) ?? undefined
   const grid = { width: current.width, height: current.height, tiles: layer.data }
 
-  const direct = placePicture(grid, tileset, pixels, cols, rows, { bankOf })
+  const direct = placePicture(grid, tileset, pixels, cols, rows, { bankOf, origin })
   if (!direct.refused) {
     if (direct.tiles !== tileset) publishTileset(session, direct.tiles)
     commitLayer(session, direct.grid.tiles, covered)
     session.status = importReport(cols, rows, direct)
-    return
+    return true
   }
 
   if (!isBanked(tileset)) {
     const elsewhere = await tilesUsedElsewhere(session)
-    if (!elsewhere) return
+    if (!elsewhere) return false
     if (session.tileset !== tileset || doc(session) !== current) {
       session.status = 'The map changed while the import was checking the project — import again.'
-      return
+      return false
     }
     const used = tilesUsedHere(session, covered)
     for (const tile of elsewhere.used) used.add(tile)
     const freed = compactTileset(tileset, used)
     if (!freed.refused && freed.doc !== tileset) {
       const remapped = { ...grid, tiles: layer.data.map((tile) => freed.mapping[tile] ?? tile) }
-      const placed = placePicture(remapped, freed.doc, pixels, cols, rows)
+      const placed = placePicture(remapped, freed.doc, pixels, cols, rows, { origin })
       if (!placed.refused) {
         const others = elsewhere.users.length ? ' Other files drawn with this tileset are renumbered to match.' : ''
         if (
@@ -1859,7 +1908,7 @@ export async function importPicture(session: MapSession, picture: Picture, mode:
               `will be removed and the tileset renumbered.${others} This map's undo history starts over. Import?`
           )
         ) {
-          return
+          return false
         }
         // The renumbering restarts the history at the renumbered map; the
         // import is then an ordinary step on top of it, undoable like any
@@ -1868,7 +1917,7 @@ export async function importPicture(session: MapSession, picture: Picture, mode:
         publishTileset(session, placed.tiles)
         commitLayer(session, placed.grid.tiles, covered)
         session.status = importReport(cols, rows, placed) + ` Freed ${freed.removed} unused.`
-        return
+        return true
       }
     }
   }
@@ -1877,17 +1926,51 @@ export async function importPicture(session: MapSession, picture: Picture, mode:
   const repack = repackBlocker(session)
   if (repack !== null) {
     session.status = `${direct.refused} ${repack}`
-    return
+    return false
   }
   const prompt = isBanked(tileset)
     ? `${direct.refused} Rebuild the three banks from the screen with the picture on it? ${REBUILD_CONSEQUENCES}`
     : `${direct.refused} Switch this screen to banked (three banks of ${MAX_TILES}) and import it there? ${BANKING_CONSEQUENCES}`
   if (!window.confirm(prompt)) {
     session.status = direct.refused
-    return
+    return false
   }
   const counts = repackBanked(session, pixels, base.width, base.height)
   if (counts) session.status = `Imported ${cols}×${rows} cells into banks — ${counts}.`
+  return counts !== null
+}
+
+/**
+ * `ImportImageDialog`'s `@imported` handler: the converted picture floats over
+ * the map, at the top-left of what is in view, to be dragged to where it goes.
+ * Nothing is decided until it is dropped — the tiles, the budget, the offer to
+ * bank — because only then is it known which cells the picture covers.
+ */
+export function floatPicture(session: MapSession, picture: Picture & { rgb: Rgb[] }, mode: string): void {
+  const blocker = housekeepingBlocker(session)
+  if (blocker) {
+    session.status = blocker
+    return
+  }
+  if (mode !== session.tileset!.mode) {
+    session.status = `The image was converted for ${mode.toUpperCase()}, and this tileset is ${session.tileset!.mode.toUpperCase()}.`
+    return
+  }
+  if (refuseIndexed(session)) return
+  void dropFloat(session)
+  const current = doc(session)
+  const cols = Math.ceil(picture.width / TILE_SIZE)
+  const rows = Math.ceil(picture.height / TILE_SIZE)
+  const float: PictureFloat = {
+    kind: 'picture',
+    picture: { width: picture.width, height: picture.height, indices: picture.indices },
+    rgb: picture.rgb,
+    mode,
+    ...clampFloat(pasteCorner(session), cols, rows, current.width, current.height)
+  }
+  session.float = float
+  session.selection = mapFloatRect(float)
+  session.status = 'Drag the picture into place, then press Enter or click outside it. Esc cancels.'
 }
 
 /** One undoable step replacing the active layer's cells, dropping baked placements the import covered. */
@@ -1911,50 +1994,221 @@ function importReport(cols: number, rows: number, result: { added: number; lossy
   )
 }
 
-// ── selection / clipboard ───────────────────────────────────────────────
+// ── selection / clipboard / the floating selection ─────────────────────
+
+/** A converted picture floating over the map, in dots, with its top-left at cell `x`, `y`. */
+export interface PictureFloat {
+  kind: 'picture'
+  picture: Picture
+  /** The colours the dialog converted it with, to draw it in while it floats. */
+  rgb: Rgb[]
+  mode: string
+  x: number
+  y: number
+}
+
+export type MapFloat = ({ kind: 'cells' } & Float) | PictureFloat
+
+/** Where a float stands, in cells — a picture covers every cell it reaches into. */
+export function mapFloatRect(float: MapFloat): Rect {
+  if (float.kind === 'cells') return floatRect(float)
+  return {
+    x: float.x,
+    y: float.y,
+    width: Math.ceil(float.picture.width / TILE_SIZE),
+    height: Math.ceil(float.picture.height / TILE_SIZE)
+  }
+}
+
+/**
+ * What the canvas draws: the map with a floating block of cells dropped where
+ * it stands, meta-tiles it carries included. A floating picture is not tiles
+ * yet, so it is drawn over the top instead (`MapCanvas.vue`).
+ */
+export function displayDoc(session: MapSession): MapDoc {
+  const current = doc(session)
+  const float = session.float
+  return float?.kind === 'cells' ? dropMapFloat(current, session.activeLayer, float).doc : current
+}
+
+/** The canvas reports the cell at the top-left of what is in view as it scrolls. UI state, not a history step. */
+export function setViewOrigin(session: MapSession, origin: Point): void {
+  if (origin.x !== session.viewOrigin.x || origin.y !== session.viewOrigin.y) session.viewOrigin = origin
+}
+
+/** Where a paste or an import first appears: the selection's corner, or else the top-left of what is in view. */
+function pasteCorner(session: MapSession): Point {
+  return session.selection ? { x: session.selection.x, y: session.selection.y } : session.viewOrigin
+}
 
 export function setSelection(session: MapSession, a: Point, b: Point): void {
   session.selection = normalizeSelection(doc(session), a, b)
 }
 
 export function clearSelection(session: MapSession): void {
+  void dropFloat(session)
   session.selection = null
 }
 
-export function copySelection(session: MapSession): void {
+export function selectAll(session: MapSession): void {
+  void dropFloat(session)
+  const current = doc(session)
+  session.selection = { x: 0, y: 0, width: current.width, height: current.height }
+  session.tool = 'select'
+}
+
+/**
+ * Lifts the selection on the active layer into a float, ready to be dragged.
+ * `copy` leaves the original where it is (a Ctrl-drag). Refused on an indexed
+ * layer, whose grid is not its content.
+ */
+export function liftSelection(session: MapSession, copy = false): boolean {
+  if (session.float) return session.float.kind === 'cells'
+  if (!session.selection || refuseIndexed(session)) return false
   const current = doc(session)
   const layer = current.layers[session.activeLayer]
-  if (!layer || !session.selection) return
-  session.clipboard = copyRect(current, layer, session.selection)
+  if (!layer) return false
+  session.float = { kind: 'cells', ...liftFloat(layer.data, current.width, current.height, session.selection, copy) }
+  return true
+}
+
+/** Moves the float so its top-left is at `at`, keeping a row and a column of it on the map. */
+export function moveFloatTo(session: MapSession, at: Point): void {
+  const float = session.float
+  if (!float) return
+  const rect = mapFloatRect(float)
+  const current = doc(session)
+  const next = clampFloat(at, rect.width, rect.height, current.width, current.height)
+  if (next.x === float.x && next.y === float.y) return
+  session.float = { ...float, ...next }
+  session.selection = mapFloatRect(session.float)
+}
+
+/** The arrow keys: lifts the selection if it is not floating yet, then moves it. */
+export function nudgeSelection(session: MapSession, dx: number, dy: number): void {
+  if (!session.float && !liftSelection(session)) return
+  const float = session.float!
+  moveFloatTo(session, { x: float.x + dx, y: float.y + dy })
+}
+
+/**
+ * Puts the float down as one undo step.
+ *
+ * Cells go through `dropMapFloat`, which carries the meta-tiles a move took
+ * along and drops the baked records it overwrote. A picture goes through
+ * `importPicture` at the cell it was dropped on — and when that refuses, or
+ * the user declines what it asks, the picture stays afloat to be moved or
+ * taken back, rather than vanishing with the work of placing it.
+ */
+export async function dropFloat(session: MapSession): Promise<void> {
+  const float = session.float
+  if (!float) return
+  // Cleared first: a second Enter while an import is still asking must not land it twice.
+  session.float = null
+  const current = doc(session)
+  if (float.kind === 'picture') {
+    const placed = await importPicture(session, float.picture, float.mode, { x: float.x, y: float.y }, 0)
+    // Selected where it landed, ready to be moved again — in tiles mode, the
+    // one with a tool that can; paint mode has no use for a selection box.
+    if (placed) session.selection = session.mode === 'tiles' ? clipRect(mapFloatRect(float), current.width, current.height) : null
+    else if (!session.float) session.float = float
+    return
+  }
+  session.selection = clipRect(floatRect(float), current.width, current.height)
+  if (float.from && float.x === float.from.x && float.y === float.from.y) return
+  const { doc: next, dropped, lost } = dropMapFloat(current, session.activeLayer, float)
+  commit(session, next)
+  if (dropped || lost) {
+    session.selectedPlacement = null
+    const notes: string[] = []
+    if (lost) notes.push(`${lost} meta-tile${lost === 1 ? '' : 's'} went off the edge and ${lost === 1 ? 'was' : 'were'} removed`)
+    if (dropped) notes.push(`${dropped} baked meta-tile${dropped === 1 ? ' was' : 's were'} written over and lost ${dropped === 1 ? 'its' : 'their'} record`)
+    session.status = `Moved — ${notes.join('; ')}.`
+  }
+}
+
+/** Takes the float back: a move returns to where it was, a paste or an import is gone. Nothing reaches the undo stack. */
+export function cancelFloat(session: MapSession): void {
+  const float = session.float
+  if (!float) return
+  session.float = null
+  session.selection = float.kind === 'cells' ? float.from : null
+  session.status = ''
+}
+
+export function copySelection(session: MapSession): void {
+  const float = session.float
+  if (float?.kind === 'picture') return
+  if (float) {
+    session.clipboard = { width: float.clip.width, height: float.clip.height, tiles: Array.from(float.clip.values) }
+  } else {
+    const current = doc(session)
+    const layer = current.layers[session.activeLayer]
+    if (!layer || !session.selection) return
+    session.clipboard = copyRect(current, layer, session.selection)
+  }
   session.status = `Copied ${session.clipboard.width}×${session.clipboard.height}`
 }
 
-/** Loads the clipboard as the current brush and switches to the stamp tool — the user then clicks to place it. */
-export function pasteClipboard(session: MapSession): void {
-  if (!session.clipboard) return
-  session.brush = session.clipboard
-  session.brushBlock = null
-  session.tool = 'stamp'
-}
-
+/**
+ * Clears the selection to tile 0. On a lifted float, that keeps the hole it
+ * left and throws the cells away; a paste or an import had nothing under it,
+ * so it is just taken back.
+ */
 export function deleteSelection(session: MapSession): void {
+  const float = session.float
+  if (float) {
+    session.float = null
+    session.selection = null
+    if (float.kind === 'cells' && float.from) commit(session, clearRect(doc(session), session.activeLayer, float.from))
+    return
+  }
   if (!session.selection || refuseIndexed(session)) return
   commit(session, clearRect(doc(session), session.activeLayer, session.selection))
+}
+
+export function cutSelection(session: MapSession): void {
+  if (session.float?.kind === 'picture' || (!session.float && !session.selection)) return
+  if (!session.float && refuseIndexed(session)) return
+  copySelection(session)
+  deleteSelection(session)
+}
+
+/**
+ * The clipboard as a float, at the selection's corner (or the top-left of
+ * what is in view), to be dragged into place. Switches to the select tool,
+ * which is the one that drags it.
+ */
+export function pasteClipboard(session: MapSession, at?: Point): void {
+  const clip = session.clipboard
+  if (!clip || refuseIndexed(session)) return
+  void dropFloat(session)
+  const current = doc(session)
+  session.float = {
+    kind: 'cells',
+    ...placeFloat({ width: clip.width, height: clip.height, values: clip.tiles }, at ?? pasteCorner(session), current.width, current.height)
+  }
+  session.selection = mapFloatRect(session.float)
+  session.tool = 'select'
+  session.status = 'Pasted — drag it into place, then press Enter or click outside it.'
 }
 
 // ── layers ───────────────────────────────────────────────────────────────
 
 export function addLayer(session: MapSession): void {
+  void dropFloat(session)
   commit(session, addLayerPure(doc(session), `layer_${doc(session).layers.length}`))
 }
 
 export function removeLayer(session: MapSession, index: number): void {
+  void dropFloat(session)
   commit(session, removeLayerPure(doc(session), index))
   if (session.activeLayer >= doc(session).layers.length) session.activeLayer = doc(session).layers.length - 1
 }
 
 /** Keeps the selection on the layer the user was editing, wherever it landed. */
 export function reorderLayer(session: MapSession, from: number, to: number): void {
+  void dropFloat(session)
   const active = doc(session).layers[session.activeLayer]
   commit(session, reorderLayerPure(doc(session), from, to))
   session.activeLayer = Math.max(0, doc(session).layers.indexOf(active))
@@ -1968,7 +2222,9 @@ export function toggleLayerVisible(session: MapSession, index: number): void {
   commit(session, toggleLayerVisiblePure(doc(session), index))
 }
 
+/** A float belongs to the layer it was lifted from or pasted onto, so changing layers puts it down first. */
 export function selectLayer(session: MapSession, index: number): void {
+  void dropFloat(session)
   session.activeLayer = index
 }
 
@@ -2008,6 +2264,7 @@ export function indexedSummary(session: MapSession, index: number): string {
 // ── size / validation ──────────────────────────────────────────────────
 
 export function resize(session: MapSession, width: number, height: number): void {
+  void dropFloat(session)
   commit(session, resizeMap(doc(session), width, height))
 }
 
@@ -2099,7 +2356,12 @@ function swapTileEdits(session: MapSession, edits: TileEdit[] | undefined): Tile
   return displaced
 }
 
+/** Undo while something floats takes the float back, and nothing else: it was the last thing done. */
 export function undo(session: MapSession): void {
+  if (session.float) {
+    cancelFloat(session)
+    return
+  }
   if (!canUndo(session.history)) return
   const leaving = session.history.present
   const displaced = swapTileEdits(session, leaving.tileEdits)
@@ -2114,7 +2376,7 @@ export function undo(session: MapSession): void {
 }
 
 export function redo(session: MapSession): void {
-  if (!canRedo(session.history)) return
+  if (session.float || !canRedo(session.history)) return
   const entering = session.history.future[0]
   const displaced = swapTileEdits(session, entering.tileEdits)
   if (displaced === null) return
@@ -2148,6 +2410,7 @@ export function pickMeta(session: MapSession, path: string): void {
   commit(session, next)
   session.brushMeta = path
   session.selectedPlacement = null
+  if (session.tool === 'select') setTool(session, 'stamp')
 }
 
 /**

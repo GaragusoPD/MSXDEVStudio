@@ -14,12 +14,16 @@
  *   live dragging like the import dialog's own worker-backed preview; move to
  *   a worker if reconversion ever needs to track every keystroke).
  * - Retouch strokes, going through `shared/screen-editor.ts`.
+ * - The rectangular selection and the floating selection a move, a paste or
+ *   an import makes (`shared/floating.ts`). A float lives here, above the
+ *   document, until it is dropped; `displayPixels` is the picture with it on.
  */
 
 import { shallowReactive } from 'vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import { decode, fitToMode } from '../../composables/useImageImport'
-import { BITMAP_MODES, isBitmapMode, type BitmapMode, type ScreenMode } from '../../../../shared/msx/modes'
+import { MODES, type BitmapMode } from '../../../../shared/msx/modes'
+import { paletteToRgb, type Rgb } from '../../../../shared/msx/palette'
 import { quantize } from '../../../../shared/msx/quantize'
 import { serializeResource } from '../../../../shared/msx/resource'
 import {
@@ -27,20 +31,38 @@ import {
   normalizeScreen,
   resizeScreen,
   screenPixels,
+  screenRgb,
   type ScreenConvert,
   type ScreenDoc
 } from '../../../../shared/msx/screen'
+import {
+  clampFloat,
+  clipRect,
+  composeFloat,
+  copyClip,
+  fillRect,
+  floatRect,
+  liftFloat,
+  normalizeRect,
+  placeFloat,
+  type Clip,
+  type Float,
+  type Rect
+} from '../../../../shared/floating'
 import {
   applyConversion,
   canRedo,
   canUndo,
   clearRetouch,
   createHistory,
+  flattenScreen,
+  isBlankScreen,
   paintScreen,
   pushHistory,
   redo as redoHistory,
   retouchFillPoints,
   setPaletteEntry,
+  setScreenPixels,
   undo as undoHistory,
   type Point,
   type ScreenHistory
@@ -50,12 +72,26 @@ import { useTabsStore } from '../../stores/tabsStore'
 import { watchResourceFile } from '../external-changes'
 
 /**
- * `TileTool`'s four plus the two this editor adds. Pencil/line/rect/fill are
+ * `TileTool`'s four plus the three this editor adds. Pencil/line/rect/fill are
  * `bitmapToolPoints`' — the same geometry the bitmap tileset editor uses, over
  * whatever index buffer it is handed — so this editor gains line and rectangle
  * without a second implementation of Bresenham.
+ *
+ * `fragment` names a rectangle and leaves the pixels where they are; `select`
+ * is the one that cuts, copies and moves them.
  */
-export type ScreenTool = TileTool | 'pick' | 'cut'
+export type ScreenTool = TileTool | 'pick' | 'fragment' | 'select'
+
+/**
+ * A float over a screen. An import also carries what has to happen to the
+ * screen to take it: the palette it was converted with, which the screen
+ * adopts on the drop when it differs, and `flatten`, because a pasted picture
+ * is no longer something the screen's own source converts to.
+ */
+export interface ScreenFloat extends Float {
+  palette: number[] | null
+  flatten: boolean
+}
 
 export interface ScreenSession {
   path: string
@@ -93,6 +129,12 @@ export interface ScreenSession {
   /** Doc for the retouch drag in progress; `doc()` reads this over `history.present`, same role
    *  as the map editor's `preview` (see `editors/map/session.ts`). */
   preview: ScreenDoc | null
+
+  /** The selected rectangle, in pixels. While something floats it is the float's own rectangle. */
+  selection: Rect | null
+  /** Pixels held above the picture: a moved selection, a paste or an import, until it is dropped. */
+  float: ScreenFloat | null
+  clipboard: Clip | null
 }
 
 const sessions = new Map<string, ScreenSession>()
@@ -119,7 +161,10 @@ export function screenSession(path: string): ScreenSession {
     showOriginal: true,
     status: '',
     busy: false,
-    preview: null
+    preview: null,
+    selection: null,
+    float: null,
+    clipboard: null
   })
   sessions.set(path, session)
   // An agent or a checkout can rewrite this file underneath the editor.
@@ -185,6 +230,9 @@ async function loadSourceImage(session: ScreenSession): Promise<void> {
 }
 
 export async function saveSession(session: ScreenSession): Promise<void> {
+  // What is on the canvas is what gets saved: a float left hanging would
+  // otherwise be in the picture the user saw and not in the file.
+  dropFloat(session)
   await window.api.invoke('fs:write', { path: session.path, content: serializeResource({ kind: 'screen', doc: doc(session) }) })
   session.dirty = false
   useTabsStore().setDirty(session.path, false)
@@ -206,39 +254,37 @@ export function commit(session: ScreenSession, next: ScreenDoc): void {
 
 // ── import / (re)conversion ─────────────────────────────────────────────
 
-/** `basePath`'s folder + the picked file's own (sanitized) name — the default place a first import lands. */
-function defaultSourcePath(basePath: string, fileName: string): string {
-  const slash = basePath.lastIndexOf('/')
-  const dir = slash === -1 ? '' : basePath.slice(0, slash)
-  const safe = fileName.replace(/[^A-Za-z0-9._-]/g, '_') || 'source.png'
-  return dir ? `${dir}/${safe}` : safe
-}
-
 /**
- * `ImportImageDialog`'s `@imported` handler: persists the picked file's bytes into the project
- * (reusing the existing path when replacing an already-set source) and bakes the dialog's own
- * conversion result into `doc.converted`.
+ * `ImportImageDialog`'s `@imported` handler: the converted picture becomes a
+ * float over the screen, to be dragged into place and dropped like a paste.
+ *
+ * The screen keeps its size and what is already on it: an import is pasted
+ * onto the picture rather than replacing it. Index 0 — where the converter
+ * puts the image's see-through pixels — is not written, so a cut-out sits on
+ * whatever is under it. The dialog converts in the screen's mode; when it
+ * converted to a different palette, the screen takes that palette on the drop.
  */
-export async function importSource(session: ScreenSession, result: ImportResult, file: File | null, mode: ScreenMode): Promise<void> {
-  if (!isBitmapMode(mode)) {
-    session.status = `${mode} has no screen document — pick one of ${BITMAP_MODES.join('/')}.`
-    return
-  }
+export function importImage(session: ScreenSession, result: ImportResult): void {
+  dropFloat(session)
   const current = doc(session)
-  let source = current.source
-  if (file) {
-    try {
-      source = current.source || defaultSourcePath(session.path, file.name)
-      await window.api.invoke('fs:writeBinary', { path: source, content: await file.arrayBuffer() })
-      session.sourceImage = await decode(file)
-      session.sourceError = null
-    } catch (error) {
-      session.status = `Couldn't save source image: ${String(error)}`
-      return
-    }
+  const info = MODES[current.mode]
+  const palette = info.palette === 'grb333' && result.palette ? result.palette : null
+  const own = current.converted?.palette ?? null
+  const adopt = palette !== null && !(own && own.length === palette.length && own.every((entry, i) => entry === palette[i]))
+  const clip: Clip = { width: result.width, height: result.height, values: result.indices }
+  const size = pictureSize(current)
+  const at = session.selection ? { x: session.selection.x, y: session.selection.y } : { x: 0, y: 0 }
+  session.float = {
+    ...placeFloat(clip, at, size.width, size.height, info.palette === 'rgb332' ? null : 0),
+    palette: adopt ? palette : null,
+    flatten: true
   }
-  commit(session, applyConversion({ ...current, mode, source }, result))
-  session.status = `Converted: ${result.report.colorsUsed} colors used`
+  session.selection = floatRect(session.float)
+  session.tool = 'select'
+  session.status =
+    `Drag the picture into place, then press Enter or click outside it. Esc cancels.` +
+    (adopt && !isBlankScreen(current) ? " Placing it gives the screen the picture's palette, which recolours what is already drawn." : '') +
+    (current.source ? ' Placing it also turns this conversion into a drawing.' : '')
 }
 
 /** Re-runs `quantize()` against the already-decoded source with a settings patch (mode and/or convert options),
@@ -250,7 +296,11 @@ export function reconvertWith(session: ScreenSession, patch: { mode?: BitmapMode
     mode: patch.mode ?? current.mode,
     convert: { ...current.convert, ...(patch.convert ?? {}) }
   }
-  const picked = session.sourceImage
+  dropFloat(session)
+  // A stale decoded image outlives the source it came from — an import
+  // flattens the screen and the image stays in memory for undo — so the
+  // document decides whether there is anything to re-run, not the cache.
+  const picked = current.source ? session.sourceImage : null
   if (!picked) {
     // No artwork to re-run, but the mode may have changed under a drawn canvas —
     // and a 64×48 SCREEN 3 buffer is not a 256×212 SCREEN 5 one.
@@ -278,6 +328,11 @@ export function reconvertNow(session: ScreenSession): void {
   reconvertWith(session, {})
 }
 
+/** Whether there is a source to re-run the conversion from — what the Reconvert button asks. */
+export function canReconvert(session: ScreenSession): boolean {
+  return Boolean(doc(session).source && session.sourceImage)
+}
+
 /**
  * Starts an empty canvas at the mode's resolution, for a screen that is drawn
  * here rather than converted from artwork — a tile atlas, a HUD strip, a
@@ -285,6 +340,7 @@ export function reconvertNow(session: ScreenSession): void {
  * `converted`, so giving it something to work on is the whole feature.
  */
 export function startBlank(session: ScreenSession): void {
+  dropFloat(session)
   const current = doc(session)
   commit(session, { ...current, converted: blankConverted(current.mode, current.width, current.height) })
   session.status = 'Blank canvas'
@@ -326,10 +382,14 @@ export function setShowOriginal(session: ScreenSession, showOriginal: boolean): 
  * that makes the operation reversible by resizing back.
  */
 export function resize(session: ScreenSession, width: number, height: number): void {
+  dropFloat(session)
   commit(session, resizeScreen(doc(session), width, height))
+  if (session.selection) session.selection = clipRect(session.selection, doc(session).width, doc(session).height)
 }
 
+/** Switching tools drops whatever floats, so a float only ever exists under the select tool. */
 export function setTool(session: ScreenSession, tool: ScreenTool): void {
+  if (tool !== 'select') dropFloat(session)
   session.tool = tool
 }
 
@@ -424,7 +484,12 @@ export function clearRetouchAction(session: ScreenSession): void {
 
 // ── undo/redo ───────────────────────────────────────────────────────────
 
+/** Undo while something floats takes the float back, and nothing else: it was the last thing done. */
 export function undo(session: ScreenSession): void {
+  if (session.float) {
+    cancelFloat(session)
+    return
+  }
   const next = undoHistory(session.history)
   if (next === session.history) return
   session.history = next
@@ -433,6 +498,8 @@ export function undo(session: ScreenSession): void {
 }
 
 export function redo(session: ScreenSession): void {
+  // Nothing to redo past a float: dropping it would be a new step, which ends the redo trail.
+  if (session.float) return
   const next = redoHistory(session.history)
   if (next === session.history) return
   session.history = next
@@ -441,3 +508,185 @@ export function redo(session: ScreenSession): void {
 }
 
 export { canRedo, canUndo }
+
+// ── selection / clipboard / the floating selection ──────────────────────
+
+/**
+ * The picture's size, whether or not there is a picture yet: an import onto a
+ * screen that was never drawn floats over a blank one of the document's size.
+ */
+function pictureSize(current: ScreenDoc): { width: number; height: number } {
+  return current.converted ? { width: current.converted.width, height: current.converted.height } : { width: current.width, height: current.height }
+}
+
+/**
+ * The picture under the float: what is shown, or a blank one when nothing has
+ * been drawn yet. Kept per document, because a drag asks for it on every
+ * pointer move and the document under a float does not change while it moves.
+ * Read-only to every caller — `composeFloat` and `fillRect` copy before writing.
+ */
+const shownCache = new WeakMap<ScreenDoc, { width: number; height: number; indices: Uint8Array }>()
+function shownPixels(current: ScreenDoc): { width: number; height: number; indices: Uint8Array } {
+  const cached = shownCache.get(current)
+  if (cached) return cached
+  const size = pictureSize(current)
+  const shown = screenPixels(current) ?? { ...size, indices: new Uint8Array(size.width * size.height) }
+  shownCache.set(current, shown)
+  return shown
+}
+
+/**
+ * What the canvas draws: the picture with the float on it. Null only when
+ * there is no picture and nothing floating — the "nothing to draw on" state.
+ */
+export function displayPixels(session: ScreenSession): { width: number; height: number; indices: Uint8Array } | null {
+  const current = doc(session)
+  const float = session.float
+  if (!float) return screenPixels(current)
+  const shown = shownPixels(current)
+  return { ...shown, indices: composeFloat(shown.indices, shown.width, shown.height, float) }
+}
+
+/** The colours `displayPixels` is drawn in — the import's own palette while it floats, since that is what the drop gives the screen. */
+export function displayRgb(session: ScreenSession): Rgb[] {
+  const palette = session.float?.palette
+  return palette ? paletteToRgb(palette) : screenRgb(doc(session))
+}
+
+export function setSelection(session: ScreenSession, a: Point, b: Point): void {
+  const size = pictureSize(doc(session))
+  session.selection = normalizeRect(a, b, size.width, size.height)
+}
+
+export function selectAll(session: ScreenSession): void {
+  dropFloat(session)
+  const size = pictureSize(doc(session))
+  session.selection = { x: 0, y: 0, ...size }
+  session.tool = 'select'
+}
+
+export function clearSelection(session: ScreenSession): void {
+  dropFloat(session)
+  session.selection = null
+}
+
+/**
+ * Lifts the selection into a float, ready to be dragged. `copy` leaves the
+ * original where it is (a Ctrl-drag). Returns false when there is nothing to lift.
+ */
+export function liftSelection(session: ScreenSession, copy = false): boolean {
+  if (session.float) return true
+  const current = doc(session)
+  const shown = screenPixels(current)
+  if (!shown || !session.selection) return false
+  session.float = { ...liftFloat(shown.indices, shown.width, shown.height, session.selection, copy), palette: null, flatten: false }
+  return true
+}
+
+/** Moves the float so its top-left is at `at`, keeping a row and a column of it on the picture. */
+export function moveFloatTo(session: ScreenSession, at: Point): void {
+  const float = session.float
+  if (!float) return
+  const size = pictureSize(doc(session))
+  const next = clampFloat(at, float.clip.width, float.clip.height, size.width, size.height)
+  if (next.x === float.x && next.y === float.y) return
+  session.float = { ...float, ...next }
+  session.selection = floatRect(session.float)
+}
+
+/** The arrow keys: lifts the selection if it is not floating yet, then moves it by one step. */
+export function nudgeSelection(session: ScreenSession, dx: number, dy: number): void {
+  if (!session.float && !liftSelection(session)) return
+  const float = session.float!
+  moveFloatTo(session, { x: float.x + dx, y: float.y + dy })
+}
+
+/**
+ * Puts the float down: one undo step, written the way a pencil stroke would
+ * be (`setScreenPixels`). An import first flattens a conversion and adopts its
+ * palette, and onto a screen never drawn it starts a blank canvas. A move
+ * dropped exactly where it was lifted is not an edit.
+ */
+export function dropFloat(session: ScreenSession): void {
+  const float = session.float
+  if (!float) return
+  session.float = null
+  const before = doc(session)
+  const size = pictureSize(before)
+  session.selection = clipRect(floatRect(float), size.width, size.height)
+  if (float.from && float.x === float.from.x && float.y === float.from.y) return
+  let current = float.flatten ? flattenScreen(before) : before
+  if (!current.converted) current = { ...current, converted: blankConverted(current.mode, current.width, current.height) }
+  if (float.palette && current.converted!.palette) current = { ...current, converted: { ...current.converted!, palette: float.palette } }
+  const shown = shownPixels(current)
+  const next = setScreenPixels(current, composeFloat(shown.indices, shown.width, shown.height, float))
+  commit(session, next)
+  session.status = float.flatten
+    ? `Placed the picture at ${float.x},${float.y}.` + (before.source ? ' The screen is a drawing now: it no longer re-converts from its source.' : '')
+    : ''
+}
+
+/** Puts the float back: a move returns to where it was, a paste or an import is gone. Nothing reaches the undo stack. */
+export function cancelFloat(session: ScreenSession): void {
+  const float = session.float
+  if (!float) return
+  session.float = null
+  session.selection = float.from
+  session.status = ''
+}
+
+export function copySelection(session: ScreenSession): void {
+  const float = session.float
+  if (float) {
+    session.clipboard = float.clip
+  } else {
+    const shown = screenPixels(doc(session))
+    if (!shown || !session.selection) return
+    session.clipboard = copyClip(shown.indices, shown.width, shown.height, session.selection)
+  }
+  session.status = `Copied ${session.clipboard.width}×${session.clipboard.height}`
+}
+
+/**
+ * Clears the selection to colour 0. On a float that was lifted, that is
+ * keeping the hole it left and throwing the pixels away; on a paste or an
+ * import, nothing was there to begin with, so it is just a cancel.
+ */
+export function deleteSelection(session: ScreenSession): void {
+  const float = session.float
+  if (float) {
+    session.float = null
+    if (float.from) {
+      const shown = screenPixels(doc(session))
+      if (shown) commit(session, setScreenPixels(doc(session), fillRect(shown.indices, shown.width, shown.height, float.from)))
+    }
+    session.selection = null
+    return
+  }
+  const shown = screenPixels(doc(session))
+  if (!shown || !session.selection) return
+  commit(session, setScreenPixels(doc(session), fillRect(shown.indices, shown.width, shown.height, session.selection)))
+}
+
+export function cutSelection(session: ScreenSession): void {
+  if (!session.float && !session.selection) return
+  copySelection(session)
+  deleteSelection(session)
+}
+
+/**
+ * The clipboard as a float, at the selection's corner (or the picture's), to
+ * be dragged into place. Switches to the select tool, which is the one that
+ * drags it.
+ */
+export function pasteClipboard(session: ScreenSession, at?: Point): void {
+  const clip = session.clipboard
+  if (!clip) return
+  dropFloat(session)
+  const size = pictureSize(doc(session))
+  const corner = at ?? (session.selection ? { x: session.selection.x, y: session.selection.y } : { x: 0, y: 0 })
+  session.float = { ...placeFloat(clip, corner, size.width, size.height), palette: null, flatten: false }
+  session.selection = floatRect(session.float)
+  session.tool = 'select'
+  session.status = 'Pasted — drag it into place, then press Enter or click outside it.'
+}

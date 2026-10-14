@@ -4,12 +4,33 @@
  * image at real MSX resolution, with pencil/fill retouch on the converted
  * side. All the logic is in `shared/screen-editor.ts` and `./session.ts`;
  * this file only turns pointer events into pixels and draws both canvases.
+ *
+ * The converted side draws `displayPixels` — the picture with any floating
+ * selection on it — so a move, a paste or an import shows where it will land
+ * without the document knowing about it until it is dropped.
  */
 import { computed, ref, watchEffect } from 'vue'
 import { MODES, SC3_BLOCK_DOTS } from '../../../../shared/msx/modes'
-import { isScreenWorld, screenPixels, screenRgb } from '../../../../shared/msx/screen'
+import { isScreenWorld } from '../../../../shared/msx/screen'
+import { clipRect, floatRect, rectContains } from '../../../../shared/floating'
 import { linePoints, type Point } from '../../../../shared/tile-editor'
-import { addFragment, doc, fillAt, finishDrag, paintDrag, pickAt, toolDrag, type ScreenSession } from './session'
+import {
+  addFragment,
+  clearSelection,
+  displayPixels,
+  displayRgb,
+  doc,
+  dropFloat,
+  fillAt,
+  finishDrag,
+  liftSelection,
+  moveFloatTo,
+  paintDrag,
+  pickAt,
+  setSelection,
+  toolDrag,
+  type ScreenSession
+} from './session'
 
 const props = defineProps<{ session: ScreenSession }>()
 
@@ -21,7 +42,7 @@ const cutFrom = ref<Point | null>(null)
 const cutTo = ref<Point | null>(null)
 
 const modeInfo = computed(() => MODES[doc(props.session).mode])
-const convertedPixels = computed(() => screenPixels(doc(props.session)))
+const convertedPixels = computed(() => displayPixels(props.session))
 
 /**
  * Screen dots per document pixel. One everywhere except SCREEN 3, whose "pixel"
@@ -33,7 +54,7 @@ const convertedPixels = computed(() => screenPixels(doc(props.session)))
  * drawn here rather than converted, so the original pane would be a placeholder
  * taking half the width — which is most of the working area at SCREEN 3's size.
  */
-const hasSource = computed(() => Boolean(doc(props.session).source || props.session.sourceImage))
+const hasSource = computed(() => Boolean(doc(props.session).source))
 
 const dotScale = computed(() => (doc(props.session).mode === 'sc3' ? SC3_BLOCK_DOTS : 1))
 const scale = computed(() => props.session.zoom * dotScale.value)
@@ -117,24 +138,99 @@ const gridStyle = computed(() => {
   return { backgroundImage: layers.join(', '), backgroundSize: sizes.join(', ') }
 })
 
-function pixelAt(event: PointerEvent): Point {
+/** The pixel under the pointer, unclamped: a captured drag can leave the canvas, and a float may follow it off the edge. */
+function rawPixelAt(event: PointerEvent): Point {
   const rect = (event.currentTarget as HTMLCanvasElement).getBoundingClientRect()
   const pixels = convertedPixels.value
   const width = pixels?.width ?? 1
   const height = pixels?.height ?? 1
-  const x = Math.floor(((event.clientX - rect.left) / rect.width) * width)
-  const y = Math.floor(((event.clientY - rect.top) / rect.height) * height)
+  return {
+    x: Math.floor(((event.clientX - rect.left) / rect.width) * width),
+    y: Math.floor(((event.clientY - rect.top) / rect.height) * height)
+  }
+}
+
+function pixelAt(event: PointerEvent): Point {
+  const pixels = convertedPixels.value
+  const width = pixels?.width ?? 1
+  const height = pixels?.height ?? 1
+  const { x, y } = rawPixelAt(event)
   return { x: Math.min(width - 1, Math.max(0, x)), y: Math.min(height - 1, Math.max(0, y)) }
 }
 
 /** Where a rubber-band drag started; `last` is where a pencil drag has walked to. */
 let anchor: Point | null = null
 
+/** Select tool: the grab point inside a float being dragged, or the corner a new selection is dragged from. */
+let grab: Point | null = null
+let selectFrom: Point | null = null
+/**
+ * Whether a new selection's drag ever reached another pixel. Tracked rather
+ * than read off the release point: placing an import can hide the source pane
+ * and move the canvas between press and release, so the two points are not
+ * comparable.
+ */
+let selectDragged = false
+/** Whether the pointer is over something the select tool would drag — the cursor says so. */
+const overSelection = ref(false)
+
+/**
+ * The select tool's press. Inside a float: grab it. Inside a selection: lift
+ * it (a copy with Ctrl or Alt) and grab that. Anywhere else: put down what
+ * floats and start a new selection — which a plain click turns into none.
+ */
+function selectDown(event: PointerEvent): void {
+  const session = props.session
+  const cell = pixelAt(event)
+  const floating = session.float
+  if (floating && rectContains(floatRect(floating), cell)) {
+    grab = { x: cell.x - floating.x, y: cell.y - floating.y }
+    return
+  }
+  if (!floating && session.selection && rectContains(session.selection, cell) && liftSelection(session, event.ctrlKey || event.altKey)) {
+    grab = { x: cell.x - session.selection.x, y: cell.y - session.selection.y }
+    return
+  }
+  dropFloat(session)
+  selectFrom = cell
+  selectDragged = false
+  setSelection(session, cell, cell)
+}
+
+function selectMove(event: PointerEvent): void {
+  const session = props.session
+  if (grab) {
+    const at = rawPixelAt(event)
+    moveFloatTo(session, { x: at.x - grab.x, y: at.y - grab.y })
+    return
+  }
+  if (selectFrom) {
+    const cell = pixelAt(event)
+    if (cell.x !== selectFrom.x || cell.y !== selectFrom.y) selectDragged = true
+    if (selectDragged) setSelection(session, selectFrom, cell)
+    return
+  }
+  const cell = pixelAt(event)
+  const rect = session.float ? floatRect(session.float) : session.selection
+  overSelection.value = rect !== null && rectContains(rect, cell)
+}
+
+function selectUp(): void {
+  // A click is not a 1×1 selection; it is "select nothing".
+  if (selectFrom && !selectDragged) clearSelection(props.session)
+  grab = null
+  selectFrom = null
+}
+
 function onDown(event: PointerEvent): void {
   if (!convertedPixels.value) return
   const cell = pixelAt(event)
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
-  if (props.session.tool === 'cut') {
+  if (props.session.tool === 'select') {
+    selectDown(event)
+    return
+  }
+  if (props.session.tool === 'fragment') {
     cutFrom.value = cell
     cutTo.value = cell
     return
@@ -153,6 +249,10 @@ function onDown(event: PointerEvent): void {
 }
 
 function onMove(event: PointerEvent): void {
+  if (props.session.tool === 'select') {
+    selectMove(event)
+    return
+  }
   if (cutFrom.value) {
     cutTo.value = pixelAt(event)
     return
@@ -171,6 +271,10 @@ function onMove(event: PointerEvent): void {
 }
 
 function onUp(): void {
+  if (props.session.tool === 'select') {
+    selectUp()
+    return
+  }
   if (cutFrom.value && cutTo.value) {
     const rect = cutRect.value
     // A click without a drag is a mis-click, not a 1×1 fragment.
@@ -193,6 +297,29 @@ const cutRect = computed(() => {
   const x = Math.min(from.x, to.x)
   const y = Math.min(from.y, to.y)
   return { x, y, width: Math.abs(to.x - from.x) + 1, height: Math.abs(to.y - from.y) + 1 }
+})
+
+/**
+ * The selection's marching box, clipped to the picture — a float can hang off
+ * the edge, and its outline should stop where the picture does.
+ */
+const selectionBox = computed(() => {
+  const session = props.session
+  const pixels = convertedPixels.value
+  const rect = session.float ? floatRect(session.float) : session.selection
+  const shown = rect && pixels ? clipRect(rect, pixels.width, pixels.height) : null
+  if (!rect || !shown) return null
+  const zoom = scale.value
+  return {
+    floating: session.float !== null,
+    label: `${rect.width}×${rect.height}${session.float ? ` at ${rect.x},${rect.y}` : ''}`,
+    style: {
+      left: `${shown.x * zoom}px`,
+      top: `${shown.y * zoom}px`,
+      width: `${shown.width * zoom}px`,
+      height: `${shown.height * zoom}px`
+    }
+  }
 })
 
 /** Overlay boxes: the live drag, then every fragment already cut. */
@@ -237,14 +364,13 @@ watchEffect(() => {
 
 watchEffect(() => {
   const element = canvas.value
-  const current = doc(props.session)
   const pixels = convertedPixels.value
   if (!element || !pixels) return
   element.width = pixels.width
   element.height = pixels.height
   const ctx = element.getContext('2d')
   if (!ctx) return
-  const rgb = screenRgb(current)
+  const rgb = displayRgb(props.session)
   const image = new ImageData(pixels.width, pixels.height)
   for (let i = 0; i < pixels.indices.length; i++) {
     const color = rgb[pixels.indices[i]] ?? { r: 255, g: 0, b: 255 }
@@ -293,6 +419,7 @@ watchEffect(() => {
           <canvas
             ref="canvas"
             class="preview interactive"
+            :class="{ movable: session.tool === 'select' && overSelection }"
             :style="convertedStyle"
             @pointerdown="onDown"
             @pointermove="onMove"
@@ -316,6 +443,12 @@ watchEffect(() => {
             :class="{ live: box.live }"
             :style="box.style"
           ><i>{{ box.label }}</i></span>
+          <span
+            v-if="selectionBox"
+            class="select-box"
+            :class="{ floating: selectionBox.floating }"
+            :style="selectionBox.style"
+          ><i>{{ selectionBox.label }}</i></span>
         </div>
       </div>
     </figure>
@@ -347,6 +480,33 @@ watchEffect(() => {
   box-sizing: border-box;
   border: 1px dashed rgba(120, 170, 255, 0.9);
   pointer-events: none;
+}
+
+/* The selection: black-and-white dashes, readable over any picture. */
+.select-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed #fff;
+  outline: 1px dashed #000;
+  outline-offset: -2px;
+  pointer-events: none;
+}
+
+.select-box.floating {
+  border-color: #ffd24e;
+}
+
+.select-box i {
+  position: absolute;
+  bottom: -14px;
+  left: 0;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 9px;
+  font-style: normal;
+  white-space: nowrap;
 }
 
 .cut-box.live {
@@ -417,6 +577,10 @@ figcaption {
 .preview.interactive {
   touch-action: none;
   cursor: crosshair;
+}
+
+.preview.interactive.movable {
+  cursor: move;
 }
 
 .hint {

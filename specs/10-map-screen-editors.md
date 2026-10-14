@@ -27,8 +27,9 @@ UI:
 - **Tile picker** (left): the referenced tileset rendered with its real palette;
   click/marquee to pick a stamp (multi-tile stamps supported).
 - **Map canvas** (center): zoom/pan, grid toggle, stamp/fill/rect/erase tools,
-  rectangular select + copy/paste, undo/redo. A screen-size (32×24) outline overlay
-  helps design multi-screen worlds. Layer visibility toggles.
+  a select tool (move, cut/copy/paste, delete — see *The floating selection*
+  below), undo/redo. A screen-size (32×24) outline overlay helps design
+  multi-screen worlds. Layer visibility toggles.
 - **Flags mode:** paint collision/meta flags per cell from `tileMeta`-defined flags.
 - Tileset changes (Spec 08 reorder) push a `tilesetReordered` mapping the map editor
   applies to open + on-disk maps that reference the file (single confirm dialog).
@@ -195,9 +196,14 @@ on an all-ones pattern and paper on an all-zero one draw alike.
   screen and repack it with `packBankedTiles`, the shared region handed in so
   it keeps its indices. Same blockers as promotion (`repackBlocker`, which
   `promotionBlocker` now delegates to), same consequences, asked first.
-- **Import image…** (`importPicture`) opens the shared import dialog locked to
-  the tileset's mode and fitted to the map, and places the result on the
-  active layer from the top-left. Tiles are found (by pixels) or appended
+- **Import image…** opens the shared import dialog locked to the tileset's
+  mode and fitted to the map. The result **floats** over the map at the
+  top-left of what is in view (`floatPicture`) — in paint mode too, where the
+  paint layer stands down while it does — and is dragged by whole cells to
+  where it goes. Only the drop decides anything: `importPicture` places it on
+  the active layer at that cell, and the picture's index 0 (its see-through
+  pixels) leaves the cells under it alone. A drop that is refused or declined
+  leaves the picture floating. Tiles are found (by pixels) or appended
   exactly as a fork stroke does — bank-local on a banked tileset — so in the
   common case it is one ordinary undo step. If the tileset is too full: an
   unbanked one first gives back the tiles only the overwritten cells used
@@ -221,6 +227,36 @@ promotion can replace the document, each editor guards its own side:
   file, because its tileset *is* the store's live document — an unsaved
   reorder in a tile tab reaches a map opened afterwards.
 
+### The floating selection (map and screen)
+
+One idea in both editors, `shared/floating.ts`: a rectangle of values — cells
+on a map, dots on a screen — held *above* the document until it is dropped.
+Dragging it changes two numbers, so it can be moved as often as the user likes
+and still lands as **one undo step**; the canvas draws the document with the
+float composed on (`displayDoc` / `displayPixels`), and every other edit made
+meanwhile goes to the real document underneath.
+
+- **Select tool:** drag a rectangle (on a map, Shift+drag with any tool still
+  works). Drag inside it to **move** it — the float remembers where it came
+  from (`from`) and clears it on the drop; Ctrl/Alt+drag copies instead. Arrow
+  keys nudge (Shift: 8). Enter or a click outside drops it; Esc, or undo, takes
+  it back with nothing on the undo stack. Ctrl+A selects all.
+- **Cut / copy / paste / delete:** Ctrl+X/C/V, Delete. Paste is a float with no
+  `from`, at the selection's corner (or, on a map, the top-left of what is in
+  view), to drag into place. Delete clears to 0; on a lifted float it keeps the
+  hole and discards the float.
+- Switching tools, layers, modes or tilesets, resizing and saving all drop a
+  float first, so what was on the canvas is what gets saved.
+- **Map:** acts on the active layer; indexed layers refuse it. A move carries
+  every meta-tile placed wholly inside the rectangle (one whose corner lands
+  off the map is removed, and the status says so); a paste or a copy-drag
+  carries tiles only, like the clipboard. Baked placements the drop writes
+  over at either end lose their records (`dropMapFloat`, `withoutBakedIn`),
+  and so do those a Delete clears.
+- **Screen:** a move on a drawing writes `converted`; on a conversion it lands
+  as retouch (`setScreenPixels`, which also forgets an entry put back to the
+  conversion's own pixel), so it survives a reconversion like a stroke does.
+
 ## B. Screen editor (`*.screen.json` = import settings + retouch strokes, or a drawing)
 
 For screens 5, 6, 7, 8 (and 10/12 YJK as import-only), **and SCREEN 3**, whose
@@ -229,7 +265,19 @@ scale. Source of truth is a source image + conversion settings — *unless there
 no source*, in which case the document is a drawing and strokes commit straight
 into `converted.indices` rather than growing a `retouch` triple list. Tools are
 `bitmap-tile-editor.ts`'s `bitmapToolPoints` (pencil / line / rect / fill), plus
-eyedropper and the fragment cut.
+eyedropper, the fragment tool (names a rectangle, moves nothing), and select.
+
+**Import pastes.** An imported image floats over the screen, to be dragged by
+the dot to where it lands, and is pasted onto what is already there: the screen
+keeps its mode (the dialog is locked to it) and its size (the picture is fitted
+inside it), and index 0 — the converter's see-through entry — is not written.
+The dialog offers *This screen's palette*, preselected when the screen already
+has art, so the picture is converted to the colours on it; when the picture was
+converted to another palette the screen takes that one on the drop. Dropping an
+import onto a conversion **flattens** it first (`flattenScreen`: retouch baked
+in, `source` cleared), because the result is no longer what any one source
+converts to — documents with a source from before keep re-converting until
+then.
 
 ```jsonc
 {

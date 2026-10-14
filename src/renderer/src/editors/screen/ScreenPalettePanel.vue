@@ -16,6 +16,7 @@ import { isScreenWorld, MAX_SCREEN_SIZE } from '../../../../shared/msx/screen'
 import Icon from '../../components/Icon.vue'
 import { screenDataExport } from '../../../../shared/msx/screen'
 import {
+  canReconvert,
   commit,
   doc,
   reconvertNow,
@@ -71,7 +72,14 @@ const TOOLS: { id: ScreenTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'rect', icon: 'crop_square', title: 'Rectangle — hold the Filled switch for a solid one' },
   { id: 'fill', icon: 'format_color_fill', title: 'Fill (flood)' },
   { id: 'pick', icon: 'colorize', title: 'Pick the colour under the cursor' },
-  { id: 'cut', icon: 'crop_free', title: 'Cut a fragment — drag a rectangle on the converted image' }
+  {
+    id: 'select',
+    icon: 'select',
+    title:
+      'Select — drag a rectangle, then drag inside it to move it (Ctrl+drag copies). ' +
+      'Arrows nudge it, Enter places it, Esc takes it back; Ctrl+X/C/V, Delete'
+  },
+  { id: 'fragment', icon: 'crop_free', title: 'Fragment — drag a rectangle to name it as a fragment' }
 ]
 
 function grbLabel(index: number): string {
@@ -283,7 +291,7 @@ function patchExport(patch: Partial<ExportBlock>): void {
       <h3>Fragments</h3>
       <p class="blurb">
         Named cut-outs of the converted image: bitmap-mode blocks, and the frames of a software
-        sprite. Pick the <Icon name="crop_free" /> tool and drag a rectangle to cut one.
+        sprite. Pick the <Icon name="crop_free" /> tool and drag a rectangle to name one.
       </p>
       <ul
         v-if="screenDoc.fragments.length"
@@ -367,7 +375,7 @@ function patchExport(patch: Partial<ExportBlock>): void {
       <button
         type="button"
         class="wide"
-        :disabled="!session.sourceImage || session.busy"
+        :disabled="!canReconvert(session) || session.busy"
         @click="reconvertNow(session)"
       >
         {{ session.busy ? 'Converting…' : 'Reconvert' }}
@@ -601,6 +609,7 @@ section {
 
 .tool-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 

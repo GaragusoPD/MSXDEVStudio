@@ -7,6 +7,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Select, move, cut, copy, paste and delete in the screen and map editors.**
+  A new Select tool drags a rectangle — by the dot on a screen, by the cell on
+  a map — and dragging inside it moves it (Ctrl+drag copies). What you move or
+  paste floats over the picture until you place it: drag it as often as you
+  like, nudge it with the arrow keys (Shift: 8), press Enter or click outside
+  it to put it down as one undo step, or Esc (or Ctrl+Z) to take it back.
+  Ctrl+X/C/V, Delete and Ctrl+A work as expected; on a map a move carries the
+  meta-tiles placed inside the selection with it.
+- **An imported image floats until you place it**, in both editors, instead of
+  landing at the top-left corner. Its see-through pixels leave what is under
+  them alone. On a map the tiles are only found or made once it is dropped, so
+  the tile budget and the offer to bank are worked out for where it actually
+  goes.
+
+### Changed
+
+- **Importing an image into a screen pastes it onto the screen** rather than
+  replacing the screen with it. The screen keeps its size, its mode and what is
+  already drawn; the dialog converts to *This screen's palette* by default when
+  there is art on it. A screen converted from a source image becomes a drawing
+  when you place an import on it, since the result is no longer something the
+  source converts to.
+- The screen editor's old "cut" tool, which names a fragment, is now called
+  **Fragment**, so it is not confused with Cut.
+
 ## [0.2.3] - 2026-10-14
 
 ### Fixed

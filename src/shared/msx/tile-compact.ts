@@ -260,26 +260,52 @@ export interface Picture {
   indices: ArrayLike<number>
 }
 
-/** The cells a picture at the grid's origin covers, partly or wholly, clipped to the grid. */
-export function pictureExtent(grid: { width: number; height: number }, picture: Picture): { cols: number; rows: number } {
+/**
+ * The cells a picture covers, partly or wholly, with its top-left at cell
+ * `at` (the origin by default) — clipped to the grid. `x`/`y` are where the
+ * covered block starts, which differs from `at` when the picture hangs off the
+ * top or left edge.
+ */
+export function pictureExtent(
+  grid: { width: number; height: number },
+  picture: Picture,
+  at: { x: number; y: number } = { x: 0, y: 0 }
+): { x: number; y: number; cols: number; rows: number } {
+  const x = Math.max(0, at.x)
+  const y = Math.max(0, at.y)
   return {
-    cols: Math.min(grid.width, Math.ceil(picture.width / TILE_SIZE)),
-    rows: Math.min(grid.height, Math.ceil(picture.height / TILE_SIZE))
+    x,
+    y,
+    cols: Math.max(0, Math.min(grid.width, at.x + Math.ceil(picture.width / TILE_SIZE)) - x),
+    rows: Math.max(0, Math.min(grid.height, at.y + Math.ceil(picture.height / TILE_SIZE)) - y)
   }
 }
 
 /**
  * Lays `picture` over `base` (a rendering of the whole grid, `grid.width × 8`
- * dots wide) at the origin. A cell the picture only partly covers keeps the
- * base's dots in the part it does not, so an image that is not a multiple of
- * eight does not paint a black fringe.
+ * dots wide) with its top-left at dot `at`, clipped to the base. A cell the
+ * picture only partly covers keeps the base's dots in the part it does not, so
+ * an image that is not a multiple of eight does not paint a black fringe — and
+ * so does every dot holding `transparent`, which is how an imported PNG's
+ * see-through pixels (quantized to index 0) leave the screen under them alone.
  */
-export function composePicture(base: Picture, picture: Picture): Uint8Array {
+export function composePicture(
+  base: Picture,
+  picture: Picture,
+  at: { x: number; y: number } = { x: 0, y: 0 },
+  transparent: number | null = null
+): Uint8Array {
   const out = Uint8Array.from(base.indices as ArrayLike<number>)
-  const width = Math.min(base.width, picture.width)
-  const height = Math.min(base.height, picture.height)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) out[y * base.width + x] = picture.indices[y * picture.width + x] ?? 0
+  for (let y = 0; y < picture.height; y++) {
+    const by = at.y + y
+    if (by < 0 || by >= base.height) continue
+    for (let x = 0; x < picture.width; x++) {
+      const bx = at.x + x
+      if (bx < 0 || bx >= base.width) continue
+      const value = picture.indices[y * picture.width + x] ?? 0
+      if (value === transparent) continue
+      out[by * base.width + bx] = value
+    }
   }
   return out
 }
@@ -298,9 +324,10 @@ export interface PlacePictureResult {
 }
 
 /**
- * Points every cell in `cols × rows` at a tile drawing what `pixels` shows
- * there (`pixels` is the whole grid, `grid.width × 8` dots wide), finding the
- * tile in the tileset or appending it.
+ * Points every cell in the `cols × rows` block starting at cell `origin` (the
+ * grid's top-left by default) at a tile drawing what `pixels` shows there
+ * (`pixels` is the whole grid, `grid.width × 8` dots wide), finding the tile
+ * in the tileset or appending it.
  *
  * All or nothing: a picture half-placed is a screen nobody asked for, so when
  * the tileset runs out the whole thing is refused, naming how far it got.
@@ -315,8 +342,9 @@ export function placePicture(
   pixels: ArrayLike<number>,
   cols: number,
   rows: number,
-  options: { bankOf?: (cellRow: number) => number } = {}
+  options: { bankOf?: (cellRow: number) => number; origin?: { x: number; y: number } } = {}
 ): PlacePictureResult {
+  const origin = options.origin ?? { x: 0, y: 0 }
   const banked = options.bankOf !== undefined && isBanked(tiles)
   const width = grid.width * TILE_SIZE
   let doc = tiles
@@ -344,13 +372,13 @@ export function placePicture(
   }
   const indexed = new Set<number | null>()
 
-  for (let cy = 0; cy < rows; cy++) {
+  for (let cy = origin.y; cy < origin.y + rows; cy++) {
     const bank = banked ? options.bankOf!(cy) : null
     if (!indexed.has(bank)) {
       index(bank)
       indexed.add(bank)
     }
-    for (let cx = 0; cx < cols; cx++) {
+    for (let cx = origin.x; cx < origin.x + cols; cx++) {
       const cellPixels = new Uint8Array(TILE_AREA)
       for (let y = 0; y < TILE_SIZE; y++) {
         for (let x = 0; x < TILE_SIZE; x++) {

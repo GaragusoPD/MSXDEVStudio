@@ -14,24 +14,46 @@ import { useProjectStore } from '../stores/projectStore'
 import { useResourcesStore } from '../stores/resourcesStore'
 import Icon from './Icon.vue'
 
-/** `lockMode`: the target already has a mode (a map's tileset), so converting for another one could only be refused. */
+/**
+ * `lockMode`: the target already has a mode (a map's tileset), so converting for another one could only be refused.
+ * `currentPalette`: the target's own GRB333 palette, offered as a third palette choice — a picture pasted onto a
+ * screen that already has art is converted to the colours that screen already shows. `preferCurrent` starts there.
+ */
 const props = withDefaults(
-  defineProps<{ mode?: ScreenMode; standalone?: boolean; fitWidth?: number; fitHeight?: number; lockMode?: boolean }>(),
+  defineProps<{
+    mode?: ScreenMode
+    standalone?: boolean
+    fitWidth?: number
+    fitHeight?: number
+    lockMode?: boolean
+    currentPalette?: number[] | null
+    preferCurrent?: boolean
+    /** The label of the button that hands the result over; the target decides what accepting it does. */
+    useLabel?: string
+  }>(),
   {
     mode: 'sc2',
     standalone: true,
-    lockMode: false
+    lockMode: false,
+    currentPalette: null,
+    preferCurrent: false,
+    useLabel: 'Use this image'
   }
 )
-/** `file`/`mode` are extra (Spec 10): the screen editor needs the picked file's own bytes (to
- *  copy into the project as `source`) and which mode the dialog actually converted to, since
- *  the dropdown lets the user change it away from the `mode` prop. Existing single-arg
- *  `@imported` handlers (Specs 08/09) keep working — the params are simply ignored. */
+/** `file`/`mode` are extra (Spec 10): the picked file itself, for a target that wants to keep the
+ *  original's bytes, and which mode the dialog actually converted to, since the dropdown lets the
+ *  user change it away from the `mode` prop. Existing single-arg `@imported` handlers (Specs
+ *  08/09) keep working — the params are simply ignored. */
 const emit = defineEmits<{ close: []; imported: [result: ImportResult, file: File | null, mode: ScreenMode] }>()
 
 const projectStore = useProjectStore()
 const resourcesStore = useResourcesStore()
-const importer = useImageImport({ mode: props.mode, fitWidth: props.fitWidth, fitHeight: props.fitHeight })
+const importer = useImageImport({
+  mode: props.mode,
+  fitWidth: props.fitWidth,
+  fitHeight: props.fitHeight,
+  ...(props.preferCurrent && props.currentPalette ? { palette: props.currentPalette } : {})
+})
 const beforeCanvas = ref<HTMLCanvasElement | null>(null)
 const afterCanvas = ref<HTMLCanvasElement | null>(null)
 const targetName = ref('imported')
@@ -43,6 +65,15 @@ const MODE_IDS = [...TILE_MODES, ...BITMAP_MODES] as ScreenMode[]
 const info = computed(() => MODES[importer.options.mode])
 /** Only MSX2 bitmap modes have a programmable palette to choose. */
 const paletteChoosable = computed(() => info.value.palette === 'grb333')
+
+/** The select's view of `options.palette`: a locked array is only ever the target's own palette. */
+const paletteChoice = computed({
+  get: (): string => (Array.isArray(importer.options.palette) ? 'current' : importer.options.palette),
+  set: (value: string) => {
+    importer.options.palette =
+      value === 'current' && props.currentPalette ? [...props.currentPalette] : (value as 'msx1' | 'optimized')
+  }
+})
 
 function paint(canvas: HTMLCanvasElement | null, image: ImageData | null): void {
   if (!canvas || !image) return
@@ -203,9 +234,13 @@ function use(): void {
         <label>
           <span>Palette</span>
           <select
-            v-model="importer.options.palette"
+            v-model="paletteChoice"
             :disabled="!paletteChoosable"
           >
+            <option
+              v-if="currentPalette"
+              value="current"
+            >This screen's palette</option>
             <option value="optimized">Optimized (median cut → 512 colors)</option>
             <option value="msx1">Fixed MSX1 palette</option>
           </select>
@@ -308,7 +343,7 @@ function use(): void {
           :disabled="!importer.result.value"
           @click="use"
         >
-          Use this image
+          {{ useLabel }}
         </button>
         <button
           type="button"

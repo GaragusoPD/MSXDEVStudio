@@ -14,12 +14,22 @@
  * and are only ever called from here.
  */
 
-import { cellIndex, getCell, remapTiles, type MapDoc, type MapLayer } from './msx/map'
+import { cellIndex, getCell, remapTiles, type MapDoc, type MapLayer, type MetaPlacement } from './msx/map'
 import type { TileEdit } from './msx/meta-paint'
 import { linePoints, rectPoints, type Point, type TilesReorderEvent } from './tile-editor'
 import type { History } from './history'
+import {
+  composeFloat,
+  fillRect,
+  floatFootprint,
+  normalizeRect,
+  rectInside,
+  rectsOverlap,
+  type Float,
+  type Rect
+} from './floating'
 
-export type { Point }
+export type { Point, Rect }
 
 // ── stamps (tile-picker marquee, clipboard, single-tile brush) ─────────────
 
@@ -112,7 +122,8 @@ export function eraseCells(doc: MapDoc, layerIndex: number, points: readonly Poi
 
 // ── tools → the cells they touch ────────────────────────────────────────────
 
-export type MapTool = 'stamp' | 'fill' | 'rect' | 'erase'
+/** `select` drags a rectangle and moves it — see `shared/floating.ts`; the others paint. */
+export type MapTool = 'stamp' | 'fill' | 'rect' | 'erase' | 'select'
 
 /**
  * `from` is the drag origin (or previous drag sample), `to` the current cell.
@@ -145,20 +156,9 @@ export function floodPoints(doc: MapDoc, layer: MapLayer, start: Point): Point[]
 
 // ── rectangular select + copy/paste ─────────────────────────────────────────
 
-export interface Rect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
 /** Normalizes two dragged corners into a rect clipped to the grid (inclusive of both corners). */
 export function normalizeSelection(doc: MapDoc, a: Point, b: Point): Rect {
-  const x0 = Math.max(0, Math.min(a.x, b.x))
-  const y0 = Math.max(0, Math.min(a.y, b.y))
-  const x1 = Math.min(doc.width - 1, Math.max(a.x, b.x))
-  const y1 = Math.min(doc.height - 1, Math.max(a.y, b.y))
-  return { x: x0, y: y0, width: Math.max(1, x1 - x0 + 1), height: Math.max(1, y1 - y0 + 1) }
+  return normalizeRect(a, b, doc.width, doc.height)
 }
 
 /** Copies a rect of one layer into a `Stamp` — paste is just `applyStamp` with this. */
@@ -170,13 +170,117 @@ export function copyRect(doc: MapDoc, layer: MapLayer, rect: Rect): Stamp {
   return { width: rect.width, height: rect.height, tiles }
 }
 
-/** Clears every cell in `rect` on `layerIndex` — the rect-select "delete". */
+/**
+ * Clears every cell in `rect` on `layerIndex` — the rect-select "delete" —
+ * and drops the record of every baked meta-tile whose cells that wiped.
+ */
 export function clearRect(doc: MapDoc, layerIndex: number, rect: Rect): MapDoc {
-  const points: Point[] = []
-  for (let y = rect.y; y < rect.y + rect.height; y++) {
-    for (let x = rect.x; x < rect.x + rect.width; x++) points.push({ x, y })
+  const layer = doc.layers[layerIndex]
+  if (!layer) return doc
+  const data = fillRect(layer.data, doc.width, doc.height, rect, 0)
+  return withoutBakedIn(data === layer.data ? doc : withLayerData(doc, layerIndex, data), layerIndex, [rect]).doc
+}
+
+// ── the floating selection ───────────────────────────────────────────────────
+
+/** Where a placed meta-tile stands, as a rectangle of cells; null when its slot names no meta. */
+function placementRect(doc: MapDoc, placement: MetaPlacement): Rect | null {
+  const ref = doc.metas[placement.slot]
+  return ref ? { x: placement.x, y: placement.y, width: ref.width, height: ref.height } : null
+}
+
+/**
+ * Drops the record of every baked placement whose footprint meets one of
+ * `rects`, except those in `keep`.
+ *
+ * A baked placement is a receipt: it says the grid holds the meta's tiles at
+ * its cells. Once something else has been written there it is a lie, and the
+ * next unbake would wipe art the user put down afterwards. Live placements are
+ * left alone — writing under one is writing the hole it shows through.
+ */
+export function withoutBakedIn(
+  doc: MapDoc,
+  layerIndex: number,
+  rects: readonly Rect[],
+  keep: ReadonlySet<number> = new Set()
+): { doc: MapDoc; dropped: number } {
+  const layer = doc.layers[layerIndex]
+  if (!layer?.placements.some((placement) => placement.baked)) return { doc, dropped: 0 }
+  const placements = layer.placements.filter((placement, index) => {
+    if (!placement.baked || keep.has(index)) return true
+    const rect = placementRect(doc, placement)
+    return !rect || !rects.some((touched) => rectsOverlap(rect, touched))
+  })
+  const dropped = layer.placements.length - placements.length
+  if (!dropped) return { doc, dropped: 0 }
+  const layers = doc.layers.slice()
+  layers[layerIndex] = { ...layer, placements }
+  return { doc: { ...doc, layers }, dropped }
+}
+
+export interface MapFloatDrop {
+  doc: MapDoc
+  /** Baked placements whose cells the drop overwrote, and whose records it dropped. */
+  dropped: number
+  /** Placements carried by a move whose corner ended up off the map, and so were removed. */
+  lost: number
+}
+
+/**
+ * Drops a float of cells onto one layer.
+ *
+ * A move (a float with `from`) takes along every meta-tile placed wholly
+ * inside the rectangle it came from — they ride the tiles they sit on, baked or
+ * live, and keep their stacking order. One whose corner lands off the map is
+ * removed, because a placement cannot stand outside it. A paste or a copy-drag
+ * carries tiles only, like the clipboard does.
+ *
+ * Every other baked placement the drop writes over, at either end, loses its
+ * record (`withoutBakedIn`).
+ */
+export function dropMapFloat(doc: MapDoc, layerIndex: number, float: Float): MapFloatDrop {
+  const layer = doc.layers[layerIndex]
+  if (!layer) return { doc, dropped: 0, lost: 0 }
+  const data = composeFloat(layer.data, doc.width, doc.height, float, 0)
+  const dx = float.x - (float.from?.x ?? float.x)
+  const dy = float.y - (float.from?.y ?? float.y)
+  const moved = new Set<number>()
+  let lost = 0
+  const placements: MetaPlacement[] = []
+  for (const placement of layer.placements) {
+    const rect = float.from && placementRect(doc, placement)
+    if (!rect || !rectInside(rect, float.from!)) {
+      placements.push(placement)
+      continue
+    }
+    const x = placement.x + dx
+    const y = placement.y + dy
+    if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) {
+      lost++
+      continue
+    }
+    moved.add(placements.length)
+    placements.push({ ...placement, x, y })
   }
-  return paintValue(doc, layerIndex, points, 0)
+  if (data === layer.data && !moved.size && !lost) return { doc, dropped: 0, lost: 0 }
+  const layers = doc.layers.slice()
+  layers[layerIndex] = { ...layer, data, placements }
+  const next = { ...doc, layers }
+  const touched = floatFootprint(float, doc.width, doc.height)
+  const { doc: settled, dropped } = withoutBakedIn(next, layerIndex, touched, moved)
+  return { doc: settled, dropped, lost }
+}
+
+/** The placements a move of `rect` would carry — what the canvas outlines as part of the float. */
+export function placementsInside(doc: MapDoc, layerIndex: number, rect: Rect): number[] {
+  const layer = doc.layers[layerIndex]
+  if (!layer) return []
+  const out: number[] = []
+  layer.placements.forEach((placement, index) => {
+    const at = placementRect(doc, placement)
+    if (at && rectInside(at, rect)) out.push(index)
+  })
+  return out
 }
 
 // ── layer list ops ───────────────────────────────────────────────────────────
