@@ -208,6 +208,13 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
         >
           Import image…
         </button>
+        <button
+          type="button"
+          title="Cut a sheet of tiles or animation frames into a tileset, a map, animated tiles, meta-tiles or sprites"
+          @click="resourcesStore.sheetImport = { destination: null, target: null }"
+        >
+          Import sheet…
+        </button>
       </div>
 
       <p class="hint">

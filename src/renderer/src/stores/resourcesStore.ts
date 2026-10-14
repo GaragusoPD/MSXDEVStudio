@@ -3,6 +3,7 @@ import type { ConversionResult, ResourceEntry } from '../../../shared/ipc'
 import { createMapDoc, SCREEN_COLS, SCREEN_ROWS } from '../../../shared/msx/map'
 import { defaultExport, serializeResource } from '../../../shared/msx/resource'
 import { createTilesDoc } from '../../../shared/msx/tile'
+import type { SheetDestination } from '../editors/sheet-import'
 import { useAppStore } from './appStore'
 import { useOutputStore } from './outputStore'
 
@@ -20,6 +21,11 @@ export const useResourcesStore = defineStore('resources', {
     /** Absolute path of MSXgl's bundled `MSXimg.txt`, when available. */
     msximgHelp: null as string | null,
     importVisible: false,
+    /**
+     * The sheet importer, open when set: where it was opened from — an editor
+     * opens it with its own file as the destination, the Resources panel with none.
+     */
+    sheetImport: null as { destination: SheetDestination | null; target: string | null } | null,
     /** The "New tiled screen" dialog — a flag here, like `importVisible`, so the File menu can open it from any view. */
     newScreenVisible: false,
     /** Why the last listing failed, if it did — shown in the panel instead of thrown at the console. */

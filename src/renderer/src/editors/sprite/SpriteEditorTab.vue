@@ -218,6 +218,7 @@ watch(
       <div class="panes">
         <SpriteList
           :doc="doc(session)"
+          :path="session.path"
           :active="session.selection.sprite"
           @select="selectSprite(session, $event)"
           @mutate="commit(session, $event)"

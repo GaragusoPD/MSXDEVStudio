@@ -198,8 +198,8 @@ export interface SheetPosesResult<T> {
   lossy: number
 }
 
-function poses(mode: TileMode, cells: readonly SheetCell[], duration: number): { frames: TileAnimFrame[]; pair: number; lossy: number } {
-  const sc1 = mode === 'sc1' ? sc1Pair(cells) : null
+function poses(mode: TileMode, cells: readonly SheetCell[], duration: number, pair?: number): { frames: TileAnimFrame[]; pair: number; lossy: number } {
+  const sc1 = mode !== 'sc1' ? null : pair === undefined ? sc1Pair(cells) : { fg: (pair >> 4) & 0x0f, bg: pair & 0x0f }
   let lossy = 0
   const frames = cells.map((cell) => {
     const pose = poseTiles(cell, mode, sc1)
@@ -212,15 +212,22 @@ function poses(mode: TileMode, cells: readonly SheetCell[], duration: number): {
 /**
  * One pose per cell, as an animated tile: the cell is the window. Transparent
  * dots are colour 0 — an animation is drawn whole, nothing shows through it.
+ * `pair` is SCREEN 1's ink and paper when the poses join a document that
+ * already has them; otherwise the cells' own two most-used colours.
  */
-export function cellsToTileAnim(mode: TileMode, cells: readonly SheetCell[], duration = DEFAULT_ANIM_DURATION): SheetPosesResult<TileAnimDoc> | string {
+export function cellsToTileAnim(
+  mode: TileMode,
+  cells: readonly SheetCell[],
+  duration = DEFAULT_ANIM_DURATION,
+  pair?: number
+): SheetPosesResult<TileAnimDoc> | string {
   if (!cells.length) return 'Select at least one cell.'
   const { cols, rows } = tilesAcross(cells[0])
   if (cols * rows > MAX_ANIM_CELLS) {
     return `A ${cols}×${rows}-tile cell is ${cols * rows} tiles; an animated tile holds at most ${MAX_ANIM_CELLS}. Import it as a meta-tile instead.`
   }
-  const { frames, pair, lossy } = poses(mode, cells, duration)
-  return { doc: { ...createTileAnimDoc(mode, cols, rows), pair, frames }, lossy }
+  const made = poses(mode, cells, duration, pair)
+  return { doc: { ...createTileAnimDoc(mode, cols, rows), pair: made.pair, frames: made.frames }, lossy: made.lossy }
 }
 
 /**
@@ -228,19 +235,24 @@ export function cellsToTileAnim(mode: TileMode, cells: readonly SheetCell[], dur
  * see-through cell — never written, so what is under the meta shows there;
  * other transparent dots are colour 0.
  */
-export function cellsToOwnedMeta(mode: TileMode, cells: readonly SheetCell[], duration = DEFAULT_ANIM_DURATION): SheetPosesResult<OwnedMetaDoc> | string {
+export function cellsToOwnedMeta(
+  mode: TileMode,
+  cells: readonly SheetCell[],
+  duration = DEFAULT_ANIM_DURATION,
+  pair?: number
+): SheetPosesResult<OwnedMetaDoc> | string {
   if (!cells.length) return 'Select at least one cell.'
   const { cols, rows } = tilesAcross(cells[0])
   if (cols > MAX_META_SIZE || rows > MAX_META_SIZE) {
     return `A ${cols}×${rows}-tile cell is too big for a meta-tile, which is at most ${MAX_META_SIZE}×${MAX_META_SIZE} tiles.`
   }
-  const { frames, pair, lossy } = poses(mode, cells, duration)
+  const made = poses(mode, cells, duration, pair)
   const holes = Array.from({ length: cols * rows }, (_, i) =>
     cells.every((cell) => tilePixels(cell, i % cols, Math.floor(i / cols)).every((value) => value === 0))
   )
   // A meta with nothing but see-through cells would draw nothing at all.
   if (holes.every(Boolean)) return 'Every selected cell is empty.'
-  return { doc: { ...createOwnedMeta(mode, cols, rows), pair, frames, holes }, lossy }
+  return { doc: { ...createOwnedMeta(mode, cols, rows), pair: made.pair, frames: made.frames, holes }, lossy: made.lossy }
 }
 
 // ── sprites ─────────────────────────────────────────────────────────────────

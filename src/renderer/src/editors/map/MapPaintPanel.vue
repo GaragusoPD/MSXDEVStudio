@@ -13,6 +13,7 @@ import { isBanked, TILE_SIZE } from '../../../../shared/msx/tile'
 import type { ScreenMode } from '../../../../shared/msx/modes'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
+import { useResourcesStore } from '../../stores/resourcesStore'
 import {
   declinePromotion,
   doc,
@@ -28,6 +29,7 @@ import {
 } from './session'
 
 const props = defineProps<{ session: MapSession }>()
+const resourcesStore = useResourcesStore()
 
 const banked = computed(() => (props.session.tileset ? isBanked(props.session.tileset) : false))
 const importing = ref(false)
@@ -129,6 +131,14 @@ const budget = computed(() => paintBudgetLabel(props.session))
           @click="importing = true"
         >
           Import image…
+        </button>
+        <button
+          type="button"
+          :disabled="busy"
+          title="Pick cells from a sheet of tiles and drag them into place on the active layer"
+          @click="resourcesStore.sheetImport = { destination: 'map', target: session.path }"
+        >
+          Import sheet…
         </button>
         <template v-if="!banked">
           <button

@@ -18,10 +18,12 @@ import {
 } from '../../../../shared/sprite-editor'
 import { drawIndices } from './draw'
 import SpriteImportDialog from './SpriteImportDialog.vue'
+import { useResourcesStore } from '../../stores/resourcesStore'
 
-const props = defineProps<{ doc: SpritesDoc; active: number }>()
+const props = defineProps<{ doc: SpritesDoc; active: number; path: string }>()
 const emit = defineEmits<{ select: [index: number]; mutate: [doc: SpritesDoc] }>()
 
+const resourcesStore = useResourcesStore()
 const THUMB = 48
 const thumbRefs = ref<(HTMLCanvasElement | null)[]>([])
 const importVisible = ref(false)
@@ -129,6 +131,13 @@ function onImported(frames: SpriteFrame[], palette: number[] | null): void {
         @click="importVisible = true"
       >
         Import PNG…
+      </button>
+      <button
+        type="button"
+        title="Characters from a sprite sheet: frames on a grid, colours split into planes"
+        @click="resourcesStore.sheetImport = { destination: 'sprites', target: path }"
+      >
+        Import sheet…
       </button>
     </div>
 

@@ -161,6 +161,13 @@ watch(
         <span class="status">{{ session.status }}</span>
         <button
           type="button"
+          title="Add poses cut from a sheet of animation frames"
+          @click="resourcesStore.sheetImport = { destination: session.kind === 'metatiles' ? 'meta' : 'anim', target: session.path }"
+        >
+          Import sheet…
+        </button>
+        <button
+          type="button"
           @click="save"
         >
           Save

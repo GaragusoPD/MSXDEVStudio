@@ -229,6 +229,28 @@ export function contentBox(images: readonly RgbaImage[]): { x: number; y: number
   return x1 < 0 ? null : { x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 }
 }
 
+/**
+ * `box` grown outward to the `step`-dot grid of its cell, clipped to the cell
+ * — a trim that keeps art on the tile grid it was drawn on, so a 16×16 coin
+ * trimmed for a meta-tile is still the same four tiles, not shifted into the
+ * corner of new ones.
+ */
+export function snapBox(
+  box: { x: number; y: number; width: number; height: number },
+  step: number,
+  cellWidth: number,
+  cellHeight: number
+): { x: number; y: number; width: number; height: number } {
+  const x = Math.floor(box.x / step) * step
+  const y = Math.floor(box.y / step) * step
+  return {
+    x,
+    y,
+    width: Math.min(cellWidth, Math.ceil((box.x + box.width) / step) * step) - x,
+    height: Math.min(cellHeight, Math.ceil((box.y + box.height) / step) * step) - y
+  }
+}
+
 /** Rounds `n` up to a multiple of `step`. */
 export function roundUp(n: number, step: number): number {
   return Math.ceil(n / step) * step
@@ -279,7 +301,13 @@ const CELL_SIZES = [64, 48, 32, 24, 16, 8]
  *    cell size that divides the length with every boundary between two cells
  *    on empty lines. (Smallest, because every multiple of it passes too.)
  * 2. Gutters: a period whose every gap falls on empty lines, filling the length
- *    exactly (or with the same margin at both ends), as many gaps as possible.
+ *    exactly (or with the same margin at both ends). Of those, the one with
+ *    something in the most of its cells — on a transparent background the
+ *    empty space beside a narrow figure passes for gutters too, but cuts cells
+ *    with nothing in them — then the most gaps, then the same margin at both
+ *    ends and the content centred in its cells, which is how packs are laid
+ *    out and what tells a grid apart from the same grid shifted into the
+ *    empty space around its figures.
  * 3. A strip of square frames — `square` is the other axis's length, given
  *    only for a sheet with transparency: an opaque 2:1 tileset is not two
  *    frames.
@@ -305,11 +333,21 @@ function guessAxis(length: number, empty: boolean[], square: number | null): { c
           if (!valid) break
           gutters++
         }
-        // Content between the gutters, or every line empty would explain anything.
-        if (!valid || gutters < 1 || empty.slice(offset, offset + cell).every(Boolean)) continue
+        if (!valid || gutters < 1) continue
         const rest = length - offset - (gutters + 1) * cell - gutters * spacing
         if (rest !== 0 && rest !== offset) continue
-        const score = gutters * 2 + (cell % 8 === 0 ? 1 : 0)
+        let filled = 0
+        let offCentre = 0
+        for (let k = 0; k <= gutters; k++) {
+          const lines = empty.slice(offset + k * (cell + spacing), offset + k * (cell + spacing) + cell)
+          const first = lines.indexOf(false)
+          if (first < 0) continue
+          filled++
+          offCentre += Math.abs(first - (cell - 1 - lines.lastIndexOf(false))) / cell
+        }
+        if (!filled) continue
+        const score =
+          (filled / (gutters + 1)) * 100 + gutters * 2 + (cell % 8 === 0 ? 1 : 0) + (rest === offset ? 3 : 0) - (offCentre / filled) * 2
         if (!best || score > best.score) best = { cell, offset, spacing, score }
       }
     }

@@ -14,6 +14,7 @@ import {
   rowsOf,
   scaleDown,
   selectionRect,
+  snapBox,
   splitStrip,
   stripOf,
   type SheetGrid
@@ -138,6 +139,18 @@ describe('the grid', () => {
       expect(guessGrid(sheet)).toEqual(grid({ cellWidth: 32, cellHeight: 32 }))
     })
 
+    it('reads gaps around frames of narrow figures, not the space beside each figure', () => {
+      // 1-dot margin, 24-dot frames, 2-dot gaps, an 8-dot-wide figure in the middle of each.
+      const width = 1 + 4 * 24 + 3 * 2 + 1
+      const height = 1 + 2 * 24 + 2 + 1
+      const sheet = image(width, height, (x, y) => {
+        const fx = (x - 1) % 26
+        const fy = (y - 1) % 26
+        return x >= 1 && y >= 1 && fx >= 8 && fx < 16 && fy >= 4 && fy < 20 ? RED : null
+      })
+      expect(guessGrid(sheet)).toEqual(grid({ cellWidth: 24, cellHeight: 24, offsetX: 1, offsetY: 1, spacingX: 2, spacingY: 2 }))
+    })
+
     it('reads a strip of square frames that touch', () => {
       // Figures as wide as their cells, on a transparent background.
       const sheet = image(24 * 5, 24, (x, y) => (y < 2 ? null : x % 2 ? RED : BLUE))
@@ -169,6 +182,15 @@ describe('cells into one picture and back', () => {
     const two = image(8, 8, (x, y) => (x === 5 && y === 6 ? RED : null))
     expect(contentBox([one, two])).toEqual({ x: 2, y: 3, width: 4, height: 4 })
     expect(contentBox([image(4, 4, () => null)])).toBeNull()
+  })
+
+  it('snaps a trim to the tile grid of the cell, so art stays on its tiles', () => {
+    // A 9×9 coin at (4,4) in a 16×16 cell keeps all four tiles; one in the
+    // top-left quarter only keeps that tile.
+    expect(snapBox({ x: 4, y: 4, width: 9, height: 9 }, 8, 16, 16)).toEqual({ x: 0, y: 0, width: 16, height: 16 })
+    expect(snapBox({ x: 2, y: 1, width: 5, height: 6 }, 8, 16, 16)).toEqual({ x: 0, y: 0, width: 8, height: 8 })
+    // A cell that is not a whole number of tiles is never grown past itself.
+    expect(snapBox({ x: 9, y: 0, width: 3, height: 4 }, 8, 12, 12)).toEqual({ x: 8, y: 0, width: 4, height: 8 })
   })
 })
 

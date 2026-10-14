@@ -215,6 +215,13 @@ watch(
         </button>
         <button
           type="button"
+          title="Pick cells from a sheet of tiles — gaps, margins and a transparent colour taken care of"
+          @click="resourcesStore.sheetImport = { destination: 'tiles', target: session.path }"
+        >
+          Import sheet…
+        </button>
+        <button
+          type="button"
           :disabled="!session.dirty"
           @click="save"
         >

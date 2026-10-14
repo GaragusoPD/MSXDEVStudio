@@ -18,6 +18,7 @@ import NewGameDialog from './components/NewGameDialog.vue'
 import NewProjectDialog from './components/NewProjectDialog.vue'
 import CloneRepoDialog from './components/CloneRepoDialog.vue'
 import NewTiledScreenDialog from './components/NewTiledScreenDialog.vue'
+import SheetImportDialog from './components/SheetImportDialog.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import StatusBar from './components/StatusBar.vue'
 import Splitter from './components/Splitter.vue'
@@ -138,6 +139,12 @@ onUnmounted(() => {
       <NewProjectDialog v-if="projectStore.wizardVisible || examplesStore.forkSource" />
       <NewGameDialog v-if="projectStore.gameWizardVisible" />
       <NewTiledScreenDialog v-if="resourcesStore.newScreenVisible" />
+      <SheetImportDialog
+        v-if="resourcesStore.sheetImport"
+        :destination="resourcesStore.sheetImport.destination"
+        :target="resourcesStore.sheetImport.target"
+        @close="resourcesStore.sheetImport = null"
+      />
       <CloneRepoDialog v-if="gitStore.cloneVisible" />
       <PreferencesDialog
         v-if="appStore.preferencesVisible"
