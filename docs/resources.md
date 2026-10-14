@@ -296,6 +296,16 @@ sprite editor, which open it with their own file as the destination.
 | **Animated tile** | A pose. The cell is the window, up to 16 tiles. | Colour 0. |
 | **Meta-tile** | A pose, up to 16×16 tiles. | A tile empty in every pose is a see-through cell. |
 | **Sprites** | A frame of a character; a frame bigger than a sprite is a metasprite grid. | Sprite colour 0. |
+| **Bitmap tileset** (MSX2) | Its tiles at the tileset's own size — one tile when the cell is that size, a block of them when it is a multiple — shared with any the tileset already has. A new tileset takes the cell as its tile size, and can also get a bitmap map. | Index 0, the tileset's transparent colour; an empty tile is the reserved tile 0. |
+| **Bitmap meta-tile** (MSX2) | A frame, its tiles found or made in the bitmap tileset it is drawn with (pick one for a new meta). | An empty tile is tile 0, never blitted. |
+| **Software sprites** | A frame of a character, padded to what the mode draws: whole bytes in SCREEN 5–8, whole 8×8 cells in SCREEN 1/2/4, two blocks in SCREEN 3. | The sheet's transparent index. |
+| **Screen** (MSX2) | The selection floats over the screen like an imported picture; drag it and press Enter. | See-through: the screen shows. |
+
+A destination with a palette of its own — an MSX2 tileset, sprite sheet or
+screen, a SCREEN 4 tileset — keeps every colour it already draws with exactly,
+and the sheet's colours take the entries nothing uses yet, so a second sheet
+never recolours the first. A new file gets **MSX1 colours** or a palette
+**optimized for the sheet**; SCREEN 8 has no palette to choose.
 
 For the animated kinds, **a file per row** (a character per row, for sprites)
 turns idle, walk and jump rows into separate animations in one import, named
@@ -483,9 +493,14 @@ Exports `_Palette` (when the mode has one) and `_Data`.
 #include "content/title.h"
 
 VDP_SetMode(VDP_MODE_SCREEN5);
-VDP_SetPalette(g_Title_Palette);           // 16 entries, 2 bytes each
+VDP_SetPalette(g_Title_Palette + 2);       // entries 1-15: see below
 VDP_WriteVRAM(g_Title_Data, g_ScreenLayoutLow, g_ScreenLayoutHigh, G_TITLE_DATA_SIZE);
 ```
+
+`_Palette` holds all 16 entries, entry 0 first. MSXgl's `VDP_SetPalette()` loads
+entries 1-15 unless `VDP_USE_PALETTE16` is TRUE in `msxgl_config.h` — the
+template leaves it FALSE — so pass the table from entry 1, or turn that on and
+pass it whole. Passed whole under the default, every colour lands one entry off.
 
 ### SFX
 

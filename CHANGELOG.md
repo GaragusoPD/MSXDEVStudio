@@ -7,18 +7,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-14
+
 ### Added
 
 - **Import sheet…** — cells from an asset-pack sheet (a PNG of tiles or
   animation frames on a grid, the kind sold on itch.io) into a tileset, a map,
-  an animated tile, a meta-tile or a sprite sheet. The pixel scale, the
+  an animated tile, a meta-tile or a sprite sheet — and on MSX2 into a bitmap
+  tileset, a bitmap meta-tile, a software-sprite sheet (any of its modes) or a
+  screen. A file with a palette keeps every colour it already draws with; the
+  sheet's colours take the entries nothing uses. The pixel scale, the
   transparent colour and the grid — cell size, margin, gap — are guessed from
   the image and can be corrected; a key colour is picked by clicking the
   background. Pick cells by click, drag, Shift- and Ctrl-click; each row can
   become its own animation or character. Sprites drawn in several colours are
   split into stacked planes, per line in mode 2, and the result says how many
   sprites a line of the character crosses. From the Resources panel, or from
-  the tile, map, pose and sprite editors for their own file.
+  any editor that can take cells — tile, map, pose, sprite, bitmap tile,
+  bitmap meta-tile, software-sprite and screen — for its own file.
 
 - **Select, move, cut, copy, paste and delete in the screen and map editors.**
   A new Select tool drags a rectangle — by the dot on a screen, by the cell on
@@ -52,6 +58,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Loading an exported palette.** The agent guide, the resources reference
+  and the bitmap and sprite-mode-2 tutorials loaded a 16-entry `_Palette` with
+  `VDP_SetPalette(table)`; under the MSX2 template's `VDP_USE_PALETTE16 FALSE`
+  that writes entries 0–14 into colours 1–15, every colour one off. They now
+  pass `table + 2` and say why.
 - **Importing a picture onto a SCREEN 4 map** converted it to a palette of its
   own and then drew it with the tileset's, so it came out in the wrong colours.
   It now converts to the tileset's palette.

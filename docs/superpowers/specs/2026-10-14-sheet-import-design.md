@@ -1,8 +1,7 @@
 # Importing sprite sheets and tilesets — design
 
 **Date:** 2026-10-14
-**Status:** phase 1 implemented with the defaults below — see *As built*.
-Phase 2 (bitmap modes) not started.
+**Status:** implemented, both phases (0.2.4) — see *As built*.
 **Scope:** one importer for the asset sheets people buy or download (itch.io
 packs and the like) — a PNG of tiles or animation frames on a grid — that cuts
 it into cells, takes a transparent colour, and sends the cells you pick to a
@@ -148,8 +147,30 @@ Proposed defaults, cheap to change; none was confirmed.
 
 ## Phases
 
-1. **This one**: the dialog, the grid and key, and the destinations above.
-2. **Bitmap modes**: bitmap tileset (`.btiles.json`, cell = tile, the key as
-   its transparent index), bitmap meta-tiles, software sprites
-   (`.swsprites.json`, which has no importer at all today), and screen
-   fragments.
+1. **Pattern modes and hardware sprites**: the dialog, the grid and key, and
+   the destinations above.
+2. **MSX2**: bitmap tilesets (a cell cut into tiles of the tileset's size, a
+   new tileset taking the cell's), bitmap meta-tiles (frames whose tiles go into
+   the bitmap tileset the meta is drawn with), software sprites in any of their
+   modes (frames padded to the mode's step), and placing cells on a screen —
+   which replaced *screen fragments*: a software-sprite sheet is what fragments
+   were for, and it now has an importer.
+
+### Phase 2, as built
+
+- **A palette is shared, not replaced.** Into a file with a palette, the
+  conversion keeps every entry its pixels use and gives the sheet's colours
+  the entries nothing uses (`unusedEntries`, the screen import's rule), so a
+  second sheet never recolours the first.
+- **"MSX1 colours" is written out.** The quantizer returns no palette for the
+  fixed MSX1 colours; a V9938 file still has to hold them, or a new tileset or
+  sprite sheet comes out sixteen blacks. Found in the app run, not by a test.
+- **Keyed dots are index 0 in every mode**, SCREEN 8 included, whose 0 is
+  otherwise black; a screen's float is told so explicitly.
+- **Verified** as phase 1 was, and on the emulator: an imported SCREEN 5
+  software sprite built with the real MSXgl, its palette loaded with
+  non-default colours, matches the source in every dot and every colour.
+- **Found on the way:** the agent guide, `resources.md` and two tutorials loaded
+  a 16-entry `_Palette` with `VDP_SetPalette(table)`, which under the
+  template's `VDP_USE_PALETTE16 FALSE` writes entries 0–14 into colours 1–15 —
+  every colour one off. They now pass `table + 2`.
