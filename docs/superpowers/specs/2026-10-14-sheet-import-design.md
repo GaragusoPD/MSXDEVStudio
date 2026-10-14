@@ -1,0 +1,127 @@
+# Importing sprite sheets and tilesets — design
+
+**Date:** 2026-10-14
+**Status:** proposed with the defaults below; phase 1 in progress.
+**Scope:** one importer for the asset sheets people buy or download (itch.io
+packs and the like) — a PNG of tiles or animation frames on a grid — that cuts
+it into cells, takes a transparent colour, and sends the cells you pick to a
+resource: a tileset, a map, an animated tile, a meta-tile, or a sprite.
+
+## Why
+
+Pablo, 2026-10-14: *"import an image that has a spritesheet or tileset (like
+pngs you buy in game assets on itch.io). We should be able to import those,
+select the transparent color, and to select the source, if to a map or an
+animated tile (also megatile) or animated sprite, etc."*
+
+Today every importer reads an image as **one picture**:
+
+- the tile editor packs the whole picture into 8×8 tiles, the bitmap tile
+  editor slices it at its own tile size, the map floats it, the screen pastes
+  it — all from (0,0), with no gap between cells;
+- the sprite importer takes a single row of frames at the document's sprite
+  size and nothing else;
+- transparency is alpha only — a sheet drawn on a magenta or teal background
+  has no transparent pixels as far as the importer is concerned;
+- `fitToMode` shrinks anything larger than a screen before converting it, so a
+  512-pixel-wide sheet arrives at half size, its pixel art smeared.
+
+A sheet is different from a picture. It is a **grid of cells** — often with a
+margin and a gap between cells, often drawn at 2× or 3× — and what you want
+from it is usually *some* of those cells, in order: the eight frames of a walk
+cycle, the four poses of a torch, the twenty ground tiles in the top-left.
+
+## The importer
+
+One dialog, `SheetImportDialog`, opened from the Resources panel (*Import
+sheet…*) and from the editors that can take cells (the tile, map, pose and
+sprite editors), which open it with themselves as the destination.
+
+1. **The sheet**, shown at a zoom you choose, with the grid drawn over it.
+2. **The grid**: cell width × height, the margin before the first cell
+   (offset x/y), the gap between cells (spacing x/y), and the **pixel scale** —
+   how many sheet pixels make one MSX dot, for art drawn at 2× or 3×.
+   *Guess* proposes all of them from the image: the scale from the common
+   divisor of every run of equal pixels, the transparent colour from alpha or
+   the corners, and the cell size and gaps from rows and columns that are
+   entirely transparent at a regular interval.
+3. **The transparent colour**: the image's alpha (always honoured), plus one
+   **key colour** picked with an eyedropper on the sheet — or none. Keyed
+   pixels become index 0 exactly as transparent PNG pixels do today, so every
+   existing converter already knows what to do with them.
+4. **The cells**: click a cell, shift-click to extend in reading order,
+   ctrl-click to toggle, drag a rectangle. The order is reading order — it is
+   the order sheets are drawn in. *Skip empty cells* (on by default) drops
+   cells with nothing in them, the usual ragged end of an animation row.
+5. **The destination**, and a preview of what it will get, converted, with the
+   loss report the image importer already has.
+
+Conversion runs once, on a strip of the selected cells side by side, through
+the existing quantizer and worker — one palette for the whole selection, and
+the mode's colour rules applied cell by cell because every cell is a multiple
+of 8 wide. No shrinking: the sheet is cut at its own scale.
+
+## Destinations
+
+Each is a pure function in `shared/` from converted cells to the resource, so
+the rules are tested without a DOM, and a renderer module applies the result —
+to a new file, or to an existing one through its editor so the change is one
+undo step there.
+
+| Destination | What a cell becomes | Transparent pixels |
+|---|---|---|
+| **Tileset** (`.tiles.json`) | Its 8×8 tiles, deduplicated against the tileset; optionally a named **block** per cell, so a 16×16 tile is one stamp on a map. New tilesets can also get a map laying the selection out as on the sheet. | Colour 0 (the backdrop); an all-transparent tile is tile 0 when it is reserved. |
+| **Map** | The selection, laid out as on the sheet, floats over the open map exactly like an imported picture; its tiles are found or made in the map's tileset where it is dropped. | See-through: the map underneath shows. |
+| **Animated tile** (`.anim-tiles.json`) | One pose per cell; cell size = the window, up to 16 tiles. | Colour 0. |
+| **Meta-tile** (`.meta-tiles.json`) | One pose per cell, up to 16×16 tiles. | An 8×8 cell transparent in every pose is a **see-through cell**; other transparent pixels are colour 0. |
+| **Sprite** (`.sprites.json`) | One frame per cell of a new character; a cell larger than the sprite size becomes a metasprite grid (up to 4×4). | Sprite colour 0 — transparent on the VDP. |
+
+Rows: for the animated destinations (animated tile, meta-tile, sprite),
+**one per row** (on by default when the selection spans several rows) makes
+each row of the selection its own animation — idle, walk and jump from one
+character sheet in one import, named after the file plus the row.
+
+**Trim** (sprites and meta-tiles, on by default): cut every frame to the one
+box that holds the content of *all* of them, so a 20×24 character in 32×32
+cells costs a 2×2 metasprite only where it must, and the frames stay aligned.
+
+### Sprites: colours into planes
+
+A hardware sprite plane has one colour — per sprite in mode 1, per line in
+mode 2. A character drawn in several colours is therefore several planes
+stacked on one cell (the editor's layers), and the importer does the split:
+
+- **Mode 1**: per frame and cell, the most-used colours each get a plane, up to
+  *max planes* (default 3); any colour left over goes to the nearest kept one.
+- **Mode 2**: the same, **per line** — each line hands its own colours to the
+  planes, so a figure with six colours, never more than two on one line, costs
+  two planes, not six.
+- Every frame of a character gets the same number of planes (the export's
+  `_PLANES` is per character), padding with empty ones.
+- The report says how many sprites one line of the character shows, against
+  the hardware's 4 (MSX1) or 8 (MSX2) per line.
+
+The OR-colour trick (CC: three colours from two planes) is left to the editor.
+
+## Decisions taken by default
+
+Proposed defaults, cheap to change; none was confirmed.
+
+1. **"To a map" means placing the selection on a map**, as a floating picture.
+   A *new* tileset can additionally lay the selection out as a new map, which
+   covers the other reading.
+2. **A big cell in a pattern tileset is its tiles plus a named block** (block
+   per cell is a checkbox, on). A meta-tile per cell is not offered: it would be
+   one file per cell.
+3. **Colour split for sprites is automatic**, with *max planes* as the control;
+   the manual colour-to-plane table of today's sprite importer stays where it
+   is.
+4. **Reading order, not click order**, for frames.
+
+## Phases
+
+1. **This one**: the dialog, the grid and key, and the destinations above.
+2. **Bitmap modes**: bitmap tileset (`.btiles.json`, cell = tile, the key as
+   its transparent index), bitmap meta-tiles, software sprites
+   (`.swsprites.json`, which has no importer at all today), and screen
+   fragments.
