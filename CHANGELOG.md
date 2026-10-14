@@ -7,6 +7,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-14
+
+### Fixed
+
+- **The app crashed on start under Wayland** on KDE with the NVIDIA driver:
+  Electron 43 segfaults the moment it creates a window, before any of the app's
+  code runs. Upgraded to Electron 44, which opens a native Wayland window on
+  the same machine — no `--ozone-platform=x11` needed.
+
 ## [0.2.2] - 2026-10-13
 
 ### Meta-tiles: overlap, removal, one model
