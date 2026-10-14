@@ -33,7 +33,7 @@ through the [tutorials](tutorials/README.md) in order.
 
 ## Learning MSXgl
 
-The [tutorials](tutorials/README.md) walk through the MSXgl graphics samples,
+The [tutorials](tutorials/README.md) walk through the MSXgl graphics and sound samples,
 each ending in a complete program you can paste into `main.c` and Run.
 
 1. [Hello world](tutorials/01-hello-world.md)
@@ -46,6 +46,7 @@ each ending in a complete program you can paste into `main.c` and Run.
 8. [Software sprites and tiles](tutorials/08-software-sprites.md)
 9. [Meta-tiles](tutorials/09-meta-tiles.md)
 10. [SCREEN 3: chunky graphics](tutorials/10-screen3-chunky.md)
+11. [Music and sound effects](tutorials/11-music-and-sound.md)
 
 For the library's own API reference, use **Help ▸ MSXgl Reference**, or the
 **Offline docs** link at the bottom of the Examples panel when you have an

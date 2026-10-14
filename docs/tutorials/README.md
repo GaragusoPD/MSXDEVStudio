@@ -1,6 +1,6 @@
-# MSXgl graphics tutorials
+# MSXgl tutorials
 
-Walkthroughs of the MSXgl graphics samples, written for MSXDEVStudio users. Each
+Walkthroughs of the MSXgl graphics and sound samples, written for MSXDEVStudio users. Each
 one explains a sample from the MSXgl checkout, gives you a complete program you
 can paste into `main.c` and Run, and points at the MSXDEVStudio editor that makes
 the art for it.
@@ -21,6 +21,7 @@ memory.
 | 8 | [Software sprites and tiles](08-software-sprites.md) | Drawing objects without the sprite hardware, its CPU cost, and the runtime MSXDEVStudio generates for it | MSX2 and up |
 | 9 | [Meta-tiles](09-meta-tiles.md) | Designs bigger than a cell: drawing one, animating it, attaching it to tilesets, and building levels out of it one byte each | MSX1 and up |
 | 10 | [SCREEN 3: chunky graphics](10-screen3-chunky.md) | The MSX1 mode with no colour clash: its two runtime shapes, the RAM shadow and dirty-strip flush, page flipping, chunky software sprites | MSX1 and up |
+| 11 | [Music and sound effects](11-music-and-sound.md) | The PSG, ayFX effects and lVGM music, priorities, jingles that hand the song back, pause and fade — through the ready-made C | MSX1 and up |
 
 ## Before you start
 
@@ -35,7 +36,7 @@ Settings these tutorials refer to (**LibModules**, **Machine**, **Target**,
 
 ![Project Settings: machine, target and ROM size, the source module list, and the ROM/startup options including Custom ISR](../images/editor_project_settings.png)
 
-For making your own tiles, sprites, maps, screens and sound effects, see
+For making your own tiles, sprites, maps, screens, sound effects and music, see
 [the resources guide](../resources.md).
 
 ## License

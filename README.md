@@ -5,7 +5,7 @@
 # MSXDEVStudio
 
 **A desktop IDE for making MSX games.** Write the code, draw the tiles and
-sprites, lay out the maps, compose the sound effects, press Run, and watch your
+sprites, lay out the maps, compose the music and sound effects, press Run, and watch your
 ROM boot in an emulator. One application, one download.
 
 Targets MSX1, MSX2, MSX2+ and MSX turbo R. Runs on Linux and Windows.
@@ -110,7 +110,15 @@ shipped in 1983.
   block into the name table, or runs a software sprite — background save,
   restore and blit — so you are not writing VDP plumbing by hand.
 - **Sound effect editor** producing ayFX banks, with per-frame tone, noise and
-  volume lanes, presets, and import of `.afx` / `.afb` files.
+  volume lanes, presets, priorities, and import of `.afx` / `.afb` files.
+- **Music editor** (`*.music.json`) — songs drawn on a piano roll over the PSG's
+  three channels, with ready-made instruments and drum beats, exported as lVGM
+  for MSXgl's player. What you hear in the editor is register for register what
+  the MSX plays — sound effects over the music and jingles over a song included.
+- **Ready-made sound code.** One call per frame plays the music, the sound
+  effect over it and writes the PSG; effects play by name at their own priority,
+  and a jingle (`g_Music_PlayJingle`) interrupts the song and hands it back where
+  it was. Every call is documented in the generated header.
 - **Build and run** with one keystroke: incremental compilation, compiler
   errors parsed into a clickable Problems panel, and launch straight into
   openMSX or into WebMSX in your browser.

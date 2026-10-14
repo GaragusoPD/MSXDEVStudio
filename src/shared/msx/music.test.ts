@@ -14,6 +14,7 @@ import {
   loopFrame,
   maskRegisters,
   monophonic,
+  musicHelperC,
   normalizeMusic,
   noteName,
   notePeriod,
@@ -310,5 +311,25 @@ describe('beats', () => {
       expect(beat.pattern).toHaveLength(ROWS_PER_BAR)
       for (const hit of beatHits(beat.pattern)) expect(INSTRUMENT_PRESETS.some((one) => one.name === hit.drum)).toBe(true)
     }
+  })
+})
+
+describe('musicHelperC', () => {
+  it('documents every call in the header, and shows the bank\'s own songs', () => {
+    const { header } = musicHelperC('g_Music', true, ['theme', 'stage clear'])
+    header.forEach((line, i) => {
+      if (/^(void|u8|bool) g_Music_\w+\(/.test(line)) expect(header[i - 1], line).toMatch(/^\/\//)
+    })
+    const text = header.join('\n')
+    expect(text).toContain('//   g_Music_Play(g_Music_Theme, TRUE);')
+    expect(text).toContain('//   g_Music_PlayJingle(g_Music_StageClear);')
+    expect(text).toContain('g_Music_Decode(); ayFX_Update(); PSG_Apply();')
+  })
+
+  it('never tells a game without effects to run ayFX', () => {
+    const text = musicHelperC('g_Music', false, ['theme']).header.join('\n')
+    expect(text).not.toContain('ayFX')
+    expect(text).not.toContain('ayfx')
+    expect(text).toContain('g_Music_Decode(); PSG_Apply();')
   })
 })

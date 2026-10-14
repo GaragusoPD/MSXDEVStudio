@@ -1027,8 +1027,11 @@ g_Music_Update();                     // the song, the effect over it, out to th
 - **Fades and pauses.** \`g_Music_FadeOut(speed)\` takes the volume down one step
   every \`speed\` frames — fifteen steps, so speed 4 is about a second at 60 Hz —
   then stops the song, and \`g_Music_IsPlaying()\` turns \`FALSE\`.
-  \`g_Music_Pause()\`/\`g_Music_Resume()\` pause in place; \`g_Music_Stop()\` ends the
-  song; \`g_Music_Play()\` starts any song from the top, fade or no fade.
+  \`g_Music_Pause()\`/\`g_Music_Resume()\` pause in place — \`_Resume()\` carries on
+  only what \`_Pause()\` paused, and does nothing after a stop, a finished fade or
+  a one-shot's end; \`g_Music_Stop()\` ends the song; \`g_Music_Play()\` starts any
+  song from the top, fade or no fade. Every call is commented in the generated
+  \`content/<bank>.h\` — read it rather than guessing.
 - **Jingles.** \`g_Music_PlayJingle(g_Music_Win)\` plays a song once over the one
   playing: the song stops where it is and, the frame the jingle ends, carries on
   from there — still paused or fading if it was. Any song in any bank can be a

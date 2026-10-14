@@ -40,6 +40,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   as a jingle over the song playing. Checked in openMSX against the editor's
   player, register by register, through effects, fades, pauses and stops.
 
+- **Documented sound code.** The generated music and sound-effect headers now
+  comment every call and open with an example using the bank's own songs and
+  effects. The help has a full reference (*Sound effects and music* in the
+  Resources guide: every call, what a jingle does to a paused or fading song,
+  what each call does during one, what the helper does inside) and a new
+  tutorial, **Music and sound effects**, whose complete program — effects,
+  priorities, a jingle, pause and fade from the keyboard — was built against
+  MSXgl and run in openMSX.
+
 - **Sound-effect priorities and named ids.** Each effect has a priority, so an
   important sound (a death, a level clear) is never cut off by a minor one (a
   coin); the bank has a channel; and every exported bank names its effects —

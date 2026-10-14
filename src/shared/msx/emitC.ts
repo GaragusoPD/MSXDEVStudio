@@ -69,6 +69,15 @@ function art(value: number): string {
   return out
 }
 
+/**
+ * A usage example for a header comment: each `[code, note]` becomes
+ * `//   code   // note`, the notes lined up one column past the longest line.
+ */
+export function exampleComment(lines: readonly (readonly [string, string?])[]): string[] {
+  const width = Math.max(...lines.map(([code, note]) => (note ? code.length : 0)))
+  return lines.map(([code, note]) => (note ? `//   ${code.padEnd(width)}   // ${note}` : `//   ${code}`).trimEnd())
+}
+
 /** Uppercase, C-identifier-safe form of a table name, for `#define`s. */
 export function defineName(name: string): string {
   return name.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()

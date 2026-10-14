@@ -1078,7 +1078,13 @@ function resourceCode(
   if (resource.kind === 'swsprites') {
     return resource.doc.sprites.length ? swSpriteHelperC(resource.doc, name) : NO_CODE
   }
-  if (resource.kind === 'music') return musicHelperC(name, resource.doc.effects !== null)
+  if (resource.kind === 'music') {
+    return musicHelperC(
+      name,
+      resource.doc.effects !== null,
+      resource.doc.songs.map((song) => song.name)
+    )
+  }
   if (resource.kind === 'sfx') return sfxHelperC(resource.doc, name)
   // A pattern meta-tile has no tile numbers of its own to draw with: each
   // tileset it is attached to draws it (`_DrawMeta`), and its window is that

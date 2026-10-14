@@ -153,7 +153,13 @@ explosion is the least noticeable loss.
   `g_Music_Stop()`, `g_Music_Pause()`, `g_Music_Resume()`, `g_Music_IsPlaying()`,
   `g_Music_FadeOut(speed)`, `g_Music_PlayJingle(song)`, `g_Music_IsJingle()`,
   `g_Music_Update()` (decode → effects → `PSG_Apply`) and `g_Music_Decode()` for a
-  game that orders the frame itself.
+  game that orders the frame itself. The header comments every call and opens
+  with an example naming the bank's own songs (and, for SFX, its first effect).
+- `_Resume()` carries on only what `_Pause()` paused (`_SongOn || _JingleOn`):
+  after `_Stop`, a finished fade or the end of a one-shot, `LVGM_Stop` has
+  rewound the player's pointer to the header, and `LVGM_Resume` would decode
+  `GM`, the options and the default byte as register writes before restarting the
+  song. `_Decode` clears `_SongOn` when a song played without loop ends.
 - The fade attenuates `g_PSG_Regs` **after** the register copy is saved, so the
   copy keeps the song's own volumes; fifteen steps, one per `speed` frames, then
   `LVGM_Stop`. `_Play` resets it — RAM is not cleared at boot.

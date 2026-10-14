@@ -354,7 +354,7 @@ describe('a jingle over the song', () => {
           if (!decoder?.playing) return
           regs.set(copy)
           decoder.decode(regs)
-        }
+        } else if (!decoder.playing) songOn = false
         copy = regs.slice(0, 13)
         if (fade.speed) {
           if (--fade.timer === 0) {

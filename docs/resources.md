@@ -564,13 +564,30 @@ Both play through MSXgl's PSG register buffer, so a project needs:
   `LVGM_USE_MSXMUSIC`, `LVGM_USE_MSXAUDIO` and `LVGM_USE_SCC` set to `FALSE` (the
   template turns those on, and they need modules a PSG game doesn't link).
 
-**Set up project** in the music editor does all of it.
+**Set up project** in the music editor does all of it. The
+[music and sound tutorial](tutorials/11-music-and-sound.md) builds a complete
+program out of everything below, step by step.
 
-An SFX bank exports as one table plus a define per effect — `G_SFX_COIN`,
-`G_SFX_JUMP`. A music bank exports one table per song, `g_Music_<Song>` (`theme`
-→ `g_Music_Theme`), with `_FRAMES` and `_LOOP_FRAME` defines for a game that
-wants to sync to it. Tick **Export ready-made C** in both editors and this is
-all the sound code a game needs:
+#### What the export writes
+
+An SFX bank exports as one table plus a define per effect, named after the bank
+and the effect — `G_SFX_PICKUP`, `G_SFX_EXPLOSION` — and `G_SFX_COUNT`. Use the
+names: an effect's number is its place in the list, and reordering changes it.
+
+A music bank exports one table per song, `g_Music_<Song>` (`stage clear` →
+`g_Music_StageClear`), and for each song its length and loop point in frames, for
+a game that wants to sync something to the music:
+
+```c
+#define G_MUSIC_THEME_FRAMES 320          // one pass, at one decode per frame
+#define G_MUSIC_THEME_LOOP_FRAME 0        // where a looping song goes back to
+#define G_MUSIC_THEME_SIZE 1488
+extern const unsigned char g_Music_Theme[];
+```
+
+Tick **Export ready-made C** in each editor and the header also declares that
+bank's player, every call commented, with an example at the top; the code itself
+goes in the `.c` beside it. That is all the sound code a game needs:
 
 ```c
 #include "msxgl.h"
@@ -582,39 +599,117 @@ g_Music_Play(g_Music_Theme, TRUE);    // TRUE: loop from the song's loop bar
 
 if (jumped)
     g_Sfx_Play(G_SFX_JUMP);           // at the effect's own priority
+if (levelDone)
+    g_Music_PlayJingle(g_Music_Win);  // once, over the theme — which then carries on
 
 // once per frame, after Halt() or in the V-blank hook:
 g_Music_Update();                     // the song, the effect over it, out to the PSG
 ```
 
+#### The sound-effect calls
+
 | Call | Does |
 |---|---|
-| `g_Sfx_Init()` | Sets ayFX up with the bank, on the channel chosen in the SFX editor |
-| `g_Sfx_Play(id)` | Plays an effect at its own priority. Returns 1 — and plays nothing — while a more important one is sounding |
-| `g_Sfx_PlayPriority(id, p)` | The same at priority `p`, for this one call |
-| `g_Sfx_Stop()` / `g_Sfx_IsPlaying()` | Cut the effect off (the music gets its channel back) / ask whether one is sounding |
-| `g_Sfx_Update()` | Once per frame **in a game without music** |
-| `g_Music_Play(song, loop)` | Starts a song from the top — also over one that is playing or fading |
-| `g_Music_Update()` | Once per frame: the song, then the effects (when the music bank has an effects bank attached), then the PSG |
-| `g_Music_FadeOut(speed)` | Fades out, one volume step every `speed` frames — fifteen steps, so speed 4 is about a second at 60 Hz — then stops |
-| `g_Music_Pause()` / `g_Music_Resume()` | Silence the song where it is / carry on |
-| `g_Music_Stop()` / `g_Music_IsPlaying()` | End the song / ask whether one is playing (FALSE after a one-shot ends or a fade finishes) |
-| `g_Music_PlayJingle(song)` / `g_Music_IsJingle()` | Play a song once over the one playing, which stops where it is and carries on after it — paused or fading still, if it was / ask whether the jingle is still on |
+| `void g_Sfx_Init()` | Sets ayFX up with the bank, on the channel chosen in the SFX editor, with nothing playing. Call it first: RAM is not cleared at boot |
+| `u8 g_Sfx_Play(u8 id)` | Plays an effect at its own priority, from the next frame. Returns 0 when it plays, and 1 — playing nothing — while a more important one is sounding. Equal priority replaces |
+| `u8 g_Sfx_PlayPriority(u8 id, u8 priority)` | The same at `priority` (0 the most important, 15 the least) for this one call |
+| `void g_Sfx_Stop()` | Cuts the effect off; music on its channel comes back the next frame |
+| `bool g_Sfx_IsPlaying()` | TRUE while an effect is sounding |
+| `void g_Sfx_Update()` | Once per frame **in a game without music**: the effect, then out to the PSG |
+
+#### The music calls
+
+| Call | Does |
+|---|---|
+| `void g_Music_Play(const u8* song, bool loop)` | Starts a song from the top — also over one that is playing, fading or under a jingle (that song is dropped). With `loop`, it goes round from its loop bar for ever |
+| `void g_Music_Update()` | Once per frame: the song, then the effects (when the music bank has an effects bank attached), then the PSG |
+| `void g_Music_Pause()` | Silences the song — or the jingle — where it is |
+| `void g_Music_Resume()` | Carries on from where `g_Music_Pause()` stopped it. After `g_Music_Stop()`, a finished fade or the end of a song played without loop there is nothing to carry on, and it does nothing: start a song with `g_Music_Play()` |
+| `void g_Music_Stop()` | Ends the music for good — a jingle and the song under it alike |
+| `bool g_Music_IsPlaying()` | TRUE while a song or a jingle is playing; FALSE while paused, after a song played without loop has ended, and after `_Stop()` or a fade |
+| `void g_Music_FadeOut(u8 speed)` | Fades out, one volume step every `speed` frames — fifteen steps, so speed 4 is about a second at 60 Hz — then stops. A fade already running restarts |
+| `void g_Music_PlayJingle(const u8* song)` | Plays a song once over the one playing, which stops where it is and carries on after it (below) |
+| `bool g_Music_IsJingle()` | TRUE from `g_Music_PlayJingle()` until the jingle ends |
+| `void g_Music_Decode()` | The song alone, into the PSG buffer — for a game that orders the frame itself (below) |
 
 Call one of the two `_Update()`s per frame, never both: with music,
 `g_Music_Update()` already runs the effects.
 
-Don't call `LVGM_Decode()` yourself when effects play over the music. lVGM
-writes only the PSG registers that change, so after an effect the borrowed
-channel would stay at the effect's pitch and volume until the song next touched
-it; the helper keeps a copy of the song's registers and puts them back first. A
-game that needs its own order calls `g_Music_Decode(); ayFX_Update();
-PSG_Apply();` — in that order.
+#### Jingles
 
-Without the ready-made C, the same works through MSXgl directly:
-`ayFX_InitBank(g_Sfx)`, `ayFX_SetChannel(PSG_CHANNEL_C)`,
-`ayFX_PlayBank(G_SFX_JUMP, priority)`, and `ayFX_Update(); PSG_Apply();` once per
-frame.
+A jingle is a short tune played *over* the music — a stage-clear fanfare, an item
+pickup, an extra life. `g_Music_PlayJingle(song)` stops the song where it is,
+plays `song` once, and the frame the jingle ends the song carries on from that
+same spot, with no silent frame between them. Any song of any bank can be a
+jingle; it always plays once, whatever its loop bar says.
+
+```c
+// Fire and forget: the theme comes back by itself.
+if (gotKey)
+    g_Music_PlayJingle(g_Music_KeyGet);
+
+// Wait for it: the level ends when the fanfare does.
+g_Music_PlayJingle(g_Music_StageClear);
+while (g_Music_IsJingle())
+{
+    Halt();
+    g_Music_Update();
+}
+NextLevel();
+```
+
+What the song does across a jingle depends on what it was doing:
+
+| When the jingle starts, the song is… | When the jingle ends, it… |
+|---|---|
+| playing | carries on from where it stopped |
+| paused (`g_Music_Pause()`) | is still paused — `g_Music_Resume()` carries it on |
+| fading out | goes on fading from the step it had reached |
+| stopped, ended, or never started | stays silent |
+
+And what the other calls do while a jingle plays:
+
+| Call during a jingle | Does |
+|---|---|
+| `g_Music_PlayJingle(other)` | Replaces the jingle; the song under it still comes back afterwards |
+| `g_Music_Pause()` / `g_Music_Resume()` | Pause and carry on the jingle |
+| `g_Music_FadeOut(speed)` | Fades the jingle, and at the end stops everything — the song under it included |
+| `g_Music_Play(song, loop)` / `g_Music_Stop()` | Start a song / stop — the jingle and the song under it are both dropped |
+| `g_Sfx_Play(id)` | Plays over the jingle exactly as over a song |
+
+There is one lVGM player, so never start a jingle with `LVGM_Play()` yourself:
+only the helper knows to put the song back. The music editor plays a jingle the
+same way — the party-popper button beside a song plays it over the one playing.
+
+#### What the helper does inside
+
+lVGM writes only the PSG registers that *change*, and ayFX writes the effect's
+channel into the same register buffer — so after an effect, the borrowed channel
+would stay at the effect's pitch and volume until the song next touched it. The
+music helper keeps a copy of the song's own registers (R#0–R#12), puts them back
+before each decode and saves them again after. That is why there is one fixed
+order per frame, and why you should not call `LVGM_Decode()` yourself when
+effects play over the music. A game that needs its own order — something
+between the song and the chip, say — calls the pieces:
+
+```c
+g_Music_Decode();   // the song's registers back, then this frame of the song
+ayFX_Update();      // the effect over its channel (only with an effects bank)
+PSG_Apply();        // the buffer to the chip
+```
+
+A fade lowers what goes to the chip, not the copy, so the song comes back at its
+own volume. A jingle sets aside where the song is — the lVGM player's position,
+loop point and wait, the register copy and the fade — and `_Decode` puts all of
+it back the frame the jingle ends, then decodes the song's next frame in that
+same call.
+
+#### Without the ready-made C
+
+The same works through MSXgl directly: `ayFX_InitBank(g_Sfx)`,
+`ayFX_SetChannel(PSG_CHANNEL_C)`, `ayFX_PlayBank(G_SFX_JUMP, priority)`, and
+`ayFX_Update(); PSG_Apply();` once per frame for effects; `LVGM_Play(g_Music_Theme,
+TRUE)` and `LVGM_Decode(); PSG_Apply();` once per frame for music alone.
 
 Author effects and music at the rate the game calls `_Update()`: 50 Hz for PAL,
 60 Hz for NTSC. The players don't adjust — a 50 Hz song plays 20% fast on a
@@ -625,6 +720,19 @@ Author effects and music at the rate the game calls `_Update()`: 50 Hz for PAL,
 Tick **Export ready-made C** in the side panel and the generated header carries
 the code that drives what you drew, so you get a working object without writing
 the VDP plumbing by hand. It calls into MSXgl, so include `msxgl.h` first.
+
+**Sound effects and music** — a player for each bank: effects by name at their
+own priority, songs that loop or play once, fades, pauses, and jingles played
+over the music that hand it back where it was. The calls are listed under
+*Sound effects and music* above:
+
+```c
+g_Sfx_Init();
+g_Music_Play(g_Music_Theme, TRUE);
+g_Sfx_Play(G_SFX_JUMP);
+g_Music_PlayJingle(g_Music_Win);
+g_Music_Update();                    // once per frame
+```
 
 **Sprite groups** — a metasprite, a stack of superposed planes, or both. The
 header defines where each character starts, and one call places the whole group:

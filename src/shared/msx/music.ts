@@ -24,7 +24,7 @@
  */
 
 import { PSG_CLOCK } from '../psg'
-import { defineName, type HelperC } from './emitC'
+import { defineName, exampleComment, type HelperC } from './emitC'
 import type { ExportBlock } from './resource'
 
 // ── model ───────────────────────────────────────────────────────────────────
@@ -799,9 +799,15 @@ export function musicConstants(doc: MusicDoc, name: string): string[] {
  * decodes the song's next frame in that same call so no frame goes silent.
  * `_SongOn` (initialised, so it is FALSE at boot whatever RAM holds) is what
  * keeps a jingle played before any song from "restoring" the player's
- * uninitialised globals. `stepPlayer` mirrors all of it.
+ * uninitialised globals, and `_Resume` from restarting a stopped player —
+ * `LVGM_Stop` rewinds the pointer to the header, which `LVGM_Resume` would
+ * decode as register writes. `stepPlayer` mirrors all of it.
  */
-export function musicHelperC(name: string, withEffects: boolean): HelperC {
+export function musicHelperC(name: string, withEffects: boolean, songs: readonly string[] = []): HelperC {
+  const tables = songs.map((song) => `${name}_${songSymbol(song)}`)
+  const song0 = tables[0] ?? 'song'
+  // A bank of one song has no second one to show as the jingle.
+  const jingleSong = tables[1] ?? 'jingle'
   const regs = `${name}_Regs`
   const fade = `${name}_Fade`
   const song = `${name}_SongOn`
@@ -809,20 +815,56 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
   const held = `${name}_Held`
   return {
     header: [
-      `// Music (lVGM). ${name}_Play(song, loop) to start one, then once per frame:`,
+      '',
+      `// ── ${name}: ready-made player ─────────────────────────────────────────`,
+      '//',
       withEffects
-        ? `//   ${name}_Update();   // the song, the sound effect over it, out to the PSG`
-        : `//   ${name}_Update();   // the song, out to the PSG`,
-      `// Needs LibModules "psg" and "vgm/lvgm_player"${withEffects ? ' and "ayfx/ayfx_player"' : ''}.`,
+        ? "// Plays the songs above with MSXgl's lVGM player, and the attached sound-effect"
+        : "// Plays the songs above with MSXgl's lVGM player.",
+      ...(withEffects ? ["// bank's effects over them: an effect borrows its channel and hands it back."] : []),
+      `// Needs LibModules ${withEffects ? '"psg", "vgm/lvgm_player" and "ayfx/ayfx_player"' : '"psg" and "vgm/lvgm_player"'}, and the`,
+      "// msxgl_config.h lines the music editor's Set up project writes.",
+      '//',
+      '// Example:',
+      ...exampleComment([
+        [`${name}_Play(${song0}, TRUE);`, "TRUE: loop from the song's loop bar"],
+        ['while(1)'],
+        ['{'],
+        ['    Halt();'],
+        [`    ${name}_Update();`, withEffects ? 'once per frame: song, effect, PSG' : 'once per frame: song, PSG'],
+        ['}'],
+        [`${name}_PlayJingle(${jingleSong});`, 'another song, once, over this one — which then carries on']
+      ]),
+      '',
+      "// Start a song from the top. With loop, it goes round from its loop bar for ever.",
       `void ${name}_Play(const u8* song, bool loop);`,
+      '// Stop for good — a jingle and the song under it alike.',
       `void ${name}_Stop();`,
+      '// Silence the song (or the jingle) where it is…',
       `void ${name}_Pause();`,
+      '// …and carry on from there. After _Stop(), a fade or the end of a song played',
+      '// without loop there is nothing to carry on: start one with _Play().',
       `void ${name}_Resume();`,
+      `// FALSE once a song played without loop has ended, or after ${name}_Stop() or a`,
+      '// fade; TRUE while a jingle plays.',
       `bool ${name}_IsPlaying();`,
+      '// Fade out and stop: one volume step every `speed` frames, fifteen steps — speed 4',
+      '// is about a second at 60 Hz. During a jingle, the song under it stops too.',
       `void ${name}_FadeOut(u8 speed);`,
+      '// Play a song once over the one playing: that one stops where it is and, the frame',
+      '// the jingle ends, carries on from there — still paused or fading, if it was. A',
+      '// jingle over a jingle replaces it; with no song playing, silence after.',
       `void ${name}_PlayJingle(const u8* jingle);`,
+      `// TRUE from ${name}_PlayJingle() until the jingle ends.`,
       `bool ${name}_IsJingle();`,
+      withEffects
+        ? '// Once per frame: the song, then the sound effect over it, then out to the PSG.'
+        : '// Once per frame: the song, then out to the PSG.',
       `void ${name}_Update();`,
+      withEffects
+        ? `// The song alone, for a game that orders the frame itself — in exactly this order:`
+        : `// The song alone, for a game that writes the PSG itself — before PSG_Apply():`,
+      withEffects ? `//   ${name}_Decode(); ayFX_Update(); PSG_Apply();` : `//   ${name}_Decode(); PSG_Apply();`,
       `void ${name}_Decode();`,
       ''
     ],
@@ -848,8 +890,8 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       `static u8 ${fade}Timer = 0;`,
       `static u8 ${fade}Level = 0;`,
       '// A jingle interrupts the song: where the song was is kept here until the jingle',
-      `// ends. ${song}: a song has been started and not stopped (under a jingle, the`,
-      `// held one) — initialised, so a jingle at boot never "restores" garbage.`,
+      `// ends. ${song}: a song has been started and has not stopped or ended (under a`,
+      `// jingle, the held one) — initialised, so a jingle at boot never "restores" garbage.`,
       `static bool ${song} = FALSE;`,
       `static bool ${jingle} = FALSE;`,
       'static struct',
@@ -893,9 +935,12 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       '\tLVGM_Pause();',
       '}',
       '',
+      `// Only what ${name}_Pause() paused: LVGM_Resume() on a stopped player would decode`,
+      '// its header as register writes.',
       `void ${name}_Resume()`,
       '{',
-      '\tLVGM_Resume();',
+      `\tif (${song} || ${jingle})`,
+      '\t\tLVGM_Resume();',
       '}',
       '',
       `// False once a song played without loop has ended, or after ${name}_Stop() or a fade.`,
@@ -977,6 +1022,8 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       `\t\tMem_Copy(${regs}, &g_PSG_Regs, 13);`,
       '\t\tLVGM_Decode();',
       '\t}',
+      '\telse if (!LVGM_IsPlaying())',
+      `\t\t${song} = FALSE; // a song played without loop has ended`,
       `\tMem_Copy(&g_PSG_Regs, ${regs}, 13);`,
       `\tif (${fade})`,
       '\t{',

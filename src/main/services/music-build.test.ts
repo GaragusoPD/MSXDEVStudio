@@ -15,7 +15,10 @@
  * helper and, up to the first pause, to `stepPlayer` — a jingle over the song
  * with an effect over the jingle, one over a fade-out (the fade goes on after),
  * one replacing another, one over a paused song (still paused after, until
- * `_Resume`), one after `_Stop` (silence after) and one over a song played once.
+ * `_Resume`), one after `_Stop` (silence after) and one over a song played once;
+ * and `_Resume` after a finished fade, a `_Stop` and a one-shot's end, all
+ * silent. The program in docs/tutorials/11-music-and-sound.md was built the way
+ * the IDE builds it and driven from the keyboard in openMSX the same way.
  */
 
 import { spawnSync } from 'node:child_process'

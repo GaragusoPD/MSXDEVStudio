@@ -318,6 +318,14 @@ describe('sfxHelperC', () => {
     expect(text).toContain('if (g_Sfx_IsPlaying())\n\t\tayFX_Mute();')
   })
 
+  it('documents every call in the header, with the bank\'s own ids and channel', () => {
+    header.forEach((line, i) => {
+      if (/^(void|u8|bool) g_Sfx_\w+\(/.test(line)) expect(header[i - 1], line).toMatch(/^\/\//)
+    })
+    expect(header).toContain('//   g_Sfx_Play(G_SFX_COIN);   // whenever: at the effect\'s own priority')
+    expect(header.join('\n')).toContain('on channel A')
+  })
+
   it('flushes to the PSG itself, for a game without music', () => {
     expect(text).toMatch(/void g_Sfx_Update\(\)\n\{\n\tayFX_Update\(\);\n\tPSG_Apply\(\);/)
   })

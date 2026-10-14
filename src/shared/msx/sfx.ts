@@ -34,7 +34,7 @@
  * with no bank header — `ayFX_Play` takes a pointer straight to it (L187).
  */
 
-import { defineName, type HelperC } from './emitC'
+import { defineName, exampleComment, type HelperC } from './emitC'
 import type { ExportBlock } from './resource'
 
 /** One 50/60 Hz tick of an effect. */
@@ -373,16 +373,41 @@ const CHANNEL_MACROS = ['PSG_CHANNEL_A', 'PSG_CHANNEL_B', 'PSG_CHANNEL_C']
  */
 export function sfxHelperC(doc: SfxDoc, name: string): HelperC {
   const priorities = doc.effects.map(effectPriority)
+  const channel = 'ABC'[sfxChannel(doc)]
+  const first = sfxIds(doc, name)[0]?.define ?? '0'
   return {
     header: [
-      `// Sound effects (ayFX). ${name}_Init() once, then ${name}_Play(id) — ids are the defines above.`,
-      `// Once per frame: ${name}_Update() — or, with music, the music bank's _Update(), which does it.`,
-      `// Needs LibModules "psg" and "ayfx/ayfx_player", and AYFX_BUFFER_DEFAULT in msxgl_config.h.`,
+      '',
+      `// ── ${name}: ready-made player ─────────────────────────────────────────`,
+      '//',
+      `// Plays the effects above with MSXgl's ayFX player, on channel ${channel}, each at its`,
+      '// own priority. Needs LibModules "psg" and "ayfx/ayfx_player", and',
+      '// AYFX_BUFFER_DEFAULT in msxgl_config.h (the music editor\'s Set up project).',
+      '//',
+      '// Example:',
+      ...exampleComment([
+        [`${name}_Init();`, 'once, before the others'],
+        [`${name}_Play(${first});`, "whenever: at the effect's own priority"],
+        ['while(1)'],
+        ['{'],
+        ['    Halt();'],
+        [`    ${name}_Update();`, 'once per frame, in a game without music'],
+        ['}']
+      ]),
+      "// With music, call the music bank's _Update() instead: it runs the effects too.",
+      '',
+      `// The bank, on channel ${channel}, nothing playing. RAM is not cleared at boot: call it first.`,
       `void ${name}_Init();`,
+      '// Play an effect (an id above) at its own priority: 0 when it plays, 1 when a',
+      '// more important one is sounding and it does not. Equal priority replaces.',
       `u8 ${name}_Play(u8 id);`,
+      '// The same at `priority` — 0 the most important, 15 the least — for this one call.',
       `u8 ${name}_PlayPriority(u8 id, u8 priority);`,
+      '// Cut the effect off; music on its channel comes back the next frame.',
       `void ${name}_Stop();`,
+      '// TRUE while an effect is sounding.',
       `bool ${name}_IsPlaying();`,
+      '// Once per frame in a game without music: the effect, then out to the PSG.',
       `void ${name}_Update();`,
       ''
     ],
