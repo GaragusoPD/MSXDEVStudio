@@ -153,6 +153,13 @@ watch(
           Import image…
         </button>
         <button
+          type="button"
+          title="Pick cells from an asset sheet and drag them into place on the screen"
+          @click="resourcesStore.sheetImport = { destination: 'screen', target: session.path }"
+        >
+          Import sheet…
+        </button>
+        <button
           v-if="doc(session).source"
           type="button"
           title="Drop every retouch pixel, back to the raw conversion"

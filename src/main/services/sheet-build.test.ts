@@ -1,19 +1,22 @@
 /**
- * A character imported from a sheet, compiled and linked by the **real**
- * MSXgl and drawn by its `_SetMeta()`: a multi-colour figure split into
- * stacked mode-2 planes, a metasprite two sprites tall, four frames. The
- * plane split is held to the editor's composite in `sheet-convert.test.ts`;
- * this is whether the result is a sprite sheet the export and the engine take.
- * With MSXDEVSTUDIO_KEEP_SCRATCH=1 it also writes what the screen should show,
- * for an openMSX boot to compare against.
+ * Characters imported from a sheet, compiled and linked by the **real** MSXgl
+ * and drawn by the export's own helpers: the same multi-colour walker as
+ * hardware sprites (split into stacked mode-2 planes, a metasprite two sprites
+ * tall, drawn by `_SetMeta()`) and as a SCREEN 5 software sprite (uploaded once,
+ * blitted with the VDP's transparency by `_Draw()`). The conversions are held to
+ * the editor's composite in `sheet-convert.test.ts`; this is whether what they
+ * make is a sheet the export and the engine take. With
+ * MSXDEVSTUDIO_KEEP_SCRATCH=1 each also writes what the screen should show, for
+ * an openMSX boot to compare against.
  */
 
 import { existsSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { MSX1_PALETTE_RGB } from '../../shared/msx/palette'
+import { MSX1_PALETTE_GRB, MSX1_PALETTE_RGB, packGrb, unpackGrb } from '../../shared/msx/palette'
 import { defaultExport } from '../../shared/msx/resource'
-import { cellsToSprite, type SheetCell } from '../../shared/msx/sheet-convert'
+import { cellsToSprite, cellsToSwSprite, type SheetCell } from '../../shared/msx/sheet-convert'
+import { normalizeSwSprites, swFramePixels } from '../../shared/msx/swsprite'
 import { compositeFrame, createSpritesDoc, type SpritesDoc } from '../../shared/msx/sprite'
 import { BUILD_TIMEOUT, buildFixture, cleanBuildFixtures, runsBuilds } from './__fixtures__/msxgl-build'
 
@@ -100,6 +103,91 @@ void main(void)
             width: cols * 16,
             height: rows * 16,
             frames: made.character.frames.map((frame) => Array.from(compositeFrame(frame.layers, 2, 16, cols, rows)))
+          })
+        )
+      }
+    },
+    BUILD_TIMEOUT
+  )
+})
+
+describe.runIf(runsBuilds)('a software sprite imported from a sheet builds against real MSXgl', () => {
+  it(
+    'four frames in SCREEN 5, uploaded once and blitted with _Draw',
+    () => {
+      const frames = [0, 1, 2, 3].map(walker)
+      const made = cellsToSwSprite('sc5', frames, 'walker')
+      if (typeof made === 'string') throw new Error(made)
+      // SCREEN 5 draws whole bytes: the 12-dot walker is already two dots a byte.
+      expect([made.width, made.height, made.frames]).toEqual([12, 22, 4])
+      // Colours the default palette does not have, so a screenshot shows
+      // whether `_Palette` reached the VDP — and reached the right entries.
+      const palette = [...MSX1_PALETTE_GRB]
+      palette[1] = packGrb(7, 0, 7) // magenta
+      palette[5] = packGrb(0, 7, 0) // green
+      palette[6] = packGrb(7, 7, 0) // yellow
+      palette[9] = packGrb(0, 7, 7) // cyan
+      palette[14] = packGrb(4, 4, 4) // grey
+      const doc = normalizeSwSprites({
+        mode: 'sc5',
+        palette,
+        transparent: 0,
+        sprites: [made],
+        export: { ...defaultExport('res/cast.swsprites.json'), name: 'g_Cast', out: 'content/cast.h', helpers: true }
+      })
+      const { output, root } = buildFixture({
+        name: 'sheetswsprite',
+        template: 'template_msx2',
+        machine: '2',
+        resources: { 'cast.swsprites': { kind: 'swsprites', doc } },
+        main: `#include "msxgl.h"
+#include "content/cast.h"
+
+// A global, so the backup survives the loop; set below, because RAM is not
+// cleared at boot on a ROM target.
+g_Cast_SwSprite walker;
+
+void main(void)
+{
+\tVDP_SetMode(VDP_MODE_SCREEN5);
+\t// Entries 1-15: the template's VDP_USE_PALETTE16 is FALSE.
+\tVDP_SetPalette(g_Cast_Palette + 2);
+\tVDP_SetColor(4);
+\tVDP_CommandHMMV(0, 0, 256, 212, 0x44);
+\tg_Cast_Upload(212);
+\twalker.slot = 0;
+\twalker.bw = 0;
+\tu8 frame = 0;
+\tu8 ticks = 0;
+\twhile(1)
+\t{
+\t\tHalt();
+\t\tg_Cast_Restore(&walker, 212);
+\t\tg_Cast_Draw(&walker, G_CAST_WALKER, frame, 120, 90, 212);
+\t\tif(++ticks == 50)
+\t\t{
+\t\t\tticks = 0;
+\t\t\tframe = (frame + 1) & 3;
+\t\t}
+\t}
+}
+`
+      })
+      expect(output).not.toMatch(/\bError:/i)
+      expect(output).not.toMatch(/Undefined Global/i)
+      expect(output).toMatch(/Success/)
+      const rom = join(root, 'out', 'sheetswsprite.rom')
+      expect(existsSync(rom), `${rom} should exist`).toBe(true)
+      if (process.env.MSXDEVSTUDIO_KEEP_SCRATCH) {
+        writeFileSync(
+          join(root, 'expected.json'),
+          JSON.stringify({
+            at: { x: 120, y: 90 },
+            spriteLine: 0,
+            palette: palette.map((grb) => unpackGrb(grb)),
+            width: made.width,
+            height: made.height,
+            frames: [0, 1, 2, 3].map((f) => Array.from(swFramePixels(doc, 0, f)))
           })
         )
       }

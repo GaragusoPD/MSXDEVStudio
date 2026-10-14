@@ -215,6 +215,13 @@ watch(
         <span class="status">{{ session.status }}</span>
         <button
           type="button"
+          title="Add frames cut from a sheet, their tiles made in this meta's tileset"
+          @click="resourcesStore.sheetImport = { destination: 'metab', target: session.path }"
+        >
+          Import sheet…
+        </button>
+        <button
+          type="button"
           @click="save"
         >
           Save

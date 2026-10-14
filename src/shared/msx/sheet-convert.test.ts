@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { MSX1_PALETTE_RGB } from './palette'
-import { cellsToOwnedMeta, cellsToSprite, cellsToTileAnim, cellsToTiles, layoutCells, selectionPicture, type SheetCell } from './sheet-convert'
+import { createBitmapTilesDoc, tileImage } from './bitmap-tile'
+import {
+  cellsToBitmapMeta,
+  cellsToBitmapTiles,
+  cellsToOwnedMeta,
+  cellsToSprite,
+  cellsToSwSprite,
+  cellsToTileAnim,
+  cellsToTiles,
+  layoutCells,
+  selectionPicture,
+  unusedEntries,
+  type SheetCell
+} from './sheet-convert'
+import { normalizeSwSprites, swFramePixels } from './swsprite'
 import { compositeFrame } from './sprite'
 import { MAX_TILES, normalizeTiles, tilePixels, TILE_SIZE } from './tile'
 
@@ -188,5 +202,91 @@ describe('cells into a sprite character', () => {
 
   it('refuses a frame past a 4×4 grid', () => {
     expect(cellsToSprite([cell(80, 16, () => 15)], { ...options, mode: 2, size: 16 })).toMatch(/at most 4×4/)
+  })
+})
+
+describe('MSX2: cells into a bitmap tileset', () => {
+  const bank = (over: Record<string, unknown> = {}) => ({ ...createBitmapTilesDoc('sc5', 16, 16, 1), reserveTile0: true, ...over })
+
+  it('a cell the tileset\u2019s size is one tile, matched to the pixel, and a repeat is shared', () => {
+    const a = cell(16, 16, (x, y) => ((x + y) % 3) + 2)
+    const result = cellsToBitmapTiles(bank(), [a, a, cell(16, 16, () => 7)], ['a', 'b', 'c'])
+    if (typeof result === 'string') throw new Error(result)
+    expect(result.cellTiles).toEqual([[1], [1], [2]])
+    expect([result.added, result.reused]).toEqual([2, 1])
+    expect([...tileImage(result.doc, 1)]).toEqual([...a.indices])
+    expect(result.doc.blocks.map((block) => [block.name, block.width, block.height])).toEqual([
+      ['a', 1, 1],
+      ['b', 1, 1],
+      ['c', 1, 1]
+    ])
+  })
+
+  it('a cell twice the tile size is four tiles, and an empty one is the reserved tile 0', () => {
+    const big = cell(32, 32, (x, y) => (x < 16 && y < 16 ? 0 : 5))
+    const result = cellsToBitmapTiles(bank(), [big])
+    if (typeof result === 'string') throw new Error(result)
+    expect([result.cols, result.rows]).toEqual([2, 2])
+    // Three identical solid tiles: one new tile, used three times.
+    expect(result.cellTiles[0]).toEqual([0, 1, 1, 1])
+  })
+
+  it('refuses a cell that is not a whole number of tiles', () => {
+    expect(cellsToBitmapTiles(bank(), [cell(24, 16, () => 1)])).toMatch(/whole number of tiles/)
+  })
+
+  it('refuses a full tileset, changing nothing', () => {
+    const full = bank({ count: 256 })
+    const result = cellsToBitmapTiles(full, [cell(16, 16, (x, y) => (x * y) % 15 + 1)])
+    if (typeof result === 'string') throw new Error(result)
+    expect(result.refused).toMatch(/ran out of room/)
+    expect(result.doc).toBe(full)
+  })
+})
+
+describe('MSX2: cells into a bitmap meta-tile', () => {
+  it('one frame per cell, its tiles made in the tileset it names', () => {
+    const tiles = { ...createBitmapTilesDoc('sc5', 8, 8, 1), reserveTile0: true }
+    const frames = [cell(16, 8, (x) => (x < 8 ? 3 : 0)), cell(16, 8, (x) => (x < 8 ? 4 : 3))]
+    const made = cellsToBitmapMeta(tiles, 'res/hero.btiles.json', frames)
+    if (typeof made === 'string') throw new Error(made)
+    expect([made.meta.tileset, made.meta.width, made.meta.height]).toEqual(['res/hero.btiles.json', 2, 1])
+    // Frame 0's right half is empty: tile 0, never blitted. The 3s are shared.
+    expect(made.meta.frames.map((frame) => frame.tiles)).toEqual([
+      [1, 0],
+      [2, 1]
+    ])
+    expect(made.tiles.count).toBe(3)
+  })
+})
+
+describe('MSX2: cells into a software sprite', () => {
+  it('pads frames to the mode\u2019s byte, and keeps the transparent dots transparent', () => {
+    // SCREEN 6 packs four dots a byte: a 10-dot frame is drawn 12 wide.
+    const frames = [cell(10, 4, (x) => (x < 5 ? 2 : 0)), cell(10, 4, (x) => (x >= 5 ? 3 : 0))]
+    const made = cellsToSwSprite('sc6', frames, 'bat', 0)
+    if (typeof made === 'string') throw new Error(made)
+    expect([made.width, made.height, made.frames]).toEqual([12, 4, 2])
+    const doc = normalizeSwSprites({ mode: 'sc6', sprites: [made] })
+    const second = swFramePixels(doc, 0, 1)
+    expect([...second.slice(0, 12)]).toEqual([0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 0, 0])
+  })
+
+  it('writes a sheet\u2019s own transparent index where the cell was transparent', () => {
+    const made = cellsToSwSprite('sc5', [cell(2, 1, (x) => (x ? 9 : 0))], 'dot', 15)
+    if (typeof made === 'string') throw new Error(made)
+    expect([...swFramePixels(normalizeSwSprites({ mode: 'sc5', sprites: [made] }), 0, 0)]).toEqual([15, 9])
+  })
+
+  it('a tiled mode draws whole 8×8 cells', () => {
+    const made = cellsToSwSprite('sc2', [cell(12, 10, () => 4)], 'box')
+    if (typeof made === 'string') throw new Error(made)
+    expect([made.width, made.height]).toEqual([16, 16])
+  })
+})
+
+describe('the palette entries a second sheet may take', () => {
+  it('is every entry no pixel uses, never the transparent 0', () => {
+    expect(unusedEntries([Uint8Array.from([0, 1, 1, 4]), [7]], 8)).toEqual([2, 3, 5, 6])
   })
 })

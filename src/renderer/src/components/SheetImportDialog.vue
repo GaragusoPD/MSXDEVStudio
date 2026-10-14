@@ -2,7 +2,8 @@
 /**
  * Imports cells from an asset sheet — a PNG of tiles or animation frames on a
  * grid — into a tileset, a map, an animated tile, a meta-tile or a sprite
- * sheet (design: docs/superpowers/specs/2026-10-14-sheet-import-design.md).
+ * sheet, and on MSX2 into a bitmap tileset, a bitmap meta-tile, software
+ * sprites or a screen (design: docs/superpowers/specs/2026-10-14-sheet-import-design.md).
  *
  * The component holds view state only. Cutting is `shared/msx/sheet.ts`,
  * what each destination makes of a cell is `shared/msx/sheet-convert.ts`, and
@@ -10,7 +11,8 @@
  * so the next row of the same sheet can go somewhere else.
  */
 import { computed, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
-import { TILE_MODES, MODES, type TileMode } from '../../../shared/msx/modes'
+import { TILE_MODES, MODES, type BitmapMode, type ScreenMode, type TileMode } from '../../../shared/msx/modes'
+import { snapSize, SW_MODES, type SwMode } from '../../../shared/msx/swsprite'
 import type { DitherMode, QuantizeOptions, QuantizeResult } from '../../../shared/msx/quantize'
 import {
   applyKey,
@@ -40,6 +42,7 @@ import { decode } from '../composables/useImageImport'
 import { useQuantizer } from '../composables/useQuantizer'
 import {
   applySheetImport,
+  BITMAP_DESTINATIONS,
   DESTINATION_KIND,
   describeTarget,
   sheetName,
@@ -65,8 +68,16 @@ const DESTINATIONS: { id: SheetDestination; label: string }[] = [
   { id: 'map', label: 'Map (place on it)' },
   { id: 'anim', label: 'Animated tile' },
   { id: 'meta', label: 'Meta-tile' },
-  { id: 'sprites', label: 'Sprites' }
+  { id: 'sprites', label: 'Sprites' },
+  { id: 'btiles', label: 'Bitmap tileset (MSX2)' },
+  { id: 'metab', label: 'Bitmap meta-tile (MSX2)' },
+  { id: 'swsprites', label: 'Software sprites' },
+  { id: 'screen', label: 'Screen (place on it)' }
 ]
+/** The modes a new bitmap tileset is made in: the V9938's, and SCREEN 3's blocks. */
+const BITMAP_TILE_MODES: BitmapMode[] = ['sc5', 'sc6', 'sc7', 'sc8', 'sc3']
+/** Destinations that only add to a file that exists. */
+const PLACE_ONLY: SheetDestination[] = ['map', 'screen']
 const ZOOMS = [1, 2, 3, 4, 6, 8]
 
 // ── the sheet ───────────────────────────────────────────────────────────────
@@ -128,6 +139,10 @@ const destination = ref<SheetDestination>(props.destination ?? 'tiles')
 const target = ref<string>(props.target ?? '')
 const name = ref('sheet')
 const newMode = ref<TileMode>('sc2')
+const newBitmapMode = ref<BitmapMode>('sc5')
+const newSwMode = ref<SwMode>('sc5')
+/** A new bitmap meta-tile's tileset. */
+const metaTileset = ref('')
 const spriteMode = ref<SpriteMode>(2)
 const spriteSize = ref<SpriteSize>(16)
 const paletteChoice = ref<'msx1' | 'optimized'>('msx1')
@@ -141,30 +156,42 @@ const duration = ref(8)
 const maxPlanes = ref(3)
 const info = ref<TargetInfo | null>(null)
 
-const targets = computed(() =>
-  resourcesStore.entries.filter((entry) => entry.kind === DESTINATION_KIND[destination.value]).map((entry) => entry.path)
-)
-const animated = computed(() => destination.value === 'anim' || destination.value === 'meta' || destination.value === 'sprites')
+const filesOf = (kind: string): string[] => resourcesStore.entries.filter((entry) => entry.kind === kind).map((entry) => entry.path)
+const targets = computed(() => filesOf(DESTINATION_KIND[destination.value]))
+const bitmapTilesets = computed(() => filesOf('btiles'))
+const animated = computed(() => ['anim', 'meta', 'sprites', 'metab', 'swsprites'].includes(destination.value))
+const bitmapDestination = computed(() => BITMAP_DESTINATIONS.includes(destination.value))
 
 watch(destination, () => {
-  if (destination.value === 'map' && !target.value) target.value = targets.value[0] ?? ''
+  if (PLACE_ONLY.includes(destination.value) && !target.value) target.value = targets.value[0] ?? ''
   else if (target.value && !targets.value.includes(target.value)) target.value = ''
+  if (destination.value === 'metab' && !metaTileset.value) metaTileset.value = bitmapTilesets.value[0] ?? ''
 })
 watch(
-  [destination, target],
+  [destination, target, metaTileset],
   async () => {
-    info.value = target.value ? await describeTarget(destination.value, target.value) : null
+    // A new bitmap meta-tile converts for the tileset it will be drawn with.
+    if (target.value) info.value = await describeTarget(destination.value, target.value)
+    else if (destination.value === 'metab' && metaTileset.value) info.value = await describeTarget('btiles', metaTileset.value)
+    else info.value = null
   },
   { immediate: true }
 )
 void resourcesStore.refresh()
 
-const tileMode = computed<TileMode>(() => info.value?.mode ?? newMode.value)
+const tileMode = computed<TileMode>(() => (info.value?.mode as TileMode | null) ?? newMode.value)
 const sprite = computed(() => info.value?.sprite ?? { mode: spriteMode.value, size: spriteSize.value })
-/** Whether the palette is the user's to choose: a new sc4 tileset, a new MSX2 sprite sheet. */
-const paletteChoosable = computed(() =>
-  destination.value === 'sprites' ? !info.value && spriteMode.value === 2 : !info.value?.palette && tileMode.value === 'sc4'
-)
+/** The mode the cells are converted for. */
+const convertMode = computed<ScreenMode>(() => {
+  if (destination.value === 'sprites') return 'sc5'
+  if (!bitmapDestination.value) return tileMode.value
+  return info.value?.mode ?? (destination.value === 'swsprites' ? newSwMode.value : newBitmapMode.value)
+})
+/** Whether the palette is the user's to choose: a new file in a mode with a programmable one. */
+const paletteChoosable = computed(() => {
+  if (destination.value === 'sprites') return !info.value && spriteMode.value === 2
+  return !info.value?.palette && MODES[convertMode.value].palette === 'grb333'
+})
 
 const quantizeOptions = computed((): QuantizeOptions => {
   if (destination.value === 'sprites') {
@@ -172,9 +199,19 @@ const quantizeOptions = computed((): QuantizeOptions => {
     const palette = info.value?.palette ?? (sprite.value.mode === 2 ? paletteChoice.value : 'msx1')
     return { mode: 'sc5', palette: Array.isArray(palette) ? [...palette] : palette, dither: dither.value }
   }
-  const mode = tileMode.value
-  const palette = mode === 'sc4' ? (info.value?.palette ?? paletteChoice.value) : 'msx1'
-  return { mode, palette: Array.isArray(palette) ? [...palette] : palette, dither: dither.value }
+  const mode = convertMode.value
+  const own = info.value?.palette
+  // A file's own palette is kept for every colour it already draws with; the
+  // entries nothing uses may take the sheet's colours.
+  const palette = own ? [...own] : MODES[mode].palette === 'grb333' ? paletteChoice.value : 'msx1'
+  return {
+    mode,
+    palette,
+    freeEntries: own ? [...(info.value?.freeEntries ?? [])] : [],
+    dither: dither.value,
+    // Keyed dots go to index 0 in every mode — SCREEN 8's too, whose 0 is otherwise black.
+    reserveTransparent: true
+  }
 })
 
 // ── the cells picked, cut and converted ─────────────────────────────────────
@@ -197,23 +234,30 @@ const picked = computed((): Picked | null => {
     cells = cells.filter((_, i) => keep[i])
   }
   if (!cells.length) return null
-  if (trim.value && (destination.value === 'sprites' || destination.value === 'meta')) {
+  // The tile a cell is cut into: 8×8 in a pattern mode, the tileset's own in a
+  // bitmap one; none for sprites, software sprites and a screen.
+  const tile = ['tiles', 'map', 'anim', 'meta'].includes(destination.value)
+    ? { width: TILE_SIZE, height: TILE_SIZE }
+    : destination.value === 'metab' || (destination.value === 'btiles' && target.value)
+      ? info.value?.tileSize ?? null
+      : null
+  if (trim.value && ['sprites', 'meta', 'swsprites', 'metab'].includes(destination.value)) {
     const found = contentBox(cells)
     // A meta-tile's trim keeps whole tiles of the sheet's own grid; a sprite
     // can sit anywhere, so its trim is to the dot.
-    const box = found && destination.value === 'meta' ? snapBox(found, TILE_SIZE, cells[0].width, cells[0].height) : found
+    const box = found && tile ? snapBox(found, tile.width, cells[0].width, cells[0].height, tile.height) : found
     if (box) cells = cells.map((cell) => cropImage(cell, box.x, box.y, box.width, box.height))
   }
-  if (destination.value !== 'sprites') {
-    // Tiles are 8×8: pad with transparency to whole tiles.
-    const width = roundUp(cells[0].width, TILE_SIZE)
-    const height = roundUp(cells[0].height, TILE_SIZE)
+  if (tile) {
+    // Pad with transparency to whole tiles.
+    const width = roundUp(cells[0].width, tile.width)
+    const height = roundUp(cells[0].height, tile.height)
     if (width !== cells[0].width || height !== cells[0].height) cells = cells.map((cell) => cropImage(cell, 0, 0, width, height))
   }
   const at = indices.map((index) => ({ col: index % cols, row: Math.floor(index / cols) }))
   const rows = rowsOf(indices, cols)
   const groups =
-    onePerRow.value && animated.value && rows.length > 1 && !(target.value && destination.value !== 'sprites')
+    onePerRow.value && animated.value && rows.length > 1 && !(target.value && !['sprites', 'swsprites'].includes(destination.value))
       ? rows.map((row) => row.map((index) => indices.indexOf(index)))
       : [indices.map((_, i) => i)]
   return { cells, at, groups }
@@ -278,6 +322,8 @@ const blocker = computed((): string | null => {
   if (!picked.value) return 'Every selected cell is empty.'
   if (info.value?.error) return info.value.error
   if (destination.value === 'map' && !target.value) return 'There is no map to place the cells on.'
+  if (destination.value === 'screen' && !target.value) return 'There is no screen to place the cells on.'
+  if (destination.value === 'metab' && !target.value && !metaTileset.value) return 'A bitmap meta-tile needs a bitmap tileset — make one first.'
   if (!target.value && !sheetName(name.value)) return 'Name the new file.'
   if (typeof spritePreview.value === 'string') return spritePreview.value
   return null
@@ -293,6 +339,8 @@ async function doImport(): Promise<void> {
     target: target.value || null,
     name: name.value,
     mode: tileMode.value,
+    bitmapMode: destination.value === 'swsprites' ? newSwMode.value : newBitmapMode.value,
+    tileset: metaTileset.value || null,
     sprite: sprite.value,
     cells: made.cells,
     at: pick.at,
@@ -535,7 +583,19 @@ const summary = computed((): string[] => {
   if (destination.value === 'anim' || destination.value === 'meta') {
     lines.push(`${width / TILE_SIZE}×${height / TILE_SIZE} tiles a pose`)
   }
-  if (picked.value && picked.value.groups.length > 1) lines.push(`${picked.value.groups.length} ${destination.value === 'sprites' ? 'characters' : 'files'}, one per row`)
+  const tileSize = info.value?.tileSize
+  if ((destination.value === 'btiles' || destination.value === 'metab') && tileSize) {
+    lines.push(`${width / tileSize.width}×${height / tileSize.height} tiles of ${tileSize.width}×${tileSize.height} a cell`)
+  } else if (destination.value === 'btiles') {
+    lines.push(`one ${width}×${height} tile a cell`)
+  }
+  if (destination.value === 'swsprites') {
+    const drawn = snapSize(convertMode.value as SwMode, width, height)
+    lines.push(`frames of ${drawn.width}×${drawn.height}${drawn.width !== width || drawn.height !== height ? ', padded to what the mode draws' : ''}`)
+  }
+  if (picked.value && picked.value.groups.length > 1) {
+    lines.push(`${picked.value.groups.length} ${destination.value === 'sprites' || destination.value === 'swsprites' ? 'characters' : 'files'}, one per row`)
+  }
   return lines
 })
 </script>
@@ -730,7 +790,7 @@ const summary = computed((): string[] => {
             <label><span>File</span>
               <select v-model="target">
                 <option
-                  v-if="destination !== 'map'"
+                  v-if="!PLACE_ONLY.includes(destination)"
                   value=""
                 >New file…</option>
                 <option
@@ -745,7 +805,38 @@ const summary = computed((): string[] => {
               type="text"
               spellcheck="false"
             ></label>
-            <label v-if="!target && destination !== 'sprites'"><span>Mode</span>
+            <label v-if="!target && destination === 'btiles'"><span>Mode</span>
+              <select v-model="newBitmapMode">
+                <option
+                  v-for="m in BITMAP_TILE_MODES"
+                  :key="m"
+                  :value="m"
+                >{{ MODES[m].label }}</option>
+              </select>
+            </label>
+            <label v-if="!target && destination === 'swsprites'"><span>Mode</span>
+              <select v-model="newSwMode">
+                <option
+                  v-for="m in SW_MODES"
+                  :key="m"
+                  :value="m"
+                >{{ MODES[m].label }}</option>
+              </select>
+            </label>
+            <label v-if="!target && destination === 'metab'"><span>Tileset</span>
+              <select v-model="metaTileset">
+                <option
+                  v-if="!bitmapTilesets.length"
+                  value=""
+                >No bitmap tilesets</option>
+                <option
+                  v-for="path in bitmapTilesets"
+                  :key="path"
+                  :value="path"
+                >{{ path.split('/').pop() }}</option>
+              </select>
+            </label>
+            <label v-if="!target && ['tiles', 'anim', 'meta'].includes(destination)"><span>Mode</span>
               <select v-model="newMode">
                 <option
                   v-for="m in TILE_MODES"
@@ -785,14 +876,14 @@ const summary = computed((): string[] => {
 
           <div class="checks">
             <label
-              v-if="destination === 'tiles'"
+              v-if="destination === 'tiles' || destination === 'btiles'"
               class="inline"
             ><input
               v-model="blocks"
               type="checkbox"
             ><span>A block per cell (a stamp on maps)</span></label>
             <label
-              v-if="destination === 'tiles' && !target"
+              v-if="(destination === 'tiles' || destination === 'btiles') && !target"
               class="inline"
             ><input
               v-model="withMap"
@@ -804,9 +895,9 @@ const summary = computed((): string[] => {
             ><input
               v-model="onePerRow"
               type="checkbox"
-            ><span>{{ destination === 'sprites' ? 'A character per row' : 'A file per row' }}</span></label>
+            ><span>{{ destination === 'sprites' || destination === 'swsprites' ? 'A character per row' : 'A file per row' }}</span></label>
             <label
-              v-if="destination === 'sprites' || destination === 'meta'"
+              v-if="['sprites', 'meta', 'swsprites', 'metab'].includes(destination)"
               class="inline"
             ><input
               v-model="trim"

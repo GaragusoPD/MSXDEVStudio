@@ -8,11 +8,14 @@
  * palette index per dot, row-major, with 0 where the sheet was transparent.
  * What 0 then means is the destination's business, and the point of having
  * one function per destination: colour 0 (the backdrop) in a tile, a
- * see-through cell in a meta-tile, a dot no sprite plane sets.
+ * see-through cell in a meta-tile, a dot no sprite plane sets, the reserved
+ * blank tile of a bitmap tileset, a software sprite's transparent index.
  */
 
+import { MAX_BITMAP_TILES, type BitmapTilesDoc } from './bitmap-tile'
 import { cellEntry, placePicture, type Picture } from './tile-compact'
-import { MAX_META_SIZE } from './meta-tile'
+import { findOrCreateBitmapTile } from './meta-paint'
+import { createMetaTileDoc, MAX_META_SIZE, type MetaTileDoc } from './meta-tile'
 import { createOwnedMeta, type OwnedMetaDoc } from './meta-owned'
 import { colorDistance, type Rgb } from './palette'
 import {
@@ -30,6 +33,8 @@ import {
 import { createTileAnimDoc, DEFAULT_ANIM_DURATION, MAX_ANIM_CELLS, type TileAnimDoc, type TileAnimFrame } from './tile-anim'
 import { mergeColorByte, TILE_SIZE, type TileBlock, type TileEntry, type TilesDoc } from './tile'
 import type { TileMode } from './modes'
+import { encodeIndices } from './screen'
+import { MAX_SW_FRAMES, MAX_SW_SIZE, snapSize, type SwMode, type SwSpriteChar } from './swsprite'
 
 /** One converted cell. */
 export interface SheetCell {
@@ -417,4 +422,147 @@ export function cellsToSprite(cells: readonly SheetCell[], options: SheetSpriteO
     spritesPerLine = Math.max(spritesPerLine, line)
   }
   return { character: { name: options.name, cols, rows, frames }, spritesPerLine, merged }
+}
+
+// ── MSX2: bitmap tiles, bitmap meta-tiles, software sprites ─────────────────
+
+/**
+ * The palette entries no pixel uses, entry 0 aside (it is the transparent
+ * one) — what a conversion may refill with colours of its own while every
+ * entry something is drawn with stays exactly as it is. How a second sheet
+ * joins a tileset or a screen without recolouring the first.
+ */
+export function unusedEntries(drawn: readonly ArrayLike<number>[], count = 16): number[] {
+  const used = new Set<number>()
+  for (const pixels of drawn) for (let i = 0; i < pixels.length; i++) used.add(pixels[i])
+  return Array.from({ length: count }, (_, i) => i).filter((i) => i > 0 && !used.has(i))
+}
+
+/** A `width × height` piece of a cell at (`x`, `y`), row-major; outside the cell is 0. */
+function piece(cell: SheetCell, x: number, y: number, width: number, height: number): Uint8Array {
+  const out = new Uint8Array(width * height)
+  for (let dy = 0; dy < height; dy++) {
+    for (let dx = 0; dx < width; dx++) {
+      const sx = x + dx
+      const sy = y + dy
+      out[dy * width + dx] = sx < cell.width && sy < cell.height ? cell.indices[sy * cell.width + sx] : 0
+    }
+  }
+  return out
+}
+
+export interface SheetBitmapTilesResult {
+  doc: BitmapTilesDoc
+  /** Per cell, its tiles row-major. */
+  cellTiles: number[][]
+  /** The cell in tiles. */
+  cols: number
+  rows: number
+  added: number
+  reused: number
+  /** Set when the tileset ran out of room; `doc` is then the tileset as it was. */
+  refused?: string
+}
+
+/**
+ * Each cell cut into tiles of the tileset's own size — one tile when the cell
+ * is that size, several when it is a multiple — each matched against what the
+ * tileset already holds, to the pixel, and appended otherwise. A tile with
+ * nothing in it is tile 0 when the tileset reserves it: the cell a meta-tile
+ * never blits. All or nothing. `blocks` names a block per cell.
+ */
+export function cellsToBitmapTiles(
+  tiles: BitmapTilesDoc,
+  cells: readonly SheetCell[],
+  blocks: readonly string[] | null = null
+): SheetBitmapTilesResult | string {
+  const first = cells[0]
+  if (!first) return 'Select at least one cell.'
+  if (first.width % tiles.width || first.height % tiles.height) {
+    return (
+      `The cells are ${first.width}×${first.height} and the tileset's tiles ${tiles.width}×${tiles.height}: ` +
+      'a cell has to be a whole number of tiles. Change the cell size, or import into a new tileset.'
+    )
+  }
+  const cols = first.width / tiles.width
+  const rows = first.height / tiles.height
+  let doc = tiles
+  let added = 0
+  let reused = 0
+  const cellTiles: number[][] = []
+  for (const cell of cells) {
+    const placed: number[] = []
+    for (let ty = 0; ty < rows; ty++) {
+      for (let tx = 0; tx < cols; tx++) {
+        const image = piece(cell, tx * tiles.width, ty * tiles.height, tiles.width, tiles.height)
+        if (doc.reserveTile0 && image.every((value) => value === 0)) {
+          placed.push(0)
+          continue
+        }
+        const found = findOrCreateBitmapTile(doc, image)
+        if (!found) {
+          return {
+            doc: tiles,
+            cellTiles: [],
+            cols,
+            rows,
+            added: 0,
+            reused: 0,
+            refused: `The tileset ran out of room after ${added} new tile${added === 1 ? '' : 's'} — it holds ${MAX_BITMAP_TILES}.`
+          }
+        }
+        if (found.doc !== doc) added++
+        else reused++
+        doc = found.doc
+        placed.push(found.index)
+      }
+    }
+    cellTiles.push(placed)
+  }
+  if (blocks) {
+    const named: TileBlock[] = cellTiles.map((placed, i) => ({ name: blocks[i] ?? `block_${doc.blocks.length + i}`, width: cols, height: rows, tiles: placed }))
+    doc = { ...doc, blocks: [...doc.blocks, ...named] }
+  }
+  return { doc, cellTiles, cols, rows, added, reused }
+}
+
+/**
+ * One frame per cell, as a bitmap meta-tile drawn with `tiles` (whose path is
+ * `tileset`): each frame's tiles found or made there, as `cellsToBitmapTiles`
+ * does. The meta and the grown tileset come back together; neither is any use
+ * without the other.
+ */
+export function cellsToBitmapMeta(
+  tiles: BitmapTilesDoc,
+  tileset: string,
+  cells: readonly SheetCell[]
+): { meta: MetaTileDoc; tiles: BitmapTilesDoc; added: number } | string {
+  const made = cellsToBitmapTiles(tiles, cells)
+  if (typeof made === 'string') return made
+  if (made.refused) return made.refused
+  if (made.cols > MAX_META_SIZE || made.rows > MAX_META_SIZE) {
+    return `A ${made.cols}×${made.rows}-tile cell is too big for a meta-tile, which is at most ${MAX_META_SIZE}×${MAX_META_SIZE} tiles.`
+  }
+  const meta: MetaTileDoc = { ...createMetaTileDoc(tileset, made.cols, made.rows), frames: made.cellTiles.map((placed) => ({ tiles: placed })) }
+  return { meta, tiles: made.doc, added: made.added }
+}
+
+/**
+ * One frame per cell, as a software-sprite character: each cell padded to the
+ * mode's size step (whole bytes in a bitmap mode, whole 8×8 cells in a tiled
+ * one), transparent dots as the sheet's `transparent` index.
+ */
+export function cellsToSwSprite(mode: SwMode, cells: readonly SheetCell[], name: string, transparent = 0): SwSpriteChar | string {
+  const first = cells[0]
+  if (!first) return 'Select at least one cell.'
+  const { width, height } = snapSize(mode, first.width, first.height)
+  if (width > MAX_SW_SIZE || height > MAX_SW_SIZE) return `A ${width}×${height} frame is past a software sprite's ${MAX_SW_SIZE}×${MAX_SW_SIZE}.`
+  if (cells.length > MAX_SW_FRAMES) return `${cells.length} frames; a software sprite holds at most ${MAX_SW_FRAMES}.`
+  const per = width * height
+  const pixels = new Uint8Array(per * cells.length)
+  cells.forEach((cell, n) => {
+    const frame = piece(cell, 0, 0, width, height)
+    for (let i = 0; i < per; i++) pixels[n * per + i] = frame[i] === 0 ? transparent : frame[i]
+  })
+  return { name, width, height, frames: cells.length, pixels: encodeIndices(pixels) }
 }

@@ -230,24 +230,25 @@ export function contentBox(images: readonly RgbaImage[]): { x: number; y: number
 }
 
 /**
- * `box` grown outward to the `step`-dot grid of its cell, clipped to the cell
- * — a trim that keeps art on the tile grid it was drawn on, so a 16×16 coin
- * trimmed for a meta-tile is still the same four tiles, not shifted into the
- * corner of new ones.
+ * `box` grown outward to the `step`-dot grid of its cell (`stepY` down, for a
+ * tile that is not square), clipped to the cell — a trim that keeps art on the
+ * tile grid it was drawn on, so a 16×16 coin trimmed for a meta-tile is still
+ * the same four tiles, not shifted into the corner of new ones.
  */
 export function snapBox(
   box: { x: number; y: number; width: number; height: number },
   step: number,
   cellWidth: number,
-  cellHeight: number
+  cellHeight: number,
+  stepY = step
 ): { x: number; y: number; width: number; height: number } {
   const x = Math.floor(box.x / step) * step
-  const y = Math.floor(box.y / step) * step
+  const y = Math.floor(box.y / stepY) * stepY
   return {
     x,
     y,
     width: Math.min(cellWidth, Math.ceil((box.x + box.width) / step) * step) - x,
-    height: Math.min(cellHeight, Math.ceil((box.y + box.height) / step) * step) - y
+    height: Math.min(cellHeight, Math.ceil((box.y + box.height) / stepY) * stepY) - y
   }
 }
 

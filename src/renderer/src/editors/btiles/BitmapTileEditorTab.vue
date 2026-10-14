@@ -162,6 +162,13 @@ function onImported(result: ImportResult): void {
           >
             <Icon name="image" />
           </button>
+          <button
+            type="button"
+            title="Import sheet: pick cells from an asset sheet — gaps, margins and a transparent colour taken care of"
+            @click="resourcesStore.sheetImport = { destination: 'btiles', target: session.path }"
+          >
+            <Icon name="grid_on" />
+          </button>
           <label class="check"><input
             v-model="dedupe"
             type="checkbox"

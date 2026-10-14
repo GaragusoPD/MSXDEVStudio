@@ -16,6 +16,7 @@ import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
 import Icon from '../../components/Icon.vue'
 import { MODES } from '../../../../shared/msx/modes'
 import { useTabsStore } from '../../stores/tabsStore'
+import { useResourcesStore } from '../../stores/resourcesStore'
 import { fromHex, grbToRgb, paletteToRgb, rgbToGrb, toHex } from '../../../../shared/msx/palette'
 import { defaultExport } from '../../../../shared/msx/resource'
 import {
@@ -67,6 +68,7 @@ import {
 const tabs = useTabsStore()
 const path = computed(() => tabs.activeTab?.filePath ?? '')
 const session = computed(() => swSpriteSession(path.value))
+const resourcesStore = useResourcesStore()
 const sheet = computed(() => doc(session.value))
 const open = computed(() => character(session.value))
 const rgb = computed(() => paletteToRgb(sheet.value.palette))
@@ -299,6 +301,13 @@ const familyNote = computed(() => {
         <span>Grid</span>
       </label>
       <span class="spacer" />
+      <button
+        type="button"
+        title="Import sheet: characters from an asset sheet, a frame per cell"
+        @click="resourcesStore.sheetImport = { destination: 'swsprites', target: session.path }"
+      >
+        <Icon name="grid_on" />
+      </button>
       <button
         :disabled="!session.dirty"
         title="Save"

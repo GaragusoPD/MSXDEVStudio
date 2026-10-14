@@ -266,7 +266,12 @@ export function commit(session: ScreenSession, next: ScreenDoc): void {
  * whatever is under it. The dialog converts in the screen's mode; when it
  * converted to a different palette, the screen takes that palette on the drop.
  */
-export function importImage(session: ScreenSession, result: ImportResult): void {
+/**
+ * `transparent` is the index the float leaves the screen alone under — 0, the
+ * transparent entry, by default; none in SCREEN 8, whose 0 is black, unless the
+ * caller converted with index 0 kept free for it (the sheet importer does).
+ */
+export function importImage(session: ScreenSession, result: ImportResult, transparent?: number | null): void {
   dropFloat(session)
   const current = doc(session)
   const info = MODES[current.mode]
@@ -282,7 +287,7 @@ export function importImage(session: ScreenSession, result: ImportResult): void 
   // A selection the user made says where; otherwise the top-left of what is in view.
   const at = session.selection ? { x: session.selection.x, y: session.selection.y } : session.viewOrigin
   session.float = {
-    ...placeFloat(clip, at, size.width, size.height, info.palette === 'rgb332' ? null : 0),
+    ...placeFloat(clip, at, size.width, size.height, transparent === undefined ? (info.palette === 'rgb332' ? null : 0) : transparent),
     palette: adopt ? palette : null,
     flatten: true
   }
