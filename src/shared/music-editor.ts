@@ -267,3 +267,99 @@ export function applyBeat(doc: MusicDoc, songIndex: number, channel: number, bea
   }
   return updateSong(next, songIndex, (one) => setChannel(one, channel, notes))
 }
+
+// ── piano roll ──────────────────────────────────────────────────────────────
+// The geometry and what a drag does, so `PianoRoll.vue` only draws and forwards
+// pointer positions. x is measured from the grid's left edge (past the
+// keyboard), y from its top (below the ruler).
+
+/** Height of one pitch row. */
+export const KEY_H = 12
+/** Default width of one row (a 16th note); the editor zooms between these. */
+export const ROW_W = 14
+export const MIN_ROW_W = 6
+export const MAX_ROW_W = 32
+
+/** Top row is the highest pitch. */
+export function pitchAtY(y: number): number {
+  return clamp(MAX_PITCH - Math.floor(y / KEY_H), MIN_PITCH, MAX_PITCH)
+}
+
+export function yOfPitch(pitch: number): number {
+  return (MAX_PITCH - pitch) * KEY_H
+}
+
+export function rowAtX(x: number, rowWidth: number, rows: number): number {
+  return clamp(Math.floor(x / rowWidth), 0, rows - 1)
+}
+
+export interface NoteHit {
+  channel: number
+  index: number
+  /** The last few pixels of a note resize it; the rest moves it. */
+  part: 'body' | 'end'
+}
+
+/** The note under (x, y) on one channel. */
+export function hitNote(song: Song, channel: number, x: number, y: number, rowWidth: number): NoteHit | null {
+  const row = Math.floor(x / rowWidth)
+  const index = noteAt(song.channels[channel], row, pitchAtY(y))
+  if (index < 0) return null
+  const note = song.channels[channel][index]
+  const right = (note.row + note.length) * rowWidth
+  const grip = Math.min(6, (note.length * rowWidth) / 3)
+  return { channel, index, part: x >= right - grip ? 'end' : 'body' }
+}
+
+/** The channel being edited wins; a click that only finds another channel's note switches to it. */
+export function hitAnyChannel(song: Song, preferred: number, x: number, y: number, rowWidth: number): NoteHit | null {
+  const order = [preferred, ...[0, 1, 2].filter((channel) => channel !== preferred)]
+  for (const channel of order) {
+    const hit = hitNote(song, channel, x, y, rowWidth)
+    if (hit) return hit
+  }
+  return null
+}
+
+/** Where a note is after an edit re-sorted its channel. */
+export function indexOfNote(notes: readonly Note[], row: number, pitch: number): number {
+  return notes.findIndex((note) => note.row === row && note.pitch === pitch)
+}
+
+export type RollDrag =
+  /** A new note, from where the press landed to wherever the pointer is; `origin.length` is a click's. */
+  | { kind: 'draw'; channel: number; origin: Note }
+  | { kind: 'move'; channel: number; index: number; original: Note; grabRow: number; grabPitch: number }
+  | { kind: 'resize'; channel: number; index: number; original: Note }
+  /** Right-drag: every note the pointer crosses goes. */
+  | { kind: 'erase'; channel: number }
+
+/** The note a draw, move or resize drag makes at the pointer's row and pitch; null for erase. */
+export function dragNote(base: Song, drag: RollDrag, row: number, pitch: number): Note | null {
+  switch (drag.kind) {
+    case 'draw':
+      // A click places the origin's own length; dragging along the row sets it.
+      return fitNote(base, { ...drag.origin, length: row === drag.origin.row ? drag.origin.length : Math.max(1, row - drag.origin.row + 1) })
+    case 'move':
+      return fitNote(base, { ...drag.original, row: drag.original.row + row - drag.grabRow, pitch: drag.original.pitch + pitch - drag.grabPitch })
+    case 'resize':
+      return fitNote(base, { ...drag.original, length: Math.max(1, row - drag.original.row + 1) })
+    case 'erase':
+      return null
+  }
+}
+
+/**
+ * The song a drag leaves, given the pointer's row and pitch. Draw, move and
+ * resize are recomputed from the song as it was when the press landed (`base`),
+ * so dragging back undoes what dragging forward did; erase accumulates, so
+ * pass it the previous result.
+ */
+export function dragSong(base: Song, drag: RollDrag, row: number, pitch: number): Song {
+  if (drag.kind === 'erase') {
+    const index = noteAt(base.channels[drag.channel], row, pitch)
+    return index >= 0 ? removeNote(base, drag.channel, index) : base
+  }
+  const note = dragNote(base, drag, row, pitch) as Note
+  return drag.kind === 'draw' ? placeNote(base, drag.channel, note) : replaceNote(base, drag.channel, drag.index, note)
+}

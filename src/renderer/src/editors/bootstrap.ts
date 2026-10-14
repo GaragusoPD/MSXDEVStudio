@@ -6,6 +6,7 @@ import * as anim from './anim/session'
 import * as btiles from './btiles/session'
 import * as map from './map/session'
 import * as meta from './meta/session'
+import * as music from './music/session'
 import * as screen from './screen/session'
 import * as sfx from './sfx/session'
 import * as sprite from './sprite/session'
@@ -19,6 +20,7 @@ import GitDiffTab from './GitDiffTab.vue'
 import MapEditorTab from './map/MapEditorTab.vue'
 import MetaTileEditorTab from './meta/MetaTileEditorTab.vue'
 import MonacoEditorTab from './MonacoEditorTab.vue'
+import MusicEditorTab from './music/MusicEditorTab.vue'
 import ProjectSettingsTab from './ProjectSettingsTab.vue'
 import ScreenEditorTab from './screen/ScreenEditorTab.vue'
 import SfxEditorTab from './sfx/SfxEditorTab.vue'
@@ -159,6 +161,15 @@ registerEditor({
   save: (path) => sfx.saveSession(sfx.sfxSession(path)),
   undo: (path) => sfx.undo(sfx.sfxSession(path)),
   redo: (path) => sfx.redo(sfx.sfxSession(path))
+})
+
+// Spec 15: PSG music — a bank of songs on a piano roll, exported as lVGM.
+registerEditor({
+  extensions: ['music.json'],
+  component: MusicEditorTab,
+  save: (path) => music.saveSession(music.musicSession(path)),
+  undo: (path) => music.undo(music.musicSession(path)),
+  redo: (path) => music.redo(music.musicSession(path))
 })
 
 // Spec 10: same compound-extension trick, for `*.map.json` and `*.screen.json`.

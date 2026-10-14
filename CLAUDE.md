@@ -92,6 +92,12 @@ Emitted C is not verified by compiling it in your head. Build a scratch project 
 
 The game-kit wizard's own emitted C is checked that way by `game-kit-build.test.ts`, which builds one project per `emitPlayC` branch against the real engine — the only thing that catches a stub calling an API that doesn't exist, or a `msxgl_config.h` default that leaves a module's symbols unresolved (`PAWN_USE_SPRT_FX` wanting the `spritefx` module nothing links).
 
+### Music: one render for the ear and the ROM
+
+A `.music.json` (Spec 15) is exported as **lVGM** — a frame-by-frame log of PSG register writes for MSXgl's `vgm/lvgm_player` — rather than PT3, so the IDE never re-implements a tracker's player: `renderSong` (`msx/music.ts`) produces one register snapshot per frame, and the editor's audio (`music-play.ts` → `psg.ts`'s three-channel chip) and `encodeLvgm` both consume exactly those frames. Keep it that way — any sound the editor makes that doesn't come from `renderSong` is a sound the game won't make.
+
+Two player facts shape the encoder and the helper, both pinned by tests and by an openMSX register log (933 frames, no mismatch): `LVGM_Decode` skips the byte after `FE` on every loop, so the loop marker is written `FE F0`; and lVGM writes only registers that *change*, so an ayFX effect (which writes its channel into the same `g_PSG_Regs`) would leave that channel wrong after it ends — the exported `_Decode` keeps a copy of the song's R#0–R#12 and restores it before each decode. ayFX must use `AYFX_BUFFER_DEFAULT`; the template's `AYFX_BUFFER_PT3` fails to link (`_PT3_Regs`) without the PT3 player. `music-build.test.ts` builds the helper against the real engine.
+
 ### The build pipeline (the core of the app)
 
 MSXDEVStudio never reimplements MSXgl's build — it spawns `node <msxgl>/engine/script/js/build.js <steps>` with **cwd = the project dir** (MSXgl bundles its own SDCC, MSXtk, and Node). Around that:

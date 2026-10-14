@@ -7,6 +7,31 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Music editor** — background music for the PSG, drawn on a piano roll over
+  its three channels, in a new `.music.json` bank that holds every tune of a game
+  and the instruments they share. Ready-made instruments (leads, bass, pluck,
+  chord arpeggios, pad, kick, snare, hats, tom) and drum beats (rock, disco,
+  march, gallop, shuffle, half-time, drive, hats only) that fill a channel in one
+  pick; a new bank opens with a demo song. Space plays and loops it, and edits
+  are heard while it loops. Pick a sound-effect bank and keys 1–9 fire its
+  effects over the song on the channel you choose, as the game will. Songs
+  export as lVGM for MSXgl's `vgm/lvgm_player`, one table per song, and the
+  toolbar shows what each costs in the ROM. With *Export ready-made C*, the
+  header gives `_Play`, `_Stop`, `_Pause`, `_Resume` and a per-frame `_Decode`
+  that keeps the song's own registers, so a sound effect hands its channel back
+  in tune. **Set up project** adds the LibModules and the `msxgl_config.h` lines
+  music with sound effects needs. What the editor plays was checked against the
+  real player in openMSX, register by register, frame by frame.
+
+### Fixed
+
+- Game kits made with sound effects set `AYFX_BUFFER_DEFAULT`. The template's
+  `AYFX_BUFFER_PT3` made the first call to ayFX fail to link
+  (`Undefined Global _PT3_Regs`) in any kit that doesn't also play PT3 music, and
+  the agent guide and the docs now say so for projects set up by hand.
+
 ## [0.2.4] - 2026-10-14
 
 ### Added

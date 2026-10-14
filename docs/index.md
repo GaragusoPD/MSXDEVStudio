@@ -28,7 +28,7 @@ through the [tutorials](tutorials/README.md) in order.
 
 | Guide | What it covers |
 |---|---|
-| [Resources](resources.md) | All six asset editors, blocks, metasprites and fragments, exporting, and the ready-made C |
+| [Resources](resources.md) | The asset editors — graphics, sound effects and music — blocks, metasprites and fragments, exporting, and the ready-made C |
 | [The project file](project-file.md) | What `.msxproj` holds, what `project_config.js` is generated from it, and the config chain MSXgl reads |
 
 ## Learning MSXgl

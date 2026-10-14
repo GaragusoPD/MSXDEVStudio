@@ -97,8 +97,8 @@ codes mean.
 - **[Tutorials](tutorials/README.md)** — start at [Hello
   world](tutorials/01-hello-world.md) and work through to software sprites.
   Each one ends with a complete program you can paste into `main.c` and Run.
-- **[Resources](resources.md)** — the tile, sprite, map, screen and sound
-  editors, and how what you draw becomes a C header your game includes.
+- **[Resources](resources.md)** — the tile, sprite, map, screen, sound-effect
+  and music editors, and how what you draw becomes a C header your game includes.
 - **The demo games** — **Help ▸ Install Demo Projects…** copies both into a
   folder you pick: `demo_msx1` is a finished MSX1 platformer, `demo_msx2` a
   SCREEN 5 shooter in a MegaROM. Open either `.msxproj` and press Run; each

@@ -15,6 +15,7 @@ in your project that an editor owns, and each one exports a C header your game
 | map | `name.map.json` | Map editor | Tile layouts / levels |
 | screen | `name.screen.json` | Screen editor | Full-screen MSX2 bitmaps (SCREEN 5–8) |
 | sfx | `name.sfx.json` | SFX editor | ayFX sound effects |
+| music | `name.music.json` | Music editor | Background music for the PSG, drawn on a piano roll |
 
 ## Creating and opening
 
@@ -266,6 +267,43 @@ frame, press Play to hear it. Start from a preset, or import `.afx`/`.afb`
 files from AYFX Editor. An effect's position in the list is the id you pass to
 `ayFX_PlayBank()`, so reordering renumbers them.
 
+**Music** — one file holds a bank of songs and the instruments they share, so a
+game's title tune, stage tune and game-over jingle live together. A new bank
+opens with a short demo song, so the first Play makes a sound.
+
+- **Draw** on the piano roll: click for a note of the length in the toolbar, or
+  drag along the row for any length. Drag a note to move it, its right edge to
+  resize it; right-click or right-drag deletes. ↑/↓ transposes the selected note
+  (Shift: an octave). Every note you draw or move plays, so you hear it.
+- **Three channels**, A, B and C — the PSG's three voices. Pick the one you
+  draw on in the toolbar; the other two show dimmed (click one of their notes to
+  switch to it). Each channel plays one note at a time, so a note drawn inside
+  another cuts it short. The speaker buttons mute a channel while you listen.
+- **Instruments** come ready-made: leads, bass, pluck, chord arpeggios (how the
+  PSG fakes a chord on one channel), a pad, and drums — kick, snare, hats, tom.
+  The instrument picked in the toolbar is what new notes get; picking one while a
+  note is selected re-voices that note.
+- **Beat…** fills the current channel with a ready-made drum pattern on every
+  bar: rock, disco, march, gallop, shuffle, half-time, drive, hats only. It
+  replaces what that channel played — Ctrl+Z if you didn't mean it.
+- **Bars, Speed, Loop bar.** A bar is sixteen rows of 16th notes; Speed is
+  frames per row (the BPM is shown next to it); a looping song goes back to the
+  Loop bar, so the bars before it play once, as an intro. Right-click a bar
+  number on the ruler to copy that bar into the next one — the quick way to
+  build a loop from one bar.
+- **Space** plays from the ▼ on the ruler (click the ruler to move it) and
+  stops. Edits made while it loops are heard straight away.
+- **Sound effects over the music:** pick one of the project's `.sfx.json` banks
+  under *Sound effects* and the channel effects play on, then press 1–9 while
+  the song plays. What you hear is what the game does — the effect takes that
+  channel over and hands it back when it ends. Channel C is the usual choice:
+  put the drums there and nobody notices a hit lost to an explosion.
+- The toolbar shows what the song costs in the ROM, in bytes and seconds. A busy
+  beat costs more than a melody: the demo's 6.4 seconds come to about 1.5 KB.
+- **Set up project** makes the changes music with sound effects needs —
+  LibModules and three lines of `msxgl_config.h` (see below). It turns into
+  *Project set up* once nothing is left to do.
+
 ## Importing a sheet
 
 Asset packs — the PNGs sold on itch.io and the like — come as **sheets**: tiles
@@ -504,14 +542,18 @@ pass it whole. Passed whole under the default, every colour lands one entry off.
 
 ### SFX
 
-Exports the whole bank as one array. Add `"ayfx/ayfx_player"` to **LibModules**
-in Project Settings first.
+Exports the whole bank as one array. Add `"psg"` and `"ayfx/ayfx_player"` to
+**LibModules** in Project Settings first, and in `msxgl_config.h` set
+`AYFX_BUFFER` to `AYFX_BUFFER_DEFAULT`: the template ships `AYFX_BUFFER_PT3`,
+which points ayFX at the PT3 music player's buffer, and the link fails with
+`Undefined Global _PT3_Regs` unless you play PT3 too. (The music editor's **Set
+up project** does both.)
 
 ```c
 #include "content/sounds.h"
 
 ayFX_InitBank(g_Sounds);
-ayFX_SetChannel(PSG_CHANNEL_A);
+ayFX_SetChannel(PSG_CHANNEL_C);
 
 ayFX_PlayBank(0, 0);                       // effect id 0, priority 0
 ```
@@ -529,6 +571,47 @@ void VBlankHook()
 
 Author your effects at the same rate you call `ayFX_Update()` — set 50 Hz for
 PAL or 60 Hz for NTSC in the SFX editor.
+
+### Music
+
+Each song exports as its own table of lVGM data, `g_Music_<Song>` (`theme` →
+`g_Music_Theme`), with `_FRAMES` and `_LOOP_FRAME` defines for a game that wants
+to sync to it. It plays through MSXgl's `vgm/lvgm_player`, so add `"psg"` and
+`"vgm/lvgm_player"` to **LibModules**, and in `msxgl_config.h` set
+`LVGM_USE_MSXMUSIC`, `LVGM_USE_MSXAUDIO` and `LVGM_USE_SCC` to `FALSE` — the
+template turns those on, and they need modules a PSG game doesn't link. **Set up
+project** in the music editor does all of it.
+
+Tick **Export ready-made C** and the header gives you five calls:
+
+```c
+#include "msxgl.h"
+#include "ayfx/ayfx_player.h"
+#include "content/music.h"
+#include "content/sounds.h"
+
+ayFX_InitBank(g_Sounds);              // sound effects, if any
+ayFX_SetChannel(PSG_CHANNEL_C);       // the channel they borrow
+g_Music_Play(g_Music_Theme, TRUE);    // TRUE: loop from the song's loop bar
+
+// once per frame, after Halt() or in the V-blank hook, in this order:
+g_Music_Decode();                     // this frame of the song
+ayFX_Update();                        // an effect takes its channel
+PSG_Apply();                          // everything goes to the PSG
+```
+
+`g_Music_Pause()` and `g_Music_Resume()` pause in place; `g_Music_Stop()` ends the
+song, and `g_Music_Play()` starts one (the same or another) from the top.
+
+Use `g_Music_Decode()` rather than calling `LVGM_Decode()` yourself when effects
+play over the music. lVGM writes only the PSG registers that change, so after
+an effect the borrowed channel would stay at the effect's pitch and volume until
+the song next touched it; `g_Music_Decode()` keeps a copy of the song's
+registers and puts them back first.
+
+The player decodes one frame per call. A bank authored at 50 Hz plays 20% fast
+on a 60 Hz machine, and a 60 Hz one plays slower on a 50 Hz machine — set the
+bank's **Rate** to the machines you are aiming at.
 
 ## Ready-made C
 

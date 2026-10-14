@@ -25,7 +25,7 @@ prompt as `Ctrl+W`.
 
 ## In the resource editors
 
-These work in the tile, bitmap-tile, sprite, map, screen and SFX editors. They
+These work in the tile, bitmap-tile, sprite, map, screen, SFX and music editors. They
 are ignored while you are typing in a text box, so naming a block does not
 trigger them.
 
@@ -38,6 +38,11 @@ trigger them.
 | `Escape` | Drop the selection — map editor |
 | `Space` | Play or stop the current effect — SFX editor |
 | `P` | Play the effect from the start — SFX editor |
+| `Space` | Play or stop the song — music editor |
+| `Delete` / `Backspace` | Delete the selected note — music editor |
+| `↑` / `↓` | Transpose the selected note a semitone (`Shift`: an octave) — music editor |
+| `←` / `→` | Move the selected note a row — music editor |
+| `1`–`9` | Fire the chosen sound-effect bank's effects over the song — music editor |
 
 Each editor keeps its own undo history, and it survives switching tabs.
 
@@ -46,6 +51,8 @@ Each editor keeps its own undo history, and it survives switching tabs.
 | Gesture | Does |
 |---|---|
 | Left / right click | Draw / erase — sprite and screen editors |
+| Left drag / right drag | Draw a note / delete the notes it crosses — music editor |
+| `Ctrl`+wheel | Zoom the piano roll — music editor |
 | Left / right click | Paint foreground / background — tile editor |
 | Drag a rectangle | Edit those tiles as one image — tile editor |
 | `Shift`+click | Extend the tile selection |

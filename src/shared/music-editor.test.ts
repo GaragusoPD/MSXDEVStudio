@@ -8,7 +8,13 @@ import {
   copyBar,
   deleteInstrument,
   deleteSong,
+  dragSong,
   duplicateSong,
+  hitAnyChannel,
+  hitNote,
+  KEY_H,
+  pitchAtY,
+  yOfPitch,
   ensureInstrument,
   instrumentInUse,
   noteAt,
@@ -168,5 +174,60 @@ describe('applyBeat', () => {
   it('ignores an unknown beat', () => {
     const doc = createMusicDoc()
     expect(applyBeat(doc, 0, 0, 'polka')).toBe(doc)
+  })
+})
+
+describe('piano roll', () => {
+  const W = 10
+  const y = (pitch: number): number => yOfPitch(pitch) + KEY_H / 2
+
+  it('puts the highest pitch at the top', () => {
+    expect(pitchAtY(0)).toBe(107)
+    expect(pitchAtY(y(60))).toBe(60)
+    expect(pitchAtY(-50)).toBe(107)
+  })
+
+  it('tells a note\'s body from its resize grip', () => {
+    const start = song([note(2, 4, 60)])
+    expect(hitNote(start, 0, 25, y(60), W)).toEqual({ channel: 0, index: 0, part: 'body' })
+    expect(hitNote(start, 0, 58, y(60), W)).toEqual({ channel: 0, index: 0, part: 'end' })
+    expect(hitNote(start, 0, 25, y(61), W)).toBeNull()
+  })
+
+  it('prefers the channel being edited, and finds another channel\'s note otherwise', () => {
+    const start: Song = { ...song([note(0, 4, 60)]), channels: [[note(0, 4, 60)], [note(0, 4, 60)], [note(8, 4, 50)]] }
+    expect(hitAnyChannel(start, 1, 5, y(60), W)?.channel).toBe(1)
+    expect(hitAnyChannel(start, 0, 85, y(50), W)?.channel).toBe(2)
+  })
+
+  it('draws a note as long as the drag, at least one row — or the default length for a click', () => {
+    const drag = { kind: 'draw' as const, channel: 0, origin: note(4, 2, 62) }
+    expect(dragSong(song(), drag, 7, 70).channels[0]).toEqual([note(4, 4, 62)])
+    expect(dragSong(song(), drag, 1, 62).channels[0]).toEqual([note(4, 1, 62)])
+    expect(dragSong(song(), drag, 4, 62).channels[0]).toEqual([note(4, 2, 62)])
+    expect(dragSong(song(), drag, 5, 62).channels[0]).toEqual([note(4, 2, 62)])
+    expect(dragSong(song(), drag, 6, 62).channels[0]).toEqual([note(4, 3, 62)])
+  })
+
+  it('moves by the distance dragged from where the note was grabbed', () => {
+    const start = song([note(4, 2, 60)])
+    const drag = { kind: 'move' as const, channel: 0, index: 0, original: note(4, 2, 60), grabRow: 5, grabPitch: 60 }
+    expect(dragSong(start, drag, 9, 63).channels[0]).toEqual([note(8, 2, 63)])
+    // Back where it started: no change at all.
+    expect(dragSong(start, drag, 5, 60)).toBe(start)
+  })
+
+  it('resizes from the note\'s start', () => {
+    const start = song([note(4, 2, 60)])
+    const drag = { kind: 'resize' as const, channel: 0, index: 0, original: note(4, 2, 60) }
+    expect(dragSong(start, drag, 11, 99).channels[0]).toEqual([note(4, 8, 60)])
+  })
+
+  it('erases whatever the drag crosses', () => {
+    const drag = { kind: 'erase' as const, channel: 0 }
+    let next = song([note(0, 2, 60), note(2, 2, 62)])
+    next = dragSong(next, drag, 1, 60)
+    next = dragSong(next, drag, 3, 62)
+    expect(next.channels[0]).toEqual([])
   })
 })

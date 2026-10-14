@@ -45,7 +45,7 @@ at that line.
 ## Resources
 
 Every `*.tiles.json`, `*.btiles.json`, `*.sprites.json`, `*.map.json`,
-`*.screen.json` and `*.sfx.json` in the project, grouped by kind, with the
+`*.screen.json`, `*.sfx.json` and `*.music.json` in the project, grouped by kind, with the
 header each one exports beside it. **Export all** writes every header;
 **Force** ignores the "already up to date" check and rewrites them all.
 
