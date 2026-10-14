@@ -7,6 +7,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-14
+
 ### Added
 
 - **Music editor** — background music for the PSG, drawn on a piano roll over
