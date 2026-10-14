@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { musicHelperC } from '../../shared/msx/music'
+import { MUSIC_CONFIG } from '../../shared/msxgl-config'
 import { normalizeProject } from '../../shared/msxproj'
 import { agentGuideFiles } from './agent-guide'
 
@@ -11,6 +13,25 @@ describe('agentGuideFiles', () => {
     const files = agentGuideFiles(normalizeProject({ name: 'mygame', machine: '2' }, 'mygame'), '/home/me/MSXgl')
     expect(files.map((f) => f.name)).toEqual(['CLAUDE.md', 'AGENTS.md'])
     expect(files[0].content).toBe(files[1].content)
+  })
+
+  it('plays music and effects through the calls the exporter really emits, in the order that works', () => {
+    const text = guide('1')
+    const header = musicHelperC('g_Music').header.join('\n')
+    for (const call of ['g_Music_Play', 'g_Music_Decode', 'g_Music_Pause', 'g_Music_Resume', 'g_Music_Stop']) {
+      expect(text).toContain(call)
+      expect(header).toContain(`void ${call}(`)
+    }
+    const decode = text.indexOf('g_Music_Decode();')
+    expect(decode).toBeGreaterThan(0)
+    expect(text.indexOf('ayFX_Update();', decode)).toBeGreaterThan(decode)
+    expect(text.indexOf('PSG_Apply();', decode)).toBeGreaterThan(text.indexOf('ayFX_Update();', decode))
+    // The config the template gets wrong for this, by name and value.
+    for (const [name, value] of Object.entries(MUSIC_CONFIG)) {
+      if (name === 'PSG_ACCESS' || name === 'LVGM_USE_PSG') continue // template defaults, already right
+      expect(text).toContain(name)
+      expect(text).toContain(value)
+    }
   })
 
   it('states the project facts', () => {

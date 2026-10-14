@@ -1,5 +1,7 @@
 /**
- * A one-channel AY-3-8910 model, just enough to audition ayFX effects (Spec 11).
+ * A one-channel AY-3-8910 model, just enough to audition ayFX effects (Spec 11)
+ * — and, at the bottom, the whole three-channel chip the music editor plays
+ * songs on (Spec 15).
  *
  * ponytail: **no hardware envelope generator, one channel, no stereo.** ayFX
  * streams never touch registers 11–13, and effects are mono, so the envelope
@@ -201,5 +203,126 @@ export function renderSfx(frames: readonly SfxFrame[], options: RenderOptions): 
       out[index++] = lastOut * gain
     }
   }
+  return out
+}
+
+// ── the whole chip (Spec 15) ────────────────────────────────────────────────
+
+/**
+ * Three tone generators, the one noise generator they share, and the mixer,
+ * driven by register snapshots (R#0–R#13) — which is what the lVGM player and
+ * ayFX both leave in `g_PSG_Regs` for `PSG_Apply` to write. The music editor's
+ * audio runs on this; the one-channel model above stays the SFX editor's.
+ *
+ * ponytail: still no envelope generator. Neither the music renderer nor ayFX
+ * writes R#11–R#13, so a volume with bit 4 set (envelope mode) plays as its
+ * low nibble.
+ *
+ * Stateful on purpose: the editor streams a song in short chunks, and the
+ * oscillators carry their phase from one chunk to the next — restarting them
+ * per chunk would click at every boundary.
+ */
+export interface PsgChip {
+  /** R#0–R#13, as `PSG_Apply` would write them. */
+  regs: Uint8Array
+  toneCounter: number[]
+  toneLevel: number[]
+  noiseCounter: number
+  noisePrescale: number
+  noiseLevel: number
+  rng: number
+  /** Fractional AY ticks carried between samples. */
+  pending: number
+  dcIn: number
+  dcOut: number
+}
+
+export function createPsgChip(): PsgChip {
+  const regs = new Uint8Array(14)
+  regs[7] = 0xbf
+  return {
+    regs,
+    toneCounter: [0, 0, 0],
+    toneLevel: [1, 1, 1],
+    noiseCounter: 0,
+    noisePrescale: 0,
+    noiseLevel: 1,
+    rng: LFSR_SEED,
+    pending: 0,
+    dcIn: 0,
+    dcOut: 0
+  }
+}
+
+function chipTick(chip: PsgChip): void {
+  const r = chip.regs
+  for (let channel = 0; channel < 3; channel++) {
+    const period = Math.max(1, r[channel * 2] | ((r[channel * 2 + 1] & 0x0f) << 8))
+    if (++chip.toneCounter[channel] >= period) {
+      chip.toneCounter[channel] = 0
+      chip.toneLevel[channel] ^= 1
+    }
+  }
+  if (++chip.noiseCounter >= Math.max(1, r[6] & 0x1f)) {
+    chip.noiseCounter = 0
+    chip.noisePrescale ^= 1
+    if (chip.noisePrescale) {
+      chip.rng = lfsrNext(chip.rng)
+      chip.noiseLevel = chip.rng & 1
+    }
+  }
+}
+
+/** The three channels mixed, 0…1 — the same OR-then-AND mixer as `psgLevel`, per channel. */
+export function chipLevel(chip: PsgChip): number {
+  const r = chip.regs
+  const mixer = r[7]
+  let sum = 0
+  for (let channel = 0; channel < 3; channel++) {
+    const tone = (mixer >> channel) & 1 ? 1 : chip.toneLevel[channel]
+    const noise = (mixer >> (channel + 3)) & 1 ? 1 : chip.noiseLevel
+    sum += (tone & noise) * AY_VOLUME[r[8 + channel] & 0x0f]
+  }
+  return sum / 3
+}
+
+export interface ChipRenderOptions {
+  sampleRate: number
+  clock?: number
+  /** Peak amplitude with all three channels at full volume. */
+  gain?: number
+}
+
+/** Fills `out[offset … offset+count)` with the chip running on its current registers. */
+export function renderChip(chip: PsgChip, out: Float32Array, offset: number, count: number, options: ChipRenderOptions): void {
+  const { sampleRate, clock = PSG_CLOCK, gain = 0.8 } = options
+  const ticksPerSample = clock / 8 / sampleRate
+  for (let i = 0; i < count; i++) {
+    chip.pending += ticksPerSample
+    let sum = 0
+    let ticks = 0
+    while (chip.pending >= 1) {
+      chip.pending -= 1
+      chipTick(chip)
+      sum += chipLevel(chip)
+      ticks++
+    }
+    const raw = ticks ? sum / ticks : chipLevel(chip)
+    // The same one-pole DC blocker as `renderSfx`: a disabled mixer is pure DC.
+    chip.dcOut = raw - chip.dcIn + 0.999 * chip.dcOut
+    chip.dcIn = raw
+    out[offset + i] = chip.dcOut * gain
+  }
+}
+
+/** A whole run of register frames offline, `samplesPerFrame` samples each. */
+export function renderPsgFrames(frames: readonly Uint8Array[], options: ChipRenderOptions & { rate: number }): Float32Array {
+  const block = samplesPerFrame(options.sampleRate, options.rate)
+  const out = new Float32Array(frames.length * block)
+  const chip = createPsgChip()
+  frames.forEach((regs, index) => {
+    chip.regs.set(regs.subarray(0, 14))
+    renderChip(chip, out, index * block, block, options)
+  })
   return out
 }

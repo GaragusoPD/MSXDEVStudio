@@ -10,7 +10,8 @@ import {
   kitProjModules,
   type NewGameRequest
 } from '../../shared/game-kit'
-import { createGameProject, patchConfigDefines } from './game-kit'
+import { patchConfigDefines } from '../../shared/msxgl-config'
+import { createGameProject } from './game-kit'
 
 const tmpDirs: string[] = []
 function makeTmpDir(prefix: string): string {

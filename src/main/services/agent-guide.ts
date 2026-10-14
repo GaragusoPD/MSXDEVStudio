@@ -108,7 +108,8 @@ So a setting missing from \`project_config.js\` is not unset — it is inherited
 
 Graphics and sound are authored in the IDE's editors as JSON under \`res/\`
 (\`.tiles.json\`, \`.btiles.json\`, \`.meta-tiles.json\`, \`.meta-btiles.json\`,
-\`.anim-tiles.json\`, \`.sprites.json\`, \`.map.json\`, \`.screen.json\`, \`.sfx.json\`) and exported to C in
+\`.anim-tiles.json\`, \`.sprites.json\`, \`.map.json\`, \`.screen.json\`, \`.sfx.json\`,
+\`.music.json\`) and exported to C in
 \`content/\` automatically before every build — a \`.h\` of declarations and a
 \`.c\` of tables, both generated. Edit the \`res/\` file (or the editor), never
 either half of the output.
@@ -989,10 +990,46 @@ that fits in 16×16 and save software sprites for what doesn't.`
 
 ### Sound
 
-SFX export as an ayFX bank. Add \`"ayfx/ayfx_player"\` to **LibModules** first,
-then \`ayFX_InitBank(g_Sounds)\`, \`ayFX_SetChannel(PSG_CHANNEL_A)\`,
-\`ayFX_PlayBank(id, priority)\`. An effect's *position in the list* is its id, so
-reordering the bank renumbers them.
+Sound effects (\`.sfx.json\`) export as an ayFX bank, music (\`.music.json\`) as
+lVGM songs. Both go through \`g_PSG_Regs\`, so \`msxgl_config.h\` needs
+\`AYFX_BUFFER\` set to \`AYFX_BUFFER_DEFAULT\`: the template ships
+\`AYFX_BUFFER_PT3\`, which points ayFX at the PT3 player's buffer, and the link
+then fails with \`Undefined Global _PT3_Regs\`. The music editor's **Set up
+project** button makes that change and the others below.
+
+**Sound effects.** Add \`"psg"\` and \`"ayfx/ayfx_player"\` to **LibModules**, then
+\`ayFX_InitBank(g_Sounds)\`, \`ayFX_SetChannel(PSG_CHANNEL_C)\`,
+\`ayFX_PlayBank(id, priority)\`, and \`ayFX_Update()\` + \`PSG_Apply()\` once per frame.
+An effect's *position in the list* is its id, so reordering the bank renumbers
+them.
+
+**Music.** A \`.music.json\` is a bank of songs drawn on a piano roll; each exports
+as its own table, \`g_Music_<Song>\`, with \`_FRAMES\` and \`_LOOP_FRAME\` defines.
+Add \`"psg"\` and \`"vgm/lvgm_player"\` to **LibModules**, and set
+\`LVGM_USE_MSXMUSIC\`, \`LVGM_USE_MSXAUDIO\` and \`LVGM_USE_SCC\` to \`FALSE\` in
+\`msxgl_config.h\` — the template turns them on, and they need modules a PSG game
+doesn't link. Tick *Export ready-made C* and drive it like this:
+
+\`\`\`c
+ayFX_InitBank(g_Sfx);                 // effects, if the game has any
+ayFX_SetChannel(PSG_CHANNEL_C);       // the channel effects borrow
+g_Music_Play(g_Music_Theme, TRUE);    // TRUE: loop from the song's loop bar
+
+// every frame (after Halt(), or from the V-blank hook), in this order:
+g_Music_Decode();                     // the song's registers for this frame
+ayFX_Update();                        // an effect overwrites its channel
+PSG_Apply();                          // the registers go to the PSG
+\`\`\`
+
+Don't call \`LVGM_Decode()\` directly when effects play over music. lVGM writes
+only the registers that change, so an effect would leave its channel at the
+effect's pitch and volume until the song next touched them; \`g_Music_Decode()\`
+keeps a copy of the song's own registers and puts them back first.
+\`g_Music_Pause()\`/\`g_Music_Resume()\` pause in place; \`g_Music_Stop()\` ends the song,
+and only \`g_Music_Play()\` starts one again. The player decodes one frame per call,
+so a bank authored at 50 Hz (its rate is in the header) runs 20% fast on a 60 Hz
+machine. Keep the least important part on the effect channel — drums on C lose
+the odd hit to an explosion and nobody notices.
 
 ### Compression
 

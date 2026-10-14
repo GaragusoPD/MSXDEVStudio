@@ -48,7 +48,8 @@ const KIND_LABELS: Record<ResourceKind, string> = {
   swsprites: 'sprites — software, any size',
   map: 'map',
   screen: 'screen / playfield',
-  sfx: 'sound effects'
+  sfx: 'sound effects',
+  music: 'music'
 }
 
 const label = (kind: string): string => KIND_LABELS[kind as ResourceKind] ?? kind
@@ -66,7 +67,8 @@ const KIND_HELP: Record<ResourceKind, string> = {
     'Software sprites: drawn into the picture, so any size, any colours, no per-line limit. Each character has its own size and its own animation frames.',
   map: 'A grid of tile indices — one screen, or a world to scroll around.',
   screen: 'A picture: import one and convert it, or draw it here. SCREEN 3 and the MSX2 bitmap modes.',
-  sfx: 'An ayFX sound-effect bank.'
+  sfx: 'An ayFX sound-effect bank.',
+  music: 'Background music for the PSG: songs drawn on a piano roll, with ready-made instruments and beats. Plays alongside the sound effects.'
 }
 
 /**
@@ -75,7 +77,7 @@ const KIND_HELP: Record<ResourceKind, string> = {
  * otherwise at creation, so "make me a SCREEN 3 tileset" meant creating the
  * wrong thing and changing it afterwards.
  *
- * Kinds with no mode (maps, bitmap meta-tiles, sprites, sfx) take it from
+ * Kinds with no mode (maps, bitmap meta-tiles, sprites, sfx, music) take it from
  * what they reference, so they get no picker.
  */
 const modeOptions = computed<readonly ScreenMode[]>(() => {

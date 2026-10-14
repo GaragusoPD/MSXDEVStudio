@@ -21,7 +21,8 @@ const RESOURCE_SUFFIXES = [
   'sprites.json',
   'map.json',
   'screen.json',
-  'sfx.json'
+  'sfx.json',
+  'music.json'
 ]
 
 export function extensionFor(filename: string): string {

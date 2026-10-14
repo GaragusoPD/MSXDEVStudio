@@ -25,6 +25,7 @@ import { defaultExport, renderResourceFiles, RESOURCE_DIR, serializeResource, ty
 import { createSfxDoc } from '../../shared/msx/sfx'
 import { createSpritesDoc } from '../../shared/msx/sprite'
 import { createTilesDoc } from '../../shared/msx/tile'
+import { patchConfigDefines } from '../../shared/msxgl-config'
 import { normalizeProject } from '../../shared/msxproj'
 import { agentGuideFiles } from './agent-guide'
 import { emitGameH, emitMainC, emitPlayC, emitScreensC } from './game-kit-c'
@@ -35,17 +36,6 @@ import {
   saveProject,
   templateDirFor
 } from './project'
-
-/** Replace `#define NAME <old>` with `#define NAME <value>`. Throws if NAME is missing. */
-export function patchConfigDefines(source: string, patches: Record<string, string>): string {
-  let out = source
-  for (const [name, value] of Object.entries(patches)) {
-    const re = new RegExp(`^(#define\\s+${name}\\s+)\\S+`, 'm')
-    if (!re.test(out)) throw new Error(`msxgl_config.h has no ${name} to patch`)
-    out = out.replace(re, `$1${value}`)
-  }
-  return out
-}
 
 export function createGameProject(request: NewGameRequest, msxglPath: string): OpenProject {
   const root = join(request.location, request.name)

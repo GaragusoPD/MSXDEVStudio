@@ -3,6 +3,7 @@ import { presetEffect, type SfxFrame } from './msx/sfx'
 import {
   applyAyfxFrame,
   AY_VOLUME,
+  createPsgChip,
   createPsgState,
   lfsrNext,
   LFSR_SEED,
@@ -12,6 +13,8 @@ import {
   PSG_TICK_RATE,
   psgLevel,
   psgTick,
+  renderChip,
+  renderPsgFrames,
   renderSfx,
   samplesPerFrame,
   toneFrequency,
@@ -230,5 +233,69 @@ describe('renderSfx', () => {
     const frames = presetEffect('hit').frames
     const options = { sampleRate: RATE_44K, rate: 50 }
     expect(renderSfx(frames, options)).toEqual(renderSfx(frames, options))
+  })
+})
+
+describe('the three-channel chip', () => {
+  /** R#0–R#13 with one tone per channel; volumes default to silent. */
+  const regs = (fields: { periods?: number[]; volumes?: number[]; mixer?: number; noise?: number }): Uint8Array => {
+    const out = new Uint8Array(14)
+    ;(fields.periods ?? [0, 0, 0]).forEach((period, channel) => {
+      out[channel * 2] = period & 0xff
+      out[channel * 2 + 1] = period >> 8
+    })
+    ;(fields.volumes ?? [0, 0, 0]).forEach((volume, channel) => (out[8 + channel] = volume))
+    out[6] = fields.noise ?? 0
+    out[7] = fields.mixer ?? 0b10111000
+    out[13] = 0xff
+    return out
+  }
+
+  const crossingsPerSecond = (samples: Float32Array, sampleRate: number): number => {
+    let crossings = 0
+    for (let i = 1; i < samples.length; i++) if (samples[i - 1] < 0 !== samples[i] < 0) crossings++
+    return crossings / 2 / (samples.length / sampleRate)
+  }
+
+  it('plays each channel at its own period', () => {
+    for (const channel of [0, 1, 2]) {
+      const periods = [0, 0, 0]
+      const volumes = [0, 0, 0]
+      periods[channel] = 254
+      volumes[channel] = 15
+      const frames = Array.from({ length: 50 }, () => regs({ periods, volumes }))
+      const samples = renderPsgFrames(frames, { sampleRate: 48000, rate: 50 })
+      expect(crossingsPerSecond(samples, 48000)).toBeCloseTo(toneFrequency(254), -1.4)
+    }
+  })
+
+  it('is silent with every volume at 0, whatever the generators do', () => {
+    const frames = Array.from({ length: 5 }, () => regs({ periods: [100, 200, 300], mixer: 0b10000000, noise: 3 }))
+    expect(Math.max(...renderPsgFrames(frames, { sampleRate: 44100, rate: 50 }).map(Math.abs))).toBe(0)
+  })
+
+  it('reads volume as its low nibble, ignoring the envelope-mode bit', () => {
+    const a = renderPsgFrames([regs({ periods: [254, 0, 0], volumes: [12, 0, 0] })], { sampleRate: 44100, rate: 50 })
+    const b = renderPsgFrames([regs({ periods: [254, 0, 0], volumes: [0x1c, 0, 0] })], { sampleRate: 44100, rate: 50 })
+    expect(b).toEqual(a)
+  })
+
+  it('stays inside the gain with all three channels at full volume', () => {
+    const frames = Array.from({ length: 20 }, () => regs({ periods: [254, 320, 400], volumes: [15, 15, 15], mixer: 0b10000000, noise: 5 }))
+    const samples = renderPsgFrames(frames, { sampleRate: 44100, rate: 50, gain: 0.8 })
+    expect(Math.max(...samples.map(Math.abs))).toBeLessThanOrEqual(0.8 * 1.01)
+  })
+
+  it('carries its phase across chunks: rendering in pieces equals rendering in one go', () => {
+    const frame = regs({ periods: [254, 377, 0], volumes: [15, 10, 0], mixer: 0b10011100, noise: 7 })
+    const whole = new Float32Array(3000)
+    const one = createPsgChip()
+    one.regs.set(frame)
+    renderChip(one, whole, 0, 3000, { sampleRate: 48000 })
+    const pieces = new Float32Array(3000)
+    const two = createPsgChip()
+    two.regs.set(frame)
+    for (const [at, count] of [[0, 1000], [1000, 7], [1007, 1993]]) renderChip(two, pieces, at, count, { sampleRate: 48000 })
+    expect(pieces).toEqual(whole)
   })
 })

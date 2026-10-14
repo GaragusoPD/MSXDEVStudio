@@ -158,6 +158,12 @@ describe('kitLibModules / kitProjModules', () => {
 })
 
 describe('configPatches', () => {
+  it('points ayFX at g_PSG_Regs when the kit has sound effects, and only then', () => {
+    expect(configPatches(req({ kit: 'platformer', audio: 'ayfx' })).AYFX_BUFFER).toBe('AYFX_BUFFER_DEFAULT')
+    expect(configPatches(req({ kit: 'text', audio: 'ayfx' }))).toEqual({ AYFX_BUFFER: 'AYFX_BUFFER_DEFAULT' })
+    expect(configPatches(req({ kit: 'platformer' }))).not.toHaveProperty('AYFX_BUFFER')
+  })
+
   it('turns off the pawn features no kit links, and collides against VRAM', () => {
     const patches = configPatches(req({ kit: 'platformer' }))
     expect(patches).toEqual({

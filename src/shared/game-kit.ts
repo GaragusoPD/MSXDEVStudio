@@ -300,12 +300,17 @@ export function vdpModeMacro(mode: DisplayMode): string {
  *    is the one it uploaded to VRAM — the same source `s_game` uses;
  *  - `PAWN_BORDER_MAX_Y` is the MSX2 bitmap height (211), two rows below a tiled
  *    screen's floor;
- *  - `SCROLL_SRC_*` describes the sample's 128-wide map, not the one exported here.
+ *  - `SCROLL_SRC_*` describes the sample's 128-wide map, not the one exported here;
+ *  - ayFX writes into **PT3's** register buffer (`AYFX_BUFFER_PT3`), which links
+ *    only with the PT3 player — the first `ayFX_*` call in a kit without it
+ *    fails with `Undefined Global _PT3_Regs`. `g_PSG_Regs` is the buffer
+ *    `PSG_Apply` sends, and the one the music helpers (Spec 15) share.
  */
 export function configPatches(
-  request: Pick<NewGameRequest, 'kit' | 'displayMode'>
+  request: Pick<NewGameRequest, 'kit' | 'displayMode'> & Partial<Pick<NewGameRequest, 'audio'>>
 ): Record<string, string> {
   const patches: Record<string, string> = {}
+  if (request.audio === 'ayfx') patches.AYFX_BUFFER = 'AYFX_BUFFER_DEFAULT'
 
   // SCREEN 3 has two switches and no safe default for either.
   //

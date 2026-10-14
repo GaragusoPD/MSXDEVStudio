@@ -93,6 +93,7 @@ import {
   type ScreenDoc
 } from './screen'
 import { encodeAyfxBank, normalizeSfx, validateSfx, type SfxDoc } from './sfx'
+import { musicConstants, musicExports, musicHelperC, normalizeMusic, validateMusic, type MusicDoc } from './music'
 import {
   hasMetasprite,
   hasSpriteGroups,
@@ -169,6 +170,7 @@ export type ResourceKind =
   | 'map'
   | 'screen'
   | 'sfx'
+  | 'music'
 
 /**
  * Where new resources are created. Nothing *requires* them to live here — the
@@ -197,7 +199,8 @@ export const RESOURCE_SUFFIXES: Readonly<Record<ResourceKind, string>> = {
   swsprites: '.swsprites.json',
   map: '.map.json',
   screen: '.screen.json',
-  sfx: '.sfx.json'
+  sfx: '.sfx.json',
+  music: '.music.json'
 }
 
 /** True for the two meta-tile-set suffixes — the kinds a meta map may reference. */
@@ -218,6 +221,7 @@ export type ResourceDoc =
   | { kind: 'map'; doc: MapDoc }
   | { kind: 'screen'; doc: ScreenDoc }
   | { kind: 'sfx'; doc: SfxDoc }
+  | { kind: 'music'; doc: MusicDoc }
 
 /** Which editor owns this path, by suffix. Null for anything else. */
 export function resourceKindOf(path: string): ResourceKind | null {
@@ -287,6 +291,8 @@ export function parseResource(path: string, text: string): ResourceDoc {
       return { kind, doc: normalizeScreen(raw) }
     case 'sfx':
       return { kind, doc: normalizeSfx(raw) }
+    case 'music':
+      return { kind, doc: normalizeMusic(raw) }
   }
 }
 
@@ -328,6 +334,8 @@ export function validateResource(resource: ResourceDoc): string[] {
       return validateScreen(resource.doc)
     case 'sfx':
       return validateSfx(resource.doc)
+    case 'music':
+      return validateMusic(resource.doc)
   }
 }
 
@@ -677,6 +685,14 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
           comment: `ayFX bank — ${resource.doc.effects.length} effect(s): ${resource.doc.effects.map((e) => e.name).join(', ')}`
         }
       ]
+    case 'music': {
+      const { rate } = resource.doc
+      return musicExports(resource.doc).map((song) => ({
+        suffix: `_${song.symbol}`,
+        bytes: song.bytes,
+        comment: `lVGM — "${song.song.name}": ${song.frames} frames (${(song.frames / rate).toFixed(1)} s at ${rate} Hz), loops from frame ${song.loopFrame}`
+      }))
+    }
   }
 }
 
@@ -808,6 +824,13 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
         `Replay rate: ${resource.doc.rate} Hz`
       )
       break
+    case 'music':
+      notes.push(
+        'Format: lVGM, one table per song (play with MSXgl LibModules "vgm/lvgm_player")',
+        `Songs: ${resource.doc.songs.map((song) => song.name).join(', ')}`,
+        `Replay rate: ${resource.doc.rate} Hz — one LVGM_Decode() per frame; the player does not adjust for 50/60 Hz`
+      )
+      break
   }
   return notes
 }
@@ -902,6 +925,7 @@ function resourceConstants(
     ]
   }
   if (resource.kind === 'swsprites') return swSpriteConstants(resource.doc, name)
+  if (resource.kind === 'music') return musicConstants(resource.doc, name)
   if (resource.kind === 'map') {
     // The helper C needs the map's shape, and so does anything that walks a layer.
     const { cell, metas } = resource.doc
@@ -1053,6 +1077,7 @@ function resourceCode(
   if (resource.kind === 'swsprites') {
     return resource.doc.sprites.length ? swSpriteHelperC(resource.doc, name) : NO_CODE
   }
+  if (resource.kind === 'music') return musicHelperC(name)
   // A pattern meta-tile has no tile numbers of its own to draw with: each
   // tileset it is attached to draws it (`_DrawMeta`), and its window is that
   // tileset's `_Animate()`. A bitmap one blits itself out of its atlas.

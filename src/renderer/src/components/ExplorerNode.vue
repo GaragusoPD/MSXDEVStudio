@@ -33,7 +33,8 @@ const BADGES: Record<string, { label: string; color: string }> = {
   'sprites.json': { label: 'S', color: '#c9457a' },
   'map.json': { label: 'M', color: '#c9457a' },
   'screen.json': { label: 'X', color: '#c9457a' },
-  'sfx.json': { label: 'F', color: '#c9457a' }
+  'sfx.json': { label: 'F', color: '#c9457a' },
+  'music.json': { label: '♪', color: '#c9457a' }
 }
 
 const badge = computed(() => {

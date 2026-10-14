@@ -33,6 +33,7 @@ import {
 import { normalizeBitmapTiles } from './bitmap-tile'
 import { sc3Offset } from './sc3'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS, type SfxDoc } from './sfx'
+import { createMusicDoc, maskRegisters, renderSong, simulateLvgm } from './music'
 import { createSpritesDoc } from './sprite'
 import { addLayer, setCharacterGrid } from '../sprite-editor'
 import { createBlock } from '../tile-editor'
@@ -144,6 +145,7 @@ describe('file naming', () => {
     expect(resourceKindOf('levels/l1.map.json')).toBe('map')
     expect(resourceKindOf('title.screen.json')).toBe('screen')
     expect(resourceKindOf('audio/blips.sfx.json')).toBe('sfx')
+    expect(resourceKindOf('audio/game.music.json')).toBe('music')
     expect(resourceKindOf('main.c')).toBeNull()
     expect(resourceKindOf('notes.json')).toBeNull()
   })
@@ -763,6 +765,53 @@ describe('screen resource', () => {
     
     expect(header).toContain('packing gained nothing here')
     expect(header).not.toContain('RLEp_UnpackToRAM')
+  })
+})
+
+describe('music resource', () => {
+  const fixture = (): ResourceDoc => {
+    const doc = createMusicDoc()
+    doc.songs.push({ ...doc.songs[0], name: 'boss fight', loopBar: 1 })
+    return { kind: 'music', doc }
+  }
+
+  it('exports one lVGM table per song, named after it', () => {
+    const tables = resourceTables(fixture())
+    expect(tables.map((table) => table.suffix)).toEqual(['_Theme', '_BossFight'])
+    expect(tables[1].comment).toContain('loops from frame 80')
+    // Each table is a whole stream the player takes a pointer to — and it
+    // decodes to the song, which is what the editor plays.
+    const { doc } = fixture() as { kind: 'music'; doc: ReturnType<typeof createMusicDoc> }
+    const frames = renderSong(doc, doc.songs[0])
+    const played = simulateLvgm(tables[0].bytes, frames.length)
+    expect(played.frames.map((regs) => [...maskRegisters(regs)].slice(0, 11))).toEqual(frames.map((regs) => [...regs].slice(0, 11)))
+  })
+
+  it('renders a header with the per-song lengths, and the helper only when asked', () => {
+    const block = defaultExport('res/music.music.json')
+    expect(block).toEqual({ name: 'g_Music', format: 'c', out: 'content/music.h' })
+    const plain = renderResourceFiles(fixture(), 'res/music.music.json', block)
+    expect(plain.header).toContain('vgm/lvgm_player')
+    expect(plain.header).toContain('#define G_MUSIC_THEME_FRAMES 320')
+    expect(plain.header).toContain('#define G_MUSIC_BOSSFIGHT_LOOP_FRAME 80')
+    expect(plain.header).toContain('extern const unsigned char g_Music_BossFight[];')
+    expect(plain.header).not.toContain('g_Music_Decode')
+
+    const helped = renderResourceFiles(fixture(), 'res/music.music.json', { ...block, helpers: true })
+    expect(helped.header).toContain('void g_Music_Play(const u8* song, bool loop);')
+    expect(helped.header).toContain('void g_Music_Decode();')
+    expect(helped.source).toContain('#include "vgm/lvgm_player.h"')
+    expect(helped.source).toContain('static u8 g_Music_Regs[13];')
+    // Restore, decode, save — in that order, around the one LVGM_Decode.
+    const body = helped.source!.slice(helped.source!.indexOf('void g_Music_Decode()'))
+    expect(body.indexOf('Mem_Copy(g_Music_Regs, &g_PSG_Regs, 13)')).toBeLessThan(body.indexOf('LVGM_Decode()'))
+    expect(body.indexOf('LVGM_Decode()')).toBeLessThan(body.indexOf('Mem_Copy(&g_PSG_Regs, g_Music_Regs, 13)'))
+  })
+
+  it('parses, serializes and validates through the resource family', () => {
+    const parsed = parseResource('res/music.music.json', serializeResource(fixture()))
+    expect(parsed).toEqual(fixture())
+    expect(validateResource(parsed)).toEqual([])
   })
 })
 
