@@ -43,6 +43,13 @@ doesn't use hardware envelopes). One channel is enough (effects are mono).
   explosion, pickup, hit (5 hardcoded frame sequences — good starting points).
 - Live keyboard audition: press P to play current effect from frame 0.
 
+## Later additions
+
+Spec 15 added what a game needs to play a bank without writing the ayFX calls:
+a define per effect, a per-effect priority, the bank's channel and opt-in helper
+C (`_Init`, `_Play`, `_PlayPriority`, `_Stop`, `_IsPlaying`, `_Update`). All three
+fields are optional in the file, so a bank from before reads back unchanged.
+
 ## Acceptance
 
 - Decoder unit test: exported bank re-parsed equals the in-memory model; an effect

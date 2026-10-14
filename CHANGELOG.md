@@ -25,6 +25,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   music with sound effects needs. What the editor plays was checked against the
   real player in openMSX, register by register, frame by frame.
 
+- **Ready-made C for music and sound effects.** One call per frame,
+  `g_Music_Update()`, plays the song, the sound effect over it and writes the
+  PSG; `g_Music_FadeOut(speed)` fades a song out and stops it, and
+  `g_Music_IsPlaying()` says when it has. Sound-effect banks get their own:
+  `g_Sfx_Init()`, `g_Sfx_Play(id)`, `g_Sfx_Stop()`, `g_Sfx_IsPlaying()` and, for a
+  game without music, `g_Sfx_Update()`.
+
+- **Sound-effect priorities and named ids.** Each effect has a priority, so an
+  important sound (a death, a level clear) is never cut off by a minor one (a
+  coin); the bank has a channel; and every exported bank names its effects —
+  `G_SFX_JUMP` — so reordering the list no longer silently changes which sound
+  a game plays. Banks saved before read back unchanged. The music editor saves
+  the effects bank it plays with, and auditions with its priorities and channel.
+
 ### Fixed
 
 - Game kits made with sound effects set `AYFX_BUFFER_DEFAULT`. The template's

@@ -48,7 +48,7 @@ include `content/tiles.h` while only `content/tiles.c` defines the arrays.
 | `res/player.sprites.json` | `g_PlayerSprites_Patterns/_Colors/_Layout` + `g_PlayerSprites_SetMeta()` | 16×16 character, mode 1, six poses, **three superposed planes** each |
 | `res/level.map.json` | `g_LevelMap_Background` | 64×12 level, RLEp-compressed (768 cells → 86 bytes) |
 | `res/background.map.json` | `g_BackgroundMap_Sky` | 32×24 backdrop pinned to the screen |
-| `res/sfx.sfx.json` | `g_Sfx` | ayFX bank: coin (0), jump (1), win (2) |
+| `res/sfx.sfx.json` | `g_Sfx`, ids `G_SFX_COIN`/`_JUMP`/`_WIN` | ayFX bank: coin (0), jump (1), win (2) |
 | `res/intro.tiles.json` / `res/intro.map.json` | `g_IntroTiles`, `g_IntroMap` | The title screen's own 256-tile bank and picture |
 
 Edit the `.json` in the IDE (or by hand — they are plain JSON), then build.

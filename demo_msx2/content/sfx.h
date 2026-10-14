@@ -9,5 +9,12 @@
 
 #pragma once
 
+#define G_SFX_COUNT 5
+#define G_SFX_SHOOT 0
+#define G_SFX_BOOM 1
+#define G_SFX_CRASH 2
+#define G_SFX_HIT 3
+#define G_SFX_VICTORY 4
+
 #define G_SFX_SIZE 215
 extern const unsigned char g_Sfx[];

@@ -162,19 +162,21 @@ export function isMusicPlaying(): boolean {
 
 /**
  * Fires an effect the way `ayFX_PlayBank` does: on the effect channel, from
- * the next frame, over the music if it is playing — or on its own if not.
+ * the next frame, over the music if it is playing — or on its own if not —
+ * unless a more important one is sounding. Returns ayFX's code: 0 played, 1 not.
  */
-export function fireEffect(frames: readonly SfxFrame[], options: { rate: number; channel: number; onFrame?: (frame: number) => void }): void {
+export function fireEffect(frames: readonly SfxFrame[], options: { rate: number; channel: number; priority: number }): number {
   audio()
   if (!player) {
     rate = options.rate
     chip = createPsgChip()
     player = createMusicPlayer([], { loopFrame: 0, loop: false, effectChannel: options.channel })
-    onFrame = options.onFrame ?? null
+    onFrame = null
   }
   player.effectChannel = options.channel
-  playEffect(player, frames)
+  const result = playEffect(player, frames, options.priority)
   start()
+  return result
 }
 
 /** A short one-off — the note under the pointer, a key on the keyboard. Doesn't touch playback. */

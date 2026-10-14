@@ -80,6 +80,12 @@ export interface MusicDoc {
   rate: 50 | 60
   instruments: Instrument[]
   songs: Song[]
+  /**
+   * The `.sfx.json` the game plays over this music, or null for none. The
+   * editor auditions its effects; the exported `_Update()` runs `ayFX_Update()`
+   * between the song and `PSG_Apply()` when one is set.
+   */
+  effects: string | null
   export: ExportBlock | null
 }
 
@@ -99,7 +105,7 @@ export const MAX_PITCH = 107
 export const MAX_SEMITONES = 48
 export const MAX_CENTS = 100
 /** The helper's own names: a song called one of these would collide with them. */
-const HELPER_NAMES = ['Play', 'Stop', 'Pause', 'Resume', 'Decode', 'Regs']
+const HELPER_NAMES = ['Play', 'Stop', 'Pause', 'Resume', 'Decode', 'Update', 'IsPlaying', 'FadeOut', 'Regs', 'Fade', 'FadeTimer', 'FadeLevel']
 
 // ── PSG registers ───────────────────────────────────────────────────────────
 
@@ -268,6 +274,7 @@ export function normalizeMusic(raw: unknown): MusicDoc {
     rate: Number(input.rate) === 60 ? 60 : 50,
     instruments,
     songs,
+    effects: typeof input.effects === 'string' && input.effects ? input.effects : null,
     export: (input.export as ExportBlock | null | undefined) ?? null
   }
 }
@@ -758,26 +765,38 @@ export function musicConstants(doc: MusicDoc, name: string): string[] {
  * the song happens to rewrite them. R#13 is left out: `PSG_Apply` writes it
  * only while bit 7 is clear and then sets that bit, so restoring it each frame
  * would retrigger the envelope.
+ *
+ * `withEffects` is whether the bank has a sound-effect bank attached: then
+ * `_Update()` runs `ayFX_Update()` between the song and `PSG_Apply()`, which
+ * is the one order that works (see `music-play.ts`).
+ *
+ * The fade is applied to `g_PSG_Regs` *after* the copy is saved, so the copy
+ * keeps the song's own volumes and only what goes to the chip is quieter. Its
+ * state is reset by `_Play`, so boot garbage in RAM never starts a fade.
  */
-export function musicHelperC(name: string): HelperC {
+export function musicHelperC(name: string, withEffects: boolean): HelperC {
   const regs = `${name}_Regs`
+  const fade = `${name}_Fade`
   return {
     header: [
-      `// Music (lVGM). Once per frame, in this order:`,
-      `//   ${name}_Decode();   // this frame of the song`,
-      `//   ayFX_Update();      // optional: a sound effect borrows its channel`,
-      `//   PSG_Apply();        // the registers go to the PSG`,
-      `// Needs LibModules "psg" and "vgm/lvgm_player" ("ayfx/ayfx_player" for effects),`,
-      `// and AYFX_BUFFER_DEFAULT in msxgl_config.h when effects play over the music.`,
+      `// Music (lVGM). ${name}_Play(song, loop) to start one, then once per frame:`,
+      withEffects
+        ? `//   ${name}_Update();   // the song, the sound effect over it, out to the PSG`
+        : `//   ${name}_Update();   // the song, out to the PSG`,
+      `// Needs LibModules "psg" and "vgm/lvgm_player"${withEffects ? ' and "ayfx/ayfx_player"' : ''}.`,
       `void ${name}_Play(const u8* song, bool loop);`,
       `void ${name}_Stop();`,
       `void ${name}_Pause();`,
       `void ${name}_Resume();`,
+      `bool ${name}_IsPlaying();`,
+      `void ${name}_FadeOut(u8 speed);`,
+      `void ${name}_Update();`,
       `void ${name}_Decode();`,
       ''
     ],
     source: [
       '#include "vgm/lvgm_player.h"',
+      ...(withEffects ? ['#include "ayfx/ayfx_player.h"'] : []),
       '',
       '#if (PSG_ACCESS != PSG_INDIRECT)',
       '\t#error "The music helpers need PSG_ACCESS PSG_INDIRECT in msxgl_config.h: they keep the song in g_PSG_Regs"',
@@ -789,10 +808,15 @@ export function musicHelperC(name: string): HelperC {
       '// The song\'s own R#0-R#12, so a sound effect cannot leave its channel wrong:',
       '// lVGM writes only what changes, and ayFX_Update() writes into g_PSG_Regs too.',
       `static u8 ${regs}[13];`,
+      '// Fade-out: frames per volume step (0 = not fading), the countdown, the steps taken.',
+      `static u8 ${fade} = 0;`,
+      `static u8 ${fade}Timer = 0;`,
+      `static u8 ${fade}Level = 0;`,
       '',
       `// Start a song from the top. With loop, it goes round from its loop bar forever.`,
       `void ${name}_Play(const u8* song, bool loop)`,
       '{',
+      `\t${fade} = 0;`,
       '\tLVGM_Play(song, loop);',
       '\t// LVGM_Play muted the volumes; the stream\'s first frame writes the rest.',
       `\tMem_Copy(&g_PSG_Regs, ${regs}, 13);`,
@@ -801,6 +825,7 @@ export function musicHelperC(name: string): HelperC {
       `// Stop for good: the next song starts with ${name}_Play().`,
       `void ${name}_Stop()`,
       '{',
+      `\t${fade} = 0;`,
       '\tLVGM_Stop();',
       '}',
       '',
@@ -815,7 +840,25 @@ export function musicHelperC(name: string): HelperC {
       '\tLVGM_Resume();',
       '}',
       '',
-      `// One frame of the song into g_PSG_Regs. Call before ayFX_Update() and PSG_Apply().`,
+      `// False once a song played without loop has ended, or after ${name}_Stop() or a fade.`,
+      `bool ${name}_IsPlaying()`,
+      '{',
+      '\treturn LVGM_IsPlaying();',
+      '}',
+      '',
+      `// Fade the song out and stop it: one volume step every \`speed\` frames, so 15 steps`,
+      `// in all — speed 4 is about a second at 60 Hz. A fade already running restarts.`,
+      `void ${name}_FadeOut(u8 speed)`,
+      '{',
+      '\tif (speed == 0)',
+      '\t\tspeed = 1;',
+      `\t${fade} = speed;`,
+      `\t${fade}Timer = speed;`,
+      `\t${fade}Level = 0;`,
+      '}',
+      '',
+      `// One frame of the song into g_PSG_Regs, for a game that runs ayFX_Update() and`,
+      `// PSG_Apply() itself — in that order, after this. Otherwise call ${name}_Update().`,
       `void ${name}_Decode()`,
       '{',
       '\tif (!LVGM_IsPlaying())',
@@ -823,6 +866,32 @@ export function musicHelperC(name: string): HelperC {
       `\tMem_Copy(${regs}, &g_PSG_Regs, 13);`,
       '\tLVGM_Decode();',
       `\tMem_Copy(&g_PSG_Regs, ${regs}, 13);`,
+      `\tif (${fade})`,
+      '\t{',
+      `\t\tif (--${fade}Timer == 0)`,
+      '\t\t{',
+      `\t\t\t${fade}Timer = ${fade};`,
+      `\t\t\tif (++${fade}Level == 15)`,
+      '\t\t\t{',
+      `\t\t\t\t${fade} = 0;`,
+      '\t\t\t\tLVGM_Stop();',
+      '\t\t\t\treturn;',
+      '\t\t\t}',
+      '\t\t}',
+      '\t\tfor (u8 i = 0; i < 3; ++i)',
+      '\t\t{',
+      '\t\t\tu8 volume = g_PSG_Regs.Volume[i] & 0x0F;',
+      `\t\t\tg_PSG_Regs.Volume[i] = (volume > ${fade}Level) ? volume - ${fade}Level : 0;`,
+      '\t\t}',
+      '\t}',
+      '}',
+      '',
+      withEffects ? `// Once per frame: the song, then the sound effect on top, then out to the PSG.` : `// Once per frame: the song, then out to the PSG.`,
+      `void ${name}_Update()`,
+      '{',
+      `\t${name}_Decode();`,
+      ...(withEffects ? ['\tayFX_Update();'] : []),
+      '\tPSG_Apply();',
       '}',
       ''
     ]

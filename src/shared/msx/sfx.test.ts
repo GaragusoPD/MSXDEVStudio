@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   AYFX_END_NOISE,
   createSfxDoc,
+  DEFAULT_PRIORITY,
   decodeAyfxBank,
+  effectPriority,
   decodeAyfxStream,
   encodeAyfxBank,
   encodeAyfxStream,
@@ -12,6 +14,10 @@ import {
   normalizeSfx,
   presetEffect,
   SFX_PRESETS,
+  sfxChannel,
+  sfxConstants,
+  sfxHelperC,
+  sfxIds,
   validateSfx,
   type SfxEffect,
   type SfxFrame
@@ -258,5 +264,61 @@ describe('presets', () => {
     a.frames[0].volume = 1
     expect(SFX_PRESETS.find((p) => p.name === 'hit')!.frames[0].volume).toBe(15)
     expect(() => presetEffect('nope')).toThrow()
+  })
+})
+
+describe('priorities and channel', () => {
+  it('leaves a bank from before them unchanged, and reads the defaults', () => {
+    const doc = normalizeSfx({ effects: [{ name: 'a', frames: [frame({ volume: 5 })] }] })
+    expect(doc).not.toHaveProperty('channel')
+    expect(doc.effects[0]).not.toHaveProperty('priority')
+    expect(effectPriority(doc.effects[0])).toBe(DEFAULT_PRIORITY)
+    expect(sfxChannel(doc)).toBe(2)
+  })
+
+  it('keeps and clamps them when set', () => {
+    const doc = normalizeSfx({ channel: 7, effects: [{ name: 'a', priority: 40 }, { name: 'b', priority: 0 }] })
+    expect(doc.channel).toBe(2)
+    expect(doc.effects.map(effectPriority)).toEqual([15, 0])
+    expect(normalizeSfx(JSON.parse(JSON.stringify(doc)))).toEqual(doc)
+  })
+})
+
+describe('sound-effect ids', () => {
+  it('names each effect after the bank and itself', () => {
+    const doc = normalizeSfx({ effects: [{ name: 'coin' }, { name: 'big jump' }] })
+    expect(sfxConstants(doc, 'g_Sfx')).toEqual(['#define G_SFX_COUNT 2', '#define G_SFX_COIN 0', '#define G_SFX_BIG_JUMP 1'])
+  })
+
+  it('never defines one name twice — a clash gets the effect\'s index', () => {
+    const doc = normalizeSfx({ effects: [{ name: 'hit' }, { name: 'hit' }, { name: 'size' }, { name: 'count' }, { name: '  ' }] })
+    expect(sfxIds(doc, 'g_Sfx').map((id) => id.define)).toEqual(['G_SFX_HIT', 'G_SFX_HIT_1', 'G_SFX_SIZE_2', 'G_SFX_COUNT_3', 'G_SFX_FX'])
+  })
+})
+
+describe('sfxHelperC', () => {
+  const doc = normalizeSfx({ channel: 0, effects: [{ name: 'coin', priority: 9 }, { name: 'death', priority: 0 }, { name: 'jump' }] })
+  const { header, source } = sfxHelperC(doc, 'g_Sfx')
+  const text = source.join('\n')
+
+  it('declares the calls a game makes', () => {
+    for (const call of ['void g_Sfx_Init();', 'u8 g_Sfx_Play(u8 id);', 'void g_Sfx_Stop();', 'bool g_Sfx_IsPlaying();', 'void g_Sfx_Update();']) {
+      expect(header).toContain(call)
+    }
+  })
+
+  it('plays each effect at its own priority, on the bank\'s channel', () => {
+    expect(text).toContain('static const u8 g_Sfx_Priority[] = { 9, 0, 8 };')
+    expect(text).toContain('return ayFX_PlayBank(id, g_Sfx_Priority[id]);')
+    expect(text).toContain('ayFX_SetChannel(PSG_CHANNEL_A);')
+  })
+
+  it('starts with nothing playing and only mutes when something is', () => {
+    expect(text.indexOf('ayFX_Stop();')).toBeGreaterThan(text.indexOf('ayFX_InitBank('))
+    expect(text).toContain('if (g_Sfx_IsPlaying())\n\t\tayFX_Mute();')
+  })
+
+  it('flushes to the PSG itself, for a game without music', () => {
+    expect(text).toMatch(/void g_Sfx_Update\(\)\n\{\n\tayFX_Update\(\);\n\tPSG_Apply\(\);/)
   })
 })

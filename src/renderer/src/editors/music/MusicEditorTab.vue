@@ -27,7 +27,7 @@ import {
   type PsgRegisters
 } from '../../../../shared/msx/music'
 import { parseResource } from '../../../../shared/msx/resource'
-import type { SfxDoc } from '../../../../shared/msx/sfx'
+import { effectPriority, sfxChannel, type SfxDoc } from '../../../../shared/msx/sfx'
 import {
   addInstrument,
   addSong,
@@ -116,6 +116,7 @@ function rendered(): PsgRegisters[] {
 }
 
 function play(): void {
+  void loadEffects()
   const active = session.value
   const one = bank.value.songs[active.song]
   active.playing = true
@@ -311,24 +312,41 @@ function applyBeatPreset(event: Event): void {
 
 const sfxBanks = computed(() => resourcesStore.entries.filter((entry) => entry.kind === 'sfx').map((entry) => entry.path))
 
-async function loadEffects(path: string): Promise<void> {
+/**
+ * Reads the attached effects bank. It is read again before each Play, so a
+ * change made in the SFX editor — an effect, its priority, the bank's channel —
+ * is heard without reopening anything.
+ */
+async function loadEffects(): Promise<void> {
   const active = session.value
+  const path = bank.value.effects ?? ''
   active.effectsPath = path
-  active.effects = []
-  if (!path) return
+  if (!path) {
+    active.effects = []
+    return
+  }
   try {
     const parsed = parseResource(path, await window.api.invoke('fs:read', { path })) as { kind: 'sfx'; doc: SfxDoc }
     active.effects = parsed.doc.effects
+    active.effectChannel = sfxChannel(parsed.doc)
   } catch (error) {
+    active.effects = []
     active.status = `Couldn't read ${path}: ${String(error)}`
   }
+}
+
+/** Attaching a bank is part of the song bank: it decides whether the exported `_Update()` runs ayFX. */
+function attachEffects(path: string): void {
+  commit(session.value, { ...bank.value, effects: path || null })
+  void loadEffects()
 }
 
 function fire(index: number): void {
   const active = session.value
   const effect = active.effects[index]
   if (!effect) return
-  fireEffect(effect.frames, { rate: bank.value.rate, channel: active.effectChannel })
+  const refused = fireEffect(effect.frames, { rate: bank.value.rate, channel: active.effectChannel, priority: effectPriority(effect) })
+  if (refused) active.status = `"${effect.name}" didn't play: a more important effect is sounding`
 }
 
 // ── project setup ───────────────────────────────────────────────────────────
@@ -441,6 +459,15 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   void refreshSetup()
 })
+
+// The attached effects bank, once the bank has loaded and whenever another bank's tab comes up.
+watch(
+  () => [session.value, session.value.loading, bank.value.effects] as const,
+  () => {
+    if (!session.value.loading) void loadEffects()
+  },
+  { immediate: true }
+)
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   stopMusic()
@@ -764,9 +791,9 @@ watch(
           <h3>Sound effects</h3>
           <select
             class="wide"
-            :value="session.effectsPath"
-            title="Hear the game's effects over the music: keys 1–9 fire them"
-            @change="loadEffects(($event.target as HTMLSelectElement).value)"
+            :value="bank.effects ?? ''"
+            title="The effects the game plays over this music: keys 1–9 fire them here, and the exported _Update() runs them"
+            @change="attachEffects(($event.target as HTMLSelectElement).value)"
           >
             <option value="">
               (none)
@@ -780,27 +807,15 @@ watch(
             </option>
           </select>
           <template v-if="session.effects.length">
-            <label class="inline">
-              On channel
-              <select
-                :value="session.effectChannel"
-                title="ayFX_SetChannel() — the channel effects borrow from the music"
-                @change="session.effectChannel = Number(($event.target as HTMLSelectElement).value)"
-              >
-                <option
-                  v-for="(name, index) in CHANNEL_NAMES"
-                  :key="name"
-                  :value="index"
-                >
-                  {{ name }}
-                </option>
-              </select>
-            </label>
+            <p class="hint">
+              On channel {{ CHANNEL_NAMES[session.effectChannel] }} — set in the effects bank, with each effect's
+              priority.
+            </p>
             <div class="chips">
               <button
                 v-for="(effect, index) in session.effects.slice(0, 9)"
                 :key="index"
-                :title="`Key ${index + 1}`"
+                :title="`Key ${index + 1} · priority ${effectPriority(effect)}`"
                 @click="fire(index)"
               >
                 {{ index + 1 }} {{ effect.name }}
@@ -1103,6 +1118,13 @@ ul {
 .chips button {
   padding: 2px 6px;
   font-size: 11px;
+}
+
+.hint {
+  margin: 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
 }
 
 .problem {

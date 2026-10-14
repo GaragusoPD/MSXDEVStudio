@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { musicHelperC } from '../../shared/msx/music'
+import { normalizeSfx, sfxHelperC } from '../../shared/msx/sfx'
 import { MUSIC_CONFIG } from '../../shared/msxgl-config'
 import { normalizeProject } from '../../shared/msxproj'
 import { agentGuideFiles } from './agent-guide'
@@ -17,15 +18,19 @@ describe('agentGuideFiles', () => {
 
   it('plays music and effects through the calls the exporter really emits, in the order that works', () => {
     const text = guide('1')
-    const header = musicHelperC('g_Music').header.join('\n')
-    for (const call of ['g_Music_Play', 'g_Music_Decode', 'g_Music_Pause', 'g_Music_Resume', 'g_Music_Stop']) {
+    const header = [...musicHelperC('g_Music', true).header, ...sfxHelperC(normalizeSfx({}), 'g_Sfx').header].join('\n')
+    const calls = [
+      'g_Music_Play', 'g_Music_Update', 'g_Music_Decode', 'g_Music_Pause', 'g_Music_Resume', 'g_Music_Stop',
+      'g_Music_FadeOut', 'g_Music_IsPlaying', 'g_Sfx_Init', 'g_Sfx_Play', 'g_Sfx_PlayPriority', 'g_Sfx_Stop',
+      'g_Sfx_IsPlaying', 'g_Sfx_Update'
+    ]
+    for (const call of calls) {
       expect(text).toContain(call)
-      expect(header).toContain(`void ${call}(`)
+      expect(header).toMatch(new RegExp(`\\b${call}\\(`))
     }
-    const decode = text.indexOf('g_Music_Decode();')
+    // The hand-rolled order, for a game that needs one: song, effect, PSG.
+    const decode = text.indexOf('g_Music_Decode(); ayFX_Update(); PSG_Apply();')
     expect(decode).toBeGreaterThan(0)
-    expect(text.indexOf('ayFX_Update();', decode)).toBeGreaterThan(decode)
-    expect(text.indexOf('PSG_Apply();', decode)).toBeGreaterThan(text.indexOf('ayFX_Update();', decode))
     // The config the template gets wrong for this, by name and value.
     for (const [name, value] of Object.entries(MUSIC_CONFIG)) {
       if (name === 'PSG_ACCESS' || name === 'LVGM_USE_PSG') continue // template defaults, already right

@@ -264,8 +264,13 @@ run-length coding, so check the numbers next to the checkbox before assuming.
 
 **SFX** — one file holds a bank of effects. Draw tone, noise and volume per
 frame, press Play to hear it. Start from a preset, or import `.afx`/`.afb`
-files from AYFX Editor. An effect's position in the list is the id you pass to
-`ayFX_PlayBank()`, so reordering renumbers them.
+files from AYFX Editor. An effect's position in the list is its id, so
+reordering renumbers them — which is why the header names each one
+(`G_SFX_JUMP`); use those. Each effect has a **Priority**, 0 the most important:
+an effect only cuts off one that matters as much or less, so give the sounds
+that must be heard (a death, a level clear) a low number and the small ones (a
+coin, a step) a higher one. **Channel** is the PSG channel the bank's effects
+borrow from the music while they play.
 
 **Music** — one file holds a bank of songs and the instruments they share, so a
 game's title tune, stage tune and game-over jingle live together. A new bank
@@ -293,11 +298,13 @@ opens with a short demo song, so the first Play makes a sound.
   build a loop from one bar.
 - **Space** plays from the ▼ on the ruler (click the ruler to move it) and
   stops. Edits made while it loops are heard straight away.
-- **Sound effects over the music:** pick one of the project's `.sfx.json` banks
-  under *Sound effects* and the channel effects play on, then press 1–9 while
-  the song plays. What you hear is what the game does — the effect takes that
-  channel over and hands it back when it ends. Channel C is the usual choice:
-  put the drums there and nobody notices a hit lost to an explosion.
+- **Sound effects over the music:** pick the project's `.sfx.json` bank under
+  *Sound effects*, then press 1–9 while the song plays. What you hear is what the
+  game does: the effect takes its channel (set in the SFX editor) over and hands
+  it back when it ends, and a less important effect doesn't cut off a more
+  important one. The bank you pick is saved with the music — it is the one the
+  exported `_Update()` plays effects for. Channel C is the usual choice: put the
+  drums there and nobody notices a hit lost to an explosion.
 - The toolbar shows what the song costs in the ROM, in bytes and seconds. A busy
   beat costs more than a melody: the demo's 6.4 seconds come to about 1.5 KB.
 - **Set up project** makes the changes music with sound effects needs —
@@ -540,78 +547,72 @@ entries 1-15 unless `VDP_USE_PALETTE16` is TRUE in `msxgl_config.h` — the
 template leaves it FALSE — so pass the table from entry 1, or turn that on and
 pass it whole. Passed whole under the default, every colour lands one entry off.
 
-### SFX
+### Sound effects and music
 
-Exports the whole bank as one array. Add `"psg"` and `"ayfx/ayfx_player"` to
-**LibModules** in Project Settings first, and in `msxgl_config.h` set
-`AYFX_BUFFER` to `AYFX_BUFFER_DEFAULT`: the template ships `AYFX_BUFFER_PT3`,
-which points ayFX at the PT3 music player's buffer, and the link fails with
-`Undefined Global _PT3_Regs` unless you play PT3 too. (The music editor's **Set
-up project** does both.)
+Both play through MSXgl's PSG register buffer, so a project needs:
 
-```c
-#include "content/sounds.h"
+- **LibModules**: `"psg"`, plus `"ayfx/ayfx_player"` for effects and
+  `"vgm/lvgm_player"` for music;
+- in `msxgl_config.h`: `AYFX_BUFFER` set to `AYFX_BUFFER_DEFAULT` (the template
+  ships `AYFX_BUFFER_PT3`, which points ayFX at the PT3 music player's buffer,
+  and the link fails with `Undefined Global _PT3_Regs`), and
+  `LVGM_USE_MSXMUSIC`, `LVGM_USE_MSXAUDIO` and `LVGM_USE_SCC` set to `FALSE` (the
+  template turns those on, and they need modules a PSG game doesn't link).
 
-ayFX_InitBank(g_Sounds);
-ayFX_SetChannel(PSG_CHANNEL_C);
+**Set up project** in the music editor does all of it.
 
-ayFX_PlayBank(0, 0);                       // effect id 0, priority 0
-```
-
-`ayFX_Update()` must run once per frame, and it only fills a register buffer —
-something has to push that buffer to the PSG:
-
-```c
-void VBlankHook()
-{
-    ayFX_Update();
-    PSG_Apply();       // if you also use PT3 music, call PT3_UpdatePSG() instead
-}
-```
-
-Author your effects at the same rate you call `ayFX_Update()` — set 50 Hz for
-PAL or 60 Hz for NTSC in the SFX editor.
-
-### Music
-
-Each song exports as its own table of lVGM data, `g_Music_<Song>` (`theme` →
-`g_Music_Theme`), with `_FRAMES` and `_LOOP_FRAME` defines for a game that wants
-to sync to it. It plays through MSXgl's `vgm/lvgm_player`, so add `"psg"` and
-`"vgm/lvgm_player"` to **LibModules**, and in `msxgl_config.h` set
-`LVGM_USE_MSXMUSIC`, `LVGM_USE_MSXAUDIO` and `LVGM_USE_SCC` to `FALSE` — the
-template turns those on, and they need modules a PSG game doesn't link. **Set up
-project** in the music editor does all of it.
-
-Tick **Export ready-made C** and the header gives you five calls:
+An SFX bank exports as one table plus a define per effect — `G_SFX_COIN`,
+`G_SFX_JUMP`. A music bank exports one table per song, `g_Music_<Song>` (`theme`
+→ `g_Music_Theme`), with `_FRAMES` and `_LOOP_FRAME` defines for a game that
+wants to sync to it. Tick **Export ready-made C** in both editors and this is
+all the sound code a game needs:
 
 ```c
 #include "msxgl.h"
-#include "ayfx/ayfx_player.h"
 #include "content/music.h"
-#include "content/sounds.h"
+#include "content/sfx.h"
 
-ayFX_InitBank(g_Sounds);              // sound effects, if any
-ayFX_SetChannel(PSG_CHANNEL_C);       // the channel they borrow
+g_Sfx_Init();                         // the bank, on its channel, nothing playing
 g_Music_Play(g_Music_Theme, TRUE);    // TRUE: loop from the song's loop bar
 
-// once per frame, after Halt() or in the V-blank hook, in this order:
-g_Music_Decode();                     // this frame of the song
-ayFX_Update();                        // an effect takes its channel
-PSG_Apply();                          // everything goes to the PSG
+if (jumped)
+    g_Sfx_Play(G_SFX_JUMP);           // at the effect's own priority
+
+// once per frame, after Halt() or in the V-blank hook:
+g_Music_Update();                     // the song, the effect over it, out to the PSG
 ```
 
-`g_Music_Pause()` and `g_Music_Resume()` pause in place; `g_Music_Stop()` ends the
-song, and `g_Music_Play()` starts one (the same or another) from the top.
+| Call | Does |
+|---|---|
+| `g_Sfx_Init()` | Sets ayFX up with the bank, on the channel chosen in the SFX editor |
+| `g_Sfx_Play(id)` | Plays an effect at its own priority. Returns 1 — and plays nothing — while a more important one is sounding |
+| `g_Sfx_PlayPriority(id, p)` | The same at priority `p`, for this one call |
+| `g_Sfx_Stop()` / `g_Sfx_IsPlaying()` | Cut the effect off (the music gets its channel back) / ask whether one is sounding |
+| `g_Sfx_Update()` | Once per frame **in a game without music** |
+| `g_Music_Play(song, loop)` | Starts a song from the top — also over one that is playing or fading |
+| `g_Music_Update()` | Once per frame: the song, then the effects (when the music bank has an effects bank attached), then the PSG |
+| `g_Music_FadeOut(speed)` | Fades out, one volume step every `speed` frames — fifteen steps, so speed 4 is about a second at 60 Hz — then stops |
+| `g_Music_Pause()` / `g_Music_Resume()` | Silence the song where it is / carry on |
+| `g_Music_Stop()` / `g_Music_IsPlaying()` | End the song / ask whether one is playing (FALSE after a one-shot ends or a fade finishes) |
 
-Use `g_Music_Decode()` rather than calling `LVGM_Decode()` yourself when effects
-play over the music. lVGM writes only the PSG registers that change, so after
-an effect the borrowed channel would stay at the effect's pitch and volume until
-the song next touched it; `g_Music_Decode()` keeps a copy of the song's
-registers and puts them back first.
+Call one of the two `_Update()`s per frame, never both: with music,
+`g_Music_Update()` already runs the effects.
 
-The player decodes one frame per call. A bank authored at 50 Hz plays 20% fast
-on a 60 Hz machine, and a 60 Hz one plays slower on a 50 Hz machine — set the
-bank's **Rate** to the machines you are aiming at.
+Don't call `LVGM_Decode()` yourself when effects play over the music. lVGM
+writes only the PSG registers that change, so after an effect the borrowed
+channel would stay at the effect's pitch and volume until the song next touched
+it; the helper keeps a copy of the song's registers and puts them back first. A
+game that needs its own order calls `g_Music_Decode(); ayFX_Update();
+PSG_Apply();` — in that order.
+
+Without the ready-made C, the same works through MSXgl directly:
+`ayFX_InitBank(g_Sfx)`, `ayFX_SetChannel(PSG_CHANNEL_C)`,
+`ayFX_PlayBank(G_SFX_JUMP, priority)`, and `ayFX_Update(); PSG_Apply();` once per
+frame.
+
+Author effects and music at the rate the game calls `_Update()`: 50 Hz for PAL,
+60 Hz for NTSC. The players don't adjust — a 50 Hz song plays 20% fast on a
+60 Hz machine.
 
 ## Ready-made C
 

@@ -798,14 +798,35 @@ describe('music resource', () => {
     expect(plain.header).not.toContain('g_Music_Decode')
 
     const helped = renderResourceFiles(fixture(), 'res/music.music.json', { ...block, helpers: true })
-    expect(helped.header).toContain('void g_Music_Play(const u8* song, bool loop);')
-    expect(helped.header).toContain('void g_Music_Decode();')
+    for (const call of ['void g_Music_Play(const u8* song, bool loop);', 'void g_Music_Update();', 'void g_Music_Decode();', 'bool g_Music_IsPlaying();', 'void g_Music_FadeOut(u8 speed);']) {
+      expect(helped.header).toContain(call)
+    }
     expect(helped.source).toContain('#include "vgm/lvgm_player.h"')
     expect(helped.source).toContain('static u8 g_Music_Regs[13];')
+    // No effects bank attached: no ayFX in the per-frame call, and no module it would need.
+    expect(helped.source).not.toContain('ayfx')
+    expect(helped.source).toMatch(/void g_Music_Update\(\)\n\{\n\tg_Music_Decode\(\);\n\tPSG_Apply\(\);/)
     // Restore, decode, save — in that order, around the one LVGM_Decode.
     const body = helped.source!.slice(helped.source!.indexOf('void g_Music_Decode()'))
     expect(body.indexOf('Mem_Copy(g_Music_Regs, &g_PSG_Regs, 13)')).toBeLessThan(body.indexOf('LVGM_Decode()'))
     expect(body.indexOf('LVGM_Decode()')).toBeLessThan(body.indexOf('Mem_Copy(&g_PSG_Regs, g_Music_Regs, 13)'))
+  })
+
+  it('runs the attached effects between the song and the PSG', () => {
+    const resource = fixture() as { kind: 'music'; doc: ReturnType<typeof createMusicDoc> }
+    resource.doc.effects = 'res/sfx.sfx.json'
+    const { source } = renderResourceFiles(resource, 'res/music.music.json', { ...defaultExport('res/music.music.json'), helpers: true })
+    expect(source).toContain('#include "ayfx/ayfx_player.h"')
+    expect(source).toMatch(/void g_Music_Update\(\)\n\{\n\tg_Music_Decode\(\);\n\tayFX_Update\(\);\n\tPSG_Apply\(\);/)
+  })
+
+  it('fades only what goes to the chip, after the song\'s own copy is saved', () => {
+    const { source } = renderResourceFiles(fixture(), 'res/music.music.json', { ...defaultExport('res/music.music.json'), helpers: true })
+    const body = source!.slice(source!.indexOf('void g_Music_Decode()'))
+    expect(body.indexOf('Mem_Copy(&g_PSG_Regs, g_Music_Regs, 13)')).toBeLessThan(body.indexOf('g_PSG_Regs.Volume[i] ='))
+    // _Play resets the fade, so RAM garbage at boot can't start one.
+    const play = source!.slice(source!.indexOf('void g_Music_Play('), source!.indexOf('void g_Music_Stop('))
+    expect(play).toContain('g_Music_Fade = 0;')
   })
 
   it('parses, serializes and validates through the resource family', () => {
@@ -851,6 +872,17 @@ describe('sfx resource', () => {
       out: 'content/fx.afb'
     })
     expect(decodeAyfxBank(bank).map((effect) => effect.frames)).toEqual(doc.effects.map((effect) => effect.frames))
+  })
+
+  it('names each effect with a define, even without the ready-made C', () => {
+    const { header, source } = renderResourceFiles(fixtureSfx(), 'audio/fx.sfx.json', defaultExport('audio/fx.sfx.json'))
+    expect(header).toContain('#define G_FXSFX_COUNT 2')
+    expect(header).toContain('#define G_FXSFX_ZAP 0')
+    expect(header).toContain('#define G_FXSFX_BOOM 1')
+    expect(source).not.toContain('ayFX_PlayBank')
+    const helped = renderResourceFiles(fixtureSfx(), 'audio/fx.sfx.json', { ...defaultExport('audio/fx.sfx.json'), helpers: true })
+    expect(helped.header).toContain('u8 g_FxSfx_Play(u8 id);')
+    expect(helped.source).toContain('ayFX_InitBank((void*)g_FxSfx);')
   })
 
   it('renders a C header naming the ayFX module to enable', () => {

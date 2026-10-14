@@ -92,7 +92,7 @@ import {
   validateScreen,
   type ScreenDoc
 } from './screen'
-import { encodeAyfxBank, normalizeSfx, validateSfx, type SfxDoc } from './sfx'
+import { encodeAyfxBank, normalizeSfx, sfxConstants, sfxHelperC, validateSfx, type SfxDoc } from './sfx'
 import { musicConstants, musicExports, musicHelperC, normalizeMusic, validateMusic, type MusicDoc } from './music'
 import {
   hasMetasprite,
@@ -926,6 +926,7 @@ function resourceConstants(
   }
   if (resource.kind === 'swsprites') return swSpriteConstants(resource.doc, name)
   if (resource.kind === 'music') return musicConstants(resource.doc, name)
+  if (resource.kind === 'sfx') return sfxConstants(resource.doc, name)
   if (resource.kind === 'map') {
     // The helper C needs the map's shape, and so does anything that walks a layer.
     const { cell, metas } = resource.doc
@@ -1077,7 +1078,8 @@ function resourceCode(
   if (resource.kind === 'swsprites') {
     return resource.doc.sprites.length ? swSpriteHelperC(resource.doc, name) : NO_CODE
   }
-  if (resource.kind === 'music') return musicHelperC(name)
+  if (resource.kind === 'music') return musicHelperC(name, resource.doc.effects !== null)
+  if (resource.kind === 'sfx') return sfxHelperC(resource.doc, name)
   // A pattern meta-tile has no tile numbers of its own to draw with: each
   // tileset it is attached to draws it (`_DrawMeta`), and its window is that
   // tileset's `_Animate()`. A bitmap one blits itself out of its atlas.

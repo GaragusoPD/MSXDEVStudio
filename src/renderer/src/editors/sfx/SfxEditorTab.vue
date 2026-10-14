@@ -7,7 +7,15 @@
  * so the explorer opens effect banks here instead of in Monaco.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { importAyfx, presetEffect, SFX_PRESETS, type SfxEffect } from '../../../../shared/msx/sfx'
+import {
+  effectPriority,
+  importAyfx,
+  MAX_PRIORITY,
+  presetEffect,
+  sfxChannel,
+  SFX_PRESETS,
+  type SfxEffect
+} from '../../../../shared/msx/sfx'
 import {
   addEffect,
   deleteEffect,
@@ -16,6 +24,7 @@ import {
   paintLane,
   renameEffect,
   setFrameCount,
+  updateEffect,
   type LaneStroke,
   type SfxLane
 } from '../../../../shared/sfx-editor'
@@ -131,6 +140,22 @@ async function onImportFile(event: Event): Promise<void> {
   } catch (error) {
     active.status = `Import failed: ${String(error)}`
   }
+}
+
+/** 0 is the most important — ayFX's own scale, so the number is the one `ayFX_PlayBank()` takes. */
+function setPriority(value: number): void {
+  const priority = Math.max(0, Math.min(MAX_PRIORITY, Math.round(value)))
+  if (!Number.isFinite(priority)) return
+  commit(session.value, updateEffect(bank.value, session.value.selected, (target) => (effectPriority(target) === priority ? target : { ...target, priority })))
+}
+
+function setChannel(channel: number): void {
+  if (channel !== sfxChannel(bank.value)) commit(session.value, { ...bank.value, channel })
+}
+
+function setHelpers(helpers: boolean): void {
+  const block = bank.value.export
+  if (block) commit(session.value, { ...bank.value, export: { ...block, helpers } })
 }
 
 async function save(): Promise<void> {
@@ -366,8 +391,51 @@ watch(
           </div>
           <p class="hint">
             The list position is the id you pass to <code>ayFX_PlayBank()</code>, so reordering
-            renumbers sounds in your game code.
+            renumbers sounds — the exported header names each one (<code>G_SFX_JUMP</code>), so use those.
           </p>
+
+          <h3>Selected effect</h3>
+          <label
+            class="field"
+            title="0 is the most important. An effect only cuts off one that matters as much or less — so a death cry at 0 is never cut short by a coin at 8."
+          >
+            Priority
+            <input
+              type="number"
+              min="0"
+              :max="MAX_PRIORITY"
+              :value="effectPriority(effect)"
+              @change="setPriority(Number(($event.target as HTMLInputElement).value))"
+            >
+          </label>
+
+          <h3>In the game</h3>
+          <label
+            class="field"
+            title="The PSG channel effects borrow from the music while they play (ayFX_SetChannel)"
+          >
+            Channel
+            <select
+              :value="sfxChannel(bank)"
+              @change="setChannel(Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option :value="0">A</option>
+              <option :value="1">B</option>
+              <option :value="2">C</option>
+            </select>
+          </label>
+          <label
+            v-if="bank.export"
+            class="field"
+            title="_Init, _Play(id), _Stop, _IsPlaying, _Update — calls into MSXgl's ayFX player"
+          >
+            <input
+              type="checkbox"
+              :checked="bank.export.helpers === true"
+              @change="setHelpers(($event.target as HTMLInputElement).checked)"
+            >
+            Export ready-made C
+          </label>
         </div>
 
         <SfxLanes
@@ -485,11 +553,15 @@ watch(
 }
 
 h3 {
-  margin: 0 0 6px;
+  margin: 10px 0 6px;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--color-text-muted);
+}
+
+h3:first-child {
+  margin-top: 0;
 }
 
 ul {
@@ -569,6 +641,27 @@ ul {
 .list-actions button:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.field input[type='number'],
+.field select {
+  margin-left: auto;
+  width: 56px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 12px;
 }
 
 .hint,

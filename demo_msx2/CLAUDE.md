@@ -46,7 +46,7 @@ Or open `canyon.msxproj` in MSXDEVStudio and press Run.
 | `res/mist.screen.json` | `g_Mist_Strip/_Rects` + `_Upload/_Restore/_Draw` | Three wisps of mist — the parallax layer, as software sprites |
 | `res/boss.screen.json` | `g_Boss_Strip/_Rects` + `_Upload/_Restore/_Draw` | A 68×40 boss, too wide to be sprites |
 | `res/hud.screen.json` | `g_Hud_Strip/_Rects` | The status band's artwork |
-| `res/sfx.sfx.json` | `g_Sfx` | ayFX bank: shot, boom, crash, hit, victory |
+| `res/sfx.sfx.json` | `g_Sfx`, ids `G_SFX_SHOOT`…`_VICTORY` | ayFX bank: shoot, boom, crash, hit, victory |
 | `res/title.screen.json`, `res/credits.screen.json` | `data/title.bin`, `data/credits.bin` | Full SCREEN 5 pictures, paged in from ROM |
 
 `datasrc/make-art.mjs` draws the source PNGs from code and `make-data.mjs`

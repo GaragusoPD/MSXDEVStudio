@@ -190,6 +190,7 @@ export function duplicateEffect(doc: SfxDoc, index: number): SfxDoc {
   const source = doc.effects[index]
   if (!source) return doc
   const copy: SfxEffect = {
+    ...source,
     name: uniqueName(doc.effects, `${source.name}_copy`),
     frames: source.frames.map((frame) => ({ ...frame }))
   }

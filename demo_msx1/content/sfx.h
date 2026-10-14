@@ -9,5 +9,10 @@
 
 #pragma once
 
+#define G_SFX_COUNT 3
+#define G_SFX_COIN 0
+#define G_SFX_JUMP 1
+#define G_SFX_WIN 2
+
 #define G_SFX_SIZE 76
 extern const unsigned char g_Sfx[];

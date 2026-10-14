@@ -145,14 +145,30 @@ explosion is the least noticeable loss.
 
 - Tables: one per song, `g_Music_<Song>` (the bank's export name + `_` + the song
   name in PascalCase). Constants: `_FRAMES`, `_LOOP_FRAME` per song.
+- The bank can name the `.sfx.json` the game plays over it (`MusicDoc.effects`,
+  the editor's *Sound effects* picker). The editor auditions that bank's effects,
+  and the helper's `_Update()` runs `ayFX_Update()` only when one is named — a game
+  without effects must not need the ayFX module.
 - Helpers (opt-in, `ExportBlock.helpers`): `g_Music_Play(song, loop)`,
-  `g_Music_Stop()`, `g_Music_Pause()`, `g_Music_Resume()`, `g_Music_Decode()`.
+  `g_Music_Stop()`, `g_Music_Pause()`, `g_Music_Resume()`, `g_Music_IsPlaying()`,
+  `g_Music_FadeOut(speed)`, `g_Music_Update()` (decode → effects → `PSG_Apply`) and
+  `g_Music_Decode()` for a game that orders the frame itself.
+- The fade attenuates `g_PSG_Regs` **after** the register copy is saved, so the
+  copy keeps the song's own volumes; fifteen steps, one per `speed` frames, then
+  `LVGM_Stop`. `_Play` resets it — RAM is not cleared at boot.
+- The SFX bank's side (Spec 11, extended here): a define per effect
+  (`G_SFX_JUMP`, always emitted; a colliding name gets its index appended), a
+  per-effect **priority** (0–15, 0 the most important — ayFX's own scale; absent =
+  8) and a bank **channel** (absent = C). Helpers: `_Init()` (bank, fixed mode,
+  channel, nothing playing), `_Play(id)` at the effect's priority,
+  `_PlayPriority(id, p)`, `_Stop()`, `_IsPlaying()`, and `_Update()` for a game
+  with no music.
 - Needs LibModules `psg`, `vgm/lvgm_player` (+ `ayfx/ayfx_player` for effects), and
   in `msxgl_config.h`: `LVGM_USE_MSXMUSIC`/`MSXAUDIO`/`SCC` FALSE (the template turns
   them on, which links modules a PSG game doesn't have) and `AYFX_BUFFER
   AYFX_BUFFER_DEFAULT` (the template's `AYFX_BUFFER_PT3` points ayFX at PT3's
-  buffer). The editor has a **Set up project** button that applies all of this;
-  `agent-guide.ts` documents it.
+  buffer, and the link fails on `_PT3_Regs`). The editor has a **Set up project**
+  button that applies all of this; `agent-guide.ts` documents it.
 - 50/60 Hz: the player does not compensate (it decodes one frame per call). A song
   authored at 60 Hz runs 5/6 speed on a 50 Hz machine. ponytail: tempo
   compensation (skip/double a decode) is a helper-only change if it is ever wanted.
@@ -190,5 +206,8 @@ disco, march, gallop, shuffle, half-time, hats only.
   helper (restore → decode → save → ayFX → apply) gives the music's registers back
   the frame after the effect ends.
 - Built against the real engine and booted in openMSX: the PSG registers logged per
-  frame match the render.
+  frame match the render — through the helpers too: priorities, `_Stop`, a fade to
+  silence and a song started after it.
+- Every helper combination links against the real engine: music with effects,
+  effects alone, music alone without the ayFX module (`music-build.test.ts`).
 - The demo song plays on first open; editing while it loops is heard.

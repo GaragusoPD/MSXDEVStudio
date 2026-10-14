@@ -10,7 +10,7 @@ import {
   type Instrument,
   type PsgRegisters
 } from './msx/music'
-import { ayfxMute, ayfxUpdate, createMusicPlayer, playEffect, replaceSong, stepPlayer } from './music-play'
+import { ayfxMute, ayfxUpdate, createMusicPlayer, fadeOut, playEffect, replaceSong, stepPlayer } from './music-play'
 import type { SfxFrame } from './msx/sfx'
 
 const fx = (volume: number, tone: number, fields: Partial<SfxFrame> = {}): SfxFrame => ({ toneOn: true, tone, noiseOn: false, noise: 0, volume, ...fields })
@@ -157,5 +157,55 @@ describe('music with a sound effect on its channel', () => {
     const back = START + effect.length + 1
     expect(played[back][4]).not.toBe(frames[back][4])
     expect(played[back][10]).not.toBe(frames[back][10])
+  })
+})
+
+describe('effect priorities', () => {
+  const blip = Array.from({ length: 4 }, (_, i) => fx(12, 100 + i))
+
+  it('lets an equal or more important effect cut one off, and refuses a less important one', () => {
+    const player = createMusicPlayer([], { loopFrame: 0, loop: false })
+    expect(playEffect(player, blip, 3)).toBe(0)
+    expect(playEffect(player, blip, 9)).toBe(1)
+    expect(playEffect(player, blip, 3)).toBe(0)
+    expect(playEffect(player, blip, 0)).toBe(0)
+    expect(player.effectPriority).toBe(0)
+  })
+
+  it('takes anything again once the effect has ended', () => {
+    const player = createMusicPlayer([], { loopFrame: 0, loop: false })
+    playEffect(player, blip, 0)
+    for (let i = 0; i <= blip.length; i++) stepPlayer(player)
+    expect(player.effect).toBeNull()
+    expect(playEffect(player, blip, 15)).toBe(0)
+  })
+})
+
+describe('fadeOut', () => {
+  const doc = normalizeMusic({
+    rate: 50,
+    instruments: [{ name: 'organ', steps: [{ volume: 15 }], loop: null }],
+    songs: [{ name: 'held', bars: 4, speed: 4, channels: [[{ row: 0, length: 64, pitch: 60 }], [], []] }]
+  })
+  const frames = renderSong(doc, doc.songs[0])
+
+  it('takes one volume step every `speed` frames and stops the song at the fifteenth', () => {
+    const player = createMusicPlayer(frames, { loopFrame: 0, loop: true })
+    fadeOut(player, 2)
+    const volumes: number[] = []
+    for (let i = 0; i < 40; i++) volumes.push(stepPlayer(player).regs[8])
+    expect(volumes.slice(0, 6)).toEqual([15, 14, 14, 13, 13, 12])
+    // Step 14 lands on frame 27 and holds for two frames; step 15 (frame 29) stops it.
+    expect(volumes.slice(27, 30)).toEqual([1, 1, 0])
+    expect(player.playing).toBe(false)
+    expect(volumes.slice(29).every((volume) => volume === 0)).toBe(true)
+  })
+
+  it('leaves the effect channel to the effect at full volume', () => {
+    const player = createMusicPlayer(frames, { loopFrame: 0, loop: true, effectChannel: 0 })
+    fadeOut(player, 1)
+    for (let i = 0; i < 6; i++) stepPlayer(player)
+    playEffect(player, [fx(13, 300)], 0)
+    expect(stepPlayer(player).regs[8]).toBe(13)
   })
 })

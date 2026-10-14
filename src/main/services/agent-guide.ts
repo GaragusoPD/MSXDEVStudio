@@ -992,44 +992,52 @@ that fits in 16×16 and save software sprites for what doesn't.`
 
 Sound effects (\`.sfx.json\`) export as an ayFX bank, music (\`.music.json\`) as
 lVGM songs. Both go through \`g_PSG_Regs\`, so \`msxgl_config.h\` needs
-\`AYFX_BUFFER\` set to \`AYFX_BUFFER_DEFAULT\`: the template ships
+\`AYFX_BUFFER\` set to \`AYFX_BUFFER_DEFAULT\` — the template ships
 \`AYFX_BUFFER_PT3\`, which points ayFX at the PT3 player's buffer, and the link
-then fails with \`Undefined Global _PT3_Regs\`. The music editor's **Set up
-project** button makes that change and the others below.
+then fails with \`Undefined Global _PT3_Regs\` — and music needs
+\`LVGM_USE_MSXMUSIC\`, \`LVGM_USE_MSXAUDIO\` and \`LVGM_USE_SCC\` set to \`FALSE\` (the
+template turns them on, and they need modules a PSG game doesn't link).
+**LibModules**: \`"psg"\`, \`"vgm/lvgm_player"\` for music, \`"ayfx/ayfx_player"\` for
+effects. The music editor's **Set up project** button makes all of these changes.
 
-**Sound effects.** Add \`"psg"\` and \`"ayfx/ayfx_player"\` to **LibModules**, then
-\`ayFX_InitBank(g_Sounds)\`, \`ayFX_SetChannel(PSG_CHANNEL_C)\`,
-\`ayFX_PlayBank(id, priority)\`, and \`ayFX_Update()\` + \`PSG_Apply()\` once per frame.
-An effect's *position in the list* is its id, so reordering the bank renumbers
-them.
-
-**Music.** A \`.music.json\` is a bank of songs drawn on a piano roll; each exports
-as its own table, \`g_Music_<Song>\`, with \`_FRAMES\` and \`_LOOP_FRAME\` defines.
-Add \`"psg"\` and \`"vgm/lvgm_player"\` to **LibModules**, and set
-\`LVGM_USE_MSXMUSIC\`, \`LVGM_USE_MSXAUDIO\` and \`LVGM_USE_SCC\` to \`FALSE\` in
-\`msxgl_config.h\` — the template turns them on, and they need modules a PSG game
-doesn't link. Tick *Export ready-made C* and drive it like this:
+Every effect has a define named after its bank and itself — \`G_SFX_JUMP\` — so
+use it rather than the effect's position in the list, which reordering changes.
+A music bank exports one table per song, \`g_Music_<Song>\`, with \`_FRAMES\` and
+\`_LOOP_FRAME\` defines. Tick *Export ready-made C* on both banks and that is all
+the sound code a game needs:
 
 \`\`\`c
-ayFX_InitBank(g_Sfx);                 // effects, if the game has any
-ayFX_SetChannel(PSG_CHANNEL_C);       // the channel effects borrow
+g_Sfx_Init();                         // the bank, on the channel set in the SFX editor
 g_Music_Play(g_Music_Theme, TRUE);    // TRUE: loop from the song's loop bar
 
-// every frame (after Halt(), or from the V-blank hook), in this order:
-g_Music_Decode();                     // the song's registers for this frame
-ayFX_Update();                        // an effect overwrites its channel
-PSG_Apply();                          // the registers go to the PSG
+g_Sfx_Play(G_SFX_JUMP);               // whenever: at the effect's own priority
+
+// once per frame (after Halt(), or from the V-blank hook):
+g_Music_Update();                     // the song, the effect over it, out to the PSG
 \`\`\`
 
-Don't call \`LVGM_Decode()\` directly when effects play over music. lVGM writes
-only the registers that change, so an effect would leave its channel at the
-effect's pitch and volume until the song next touched them; \`g_Music_Decode()\`
-keeps a copy of the song's own registers and puts them back first.
-\`g_Music_Pause()\`/\`g_Music_Resume()\` pause in place; \`g_Music_Stop()\` ends the song,
-and only \`g_Music_Play()\` starts one again. The player decodes one frame per call,
-so a bank authored at 50 Hz (its rate is in the header) runs 20% fast on a 60 Hz
-machine. Keep the least important part on the effect channel — drums on C lose
-the odd hit to an explosion and nobody notices.
+- **Priorities.** Each effect has one, 0 the most important. \`g_Sfx_Play()\` plays
+  nothing and returns 1 while a more important effect is sounding, so a death cry
+  is never cut short by a coin; equal priority replaces.
+  \`g_Sfx_PlayPriority(id, priority)\` overrides it for one call. \`g_Sfx_Stop()\`,
+  \`g_Sfx_IsPlaying()\`.
+- **One per-frame call, never two.** \`g_Music_Update()\` runs the effects only when
+  the music bank has an effects bank attached (the *Sound effects* picker in the
+  music editor). A game with effects and no music calls \`g_Sfx_Update()\` instead.
+- **Fades and pauses.** \`g_Music_FadeOut(speed)\` takes the volume down one step
+  every \`speed\` frames — fifteen steps, so speed 4 is about a second at 60 Hz —
+  then stops the song, and \`g_Music_IsPlaying()\` turns \`FALSE\`.
+  \`g_Music_Pause()\`/\`g_Music_Resume()\` pause in place; \`g_Music_Stop()\` ends the
+  song; \`g_Music_Play()\` starts any song from the top, fade or no fade.
+- **Don't call \`LVGM_Decode()\` directly** when effects play over music. lVGM
+  writes only the registers that change, so an effect would leave its channel at
+  the effect's pitch and volume until the song next touched them; the helper
+  keeps a copy of the song's own registers and puts them back first. A game that
+  needs its own order calls \`g_Music_Decode(); ayFX_Update(); PSG_Apply();\`.
+- The player decodes one frame per call, so a bank authored at 50 Hz (its rate is
+  in the header) runs 20% fast on a 60 Hz machine. Effects borrow channel C unless
+  the bank says otherwise — keep the least important part there; drums on C lose
+  the odd hit to an explosion and nobody notices.
 
 ### Compression
 

@@ -34,6 +34,7 @@
  * with no bank header — `ayFX_Play` takes a pointer straight to it (L187).
  */
 
+import { defineName, type HelperC } from './emitC'
 import type { ExportBlock } from './resource'
 
 /** One 50/60 Hz tick of an effect. */
@@ -51,6 +52,12 @@ export interface SfxFrame {
 export interface SfxEffect {
   name: string
   frames: SfxFrame[]
+  /**
+   * 0–15, **0 the most important** — ayFX's own scale. A new effect plays only
+   * if it is at least as important as the one sounding, so a death cry is
+   * never cut off by a coin. Absent means `DEFAULT_PRIORITY`.
+   */
+  priority?: number
 }
 
 export interface SfxDoc {
@@ -58,6 +65,8 @@ export interface SfxDoc {
   /** Replay rate the effects were authored at; 50 (PAL/VBlank) or 60 (NTSC). */
   rate: 50 | 60
   effects: SfxEffect[]
+  /** The PSG channel the effects borrow, 0–2 for A–C. Absent means C, ayFX's own default. */
+  channel?: number
   export: ExportBlock | null
 }
 
@@ -70,6 +79,19 @@ export const MAX_EFFECTS = 256
 export const AYFX_END_NOISE = 0x20
 /** New effects start here; the frame count is editable per effect. */
 export const DEFAULT_FRAMES = 16
+/** The middle of ayFX's 0–15: room for effects that matter more, and for ones that matter less. */
+export const DEFAULT_PRIORITY = 8
+export const MAX_PRIORITY = 15
+/** Channel C: what `ayfx_player.c` starts on, and the one music minds losing least. */
+export const DEFAULT_SFX_CHANNEL = 2
+
+export function effectPriority(effect: SfxEffect): number {
+  return effect.priority ?? DEFAULT_PRIORITY
+}
+
+export function sfxChannel(doc: SfxDoc): number {
+  return doc.channel ?? DEFAULT_SFX_CHANNEL
+}
 
 const clamp = (value: unknown, max: number): number => {
   const n = Math.round(Number(value))
@@ -103,13 +125,16 @@ export function normalizeSfx(raw: unknown): SfxDoc {
     const frames = Array.isArray(effect.frames) ? effect.frames.map(normalizeFrame) : []
     return {
       name: String(effect.name ?? `fx${index}`),
-      frames: frames.length ? frames : Array.from({ length: DEFAULT_FRAMES }, blankFrame)
+      frames: frames.length ? frames : Array.from({ length: DEFAULT_FRAMES }, blankFrame),
+      // Only written when set, so a bank from before priorities reads back unchanged.
+      ...(effect.priority === undefined ? {} : { priority: clamp(effect.priority, MAX_PRIORITY) })
     }
   })
   return {
     version: 1,
     rate: Number(input.rate) === 60 ? 60 : 50,
     effects,
+    ...(input.channel === undefined ? {} : { channel: clamp(input.channel, 2) }),
     export: input.export ?? null
   }
 }
@@ -313,4 +338,107 @@ export function presetEffect(name: string): SfxEffect {
   const preset = SFX_PRESETS.find((entry) => entry.name === name)
   if (!preset) throw new Error(`No such ayFX preset: ${name}`)
   return { name: preset.name, frames: preset.frames.map((frame) => ({ ...frame })) }
+}
+
+// ── export: ids and the ready-made C ────────────────────────────────────────
+
+/**
+ * One `#define` per effect, so game code says `G_SFX_JUMP` rather than 1 and
+ * reordering the bank cannot silently change which sound plays. A name that
+ * would collide — with another effect's, or with the table's own `_SIZE` and
+ * `_COUNT` — gets its index appended rather than a duplicate definition.
+ */
+export function sfxIds(doc: SfxDoc, name: string): { define: string; index: number }[] {
+  const prefix = defineName(name)
+  const taken = new Set([`${prefix}_SIZE`, `${prefix}_COUNT`])
+  return doc.effects.map((effect, index) => {
+    const base = `${prefix}_${defineName(effect.name.trim()) || 'FX'}`
+    const define = taken.has(base) ? `${base}_${index}` : base
+    taken.add(define)
+    return { define, index }
+  })
+}
+
+export function sfxConstants(doc: SfxDoc, name: string): string[] {
+  return [`#define ${defineName(name)}_COUNT ${doc.effects.length}`, ...sfxIds(doc, name).map(({ define, index }) => `#define ${define} ${index}`)]
+}
+
+const CHANNEL_MACROS = ['PSG_CHANNEL_A', 'PSG_CHANNEL_B', 'PSG_CHANNEL_C']
+
+/**
+ * The bank's ready-made C: set ayFX up on the bank's channel, play by id at
+ * each effect's own priority, and — for a game with no music — the per-frame
+ * call. A game with music calls the music bank's `_Update()` instead, which
+ * runs `ayFX_Update()` between the song and `PSG_Apply()`.
+ */
+export function sfxHelperC(doc: SfxDoc, name: string): HelperC {
+  const priorities = doc.effects.map(effectPriority)
+  return {
+    header: [
+      `// Sound effects (ayFX). ${name}_Init() once, then ${name}_Play(id) — ids are the defines above.`,
+      `// Once per frame: ${name}_Update() — or, with music, the music bank's _Update(), which does it.`,
+      `// Needs LibModules "psg" and "ayfx/ayfx_player", and AYFX_BUFFER_DEFAULT in msxgl_config.h.`,
+      `void ${name}_Init();`,
+      `u8 ${name}_Play(u8 id);`,
+      `u8 ${name}_PlayPriority(u8 id, u8 priority);`,
+      `void ${name}_Stop();`,
+      `bool ${name}_IsPlaying();`,
+      `void ${name}_Update();`,
+      ''
+    ],
+    source: [
+      '#include "ayfx/ayfx_player.h"',
+      '',
+      '// Each effect\'s priority, 0 the most important: a sound only cuts off one that',
+      '// matters as much or less.',
+      `static const u8 ${name}_Priority[] = { ${priorities.join(', ')} };`,
+      '',
+      `// The bank, on channel ${'ABC'[sfxChannel(doc)]}, nothing playing.`,
+      `void ${name}_Init()`,
+      '{',
+      // The bank is const (it lives in ROM) and ayFX_InitBank takes a plain void*
+      // although it only reads through it: the cast is what the API forces.
+      '#pragma save',
+      '#pragma disable_warning 357',
+      `\tayFX_InitBank((void*)${name});`,
+      '#pragma restore',
+      '\tayFX_SetMode(AYFX_MODE_FIXED);',
+      `\tayFX_SetChannel(${CHANNEL_MACROS[sfxChannel(doc)]});`,
+      '\tayFX_Stop();',
+      '}',
+      '',
+      '// Play an effect at its own priority. 0 when it plays; 1 when a more important',
+      '// one is sounding and it does not.',
+      `u8 ${name}_Play(u8 id)`,
+      '{',
+      `\treturn ayFX_PlayBank(id, ${name}_Priority[id]);`,
+      '}',
+      '',
+      `// The same, overriding the effect's priority for this one call.`,
+      `u8 ${name}_PlayPriority(u8 id, u8 priority)`,
+      '{',
+      '\treturn ayFX_PlayBank(id, priority);',
+      '}',
+      '',
+      `// Cut the effect off and silence its channel — music there comes back next frame.`,
+      `void ${name}_Stop()`,
+      '{',
+      `\tif (${name}_IsPlaying())`,
+      '\t\tayFX_Mute();',
+      '}',
+      '',
+      `bool ${name}_IsPlaying()`,
+      '{',
+      '\treturn (ayFX_Priority & 0x80) == 0;',
+      '}',
+      '',
+      `// Once per frame, in a game without music: the effect, then out to the PSG.`,
+      `void ${name}_Update()`,
+      '{',
+      '\tayFX_Update();',
+      '\tPSG_Apply();',
+      '}',
+      ''
+    ]
+  }
 }
