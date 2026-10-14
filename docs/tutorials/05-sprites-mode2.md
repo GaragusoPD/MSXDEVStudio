@@ -254,7 +254,7 @@ Exporting a sprite resource named `Hero` generates `content/hero.h` with
 ```c
 #include "content/hero.h"
 
-VDP_SetPalette(g_Hero_Palette);
+VDP_SetPalette(g_Hero_Palette + 2);   // entries 1-15; the table starts at entry 0
 VDP_LoadSpritePattern(g_Hero_Patterns, 0, 1);
 VDP_SetSpriteExMultiColor(0, x, y, 0, g_Hero_Colors);
 ```

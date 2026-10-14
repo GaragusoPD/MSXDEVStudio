@@ -102,7 +102,7 @@ way VRAM expects it for that mode):
 #include "content/title.h"
 
 VDP_SetMode(VDP_MODE_SCREEN5);
-VDP_SetPalette(g_Title_Palette);
+VDP_SetPalette(g_Title_Palette + 2);   // from entry 1: the table starts at entry 0
 VDP_WriteVRAM(g_Title_Data, g_ScreenLayoutLow, g_ScreenLayoutHigh, G_TITLE_DATA_SIZE);
 ```
 

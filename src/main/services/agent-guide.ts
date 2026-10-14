@@ -881,9 +881,15 @@ A converted picture exports \`_Data\` (+ \`_Palette\` where the mode has one) an
 
 \`\`\`c
 VDP_SetMode(VDP_MODE_SCREEN5);
-VDP_SetPalette(g_Title_Palette);       // 16 entries, 2 bytes each
+VDP_SetPalette(g_Title_Palette + 2);   // entries 1-15 — see below
 VDP_WriteVRAM(g_Title_Data, g_ScreenLayoutLow, g_ScreenLayoutHigh, G_TITLE_DATA_SIZE);
 \`\`\`
+
+\`_Palette\` holds all 16 entries, 2 bytes each, entry 0 first. MSXgl's
+\`VDP_SetPalette()\` loads entries **1-15** unless \`VDP_USE_PALETTE16\` is TRUE in
+\`msxgl_config.h\` (the template leaves it FALSE), so pass the table from entry 1
+— \`g_Title_Palette + 2\` — or turn that on and pass the table itself. Passing it
+whole under the default shifts every colour by one entry.
 
 **Bitmap tiles** are the SCREEN 5/6/7/8 counterpart of a pattern tileset: a bank
 of small images (any size, not just 8×8) addressed by number. They live in VRAM
