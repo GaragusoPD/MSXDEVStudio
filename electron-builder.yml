@@ -74,15 +74,9 @@ linux:
   category: Development
   synopsis: Desktop IDE for MSX game development
   syncDesktopName: true
-  # Electron 43 segfaults creating a Wayland window on NVIDIA/KDE; XWayland works.
-  # Only reaches launches through the .desktop entry, not a bare `msxdevstudio`.
-  executableArgs: [--ozone-platform=x11]
 
 appImage:
   artifactName: ${name}-${version}.${ext}
-  # linux.executableArgs displaces electron-builder's AppImage default, so restate
-  # it; the two lists are merged.
-  executableArgs: [--no-sandbox]
 
 deb:
   artifactName: ${name}-${version}.${ext}

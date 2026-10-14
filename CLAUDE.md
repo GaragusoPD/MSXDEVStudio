@@ -7,7 +7,7 @@ MSXDEVStudio is a desktop IDE for MSX game development (Electron + Vue 3 + TypeS
 ## Commands
 
 ```bash
-npm run dev                # launch the app with hot reload (--noSandbox is intentional; so is --ozone-platform=x11: Electron 43 segfaults creating a Wayland window on NVIDIA/KDE, and only argv is early enough — appendSwitch is too late)
+npm run dev                # launch the app with hot reload (--noSandbox is intentional)
 npm run check              # lint + typecheck — the CI gate
 npm run typecheck:node     # tsc over main/preload/shared (tsconfig.node.json)
 npm run typecheck:web      # vue-tsc over the renderer (tsconfig.web.json)
