@@ -2108,9 +2108,8 @@ export async function dropFloat(session: MapSession): Promise<void> {
   const current = doc(session)
   if (float.kind === 'picture') {
     const placed = await importPicture(session, float.picture, float.mode, { x: float.x, y: float.y }, 0)
-    // Selected where it landed, ready to be moved again — in tiles mode, the
-    // one with a tool that can; paint mode has no use for a selection box.
-    if (placed) session.selection = session.mode === 'tiles' ? clipRect(mapFloatRect(float), current.width, current.height) : null
+    // A placed picture is not selected: the next import would otherwise start on top of it.
+    if (placed) session.selection = null
     else if (!session.float) session.float = float
     return
   }

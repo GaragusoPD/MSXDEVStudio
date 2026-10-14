@@ -32,6 +32,7 @@ import {
   deleteSelection,
   doc,
   dropFloat,
+  freePaletteEntries,
   importImage,
   nudgeSelection,
   pasteClipboard,
@@ -319,7 +320,9 @@ watch(
     </template>
 
     <!-- The screen has a mode and a size; the picture is converted into both,
-         and to the colours already on it unless the user picks otherwise. -->
+         and to the colours already on it — plus the entries nothing uses yet,
+         so a second picture gets colours of its own without recolouring the
+         first — unless the user picks otherwise. -->
     <ImportImageDialog
       v-if="importVisible"
       :mode="doc(session).mode"
@@ -328,6 +331,7 @@ watch(
       :standalone="false"
       lock-mode
       :current-palette="doc(session).converted?.palette ?? null"
+      :free-entries="freePaletteEntries(session)"
       :prefer-current="!isBlankScreen(doc(session))"
       use-label="Place this image"
       @close="importVisible = false"

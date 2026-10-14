@@ -197,13 +197,16 @@ on an all-ones pattern and paper on an all-zero one draw alike.
   it keeps its indices. Same blockers as promotion (`repackBlocker`, which
   `promotionBlocker` now delegates to), same consequences, asked first.
 - **Import image…** opens the shared import dialog locked to the tileset's
-  mode and fitted to the map. The result **floats** over the map at the
+  mode and fitted to the map, and on SCREEN 4 to the tileset's own palette
+  (a map cannot change it: every map drawn with the tileset shares it). The
+  result **floats** over the map at the selection's corner, or else the
   top-left of what is in view (`floatPicture`) — in paint mode too, where the
   paint layer stands down while it does — and is dragged by whole cells to
   where it goes. Only the drop decides anything: `importPicture` places it on
   the active layer at that cell, and the picture's index 0 (its see-through
   pixels) leaves the cells under it alone. A drop that is refused or declined
-  leaves the picture floating. Tiles are found (by pixels) or appended
+  leaves the picture floating; a placed one is not left selected, so the next
+  import does not start on top of it. Tiles are found (by pixels) or appended
   exactly as a fork stroke does — bank-local on a banked tileset — so in the
   common case it is one ordinary undo step. If the tileset is too full: an
   unbanked one first gives back the tiles only the overwritten cells used
@@ -271,9 +274,16 @@ eyedropper, the fragment tool (names a rectangle, moves nothing), and select.
 the dot to where it lands, and is pasted onto what is already there: the screen
 keeps its mode (the dialog is locked to it) and its size (the picture is fitted
 inside it), and index 0 — the converter's see-through entry — is not written.
-The dialog offers *This screen's palette*, preselected when the screen already
-has art, so the picture is converted to the colours on it; when the picture was
-converted to another palette the screen takes that one on the drop. Dropping an
+Several pictures share one screen's palette. With art already on the screen,
+the dialog preselects *This screen's palette + N unused*: every entry a pixel
+is drawn with is kept exactly, and the entries nothing uses (`freePaletteEntries`)
+are refilled from the new picture's own colours (`QuantizeOptions.freeEntries`,
+`sharePalette`) — so the second picture gets colours of its own and the first
+keeps its. *…only* converts to the entries as they are. When the picture was
+converted to another palette the screen takes that one on the drop, and the
+status line warns only if an entry something is drawn with changes. A new
+import starts at the selection's corner, or else the top-left of what is in
+view; a placed one is not left selected, so the next does not start on it. Dropping an
 import onto a conversion **flattens** it first (`flattenScreen`: retouch baked
 in, `source` cleared), because the result is no longer what any one source
 converts to — documents with a source from before keep re-converting until

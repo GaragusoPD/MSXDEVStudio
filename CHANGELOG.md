@@ -22,6 +22,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   them alone. On a map the tiles are only found or made once it is dropped, so
   the tile budget and the offer to bank are worked out for where it actually
   goes.
+- **Several pictures on one screen, each in its own colours.** The import
+  dialog's new *This screen's palette + N unused* choice — the default once a
+  screen has art — keeps every colour already drawn and gives the new picture
+  the palette entries nothing uses yet, so a second picture no longer has to
+  borrow the first one's colours or recolour it.
 
 ### Changed
 
@@ -33,6 +38,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   source converts to.
 - The screen editor's old "cut" tool, which names a fragment, is now called
   **Fragment**, so it is not confused with Cut.
+
+### Fixed
+
+- **Importing a picture onto a SCREEN 4 map** converted it to a palette of its
+  own and then drew it with the tileset's, so it came out in the wrong colours.
+  It now converts to the tileset's palette.
 
 ## [0.2.3] - 2026-10-14
 

@@ -28,6 +28,7 @@ import {
   paintDrag,
   pickAt,
   setSelection,
+  setViewOrigin,
   toolDrag,
   type ScreenSession
 } from './session'
@@ -322,6 +323,20 @@ const selectionBox = computed(() => {
   }
 })
 
+/**
+ * Keeps the session's idea of what is in view current, so an import appears
+ * where the user is looking on a world bigger than the pane. The scroller's
+ * padding is the 12px before pixel 0.
+ */
+function onScroll(event: Event): void {
+  const pane = event.currentTarget as HTMLElement
+  const step = scale.value
+  setViewOrigin(props.session, {
+    x: Math.max(0, Math.ceil((pane.scrollLeft - 12) / step)),
+    y: Math.max(0, Math.ceil((pane.scrollTop - 12) / step))
+  })
+}
+
 /** Overlay boxes: the live drag, then every fragment already cut. */
 const overlays = computed(() => {
   const zoom = scale.value
@@ -404,7 +419,10 @@ watchEffect(() => {
     </figure>
     <figure>
       <figcaption>{{ modeInfo.label }} — {{ convertedDims }} {{ modeInfo.colorModel === 'block' ? 'blocks (draw here)' : '(retouch here)' }}</figcaption>
-      <div class="scroller">
+      <div
+        class="scroller"
+        @scroll="onScroll"
+      >
         <p
           v-if="!convertedPixels"
           class="hint"

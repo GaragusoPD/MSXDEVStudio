@@ -16,8 +16,11 @@ import Icon from './Icon.vue'
 
 /**
  * `lockMode`: the target already has a mode (a map's tileset), so converting for another one could only be refused.
- * `currentPalette`: the target's own GRB333 palette, offered as a third palette choice — a picture pasted onto a
- * screen that already has art is converted to the colours that screen already shows. `preferCurrent` starts there.
+ * `currentPalette`: the target's own GRB333 palette, offered as a palette choice — a picture pasted onto a screen
+ * that already has art is converted to the colours that screen already shows. `freeEntries` are the entries of it
+ * nothing uses yet: with them, the picture may also take those entries for colours of its own ("share"), which is
+ * how several pictures fit on one screen without recolouring each other. `preferCurrent` starts on the target's
+ * palette — shared when there is room, as it is otherwise.
  */
 const props = withDefaults(
   defineProps<{
@@ -27,6 +30,9 @@ const props = withDefaults(
     fitHeight?: number
     lockMode?: boolean
     currentPalette?: number[] | null
+    freeEntries?: number[] | null
+    /** What the target's palette is called in the choice: "This screen's palette", "This tileset's palette". */
+    currentPaletteLabel?: string
     preferCurrent?: boolean
     /** The label of the button that hands the result over; the target decides what accepting it does. */
     useLabel?: string
@@ -36,6 +42,8 @@ const props = withDefaults(
     standalone: true,
     lockMode: false,
     currentPalette: null,
+    freeEntries: null,
+    currentPaletteLabel: "This screen's palette",
     preferCurrent: false,
     useLabel: 'Use this image'
   }
@@ -52,7 +60,7 @@ const importer = useImageImport({
   mode: props.mode,
   fitWidth: props.fitWidth,
   fitHeight: props.fitHeight,
-  ...(props.preferCurrent && props.currentPalette ? { palette: props.currentPalette } : {})
+  ...(props.preferCurrent && props.currentPalette ? { palette: props.currentPalette, freeEntries: props.freeEntries ?? [] } : {})
 })
 const beforeCanvas = ref<HTMLCanvasElement | null>(null)
 const afterCanvas = ref<HTMLCanvasElement | null>(null)
@@ -66,12 +74,18 @@ const info = computed(() => MODES[importer.options.mode])
 /** Only MSX2 bitmap modes have a programmable palette to choose. */
 const paletteChoosable = computed(() => info.value.palette === 'grb333')
 
-/** The select's view of `options.palette`: a locked array is only ever the target's own palette. */
+/**
+ * The select's view of `options.palette`: a locked array is only ever the
+ * target's own palette — `share` when it may also refill the free entries,
+ * `current` when it is kept whole.
+ */
 const paletteChoice = computed({
-  get: (): string => (Array.isArray(importer.options.palette) ? 'current' : importer.options.palette),
+  get: (): string =>
+    Array.isArray(importer.options.palette) ? (importer.options.freeEntries?.length ? 'share' : 'current') : importer.options.palette,
   set: (value: string) => {
-    importer.options.palette =
-      value === 'current' && props.currentPalette ? [...props.currentPalette] : (value as 'msx1' | 'optimized')
+    const locked = (value === 'share' || value === 'current') && props.currentPalette
+    importer.options.freeEntries = value === 'share' && props.freeEntries ? [...props.freeEntries] : []
+    importer.options.palette = locked ? [...props.currentPalette!] : (value as 'msx1' | 'optimized')
   }
 })
 
@@ -238,9 +252,13 @@ function use(): void {
             :disabled="!paletteChoosable"
           >
             <option
+              v-if="currentPalette && freeEntries?.length"
+              value="share"
+            >{{ currentPaletteLabel }} + {{ freeEntries.length }} unused for this picture</option>
+            <option
               v-if="currentPalette"
               value="current"
-            >This screen's palette</option>
+            >{{ currentPaletteLabel }} only</option>
             <option value="optimized">Optimized (median cut → 512 colors)</option>
             <option value="msx1">Fixed MSX1 palette</option>
           </select>

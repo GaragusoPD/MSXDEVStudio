@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { isValidGrb, MSX1_PALETTE_RGB } from './palette'
-import { fitRowConstraint, medianCut, quantize, rgb332Palette, type RgbaImage } from './quantize'
+import { isValidGrb, MSX1_PALETTE_RGB, rgbToGrb } from './palette'
+import { fitRowConstraint, medianCut, quantize, rgb332Palette, sharePalette, type RgbaImage } from './quantize'
 import { packTiles, rowColorViolations, tilePixels, validateTiles } from './tile'
 
 /**
@@ -93,6 +93,30 @@ describe('sc6 (4 colors)', () => {
     const result = quantize(referenceImage(32, 32), { mode: 'sc6', palette: 'optimized', dither: 'none' })
     expect(result.palette).toHaveLength(4)
     expect([...result.indices].every((index) => index < 4)).toBe(true)
+  })
+
+  /**
+   * Two pictures on one screen: the second gets the entries the first left
+   * unused, and the ones the first uses do not move — or the first would
+   * change colour under it.
+   */
+  it('fills only the free entries from the picture, keeping every other one exactly', () => {
+    const red = rgbToGrb({ r: 255, g: 0, b: 0 })
+    const white = rgbToGrb({ r: 255, g: 255, b: 255 })
+    // Entries 0-2 are in use; 3-15 are the padding a small picture's median cut leaves.
+    const palette = [0, red, white, ...new Array(13).fill(white)]
+    const free = Array.from({ length: 13 }, (_, i) => i + 3)
+    const result = quantize(solid(4, 4, [250, 220, 40]), { mode: 'sc5', palette, freeEntries: free })
+    const yellow = rgbToGrb({ r: 250, g: 220, b: 40 })
+    expect(result.palette!.slice(0, 3)).toEqual([0, red, white])
+    expect(result.palette).toContain(yellow)
+    expect(result.palette![result.indices[0]]).toBe(yellow)
+  })
+
+  it('adds nothing for a colour a kept entry already holds, and never frees entry 0', () => {
+    const red = rgbToGrb({ r: 255, g: 0, b: 0 })
+    const palette = [0x111, red, 0, 0]
+    expect(sharePalette(solid(2, 2, [255, 0, 0]), palette, [0, 2, 3])).toEqual(palette)
   })
 })
 

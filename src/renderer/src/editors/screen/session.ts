@@ -56,7 +56,6 @@ import {
   clearRetouch,
   createHistory,
   flattenScreen,
-  isBlankScreen,
   paintScreen,
   pushHistory,
   redo as redoHistory,
@@ -135,6 +134,8 @@ export interface ScreenSession {
   /** Pixels held above the picture: a moved selection, a paste or an import, until it is dropped. */
   float: ScreenFloat | null
   clipboard: Clip | null
+  /** The pixel at the top-left of what is in view — where an import first appears when nothing is selected. */
+  viewOrigin: Point
 }
 
 const sessions = new Map<string, ScreenSession>()
@@ -164,7 +165,8 @@ export function screenSession(path: string): ScreenSession {
     preview: null,
     selection: null,
     float: null,
-    clipboard: null
+    clipboard: null,
+    viewOrigin: { x: 0, y: 0 }
   })
   sessions.set(path, session)
   // An agent or a checkout can rewrite this file underneath the editor.
@@ -271,9 +273,14 @@ export function importImage(session: ScreenSession, result: ImportResult): void 
   const palette = info.palette === 'grb333' && result.palette ? result.palette : null
   const own = current.converted?.palette ?? null
   const adopt = palette !== null && !(own && own.length === palette.length && own.every((entry, i) => entry === palette[i]))
+  // Only a changed entry something is drawn with changes what is on screen;
+  // the ones a shared conversion filled were free.
+  const used = usedEntries(current)
+  const recolours = adopt && own !== null && palette!.some((entry, i) => used.has(i) && own[i] !== entry)
   const clip: Clip = { width: result.width, height: result.height, values: result.indices }
   const size = pictureSize(current)
-  const at = session.selection ? { x: session.selection.x, y: session.selection.y } : { x: 0, y: 0 }
+  // A selection the user made says where; otherwise the top-left of what is in view.
+  const at = session.selection ? { x: session.selection.x, y: session.selection.y } : session.viewOrigin
   session.float = {
     ...placeFloat(clip, at, size.width, size.height, info.palette === 'rgb332' ? null : 0),
     palette: adopt ? palette : null,
@@ -283,8 +290,31 @@ export function importImage(session: ScreenSession, result: ImportResult): void 
   session.tool = 'select'
   session.status =
     `Drag the picture into place, then press Enter or click outside it. Esc cancels.` +
-    (adopt && !isBlankScreen(current) ? " Placing it gives the screen the picture's palette, which recolours what is already drawn." : '') +
+    (recolours ? " Placing it gives the screen the picture's palette, which recolours what is already drawn." : '') +
     (current.source ? ' Placing it also turns this conversion into a drawing.' : '')
+}
+
+/** The palette entries some pixel of the picture is drawn with. */
+function usedEntries(current: ScreenDoc): Set<number> {
+  return current.converted ? new Set(shownPixels(current).indices) : new Set()
+}
+
+/**
+ * The entries of the screen's palette no pixel uses, entry 0 aside — what an
+ * import may fill with colours of its own without recolouring anything
+ * (`QuantizeOptions.freeEntries`). Empty in the modes with a fixed palette.
+ */
+export function freePaletteEntries(session: ScreenSession): number[] {
+  const current = doc(session)
+  const palette = current.converted?.palette
+  if (!palette || MODES[current.mode].palette !== 'grb333') return []
+  const used = usedEntries(current)
+  return palette.map((_, index) => index).filter((index) => index > 0 && !used.has(index))
+}
+
+/** The canvas reports the pixel at the top-left of what is in view as it scrolls. UI state, not a history step. */
+export function setViewOrigin(session: ScreenSession, origin: Point): void {
+  if (origin.x !== session.viewOrigin.x || origin.y !== session.viewOrigin.y) session.viewOrigin = origin
 }
 
 /** Re-runs `quantize()` against the already-decoded source with a settings patch (mode and/or convert options),
@@ -613,7 +643,8 @@ export function dropFloat(session: ScreenSession): void {
   session.float = null
   const before = doc(session)
   const size = pictureSize(before)
-  session.selection = clipRect(floatRect(float), size.width, size.height)
+  // A placed import is not selected: the next one would otherwise start on top of it.
+  session.selection = float.flatten ? null : clipRect(floatRect(float), size.width, size.height)
   if (float.from && float.x === float.from.x && float.y === float.from.y) return
   let current = float.flatten ? flattenScreen(before) : before
   if (!current.converted) current = { ...current, converted: blankConverted(current.mode, current.width, current.height) }

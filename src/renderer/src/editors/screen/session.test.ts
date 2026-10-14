@@ -23,6 +23,7 @@ import {
   displayPixels,
   doc,
   dropFloat,
+  freePaletteEntries,
   importImage,
   liftSelection,
   moveFloatTo,
@@ -239,7 +240,9 @@ describe('importing an image', () => {
     palette[7] = 0x0777
     const session = await open(drawing({ source: 'res/title.png', retouch: [0, 0, 9] }))
     importImage(session, imported(1, 1, 7, palette))
-    expect(session.status).toMatch(/palette/)
+    // Entry 7 is not drawn with, so taking the new one recolours nothing.
+    expect(session.status).not.toMatch(/recolours/)
+    expect(session.status).toMatch(/drawing/)
     moveFloatTo(session, { x: 4, y: 4 })
     dropFloat(session)
     const after = doc(session)
@@ -265,6 +268,55 @@ describe('importing an image', () => {
     expect(doc(session).converted).toMatchObject({ width: 16, height: 8 })
     expect(shown(session)[7 * 16 + 15]).toBe(5)
     expect(shown(session)[0]).toBe(0)
+  })
+
+  it('places several pictures on the same screen, each where it was dropped', async () => {
+    const session = await open(drawing())
+    importImage(session, imported(2, 2, 7))
+    moveFloatTo(session, { x: 4, y: 4 })
+    dropFloat(session)
+    importImage(session, imported(3, 1, 9))
+    moveFloatTo(session, { x: 10, y: 0 })
+    dropFloat(session)
+
+    expect(shown(session)[4 * 16 + 4]).toBe(7)
+    expect(shown(session)[5 * 16 + 5]).toBe(7)
+    expect([...shown(session).slice(10, 13)]).toEqual([9, 9, 9])
+    // The art that was there before both is still there.
+    expect(shown(session)[1 * 16 + 1]).toBe(3)
+    expect(session.history.past).toHaveLength(2)
+  })
+
+  it('starts the next picture where the user is looking, not on top of the last one', async () => {
+    const session = await open(drawing())
+    importImage(session, imported(2, 2, 7))
+    moveFloatTo(session, { x: 4, y: 4 })
+    dropFloat(session)
+    expect(session.selection).toBeNull()
+    session.viewOrigin = { x: 8, y: 2 }
+    importImage(session, imported(2, 2, 9))
+    expect(session.float).toMatchObject({ x: 8, y: 2 })
+  })
+
+  it("shares the screen's palette: the entries in use stay, so the picture already there keeps its colours", async () => {
+    // The drawing uses entries 0, 3 and 4; the rest are free for a new picture.
+    const session = await open(drawing())
+    expect(freePaletteEntries(session)).toEqual([1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+    // What a shared conversion hands back: entry 5 refilled with a colour of the picture's own.
+    const shared = [...MSX1_PALETTE_GRB]
+    shared[5] = 0x0707
+    importImage(session, imported(1, 1, 5, shared))
+    expect(session.status).not.toMatch(/recolours/)
+    dropFloat(session)
+    expect(doc(session).converted!.palette![5]).toBe(0x0707)
+    expect(doc(session).converted!.palette!.slice(3, 5)).toEqual(MSX1_PALETTE_GRB.slice(3, 5))
+    expect(freePaletteEntries(session)).not.toContain(5)
+
+    // Changing an entry that is drawn with does recolour, and says so.
+    const clash = [...doc(session).converted!.palette!]
+    clash[3] = 0x0123
+    importImage(session, imported(1, 1, 3, clash))
+    expect(session.status).toMatch(/recolours/)
   })
 
   it('cancels with nothing to undo', async () => {

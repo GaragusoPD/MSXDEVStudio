@@ -607,14 +607,15 @@ section {
   background: none;
 }
 
+/* A grid, not a flex row: seven tools do not fit the panel's width, and a
+   wrapped flex item would stretch across the whole second line. */
 .tool-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(30px, 1fr));
   gap: 6px;
 }
 
 .tool-row button {
-  flex: 1;
   padding: 4px;
   border: 1px solid var(--color-border);
   border-radius: 3px;

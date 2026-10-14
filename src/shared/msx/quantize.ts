@@ -32,6 +32,13 @@ export interface QuantizeOptions {
   reserveTransparent?: boolean
   /** Ordered/error-diffusion amplitude in 8-bit units. */
   ditherStrength?: number
+  /**
+   * With an array palette: the entries the conversion may *replace* — the
+   * ones nothing already drawn uses. They are filled from the picture's own
+   * colours (`sharePalette`), every other entry is kept exactly. How several
+   * pictures share one screen's sixteen colours without recolouring each other.
+   */
+  freeEntries?: number[]
 }
 
 export interface LossReport {
@@ -178,7 +185,8 @@ function resolvePalette(image: RgbaImage, options: Required<QuantizeOptions>): R
   if (info.palette === 'fixed' || options.palette === 'msx1') return { rgb: [...MSX1_PALETTE_RGB], grb: null }
 
   if (Array.isArray(options.palette)) {
-    const grb = options.palette.slice(0, options.colors)
+    const locked = options.palette.slice(0, options.colors)
+    const grb = options.freeEntries.length ? sharePalette(image, locked, options.freeEntries) : locked
     return { rgb: grb.map(grbToRgb), grb }
   }
 
@@ -196,6 +204,33 @@ function resolvePalette(image: RgbaImage, options: Required<QuantizeOptions>): R
   return { rgb: grb.map(grbToRgb), grb }
 }
 
+/**
+ * `palette` with its `free` entries refilled from `image`: a median cut of the
+ * picture's colours that no kept entry already holds exactly, snapped to
+ * GRB333 and deduplicated. Every other entry comes back untouched, so a pixel
+ * already drawn with one keeps its colour. Free entries the picture does not
+ * need are left as they were. Index 0 is never free: it is the transparent one.
+ */
+export function sharePalette(image: RgbaImage, palette: readonly number[], free: readonly number[]): number[] {
+  const out = palette.slice()
+  const slots = [...new Set(free)].filter((index) => index > 0 && index < out.length).sort((a, b) => a - b)
+  if (!slots.length) return out
+  const kept = new Set(out.filter((_, index) => !slots.includes(index)))
+  const wanted = new Map<number, number>()
+  for (const [key, count] of histogramOf(image)) {
+    const packed = rgbToGrb({ r: (key >> 16) & 0xff, g: (key >> 8) & 0xff, b: key & 0xff })
+    if (!kept.has(packed)) wanted.set(key, count)
+  }
+  if (!wanted.size) return out
+  const added: number[] = []
+  for (const color of medianCut(wanted, slots.length)) {
+    const packed = rgbToGrb(color)
+    if (!kept.has(packed) && !added.includes(packed)) added.push(packed)
+  }
+  added.forEach((packed, i) => (out[slots[i]] = packed))
+  return out
+}
+
 // ── main entry ──────────────────────────────────────────────────────────────
 
 export function quantize(image: RgbaImage, options: QuantizeOptions): QuantizeResult {
@@ -206,7 +241,8 @@ export function quantize(image: RgbaImage, options: QuantizeOptions): QuantizeRe
     dither: options.dither ?? 'none',
     colors: options.colors ?? Math.min(256, info.colors),
     reserveTransparent: options.reserveTransparent ?? info.palette !== 'rgb332',
-    ditherStrength: options.ditherStrength ?? 32
+    ditherStrength: options.ditherStrength ?? 32,
+    freeEntries: options.freeEntries ?? []
   }
   const { rgb, grb } = resolvePalette(image, settings)
   const skip = settings.reserveTransparent && rgb.length > 1 ? [0] : []

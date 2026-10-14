@@ -232,6 +232,34 @@ describe('importing a picture', () => {
     expect(session.history.past).toHaveLength(1)
   })
 
+  it('places several pictures on the same map, each where it was dropped', async () => {
+    const session = await openMap()
+    floatPicture(session, picture(1, 1, () => 4), 'sc2')
+    moveFloatTo(session, { x: 5, y: 5 })
+    await dropFloat(session)
+    floatPicture(session, picture(2, 1, () => 6), 'sc2')
+    moveFloatTo(session, { x: 2, y: 6 })
+    await dropFloat(session)
+
+    const at = (x: number, y: number): Uint8Array => tilePixels(session.tileset!, cells(session)[y * 8 + x])
+    expect(at(5, 5).every((v) => v === 4)).toBe(true)
+    expect(at(2, 6).every((v) => v === 6)).toBe(true)
+    expect(at(3, 6).every((v) => v === 6)).toBe(true)
+    expect(cells(session).slice(0, 2)).toEqual([1, 2])
+    expect(session.history.past).toHaveLength(2)
+  })
+
+  it('starts the next picture where the user is looking, not on top of the last one', async () => {
+    const session = await openMap()
+    floatPicture(session, picture(1, 1, () => 4), 'sc2')
+    moveFloatTo(session, { x: 5, y: 5 })
+    await dropFloat(session)
+    expect(session.selection).toBeNull()
+    session.viewOrigin = { x: 2, y: 1 }
+    floatPicture(session, picture(1, 1, () => 6), 'sc2')
+    expect(session.float).toMatchObject({ x: 2, y: 1 })
+  })
+
   it("leaves the cells under the picture's see-through pixels alone", async () => {
     const session = await openMap()
     floatPicture(session, picture(2, 1, (cx) => (cx === 0 ? 4 : 0)), 'sc2')

@@ -197,6 +197,9 @@ const budget = computed(() => paintBudgetLabel(props.session))
       :fit-height="doc(session).height * TILE_SIZE"
       :standalone="false"
       lock-mode
+      :current-palette="session.tileset.palette"
+      current-palette-label="This tileset's palette"
+      :prefer-current="session.tileset.palette !== null"
       use-label="Place this image"
       @close="importing = false"
       @imported="onImported"

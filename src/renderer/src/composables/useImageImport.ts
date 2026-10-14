@@ -20,6 +20,8 @@ export interface ImportOptions {
   /** The target document's size, when it has one of its own — see `fitToMode`. */
   fitWidth?: number
   fitHeight?: number
+  /** With a locked palette: the entries the conversion may refill — see `QuantizeOptions.freeEntries`. */
+  freeEntries?: number[]
 }
 
 export interface ImportResult {
@@ -100,6 +102,7 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
   const options = reactive<ImportOptions>({
     mode: initial.mode ?? 'sc2',
     palette: Array.isArray(initial.palette) ? [...initial.palette] : (initial.palette ?? 'optimized'),
+    freeEntries: initial.freeEntries ? [...initial.freeEntries] : [],
     dither: initial.dither ?? 'none'
   })
 
@@ -147,12 +150,16 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
       width: image.width,
       height: image.height,
       data,
-      options: { ...raw, palette: Array.isArray(raw.palette) ? [...toRaw(raw.palette)] : raw.palette }
+      options: {
+        ...raw,
+        palette: Array.isArray(raw.palette) ? [...toRaw(raw.palette)] : raw.palette,
+        freeEntries: [...toRaw(raw.freeEntries ?? [])]
+      }
     }
     worker.postMessage(request, [data])
   }
 
-  watch(() => [options.mode, options.palette, options.dither, options.fitWidth, options.fitHeight], convert)
+  watch(() => [options.mode, options.palette, options.dither, options.fitWidth, options.fitHeight, options.freeEntries], convert)
 
   async function loadFile(file: File): Promise<void> {
     try {
