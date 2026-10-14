@@ -105,7 +105,25 @@ export const MAX_PITCH = 107
 export const MAX_SEMITONES = 48
 export const MAX_CENTS = 100
 /** The helper's own names: a song called one of these would collide with them. */
-const HELPER_NAMES = ['Play', 'Stop', 'Pause', 'Resume', 'Decode', 'Update', 'IsPlaying', 'FadeOut', 'Regs', 'Fade', 'FadeTimer', 'FadeLevel']
+const HELPER_NAMES = [
+  'Play',
+  'Stop',
+  'Pause',
+  'Resume',
+  'Decode',
+  'Update',
+  'IsPlaying',
+  'FadeOut',
+  'PlayJingle',
+  'IsJingle',
+  'Regs',
+  'Fade',
+  'FadeTimer',
+  'FadeLevel',
+  'SongOn',
+  'JingleOn',
+  'Held'
+]
 
 // ── PSG registers ───────────────────────────────────────────────────────────
 
@@ -773,10 +791,22 @@ export function musicConstants(doc: MusicDoc, name: string): string[] {
  * The fade is applied to `g_PSG_Regs` *after* the copy is saved, so the copy
  * keeps the song's own volumes and only what goes to the chip is quieter. Its
  * state is reset by `_Play`, so boot garbage in RAM never starts a fade.
+ *
+ * A jingle runs on the same player — there is one lVGM decoder — so
+ * `_PlayJingle` sets aside everything that says where the song is (the
+ * player's pointer, loop address, wait and state, the register copy, the
+ * fade) and `_Decode` puts it back the frame the jingle hits its end, then
+ * decodes the song's next frame in that same call so no frame goes silent.
+ * `_SongOn` (initialised, so it is FALSE at boot whatever RAM holds) is what
+ * keeps a jingle played before any song from "restoring" the player's
+ * uninitialised globals. `stepPlayer` mirrors all of it.
  */
 export function musicHelperC(name: string, withEffects: boolean): HelperC {
   const regs = `${name}_Regs`
   const fade = `${name}_Fade`
+  const song = `${name}_SongOn`
+  const jingle = `${name}_JingleOn`
+  const held = `${name}_Held`
   return {
     header: [
       `// Music (lVGM). ${name}_Play(song, loop) to start one, then once per frame:`,
@@ -790,6 +820,8 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       `void ${name}_Resume();`,
       `bool ${name}_IsPlaying();`,
       `void ${name}_FadeOut(u8 speed);`,
+      `void ${name}_PlayJingle(const u8* jingle);`,
+      `bool ${name}_IsJingle();`,
       `void ${name}_Update();`,
       `void ${name}_Decode();`,
       ''
@@ -805,6 +837,9 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       '\t#error "The music helpers need LVGM_USE_PSG TRUE in msxgl_config.h"',
       '#endif',
       '',
+      '// lvgm_player.c\'s own; its header leaves it out, and a jingle has to put it back.',
+      'extern const u8* g_LVGM_LoopAddr;',
+      '',
       '// The song\'s own R#0-R#12, so a sound effect cannot leave its channel wrong:',
       '// lVGM writes only what changes, and ayFX_Update() writes into g_PSG_Regs too.',
       `static u8 ${regs}[13];`,
@@ -812,24 +847,47 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       `static u8 ${fade} = 0;`,
       `static u8 ${fade}Timer = 0;`,
       `static u8 ${fade}Level = 0;`,
+      '// A jingle interrupts the song: where the song was is kept here until the jingle',
+      `// ends. ${song}: a song has been started and not stopped (under a jingle, the`,
+      `// held one) — initialised, so a jingle at boot never "restores" garbage.`,
+      `static bool ${song} = FALSE;`,
+      `static bool ${jingle} = FALSE;`,
+      'static struct',
+      '{',
+      '\tconst LVGM_Header* Header;',
+      '\tconst u8* Pointer;',
+      '\tconst u8* LoopAddr;',
+      '\tu8 Default;',
+      '\tu8 Wait;',
+      '\tu8 State;',
+      '\tu8 Regs[13];',
+      '\tu8 Fade;',
+      '\tu8 FadeTimer;',
+      '\tu8 FadeLevel;',
+      `} ${held};`,
       '',
       `// Start a song from the top. With loop, it goes round from its loop bar forever.`,
       `void ${name}_Play(const u8* song, bool loop)`,
       '{',
       `\t${fade} = 0;`,
+      `\t${song} = TRUE;`,
+      `\t${jingle} = FALSE;`,
       '\tLVGM_Play(song, loop);',
       '\t// LVGM_Play muted the volumes; the stream\'s first frame writes the rest.',
       `\tMem_Copy(&g_PSG_Regs, ${regs}, 13);`,
       '}',
       '',
-      `// Stop for good: the next song starts with ${name}_Play().`,
+      `// Stop for good, a jingle and the song under it alike: the next song starts with`,
+      `// ${name}_Play().`,
       `void ${name}_Stop()`,
       '{',
       `\t${fade} = 0;`,
+      `\t${song} = FALSE;`,
+      `\t${jingle} = FALSE;`,
       '\tLVGM_Stop();',
       '}',
       '',
-      `// Silence the song where it is; ${name}_Resume() carries on from there.`,
+      `// Silence the song (or the jingle) where it is; ${name}_Resume() carries on from there.`,
       `void ${name}_Pause()`,
       '{',
       '\tLVGM_Pause();',
@@ -841,6 +899,7 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       '}',
       '',
       `// False once a song played without loop has ended, or after ${name}_Stop() or a fade.`,
+      `// True while a jingle plays.`,
       `bool ${name}_IsPlaying()`,
       '{',
       '\treturn LVGM_IsPlaying();',
@@ -848,6 +907,7 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       '',
       `// Fade the song out and stop it: one volume step every \`speed\` frames, so 15 steps`,
       `// in all — speed 4 is about a second at 60 Hz. A fade already running restarts.`,
+      `// During a jingle it fades the jingle, and the song under it stops with it.`,
       `void ${name}_FadeOut(u8 speed)`,
       '{',
       '\tif (speed == 0)',
@@ -855,6 +915,37 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       `\t${fade} = speed;`,
       `\t${fade}Timer = speed;`,
       `\t${fade}Level = 0;`,
+      '}',
+      '',
+      `// Play a jingle once over the song: the song stops where it is and, the frame the`,
+      `// jingle ends, carries on from there — still paused if it was paused, still fading`,
+      `// if it was fading. A jingle started during another replaces it; with no song, the`,
+      `// jingle ends in silence. Any song of any bank can be one, played without loop.`,
+      `void ${name}_PlayJingle(const u8* jingle)`,
+      '{',
+      `\tif (${song} && !${jingle})`,
+      '\t{',
+      `\t\t${held}.Header = g_LVGM_Header;`,
+      `\t\t${held}.Pointer = g_LVGM_Pointer;`,
+      `\t\t${held}.LoopAddr = g_LVGM_LoopAddr;`,
+      `\t\t${held}.Default = g_LVGM_PSG_Default;`,
+      `\t\t${held}.Wait = g_LVGM_Wait;`,
+      `\t\t${held}.State = g_LVGM_State;`,
+      `\t\tMem_Copy(${regs}, ${held}.Regs, 13);`,
+      `\t\t${held}.Fade = ${fade};`,
+      `\t\t${held}.FadeTimer = ${fade}Timer;`,
+      `\t\t${held}.FadeLevel = ${fade}Level;`,
+      '\t}',
+      `\t${jingle} = TRUE;`,
+      `\t${fade} = 0;`,
+      '\tLVGM_Play(jingle, FALSE);',
+      `\tMem_Copy(&g_PSG_Regs, ${regs}, 13);`,
+      '}',
+      '',
+      `// TRUE from ${name}_PlayJingle() until the jingle ends.`,
+      `bool ${name}_IsJingle()`,
+      '{',
+      `\treturn ${jingle};`,
       '}',
       '',
       `// One frame of the song into g_PSG_Regs, for a game that runs ayFX_Update() and`,
@@ -865,6 +956,27 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       '\t\treturn;',
       `\tMem_Copy(${regs}, &g_PSG_Regs, 13);`,
       '\tLVGM_Decode();',
+      `\tif (${jingle} && !LVGM_IsPlaying())`,
+      '\t{',
+      '\t\t// The jingle has ended: the song carries on where it was, this same frame.',
+      `\t\t${jingle} = FALSE;`,
+      `\t\tif (!${song})`,
+      '\t\t\treturn;',
+      `\t\tg_LVGM_Header = ${held}.Header;`,
+      `\t\tg_LVGM_Pointer = ${held}.Pointer;`,
+      `\t\tg_LVGM_LoopAddr = ${held}.LoopAddr;`,
+      `\t\tg_LVGM_PSG_Default = ${held}.Default;`,
+      `\t\tg_LVGM_Wait = ${held}.Wait;`,
+      `\t\tg_LVGM_State = ${held}.State;`,
+      `\t\tMem_Copy(${held}.Regs, ${regs}, 13);`,
+      `\t\t${fade} = ${held}.Fade;`,
+      `\t\t${fade}Timer = ${held}.FadeTimer;`,
+      `\t\t${fade}Level = ${held}.FadeLevel;`,
+      '\t\tif (!LVGM_IsPlaying())',
+      `\t\t\treturn; // paused: ${name}_Resume() carries on`,
+      `\t\tMem_Copy(${regs}, &g_PSG_Regs, 13);`,
+      '\t\tLVGM_Decode();',
+      '\t}',
       `\tMem_Copy(&g_PSG_Regs, ${regs}, 13);`,
       `\tif (${fade})`,
       '\t{',
@@ -873,8 +985,7 @@ export function musicHelperC(name: string, withEffects: boolean): HelperC {
       `\t\t\t${fade}Timer = ${fade};`,
       `\t\t\tif (++${fade}Level == 15)`,
       '\t\t\t{',
-      `\t\t\t\t${fade} = 0;`,
-      '\t\t\t\tLVGM_Stop();',
+      `\t\t\t\t${name}_Stop();`,
       '\t\t\t\treturn;',
       '\t\t\t}',
       '\t\t}',

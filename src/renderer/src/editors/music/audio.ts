@@ -15,7 +15,7 @@
 
 import type { PsgRegisters } from '../../../../shared/msx/music'
 import type { SfxFrame } from '../../../../shared/msx/sfx'
-import { createMusicPlayer, playEffect, replaceSong, stepPlayer, type MusicPlayer } from '../../../../shared/music-play'
+import { createMusicPlayer, playEffect, playJingle, replaceSong, stepPlayer, type MusicPlayer } from '../../../../shared/music-play'
 import { createPsgChip, renderChip, renderPsgFrames, samplesPerFrame, type PsgChip } from '../../../../shared/psg'
 
 const LOOKAHEAD = 0.12
@@ -116,7 +116,7 @@ export interface MusicPlayOptions {
   /** Song frame to start from. */
   start: number
   effectChannel: number
-  /** Called with the song frame under the playhead (-1 between songs), and -1 once playback ends. */
+  /** Called with the song frame under the playhead (-1 between songs and during a jingle), and -1 once playback ends. */
   onFrame: (frame: number) => void
 }
 
@@ -131,11 +131,10 @@ export function playMusic(frames: PsgRegisters[], options: MusicPlayOptions): vo
   start()
 }
 
-/** Swaps in a re-rendered song while it plays — the next chunk is the new one. */
+/** Swaps in a re-rendered song while it plays — the next chunk is the new one. Under a jingle, the song waiting is. */
 export function updateMusic(frames: PsgRegisters[], loopFrame: number, loop: boolean, effectChannel: number): void {
   if (!player) return
-  replaceSong(player, frames, loopFrame)
-  player.loop = loop
+  replaceSong(player, frames, loopFrame, loop)
   player.effectChannel = effectChannel
 }
 
@@ -177,6 +176,23 @@ export function fireEffect(frames: readonly SfxFrame[], options: { rate: number;
   const result = playEffect(player, frames, options.priority)
   start()
   return result
+}
+
+/**
+ * Plays `frames` once the way `g_Music_PlayJingle` does: the song stops where
+ * it is and carries on after the jingle's last frame — or, with nothing
+ * playing, the jingle plays on its own.
+ */
+export function fireJingle(frames: PsgRegisters[], options: { rate: number; effectChannel: number }): void {
+  audio()
+  if (!player) {
+    rate = options.rate
+    chip = createPsgChip()
+    player = createMusicPlayer([], { loopFrame: 0, loop: false, effectChannel: options.effectChannel })
+    onFrame = null
+  }
+  playJingle(player, frames)
+  start()
 }
 
 /** A short one-off — the note under the pointer, a key on the keyboard. Doesn't touch playback. */

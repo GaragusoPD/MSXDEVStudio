@@ -140,6 +140,11 @@ describe('validateMusic', () => {
 
   it('rejects a song named after a helper', () => {
     expect(validateMusic(normalizeMusic({ songs: [{ name: 'play' }] })).join('\n')).toContain('the helpers use _Play')
+    expect(validateMusic(normalizeMusic({ songs: [{ name: 'play jingle' }] })).join('\n')).toContain('the helpers use _PlayJingle')
+  })
+
+  it('lets a jingle be called "jingle" — the helper\'s own flags keep out of the way', () => {
+    expect(validateMusic(normalizeMusic({ songs: [{ name: 'theme' }, { name: 'jingle' }, { name: 'song' }] }))).toEqual([])
   })
 
   it('names tables in PascalCase', () => {

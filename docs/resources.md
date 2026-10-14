@@ -305,6 +305,11 @@ opens with a short demo song, so the first Play makes a sound.
   important one. The bank you pick is saved with the music — it is the one the
   exported `_Update()` plays effects for. Channel C is the usual choice: put the
   drums there and nobody notices a hit lost to an explosion.
+- **Jingles:** the party-popper button beside a song plays it once *over* the song that is
+  playing — the song stops where it is and carries on when the jingle ends, as
+  `g_Music_PlayJingle()` does in the game. The playhead disappears while the
+  jingle plays and comes back where it left off. Any song can be a jingle; a
+  short one-bar fanfare, played once, is the usual kind.
 - The toolbar shows what the song costs in the ROM, in bytes and seconds. A busy
   beat costs more than a melody: the demo's 6.4 seconds come to about 1.5 KB.
 - **Set up project** makes the changes music with sound effects needs —
@@ -594,6 +599,7 @@ g_Music_Update();                     // the song, the effect over it, out to th
 | `g_Music_FadeOut(speed)` | Fades out, one volume step every `speed` frames — fifteen steps, so speed 4 is about a second at 60 Hz — then stops |
 | `g_Music_Pause()` / `g_Music_Resume()` | Silence the song where it is / carry on |
 | `g_Music_Stop()` / `g_Music_IsPlaying()` | End the song / ask whether one is playing (FALSE after a one-shot ends or a fade finishes) |
+| `g_Music_PlayJingle(song)` / `g_Music_IsJingle()` | Play a song once over the one playing, which stops where it is and carries on after it — paused or fading still, if it was / ask whether the jingle is still on |
 
 Call one of the two `_Update()`s per frame, never both: with music,
 `g_Music_Update()` already runs the effects.

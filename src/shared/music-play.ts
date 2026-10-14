@@ -13,6 +13,11 @@
  * stream decodes to, "restore the copy, decode, save the copy" collapses to
  * "load this frame" — the tests hold that against the real stream.
  *
+ * A jingle (`_PlayJingle`) is a song played once on the same player, with the
+ * song it interrupted set aside — here the `SongState` fields, in the helper
+ * the lVGM player's globals plus its register copy and fade — and put back the
+ * frame the jingle ends, which decodes the song's next frame at once.
+ *
  * Pure and DOM-free: the editor's audio streams chunks of `stepPlayer` output
  * through `psg.ts`, and Vitest drives the same code.
  */
@@ -55,7 +60,8 @@ export function ayfxMute(regs: Uint8Array, channel: number): void {
   regs[R_VOLUME + channel] = 0
 }
 
-export interface MusicPlayer {
+/** Where a song is: what a jingle sets aside and puts back. */
+export interface SongState {
   /** The song, rendered. Replaced in place while playing when the song is edited. */
   frames: PsgRegisters[]
   loopFrame: number
@@ -63,6 +69,16 @@ export interface MusicPlayer {
   /** The next song frame `stepPlayer` decodes. */
   position: number
   playing: boolean
+  /** The helper's fade-out: frames per step (0 = none), its countdown, the steps taken. */
+  fade: { speed: number; timer: number; level: number }
+}
+
+export interface MusicPlayer extends SongState {
+  /**
+   * Non-null while a jingle plays — the `SongState` fields are then the
+   * jingle's — holding the song it interrupted, or null when none was playing.
+   */
+  jingle: { held: SongState | null } | null
   /** `g_PSG_Regs`. */
   regs: Uint8Array
   effect: { frames: readonly SfxFrame[]; index: number } | null
@@ -70,8 +86,6 @@ export interface MusicPlayer {
   effectPriority: number
   /** Where effects play, 0–2. ayFX's own default is C. */
   effectChannel: number
-  /** The helper's fade-out: frames per step (0 = none), its countdown, the steps taken. */
-  fade: { speed: number; timer: number; level: number }
 }
 
 export function createMusicPlayer(frames: PsgRegisters[], options: { loopFrame: number; loop: boolean; start?: number; effectChannel?: number }): MusicPlayer {
@@ -81,6 +95,7 @@ export function createMusicPlayer(frames: PsgRegisters[], options: { loopFrame: 
     loop: options.loop,
     position: Math.min(Math.max(0, options.start ?? 0), Math.max(0, frames.length - 1)),
     playing: frames.length > 0,
+    jingle: null,
     regs: silentRegisters(),
     effect: null,
     effectPriority: 0xff,
@@ -109,23 +124,53 @@ export function stopEffect(player: MusicPlayer): void {
   player.effectPriority = 0xff
 }
 
-/** `_FadeOut(speed)`: a volume step every `speed` frames, and the song stops at the fifteenth. */
+/**
+ * `_FadeOut(speed)`: a volume step every `speed` frames, and the song stops at
+ * the fifteenth. During a jingle it fades the jingle, and the end of the fade
+ * is `_Stop` — the held song goes with it.
+ */
 export function fadeOut(player: MusicPlayer, speed: number): void {
   const frames = Math.max(1, speed)
   player.fade = { speed: frames, timer: frames, level: 0 }
 }
 
-/** Swaps in a re-rendered song without losing the place — what makes editing while it loops audible. */
-export function replaceSong(player: MusicPlayer, frames: PsgRegisters[], loopFrame: number): void {
+/**
+ * `_PlayJingle(jingle)`: `frames` play once, from the next frame, and the song
+ * carries on afterwards from where it stopped — fade and all. A jingle over a
+ * jingle replaces it and keeps the song held by the first.
+ */
+export function playJingle(player: MusicPlayer, frames: PsgRegisters[]): void {
+  if (!player.jingle) {
+    const { frames: song, loopFrame, loop, position, playing, fade } = player
+    player.jingle = { held: playing ? { frames: song, loopFrame, loop, position, playing, fade: { ...fade } } : null }
+  }
   player.frames = frames
-  player.loopFrame = Math.min(loopFrame, Math.max(0, frames.length - 1))
-  if (player.position > frames.length) player.position = player.loop ? player.loopFrame : frames.length
+  player.loopFrame = 0
+  player.loop = false
+  player.position = 0
+  player.playing = frames.length > 0
+  player.fade = { speed: 0, timer: 0, level: 0 }
+}
+
+/** The song the editor is editing: the one under a jingle while one plays, or null when there is none. */
+export function songState(player: MusicPlayer): SongState | null {
+  return player.jingle ? player.jingle.held : player
+}
+
+/** Swaps in a re-rendered song without losing the place — what makes editing while it loops audible. Reaches under a jingle. */
+export function replaceSong(player: MusicPlayer, frames: PsgRegisters[], loopFrame: number, loop?: boolean): void {
+  const song = songState(player)
+  if (!song) return
+  if (loop !== undefined) song.loop = loop
+  song.frames = frames
+  song.loopFrame = Math.min(loopFrame, Math.max(0, frames.length - 1))
+  if (song.position > frames.length) song.position = song.loop ? song.loopFrame : frames.length
 }
 
 export interface PlayerFrame {
   /** What `PSG_Apply` writes this frame. */
   regs: PsgRegisters
-  /** The song frame that was decoded, or -1 when the song has stopped. */
+  /** The song frame that was decoded, or -1 when the song has stopped or a jingle is playing over it. */
   songFrame: number
 }
 
@@ -136,9 +181,10 @@ function applyFade(player: MusicPlayer): void {
   if (--fade.timer === 0) {
     fade.timer = fade.speed
     if (++fade.level === 15) {
-      // LVGM_Stop → PSG_Mute.
+      // _Stop: LVGM_Stop → PSG_Mute, and a jingle's held song is dropped.
       fade.speed = 0
       player.playing = false
+      player.jingle = null
       for (let channel = 0; channel < 3; channel++) player.regs[R_VOLUME + channel] = 0
       return
     }
@@ -147,6 +193,13 @@ function applyFade(player: MusicPlayer): void {
     const volume = player.regs[R_VOLUME + channel] & 0x0f
     player.regs[R_VOLUME + channel] = volume > fade.level ? volume - fade.level : 0
   }
+}
+
+/** The jingle hit its end: the song comes back, to be decoded in the same frame. */
+function endJingle(player: MusicPlayer): void {
+  const held = player.jingle?.held
+  player.jingle = null
+  if (held) Object.assign(player, held)
 }
 
 /** One frame of the helper: music, then the effect on top, then out. */
@@ -158,10 +211,11 @@ export function stepPlayer(player: MusicPlayer): PlayerFrame {
       // LVGM_Stop → PSG_Mute, and g_Music_Decode stops restoring.
       player.playing = false
       for (let channel = 0; channel < 3; channel++) player.regs[R_VOLUME + channel] = 0
+      if (player.jingle) endJingle(player)
     }
   }
   if (player.playing) {
-    songFrame = player.position
+    songFrame = player.jingle ? -1 : player.position
     // R#13 is never restored by the helper; the music never writes it anyway.
     player.regs.set(player.frames[player.position].subarray(0, 13))
     player.position++

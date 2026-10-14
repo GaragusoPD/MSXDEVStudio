@@ -151,8 +151,9 @@ explosion is the least noticeable loss.
   without effects must not need the ayFX module.
 - Helpers (opt-in, `ExportBlock.helpers`): `g_Music_Play(song, loop)`,
   `g_Music_Stop()`, `g_Music_Pause()`, `g_Music_Resume()`, `g_Music_IsPlaying()`,
-  `g_Music_FadeOut(speed)`, `g_Music_Update()` (decode → effects → `PSG_Apply`) and
-  `g_Music_Decode()` for a game that orders the frame itself.
+  `g_Music_FadeOut(speed)`, `g_Music_PlayJingle(song)`, `g_Music_IsJingle()`,
+  `g_Music_Update()` (decode → effects → `PSG_Apply`) and `g_Music_Decode()` for a
+  game that orders the frame itself.
 - The fade attenuates `g_PSG_Regs` **after** the register copy is saved, so the
   copy keeps the song's own volumes; fifteen steps, one per `speed` frames, then
   `LVGM_Stop`. `_Play` resets it — RAM is not cleared at boot.
@@ -169,6 +170,19 @@ explosion is the least noticeable loss.
   AYFX_BUFFER_DEFAULT` (the template's `AYFX_BUFFER_PT3` points ayFX at PT3's
   buffer, and the link fails on `_PT3_Regs`). The editor has a **Set up project**
   button that applies all of this; `agent-guide.ts` documents it.
+- **Jingles.** `_PlayJingle(song)` plays a song once over the current one, which
+  stops where it is and carries on when the jingle ends. There is one lVGM
+  player, so the helper sets aside what says where the song is — `g_LVGM_Header`,
+  `_Pointer`, `_LoopAddr` (a global of `lvgm_player.c` its header doesn't declare;
+  the helper declares it `extern`), `_PSG_Default`, `_Wait`, `_State`, the
+  register copy and the fade — and `_Decode` puts it back the call the jingle
+  hits `FF`, then decodes the song's next frame in that same call: no silent
+  frame between them. A paused song stays paused (its `State` comes back without
+  `PLAY`); a fading one goes on fading. A jingle over a jingle keeps the song;
+  `_Play`, `_Stop` and the end of a fade drop it. An initialised `_SongOn` flag (set
+  by `_Play`, cleared by `_Stop`) keeps a jingle played before any song from
+  restoring the player's uninitialised globals. `stepPlayer`'s `playJingle`
+  mirrors it, and the editor auditions it from a button beside each song.
 - 50/60 Hz: the player does not compensate (it decodes one frame per call). A song
   authored at 60 Hz runs 5/6 speed on a 50 Hz machine. ponytail: tempo
   compensation (skip/double a decode) is a helper-only change if it is ever wanted.
@@ -208,6 +222,11 @@ disco, march, gallop, shuffle, half-time, hats only.
 - Built against the real engine and booted in openMSX: the PSG registers logged per
   frame match the render — through the helpers too: priorities, `_Stop`, a fade to
   silence and a song started after it.
+- Jingles, booted in openMSX and sampled at every `_Update` entry: identical to a
+  statement-by-statement model of the helper over the real streams for 720
+  frames — over the song, under an effect, over a fade, over another jingle,
+  over a paused song, after `_Stop`, over a one-shot song — and that model equal
+  to `stepPlayer` wherever the editor can follow.
 - Every helper combination links against the real engine: music with effects,
   effects alone, music alone without the ayFX module (`music-build.test.ts`).
 - The demo song plays on first open; editing while it loops is heard.

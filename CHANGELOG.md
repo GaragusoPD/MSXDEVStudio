@@ -32,6 +32,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `g_Sfx_Init()`, `g_Sfx_Play(id)`, `g_Sfx_Stop()`, `g_Sfx_IsPlaying()` and, for a
   game without music, `g_Sfx_Update()`.
 
+- **Jingles over the music.** `g_Music_PlayJingle(song)` plays a song once over
+  the one playing — a stage-clear fanfare, an item pickup — and the song stops
+  where it is and carries on from that spot when the jingle ends, still paused
+  or fading if it was; `g_Music_IsJingle()` says when it has. Any song in a bank
+  can be one. The music editor auditions it: the button beside a song plays it
+  as a jingle over the song playing. Checked in openMSX against the editor's
+  player, register by register, through effects, fades, pauses and stops.
+
 - **Sound-effect priorities and named ids.** Each effect has a priority, so an
   important sound (a death, a level clear) is never cut off by a minor one (a
   coin); the bank has a channel; and every exported bank names its effects —

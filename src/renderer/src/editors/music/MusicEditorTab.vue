@@ -55,7 +55,7 @@ import { useProjectStore } from '../../stores/projectStore'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import PianoRoll from './PianoRoll.vue'
-import { fireEffect, isMusicPlaying, playMusic, previewFrames, stopMusic, updateMusic } from './audio'
+import { fireEffect, fireJingle, isMusicPlaying, playMusic, previewFrames, stopMusic, updateMusic } from './audio'
 import { CHANNEL_COLORS, type RollPointer } from './roll'
 import {
   beginDrag,
@@ -158,6 +158,17 @@ watch(
     updateMusic(rendered(), loopFrame(one), active.loop, active.effectChannel)
   }
 )
+
+/**
+ * A song of the bank once over the one playing, as `g_Music_PlayJingle` plays
+ * it: the song stops where it is and carries on afterwards. Rendered unmuted —
+ * the mute buttons are for the song being edited.
+ */
+function jingle(index: number): void {
+  const one = bank.value.songs[index]
+  if (!one) return
+  fireJingle(renderSong(bank.value, one), { rate: bank.value.rate, effectChannel: session.value.effectChannel })
+}
 
 /** About half a second of one note on its own — what drawing or clicking a key sounds like. */
 function previewNote(pitch: number, instrumentIndex: number): void {
@@ -652,6 +663,16 @@ watch(
                 :value="one.name"
                 @change="commit(session, renameSong(bank, index, ($event.target as HTMLInputElement).value))"
               >
+              <button
+                class="small"
+                :title="`Play ${one.name} once as a jingle: the song playing stops where it is and carries on after it, as g_Music_PlayJingle() does`"
+                @click.stop="jingle(index)"
+              >
+                <Icon
+                  name="celebration"
+                  :size="12"
+                />
+              </button>
             </li>
           </ul>
           <div class="list-actions">

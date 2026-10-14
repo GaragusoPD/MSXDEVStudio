@@ -21,7 +21,7 @@ describe('agentGuideFiles', () => {
     const header = [...musicHelperC('g_Music', true).header, ...sfxHelperC(normalizeSfx({}), 'g_Sfx').header].join('\n')
     const calls = [
       'g_Music_Play', 'g_Music_Update', 'g_Music_Decode', 'g_Music_Pause', 'g_Music_Resume', 'g_Music_Stop',
-      'g_Music_FadeOut', 'g_Music_IsPlaying', 'g_Sfx_Init', 'g_Sfx_Play', 'g_Sfx_PlayPriority', 'g_Sfx_Stop',
+      'g_Music_FadeOut', 'g_Music_IsPlaying', 'g_Music_PlayJingle', 'g_Music_IsJingle', 'g_Sfx_Init', 'g_Sfx_Play', 'g_Sfx_PlayPriority', 'g_Sfx_Stop',
       'g_Sfx_IsPlaying', 'g_Sfx_Update'
     ]
     for (const call of calls) {

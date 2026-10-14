@@ -9,7 +9,13 @@
  * every frame (see CLAUDE.md for the method), against `stepPlayer`: 933 frames
  * across a song switch, a loop and three effects on channel C; then 695 more
  * through the helpers — priorities (a coin refused under a death cry),
- * `g_Sfx_Stop`, a fade-out to silence and `g_Music_Play` after it.
+ * `g_Sfx_Stop`, a fade-out to silence and `g_Music_Play` after it. Jingles:
+ * 720 frames sampled at each `g_Music_Update` entry (a breakpoint, so no frame
+ * is caught mid-update), identical to a statement-by-statement model of the
+ * helper and, up to the first pause, to `stepPlayer` — a jingle over the song
+ * with an effect over the jingle, one over a fade-out (the fade goes on after),
+ * one replacing another, one over a paused song (still paused after, until
+ * `_Resume`), one after `_Stop` (silence after) and one over a song played once.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -118,6 +124,10 @@ const MUSIC_WITH_EFFECTS = [
   '\tif (frame == 70)',
   '\t\tg_Sfx_PlayPriority(G_SFX_DEATH, 0);',
   '\tif (frame == 100) { g_Music_Pause(); g_Music_Resume(); }',
+  '\tif (frame == 110)',
+  '\t\tg_Music_PlayJingle(g_Music_Theme);',
+  '\tif (frame == 120 && g_Music_IsJingle())',
+  '\t\tg_Music_PlayJingle(g_Music_Theme);',
   '\tif (frame == 150)',
   '\t\tg_Music_FadeOut(4);',
   '\tif (frame == 250 && !g_Music_IsPlaying())',

@@ -1029,6 +1029,15 @@ g_Music_Update();                     // the song, the effect over it, out to th
   then stops the song, and \`g_Music_IsPlaying()\` turns \`FALSE\`.
   \`g_Music_Pause()\`/\`g_Music_Resume()\` pause in place; \`g_Music_Stop()\` ends the
   song; \`g_Music_Play()\` starts any song from the top, fade or no fade.
+- **Jingles.** \`g_Music_PlayJingle(g_Music_Win)\` plays a song once over the one
+  playing: the song stops where it is and, the frame the jingle ends, carries on
+  from there — still paused or fading if it was. Any song in any bank can be a
+  jingle, and it always plays once. \`g_Music_IsJingle()\` is \`TRUE\` until it
+  ends, so a stage-clear screen can wait for its fanfare. A jingle over a
+  jingle replaces it and keeps the song; \`g_Music_Play()\`, \`g_Music_Stop()\` or the
+  end of a \`g_Music_FadeOut()\` drop the song under it. Don't call \`LVGM_Play()\`
+  for one yourself: there is one lVGM player, and only the helper puts the song
+  back. Effects carry on over a jingle as over a song.
 - **Don't call \`LVGM_Decode()\` directly** when effects play over music. lVGM
   writes only the registers that change, so an effect would leave its channel at
   the effect's pitch and volume until the song next touched them; the helper
