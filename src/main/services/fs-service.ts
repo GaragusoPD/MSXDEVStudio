@@ -43,6 +43,9 @@ export class FsService {
   private root: string | null = null
   private watcher: FSWatcher | null = null
 
+  /** Set by main for services that follow a file on disk (ProjectService and the `.msxproj`). */
+  onChange: ((event: FsChangeEvent) => void) | null = null
+
   constructor(private readonly getWindow: () => BrowserWindow | null) {}
 
   registerIpc(): void {
@@ -91,6 +94,7 @@ export class FsService {
       if (!knownTypes.includes(type as FsChangeEvent['type'])) return // 'ready'/'raw'/'error' have their own listeners
       const event: FsChangeEvent = { type: type as FsChangeEvent['type'], path: this.toRelative(absPath) }
       this.getWindow()?.webContents.send('fs:changed', event)
+      this.onChange?.(event)
     })
     return true
   }

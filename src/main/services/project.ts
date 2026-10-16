@@ -81,6 +81,37 @@ export function saveProject(root: string, projectFile: string, project: MsxProje
   return { root, projectFile, project, imported: false }
 }
 
+/**
+ * The open project's `.msxproj` as it is on disk *now*, when that differs from
+ * `current` — it was edited outside the IDE (a text editor, a git checkout, an
+ * agent). Null when nothing changed or the file is gone.
+ *
+ * Without this the IDE builds from the copy it read at open, and
+ * `project_config.js` is regenerated from that stale copy before every build:
+ * modules added on disk are dropped and the link fails with `Undefined Global`.
+ *
+ * Throws when the file does not parse, so a build can say why rather than
+ * quietly fall back to the stale copy; a file watcher may ignore that, since
+ * the next write fires again.
+ */
+export function reloadProject(current: OpenProject): OpenProject | null {
+  const path = join(current.root, current.projectFile)
+  if (!existsSync(path)) return null
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf-8'))
+  } catch (error) {
+    throw new Error(`Couldn't read ${current.projectFile}: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error
+    })
+  }
+  const name = basename(current.projectFile, PROJECT_EXT)
+  const project = normalizeProject(raw, name)
+  // Both normalized: the renderer's saved copy need not share the reader's key order.
+  if (JSON.stringify(project) === JSON.stringify(normalizeProject(current.project, name))) return null
+  return { ...current, project }
+}
+
 /** Loads an existing `.msxproj` from `root`. Null when there is none. */
 export function loadProject(root: string): OpenProject | null {
   const projectFile = findProjectFile(root)

@@ -13,6 +13,7 @@ import {
   loadProject,
   PROJECT_EXT,
   readIdeState,
+  reloadProject,
   resolveNodeBinary,
   saveProject,
   scanLibModules,
@@ -142,11 +143,36 @@ export class ProjectService {
   }
 
   /**
+   * Adopts the `.msxproj` from disk when it was edited outside the IDE, and
+   * tells the renderer, whose settings form would otherwise save the stale copy
+   * back over it. Throws when the file does not parse (see `reloadProject`).
+   */
+  private refreshFromDisk(): void {
+    if (!this.current) return
+    const fresh = reloadProject(this.current)
+    if (!fresh) return
+    this.current = { ...fresh, imported: this.current.imported }
+    this.getWindow()?.webContents.send('project:changed', this.current)
+  }
+
+  /** FsService's watcher hook: `path` is project-relative. */
+  fileChanged(path: string): void {
+    if (path !== this.current?.projectFile) return
+    try {
+      this.refreshFromDisk()
+    } catch {
+      // Half-written or broken: the next write fires again, and a build reports it.
+    }
+  }
+
+  /**
    * Pre-build step (Spec 04): brings `project_config.js` back in sync with the
-   * `.msxproj` before MSXgl reads it. A no-op for `customConfig` projects.
+   * `.msxproj` before MSXgl reads it — the file on disk, not the copy read at
+   * open, in case the watcher missed an edit. A no-op for `customConfig` projects.
    */
   regenerateConfig(): void {
     if (!this.current) return
+    this.refreshFromDisk()
     writeGeneratedConfig(
       this.current.root,
       this.current.projectFile,

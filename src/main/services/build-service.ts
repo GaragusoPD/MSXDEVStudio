@@ -117,7 +117,7 @@ export class BuildService {
   }
 
   private async startInner(command: BuildCommand): Promise<BuildFinished> {
-    const open = this.deps.getProject()
+    let open = this.deps.getProject()
     if (!open) throw new Error('No project is open.')
     const msxglPath = this.deps.msxglPath()
     if (!msxglPath) throw new Error('MSXgl is not configured — set it up in Toolchain Settings.')
@@ -125,6 +125,8 @@ export class BuildService {
     if (!node) throw new Error('No Node executable found in the configured MSXgl checkout.')
 
     this.deps.prepare()
+    // prepare() may have re-read a `.msxproj` edited outside the IDE: build with that one.
+    open = this.deps.getProject() ?? open
 
     const webmsx = command === 'run' && open.project.emulator.preferred === 'webmsx'
     this.deps.emit('build:started', { command })

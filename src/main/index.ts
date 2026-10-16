@@ -96,6 +96,8 @@ ipcMain.handle('git:init', () => gitService.init())
 ipcMain.handle('git:clone', (_e, req: { url: string; targetDir: string }) => gitService.clone(req.url, req.targetDir))
 const projectService = new ProjectService(stateService, toolchainService, fsService, gitService, () => mainWindow)
 projectService.registerIpc()
+// A `.msxproj` edited outside the IDE is picked up as it is written, not at the next open.
+fsService.onChange = (event) => projectService.fileChanged(event.path)
 
 // A second launch (another `.msxproj` double-click, or `msxdevstudio some.msxproj`
 // while already running) hits this instance instead of starting a competing

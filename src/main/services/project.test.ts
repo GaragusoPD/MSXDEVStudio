@@ -11,6 +11,7 @@ import {
   loadProject,
   resolveNodeBinary,
   readIdeState,
+  reloadProject,
   saveProject,
   scanLibModules,
   writeGeneratedConfig,
@@ -152,6 +153,43 @@ describe('saveProject / loadProject', () => {
     expect(readFileSync(configPath, 'utf-8')).toBe('// hand written\nProjName = "custom";\n')
     // …but the .msxproj itself still records the change.
     expect(loadProject(opened.root)?.project.target).toBe('DOS2')
+  })
+})
+
+describe('reloadProject', () => {
+  // No MSXgl needed: saveProject only writes the .msxproj and project_config.js.
+  function opened(): ReturnType<typeof saveProject> {
+    const root = mkdtempSync(join(tmpdir(), 'msxproj-reload-'))
+    tmpDirs.push(root)
+    return saveProject(root, 'game.msxproj', normalizeProject({ name: 'game', libModules: ['system'] }, 'game'))
+  }
+
+  it('is null while the file still says what the IDE holds', () => {
+    expect(reloadProject(opened())).toBeNull()
+  })
+
+  it('returns the edit made outside the IDE', () => {
+    const current = opened()
+    const path = join(current.root, current.projectFile)
+    const edited = { ...JSON.parse(readFileSync(path, 'utf-8')), libModules: ['system', 'vgm/lvgm_player'] }
+    writeFileSync(path, JSON.stringify(edited), 'utf-8')
+
+    const fresh = reloadProject(current)
+    expect(fresh?.project.libModules).toEqual(['system', 'vgm/lvgm_player'])
+    expect(fresh?.root).toBe(current.root)
+    expect(fresh?.projectFile).toBe(current.projectFile)
+  })
+
+  it('throws on a file that does not parse, rather than keep the stale copy quietly', () => {
+    const current = opened()
+    writeFileSync(join(current.root, current.projectFile), '{ "name": ', 'utf-8')
+    expect(() => reloadProject(current)).toThrow(/game\.msxproj/)
+  })
+
+  it('is null once the file is gone', () => {
+    const current = opened()
+    rmSync(join(current.root, current.projectFile))
+    expect(reloadProject(current)).toBeNull()
   })
 })
 
