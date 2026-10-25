@@ -428,6 +428,15 @@ const packing = computed(() => {
       >
         <button
           type="button"
+          class="pick"
+          :class="{ on: index === session.activeLayer }"
+          :title="index === session.activeLayer ? 'The layer you are working on' : 'Work on this layer'"
+          @click.stop="selectLayer(session, index)"
+        >
+          <Icon :name="index === session.activeLayer ? 'edit' : 'radio_button_unchecked'" />
+        </button>
+        <button
+          type="button"
           class="vis"
           :title="layer.visible ? 'Hide layer' : 'Show layer'"
           @click.stop="toggleLayerVisible(session, index)"
@@ -658,6 +667,7 @@ label > span:first-child {
   background: var(--color-bg-active-item);
 }
 
+.layer-row .pick,
 .layer-row .vis,
 .layer-row .move,
 .layer-row .remove {
@@ -665,6 +675,10 @@ label > span:first-child {
   width: 18px;
   font-size: 11px;
   color: var(--color-text-muted);
+}
+
+.layer-row .pick.on {
+  color: var(--color-accent);
 }
 
 .layer-row .move:disabled,

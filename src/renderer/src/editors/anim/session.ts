@@ -92,6 +92,8 @@ export interface AnimSession {
   holeMode: boolean
   strokeActive: boolean
   attachedTo: AnimAttachment[]
+  /** An imported picture over the pose, in dots, until `placeFloat` cuts it in or `dropFloat` lets go. */
+  float: { picture: Picture; x: number; y: number } | null
   status: string
   stopWatching: (() => void) | null
 }
@@ -121,6 +123,7 @@ export function animSession(path: string): AnimSession {
     holeMode: false,
     strokeActive: false,
     attachedTo: [],
+    float: null,
     status: '',
     stopWatching: null
   })
@@ -514,6 +517,54 @@ export function pastePose(session: AnimSession): void {
     (lossy ? ` (${lossy} reduced to two colours a row)` : '') +
     (cut ? ` — cut to ${current.width}×${current.height}` : '') +
     '.'
+}
+
+// ── an imported picture, floated then placed ─────────────────────────────────
+
+type Picture = { width: number; height: number; indices: Uint8Array }
+
+/** Floats a converted picture over the current pose, top-left, to be moved and then placed. */
+export function floatImage(session: AnimSession, picture: Picture): void {
+  session.float = { picture, x: 0, y: 0 }
+  session.status = 'Drag the picture where it goes, then Place (Enter). Esc cancels.'
+}
+
+export function moveFloat(session: AnimSession, x: number, y: number): void {
+  if (session.float) session.float = { ...session.float, x, y }
+}
+
+export function dropFloat(session: AnimSession): void {
+  session.float = null
+  session.status = ''
+}
+
+/**
+ * Cuts the floating picture into the current pose at its size and in its
+ * mode's colour rule, as one undo step: what falls outside the pose is cut
+ * off, colour 0 leaves the pose's dot under it, and a cell it draws into stops
+ * being see-through.
+ */
+export function placeFloat(session: AnimSession): void {
+  const float = session.float
+  if (!float) return
+  const current = doc(session)
+  const pose = posePixels(session, session.frame)
+  const drawn = new Set<number>()
+  for (let y = 0; y < float.picture.height; y++) {
+    for (let x = 0; x < float.picture.width; x++) {
+      const px = float.x + x
+      const py = float.y + y
+      const index = float.picture.indices[y * float.picture.width + x]
+      if (!index || px < 0 || py < 0 || px >= pose.width || py >= pose.height) continue
+      pose.indices[py * pose.width + px] = index
+      drawn.add(Math.floor(py / 8) * current.width + Math.floor(px / 8))
+    }
+  }
+  const { tiles, lossy } = pictureTiles(current.mode, pose, current.mode === 'sc1' ? current.pair : undefined)
+  const frames = current.frames.map((frame, f) => (f === session.frame ? { ...frame, tiles } : frame))
+  commit(session, isOwnedMeta(current) ? { ...current, frames, holes: current.holes.map((hole, i) => hole && !drawn.has(i)) } : { ...current, frames })
+  session.float = null
+  session.status = `Placed the picture into pose ${session.frame + 1}` + (lossy ? ` (${lossy} tiles reduced to two colours a row)` : '') + '.'
 }
 
 // ── meta-tiles: footprint and flags ─────────────────────────────────────────

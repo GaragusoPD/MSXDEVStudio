@@ -1410,7 +1410,7 @@ describe('paint mode', () => {
       expect(session.brushMeta).toBeNull()
       expect(session.pickerSelection).toEqual([0])
       const tileset = useTilesetStore().patternDoc(TILES)!
-      expect(doc(session).metas[0].cells.every((tile) => tile >= MAX_TILES - tileset.sharedTiles)).toBe(true)
+      expect(doc(session).metas[0]?.cells?.every((tile) => tile >= MAX_TILES - tileset.sharedTiles)).toBe(true)
     })
 
     it('refuses promotion on a taller map and says why', async () => {

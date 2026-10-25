@@ -7,6 +7,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-25
+
+### Added
+
+- **Import image… in the meta-tile and animated-tile editor.** One picture,
+  fitted to the design, floats over the pose; drag it or nudge it with the
+  arrow keys, then **Place** (Enter) cuts it in at the design's size and in its
+  mode's colours.
+- **A select button on each map layer**, left of the eye: the layer you are
+  working on shows a pencil.
+
+### Fixed
+
+- **Banking a screen that places meta-tiles.** Switching to banked, rebuilding
+  the banks or importing a picture banked refused any map with meta-tile
+  placements. Live placements now survive: their art moves to the tiles every
+  bank shares, and the cells under them cost no tile.
+- **Imports fit the target's size.** The import dialog ignored the size it was
+  given and always fitted to one screen.
+
 ## [0.3.1] - 2026-10-25
 
 ### Fixed

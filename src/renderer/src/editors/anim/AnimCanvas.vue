@@ -12,7 +12,7 @@
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { beginStroke, doc, endStroke, ownedMeta, paint, posePixels, toggleHole, type AnimSession } from './session'
+import { beginStroke, doc, endStroke, moveFloat, ownedMeta, paint, posePixels, toggleHole, type AnimSession } from './session'
 
 const props = defineProps<{ session: AnimSession }>()
 
@@ -21,6 +21,8 @@ const preview = ref<Point[]>([])
 let origin: Point | null = null
 let painting = false
 let role: 'fg' | 'bg' = 'fg'
+/** Where a drag of the floating picture took hold of it, in dots from its corner. */
+let grab: Point | null = null
 
 const anim = computed(() => doc(props.session))
 const cols = computed(() => anim.value.width * 8)
@@ -45,6 +47,13 @@ function pointsFor(from: Point, to: Point): Point[] {
 
 function onDown(event: PointerEvent): void {
   const point = pointAt(event)
+  const float = props.session.float
+  if (float) {
+    // While a picture floats, the canvas moves it and paints nothing.
+    ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
+    grab = { x: point.x - float.x, y: point.y - float.y }
+    return
+  }
   if (props.session.holeMode) {
     toggleHole(props.session, Math.floor(point.y / 8) * anim.value.width + Math.floor(point.x / 8))
     return
@@ -62,6 +71,11 @@ function onDown(event: PointerEvent): void {
 }
 
 function onMove(event: PointerEvent): void {
+  if (grab) {
+    const point = pointAt(event)
+    moveFloat(props.session, point.x - grab.x, point.y - grab.y)
+    return
+  }
   if (!painting || !origin) return
   const point = pointAt(event)
   if (props.session.tool === 'pencil') {
@@ -74,6 +88,7 @@ function onMove(event: PointerEvent): void {
 }
 
 function onUp(event: PointerEvent): void {
+  grab = null
   if (!painting) return
   painting = false
   const point = pointAt(event)
@@ -127,6 +142,22 @@ watchEffect(() => {
     context.stroke()
     context.restore()
   })
+  const float = props.session.float
+  if (float) {
+    for (let y = 0; y < float.picture.height; y++) {
+      for (let x = 0; x < float.picture.width; x++) {
+        const index = float.picture.indices[y * float.picture.width + x]
+        if (index) {
+          context.fillStyle = toHex(rgb.value[index])
+          context.fillRect((float.x + x) * px, (float.y + y) * px, px, px)
+        }
+      }
+    }
+    context.strokeStyle = '#ffd24e'
+    context.setLineDash([4, 3])
+    context.strokeRect(float.x * px + 0.5, float.y * px + 0.5, float.picture.width * px - 1, float.picture.height * px - 1)
+    context.setLineDash([])
+  }
   if (preview.value.length) {
     context.globalAlpha = 0.6
     context.fillStyle = toHex(rgb.value[props.session.color])
@@ -157,7 +188,7 @@ watchEffect(() => {
   <div class="anim-canvas">
     <canvas
       ref="canvas"
-      :class="{ holes: session.holeMode }"
+      :class="{ holes: session.holeMode, floating: session.float }"
       @contextmenu.prevent
       @pointerdown="onDown"
       @pointermove="onMove"
@@ -185,5 +216,9 @@ canvas {
 
 canvas.holes {
   cursor: cell;
+}
+
+canvas.floating {
+  cursor: move;
 }
 </style>

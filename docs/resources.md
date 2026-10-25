@@ -416,6 +416,13 @@ export stay); an animated tile keeps its own, because its window is what the
 tilesets it is attached to have room for. Set the grid's cell size to the whole
 picture to import it as a single pose.
 
+For one picture, the pose editor's own **Import image…** is quicker: the
+picture is shrunk to fit the meta-tile (or animated tile), floats over the
+current pose, and is dragged — or nudged with the arrow keys, Shift for a whole
+tile — to where it goes. **Place** (Enter) cuts it in at the pose's size and in
+its mode's colours, as one undo step; colour 0 leaves the pose under it, and a
+see-through cell it draws into becomes opaque. Esc drops it.
+
 A sprite plane has one colour: per sprite in mode 1, per line in mode 2. The
 importer stacks planes for a figure drawn in several colours, up to **Max
 planes**, and gives any colour past that the nearest one kept. In mode 2 it

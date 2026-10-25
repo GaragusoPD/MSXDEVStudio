@@ -8,6 +8,9 @@ import {
   animSession,
   copyPose,
   pastePose,
+  floatImage,
+  moveFloat,
+  placeFloat,
   beginStroke,
   canUndo,
   doc,
@@ -232,6 +235,26 @@ describe('the pixel clipboard', () => {
     expect([doc(session).width, doc(session).height]).toEqual([1, 1])
     expect(posePixels(session, 0).indices[0]).toBe(6)
     expect(session.status).toMatch(/cut to 1×1/)
+  })
+
+  it('an imported picture floats, moves, and is cut into the pose at its size when placed', async () => {
+    files[META] = serializeResource({ kind: 'metatiles', doc: { ...createOwnedMeta('sc2', 2, 1), holes: [true, true] } })
+    const session = animSession(META)
+    await settled()
+    const before = posePixels(session, 0).indices[12]
+    floatImage(session, clip(3, 2, 6).picture)
+    moveFloat(session, 12, 0)
+    placeFloat(session)
+
+    const meta = doc(session) as OwnedMetaDoc
+    expect([meta.width, meta.height]).toEqual([2, 1])
+    expect(meta.holes).toEqual([true, false])
+    const pixels = posePixels(session, 0)
+    expect(pixels.indices[11]).not.toBe(6) // left of where it was dropped
+    expect(pixels.indices[12]).toBe(6)
+    expect(session.float).toBeNull()
+    undo(session)
+    expect(posePixels(session, 0).indices[12]).toBe(before)
   })
 
   it('a copied pose is on the clipboard, named after its file', async () => {
