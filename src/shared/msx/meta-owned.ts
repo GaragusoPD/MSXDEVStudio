@@ -36,6 +36,10 @@ import {
   blankTileEntry,
   isBanked,
   MAX_TILES,
+  metaCellSlots,
+  normalizeTiles,
+  remapAnimBindings,
+  remapMetaBindings,
   SC1_GROUP,
   TILE_SIZE,
   type AnimLoop,
@@ -388,7 +392,7 @@ export interface RemovedMeta {
   mapping: number[] | null
   /** Tiles dropped with it. */
   removed: number
-  /** Why its tiles stayed, when they could not go (a banked tileset, sc1 packing). */
+  /** Why its tiles stayed, when they could not go (sc1 colour groups would not pack). */
   refused?: string
 }
 
@@ -405,15 +409,71 @@ export function removeMeta(tiles: TilesDoc, path: string, used: Iterable<number>
   if (detached === tiles) return { doc: tiles, mapping: null, removed: 0 }
   const own = new Set<number>()
   for (const binding of tiles.metas) if (binding.path === path) for (const tile of binding.cells) if (tile) own.add(tile)
+  const window: number[] = []
   for (const binding of tiles.animations) {
-    if (binding.path === path && binding.bank === null) for (let i = 0; i < animCells(binding); i++) own.add(binding.slot + i)
+    if (binding.path === path && binding.bank === null) for (let i = 0; i < animCells(binding); i++) window.push(binding.slot + i)
   }
+  for (const tile of window) own.add(tile)
+  if (isBanked(detached)) return removeBanked(detached, own, window, new Set(used))
   const keep = new Set(used)
   for (let i = 0; i < detached.count; i++) if (!own.has(i)) keep.add(i)
   const result = compactTileset(detached, keep)
   if (result.refused) return { doc: detached, mapping: null, removed: 0, refused: result.refused }
   if (result.doc === detached) return { doc: detached, mapping: null, removed: 0 }
   return { doc: result.doc, mapping: result.mapping, removed: result.removed }
+}
+
+/**
+ * `removeMeta` on a banked tileset, where the common range never renumbers (a
+ * bank's own art sits at fixed indices — see `removeTile`). A meta's still
+ * tiles live in the shared region at the top instead, the same art in every
+ * bank, and that region can close up: the survivors move up to 255 in their
+ * order, so only shared indices change, and an index below the region means
+ * what it meant. The window is freed only when it is the topmost thing in the
+ * common range, by shrinking `count` — nothing moves for that.
+ */
+function removeBanked(doc: TilesDoc, own: ReadonlySet<number>, window: readonly number[], keep: Set<number>): RemovedMeta {
+  for (const tile of metaCellSlots(doc)) keep.add(tile)
+  for (const block of doc.blocks) for (const tile of block.tiles) keep.add(tile)
+  const drops = (tile: number): boolean => own.has(tile) && !keep.has(tile)
+  const mapping = Array.from({ length: MAX_TILES }, (_, i) => i)
+  let removed = 0
+
+  let count = doc.count
+  const start = window[0]
+  const highestBank = Math.max(0, ...doc.bankTiles.map((bank) => bank.length))
+  if (window.length && start > 0 && start + window.length === count && start >= highestBank && window.every(drops)) {
+    for (const tile of window) mapping[tile] = 0
+    count = start
+    removed += window.length
+  }
+
+  const survivors: number[] = []
+  for (let i = MAX_TILES - doc.sharedTiles; i < MAX_TILES; i++) {
+    if (!drops(i)) survivors.push(i)
+    else {
+      mapping[i] = 0
+      removed++
+    }
+  }
+  if (!removed) return { doc, mapping: null, removed: 0 }
+  const tiles = doc.tiles.slice(0, count)
+  const top = MAX_TILES - survivors.length
+  survivors.forEach((old, j) => {
+    tiles[top + j] = doc.tiles[old]
+    mapping[old] = top + j
+  })
+  const next = normalizeTiles({
+    ...doc,
+    count,
+    tiles,
+    flags: doc.flags.slice(0, count),
+    sharedTiles: survivors.length,
+    blocks: doc.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => mapping[tile] ?? tile) })),
+    animations: remapAnimBindings(doc.animations, mapping),
+    metas: remapMetaBindings(doc.metas, mapping)
+  })
+  return { doc: next, mapping, removed }
 }
 
 /** A meta read for a refresh, or why it could not be. */

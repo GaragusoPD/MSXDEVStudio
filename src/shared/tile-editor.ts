@@ -336,6 +336,12 @@ export interface TileHistoryEntry {
   label: string
   /** Set on reorder steps: the old-index → new-index mapping Spec 10 replays (see `emitTilesReordered`). */
   remap?: number[]
+  /**
+   * What undo publishes, when `invertMapping(remap)` would guess wrong: a step
+   * that drops tiles maps each to 0, and only the step knows whether 0's own
+   * tile stayed there (a meta-tile's removal) or went too.
+   */
+  unmap?: number[]
 }
 
 export interface TileHistory {
@@ -349,9 +355,9 @@ export function initHistory(doc: TilesDoc): TileHistory {
   return { entries: [{ doc, label: 'open' }], index: 0 }
 }
 
-export function pushHistory(history: TileHistory, doc: TilesDoc, label: string, remap?: number[]): TileHistory {
+export function pushHistory(history: TileHistory, doc: TilesDoc, label: string, remap?: number[], unmap?: number[]): TileHistory {
   const entries = history.entries.slice(0, history.index + 1)
-  entries.push({ doc, label, remap })
+  entries.push(unmap ? { doc, label, remap, unmap } : { doc, label, remap })
   const trimmed = entries.slice(Math.max(0, entries.length - HISTORY_LIMIT))
   return { entries: trimmed, index: trimmed.length - 1 }
 }

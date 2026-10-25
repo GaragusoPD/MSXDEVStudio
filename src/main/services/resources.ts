@@ -15,7 +15,10 @@ import { isIgnoredName, resolveRelativePath } from '../../shared/fs-safety'
 import type { ImgRule, MsxProject } from '../../shared/msxproj'
 import { defaultExport, parseResource, renderResourceFiles,
   sourcePathFor, resourceKindOf, validateResource, type ResourceDoc } from '../../shared/msx/resource'
-import { metaRefFrom, validateMap, type MapDoc } from '../../shared/msx/map'
+import { metaRefFrom, remapTiles, validateMap, type MapDoc } from '../../shared/msx/map'
+import { remapMetaTiles } from '../../shared/msx/meta-tile'
+import { pendingReorders } from '../../shared/map-editor'
+import type { TilesReorderEvent } from '../../shared/tile-editor'
 import { movingCells, refreshMetas, type LoadedMeta } from '../../shared/msx/meta-owned'
 import { isBanked, isMetaPath, MAX_TILES, type TilesDoc } from '../../shared/msx/tile'
 import { animModesCompatible, animRefFrom, withAnimFrame, type TileAnimDoc } from '../../shared/msx/tile-anim'
@@ -117,12 +120,38 @@ function exportDependencies(root: string, resource: ResourceDoc): string[] {
   const attached = (doc: TilesDoc): string[] => [...doc.animations.map((b) => b.path), ...doc.metas.map((b) => b.path)]
   let paths: string[] = []
   if (resource.kind === 'tiles') paths = attached(resource.doc)
+  // Its numbers follow the tileset's reorder log (`replayTilesetLog`).
+  if (resource.kind === 'map' || resource.kind === 'metabtiles') paths.push(resource.doc.tileset)
   if (resource.kind === 'map' && resource.doc.metas.length) {
     paths = resource.doc.metas.map((ref) => ref.path)
     const tileset = readTileset(root, resource.doc.tileset)
     if (tileset) paths.push(resource.doc.tileset, ...attached(tileset))
   }
   return [...new Set(paths)].map((path) => insideRoot(root, path)).filter((path): path is string => path !== null)
+}
+
+/**
+ * Brings a map, or a bitmap meta-tile, into its tileset's current numbering.
+ *
+ * Deleting, moving or reclaiming tiles renumbers a tileset, and its file logs
+ * each renumbering (`reorderLog`) for the files drawn with it; an editor
+ * replays what a file missed when it opens. A build opens nothing, so without
+ * this a file that was closed at the time exports the old numbers — the wrong
+ * art, with nothing to say so. Only a stamped file is replayed: one without
+ * `tilesetReorderSeen` cannot say which entries it has already seen, and
+ * replaying them all would scramble one written after them.
+ */
+function replayTilesetLog(root: string, resource: ResourceDoc, text: string): void {
+  if (resource.kind !== 'map' && resource.kind !== 'metabtiles') return
+  const seen = (JSON.parse(text) as { tilesetReorderSeen?: unknown }).tilesetReorderSeen
+  const abs = insideRoot(root, resource.doc.tileset)
+  if (typeof seen !== 'number' || !abs || !existsSync(abs)) return
+  const log = (JSON.parse(readFileSync(abs, 'utf-8')) as { reorderLog?: TilesReorderEvent[] }).reorderLog
+  if (!Array.isArray(log)) return
+  for (const event of pendingReorders(log, seen)) {
+    if (resource.kind === 'map') resource.doc = remapTiles(resource.doc, event.mapping)
+    else resource.doc = remapMetaTiles(resource.doc, event.mapping)
+  }
 }
 
 /** A pattern tileset as its file says, or null when it is not one or cannot be read. */
@@ -417,7 +446,8 @@ export function exportResourceFile(root: string, relative: string, options: Expo
   if (!sourceAbs) return { ...base, message: 'Path escapes the project folder.' }
 
   try {
-    const resource = parseResource(relative, readFileSync(sourceAbs, 'utf-8'))
+    const text = readFileSync(sourceAbs, 'utf-8')
+    const resource = parseResource(relative, text)
     const block = resource.doc.export
     if (!block?.out) return { ...base, status: 'skipped', message: 'No export target set.' }
 
@@ -437,6 +467,7 @@ export function exportResourceFile(root: string, relative: string, options: Expo
     // Before validation, not just before rendering: a stale mirror also means
     // stale sizes, and "this placement hangs off the map" must be judged
     // against the meta as it is now.
+    replayTilesetLog(root, resource, text)
     refreshMapMetas(root, resource)
     let attachedProblems: string[] = []
     if (resource.kind === 'tiles') {

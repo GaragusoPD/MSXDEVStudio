@@ -356,7 +356,10 @@ from every map drawn with the tileset too, because a map that places a meta its
 tileset does not have will not export. Its tiles leave the tileset with it
 (unless a map's grid, a block or another meta still shows them), so the tiles
 above them renumber: re-read the tileset header's constants rather than keep
-tile numbers in C.
+tile numbers in C. A map file you write by hand for a tileset whose
+\`.tiles.json\` has a \`reorderLog\` should carry \`"tilesetReorderSeen"\` set to
+the last entry's \`at\` — the build replays every newer entry over the map, and
+leaves a map without one exactly as written.
 
 ### Placing meta-tiles on a map
 

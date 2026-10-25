@@ -7,6 +7,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-25
+
+### Fixed
+
+- **Removing a meta-tile from a banked tileset frees its tiles too.** Its art
+  leaves the shared region at the top of the bank, which closes up; each bank's
+  own tiles keep their numbers.
+- **The build follows tile renumbering.** A map (or bitmap meta-tile) that was
+  closed when its tileset's tiles were deleted, moved or reclaimed exported the
+  old numbers until it was opened. The export now applies what it missed.
+- **New maps no longer ask to renumber.** A map is stamped with the renumbering
+  it was made in, when it is created and when it is saved, so opening it never
+  replays changes from before it existed. A map whose renumbering you declined
+  stays unstamped and asks again.
+- **Undoing a meta-tile's removal** no longer turned an open map's blank cells
+  into the meta's art.
+
 ## [0.3.3] - 2026-10-25
 
 ### Fixed

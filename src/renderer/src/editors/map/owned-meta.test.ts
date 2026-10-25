@@ -17,7 +17,7 @@ import { emitAnimSaved } from '../anim/events'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
-import { attachableMetas, attachMetaFile, pruneTileSessions, removeMetaFile, tileSession } from '../tile/session'
+import { attachableMetas, attachMetaFile, pruneTileSessions, removeMetaFile, tileSession, undo as undoTiles } from '../tile/session'
 import { animSession, findAttachments, pruneAnimSessions, removeFromTileset } from '../anim/session'
 import {
   doc,
@@ -127,6 +127,34 @@ describe('attaching from the tile editor', () => {
     expect(session.status).toMatch(/Removed rock\.meta-tiles\.json from main\.tiles\.json\. 1 tile went with it/)
   })
 
+  it('undoing the removal brings its tile back without touching the cells that show tile 0', async () => {
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 2, height: 1, layers: [{ name: 'bg', data: [0, 3] }] })
+    const session = await open(() => tileSession(TILES))
+    await attachMetaFile(session, ROCK)
+    const map = await open(() => mapSession(MAP))
+    await removeMetaFile(session, ROCK)
+    expect(session.doc.count).toBe(4)
+    undoTiles(session)
+    expect(session.doc.metas.map((binding) => binding.cells)).toEqual([[4, 0]])
+    expect(doc(map).layers[0].data).toEqual([0, 3])
+  })
+
+  it('a map saved without a reorder stamp gets one — unless it declined a renumbering', async () => {
+    const saved = async (): Promise<unknown> => {
+      pruneMapSessions(new Set())
+      const map = await open(() => mapSession(MAP))
+      await saveMap(map)
+      return JSON.parse(files[MAP]).tilesetReorderSeen
+    }
+    // Nothing in the log yet: it has seen all of it, and every later entry replays.
+    expect(await saved()).toBe(0)
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 8, height: 8 })
+    files[TILES] = JSON.stringify({ ...JSON.parse(files[TILES]), reorderLog: [{ path: TILES, mapping: [1, 0], at: 77 }] })
+    setActivePinia(createPinia())
+    ;(window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false)
+    expect(await saved()).toBeUndefined()
+  })
+
   it('removing it keeps a tile another meta shares or a map shows, and renumbers the closed maps', async () => {
     const STONE = 'res/stone.meta-tiles.json'
     const PEBBLE = 'res/pebble.meta-tiles.json'
@@ -141,8 +169,15 @@ describe('attaching from the tile editor', () => {
     for (const path of [ROCK, STONE, PEBBLE]) await attachMetaFile(session, path)
     expect(session.doc.metas.map((binding) => binding.cells)).toEqual([[4, 0], [4, 5], [6, 0]])
     files[CLOSED] = JSON.stringify({ version: 1, tileset: TILES, width: 2, height: 1, layers: [{ name: 'bg', data: [3, 6] }] })
+    useResourcesStore().entries.push({ path: PEBBLE, kind: 'metatiles', out: null })
+    const map = await open(() => mapSession(MAP))
+    pickMeta(map, PEBBLE)
+    expect(doc(map).metas.map((ref) => ref.cells)).toEqual([[6, 0]])
+    placeMetaAt(map, 0, 0)
 
     await removeMetaFile(session, STONE)
+    // The open map's mirror of the pebble follows it down.
+    expect(doc(map).metas.map((ref) => ref.cells)).toEqual([[5, 0]])
     expect(session.doc.count).toBe(6)
     expect(session.doc.tiles[4].pattern[0]).toBe(0x81)
     expect(session.doc.tiles[5].pattern[0]).toBe(0x99)

@@ -360,6 +360,16 @@ export function resizeMap(doc: MapDoc, width: number, height: number): MapDoc {
  * Applies a tileset reorder (`reorderTiles`' mapping) to every tile layer —
  * what Spec 10 replays after a Spec 08 drag-reorder so maps look unchanged.
  */
+/**
+ * A map written beside a tileset that has just been created, stamped as having
+ * seen none of its reorders — there are none yet — so every later one is
+ * replayed over it, by the editor and by the build. Unstamped, it would be
+ * ambiguous (see `pendingReorders` in `map-editor.ts`) and the build would replay nothing.
+ */
+export function stampFresh(doc: MapDoc): MapDoc {
+  return { ...doc, tilesetReorderSeen: 0 } as MapDoc
+}
+
 export function remapTiles(doc: MapDoc, mapping: readonly number[]): MapDoc {
   const layers = doc.layers.map((layer) =>
     layer.kind === 'tiles' ? { ...layer, data: layer.data.map((value) => mapping[value] ?? value) } : layer

@@ -6,7 +6,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { BITMAP_MODES, MODES, TILE_MODES, isTileMode, type ScreenMode } from '../../../shared/msx/modes'
-import { mapFromLayout } from '../../../shared/msx/map'
+import { mapFromLayout, stampFresh } from '../../../shared/msx/map'
 import { bankedPackBlocker, MAX_TILES, packChosen, TILE_SIZE, type BankChoice } from '../../../shared/msx/tile'
 import { RESOURCE_DIR, defaultExport, serializeResource } from '../../../shared/msx/resource'
 import { useImageImport, type ImportResult } from '../composables/useImageImport'
@@ -187,7 +187,7 @@ async function saveTileset(): Promise<void> {
     const rows = packed.banked ? layout.length / cols : Math.floor(result.height / TILE_SIZE)
     const map = mapFromLayout(path, layout, cols, rows)
     map.export = defaultExport(mapPath)
-    await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
+    await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: stampFresh(map) }) })
 
     if (useBanks) {
       // Per bank, not one combined count: the budget is per bank, so "bank 1

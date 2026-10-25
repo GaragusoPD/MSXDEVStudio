@@ -19,7 +19,7 @@ import {
 } from '../../shared/game-kit'
 import type { OpenProject } from '../../shared/ipc'
 import { createBitmapTilesDoc, sheetCols } from '../../shared/msx/bitmap-tile'
-import { createMapDoc } from '../../shared/msx/map'
+import { createMapDoc, stampFresh } from '../../shared/msx/map'
 import { blankConverted, createScreenDoc, decodeIndices, encodeIndices } from '../../shared/msx/screen'
 import { defaultExport, renderResourceFiles, RESOURCE_DIR, serializeResource, type ResourceDoc } from '../../shared/msx/resource'
 import { createSfxDoc } from '../../shared/msx/sfx'
@@ -149,7 +149,7 @@ function writeStubResources(root: string, request: NewGameRequest): void {
         if (solid) map.layers[0].data[y * width + x] = 1
       }
     }
-    writeResource(root, mapPath, { kind: 'map', doc: map })
+    writeResource(root, mapPath, { kind: 'map', doc: stampFresh(map) })
   }
 
   if (request.audio === 'ayfx') {
@@ -223,7 +223,7 @@ function writeSc3Resources(root: string, request: NewGameRequest): void {
       if (y >= height - 2 || (grid && (x % 8 === 0 || y % 8 === 0))) map.layers[0].data[y * width + x] = 1
     }
   }
-  writeResource(root, mapPath, { kind: 'map', doc: map })
+  writeResource(root, mapPath, { kind: 'map', doc: stampFresh(map) })
 
   if (!chunky) return
   // `playfield`, not `play`: every generated `content/*.c` is added to

@@ -74,10 +74,23 @@ open maps by event, closed ones rewritten), since a map cannot place a meta its
 tileset does not have — the export refuses it. Its tiles go too (`removeMeta`:
 `compactTileset` restricted to the meta's own cells and window, keeping what a
 map grid, a block or another meta still shows), and the renumbering goes out
-on the reorder seam. When the tileset is saved with it (the pose editor's
-remove), closed maps that carry a `tilesetReorderSeen` are rewritten in the new
-numbering on the spot, because the exporter does not replay a tileset's reorder
-log; the rest replay it on open. Unbanked only.
+on the reorder seam. On a banked tileset only the shared region closes up
+(`removeBanked`), so a bank's own indices never move. When the tileset is saved
+with it (the pose editor's remove), closed maps that carry a
+`tilesetReorderSeen` are rewritten in the new numbering on the spot; the rest
+replay it on open. The tile editor's undo publishes the step's exact inverse
+(`TileHistoryEntry.unmap`), since `invertMapping` cannot tell a dropped tile
+from one moved to 0.
+
+**A reorder stamp says which renumberings a file has seen.** A map or bitmap
+meta stores `tilesetReorderSeen` (the `at` of the last tileset `reorderLog`
+entry folded in); the editor replays newer entries on open and the exporter
+replays them before every export (`replayTilesetLog`). A file *without* a stamp
+is ambiguous — new, or behind on every entry — so the editor asks before
+replaying the whole log and the exporter replays nothing. Anything that writes
+a map stamps it — `stampFresh` (0, "seen none") beside a new tileset, the last
+entry's `at` beside one with a log — and the map editor stamps on save, except
+after a declined renumbering, so that map keeps asking.
 
 Tile 0 is the seam that makes a group *transparent*: `TilesDoc.reserveTile0` locks it all-blank, and a meta cell holding 0 is a **skipped write**, which is the only see-through a name table has. Off in every pre-existing file, because tile 0 is real art in `demo_msx1`. A map *places* metas (`MapLayer.placements`, over a mirrored `MapDoc.metas`) beside its ordinary tile grid; `baked` trades the runtime draw for grid bytes. An **indexed** layer (`MapLayer.indexed`) is the other way round: its placements — pattern metas, free to overlap, stacked in list order — *are* its content, exported as one byte per meta in reading order (`indexedLayerStream`; slot + 1, or 0 for an empty cell) plus overlay records (slot + 1, x, y) for the metas reading order cannot carry, and expanded by the game into a RAM tile map (`_Expand`). `indexedLayerPlan` decides which go where: a meta goes to the overlays when its top-left is covered, when another starts at the same cell, or when an opaque overlap would come out in the wrong order. `decodeIndexedStream`/`expandIndexedLayer` walk it exactly as the C does, and are what the tests hold the C to. Its metas are not in `_Placements`; its stream is never RLEp-packed, whatever the map's other layers are.
 

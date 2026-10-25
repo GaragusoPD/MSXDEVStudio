@@ -9,6 +9,7 @@ import {
   ownedMetaConstants,
   ownedMetaTables,
   refreshMetas,
+  removeMeta,
   resolveMeta,
   tilesetMetaConstants,
   tilesetMetaHelperC,
@@ -227,6 +228,45 @@ describe('attaching an animated meta', () => {
     expect(window.slot).toBe(8)
     expect(doc.groupColors[1]).toBe(0xa1)
     expect(validateTiles(doc)).toEqual([])
+  })
+})
+
+describe('removing a meta from a banked tileset', () => {
+  /** Banked sc2, two metas in the shared region: A at 255 (older), B at 254. */
+  function banked(): TilesDoc {
+    const tiles: TileEntry[] = [tile(0), tile(1), tile(2)]
+    tiles[254] = tile(0xbb)
+    tiles[255] = tile(0xaa)
+    return normalizeTiles({
+      mode: 'sc2',
+      count: 3,
+      tiles,
+      bankTiles: [[tile(9)], [], []],
+      sharedTiles: 2,
+      metas: [
+        { path: TREE, name: 'g_Tree', width: 2, height: 1, flags: 0, frames: 1, cells: [255, 0] },
+        { path: TORCH, name: 'g_Torch', width: 2, height: 1, flags: 0, frames: 1, cells: [254, 1] }
+      ]
+    })
+  }
+
+  it('closes up the shared region: only shared indices move', () => {
+    const { doc, mapping, removed } = removeMeta(banked(), TREE, [])
+    expect(removed).toBe(1)
+    expect(doc.sharedTiles).toBe(1)
+    expect(doc.tiles[255].pattern[0]).toBe(0xbb)
+    expect(doc.metas.map((binding) => binding.cells)).toEqual([[255, 1]])
+    expect(mapping!.slice(0, 3)).toEqual([0, 1, 2])
+    expect([mapping![254], mapping![255]]).toEqual([255, 0])
+    expect(doc.bankTiles[0][0].pattern[0]).toBe(9)
+  })
+
+  it('keeps a shared tile a map still shows, and a common one it reused', () => {
+    expect(removeMeta(banked(), TREE, [255]).removed).toBe(0)
+    const { doc } = removeMeta(banked(), TORCH, [])
+    expect(doc.count).toBe(3)
+    expect(doc.tiles[255].pattern[0]).toBe(0xaa)
+    expect(doc.sharedTiles).toBe(1)
   })
 })
 

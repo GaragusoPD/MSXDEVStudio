@@ -9,7 +9,7 @@
  */
 
 import { watch } from 'vue'
-import { normalizeMap, type MapDoc } from '../../../shared/msx/map'
+import { normalizeMap, stampFresh, type MapDoc } from '../../../shared/msx/map'
 import { isOwnedMeta, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../shared/msx/meta-owned'
 import type { TileMode } from '../../../shared/msx/modes'
 import type { Rgb } from '../../../shared/msx/palette'
@@ -360,7 +360,7 @@ async function importTiles(request: SheetImport): Promise<SheetImportOutcome> {
       height: layout.height,
       layers: [{ name: 'background', data: layout.tiles }]
     })
-    files.push({ path: mapPath, resource: { kind: 'map', doc: map } })
+    files.push({ path: mapPath, resource: { kind: 'map', doc: stampFresh(map) } })
   }
   const refused = await writeNew(files)
   if (refused) return failed(refused)
@@ -577,7 +577,7 @@ async function importBitmapTiles(request: SheetImport): Promise<SheetImportOutco
       cell: { width: made.doc.width, height: made.doc.height, cols: sheetCols(made.doc), ...(mode === 'sc3' ? { sc3: true } : {}) },
       layers: [{ name: 'background', data: layout.tiles }]
     })
-    files.push({ path: mapPath, resource: { kind: 'map', doc: map } })
+    files.push({ path: mapPath, resource: { kind: 'map', doc: stampFresh(map) } })
   }
   const refused = await writeNew(files)
   if (refused) return failed(refused)

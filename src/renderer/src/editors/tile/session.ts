@@ -265,9 +265,9 @@ function markDirty(session: TileSession): void {
 }
 
 /** Replaces the document and pushes one undo step. `remap` is set for reorders only. */
-export function commit(session: TileSession, doc: TilesDoc, label: string, remap?: number[]): void {
+export function commit(session: TileSession, doc: TilesDoc, label: string, remap?: number[], unmap?: number[]): void {
   session.doc = doc
-  session.history = pushHistory(session.history, doc, label, remap)
+  session.history = pushHistory(session.history, doc, label, remap, unmap)
   useTilesetStore().set(session.path, doc, session.path)
   markDirty(session)
 }
@@ -462,9 +462,13 @@ async function saveWithMap(session: TileSession, status: string, layout: number[
 
   const map = mapFromLayout(session.path, layout, cols, rows, offset)
   map.export = defaultExport(mapPath)
+  // Born in the tileset's current numbering: stamped, so no reorder already in
+  // its log is ever replayed over it.
+  const log = useTilesetStore().reorderLog(session.path)
+  const content = log.length ? { ...map, tilesetReorderSeen: log[log.length - 1].at } : map
   session.status = status
   try {
-    await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
+    await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: content }) })
   } catch (error) {
     session.status = `${status} — failed to write ${mapPath}: ${String(error)}`
   }
@@ -1105,7 +1109,13 @@ export async function removeMetaFile(session: TileSession, path: string): Promis
 function detachStep(session: TileSession, path: string, used: ReadonlySet<number> | null): RemovedMeta | null {
   const result: RemovedMeta = used ? removeMeta(session.doc, path, used) : { doc: detachMeta(session.doc, path), mapping: null, removed: 0 }
   if (result.doc === session.doc) return null
-  commit(session, result.doc, 'remove meta-tile', result.mapping ?? undefined)
+  // Tile 0 never belongs to a meta, so it stays at 0 and every other tile
+  // mapped there was dropped: undo brings back only what moved.
+  const unmap = result.mapping?.map((_, i) => i)
+  result.mapping?.forEach((to, from) => {
+    if (unmap && (to !== 0 || from === 0)) unmap[to] = from
+  })
+  commit(session, result.doc, 'remove meta-tile', result.mapping ?? undefined, unmap)
   if (session.active >= result.doc.count) select(session, result.doc.count - 1)
   return result
 }
@@ -1457,7 +1467,7 @@ export function undo(session: TileSession): void {
   if (!canUndo(session.history)) return
   // Undoing a reorder has to renumber maps back, so the seam gets the inverse mapping.
   const leaving = session.history.entries[session.history.index]
-  if (leaving.remap) publishRemap(session, invertMapping(leaving.remap))
+  if (leaving.remap) publishRemap(session, leaving.unmap ?? invertMapping(leaving.remap))
   session.history = undoHistory(session.history)
   applyHistory(session)
 }

@@ -185,6 +185,8 @@ export interface MapSession {
   tilesetError: string | null
   /** Last tileset `reorderLog` entry (by `at`) this map has folded in; null = never replayed. */
   tilesetReorderSeen: number | null
+  /** The open-time renumber prompt was declined: the map stays unstamped, so it asks again. */
+  reorderDeclined: boolean
 
   activeLayer: number
   tool: MapTool
@@ -293,6 +295,7 @@ export function mapSession(path: string): MapSession {
     refMetas: new Map(),
     tilesetError: null,
     tilesetReorderSeen: null,
+    reorderDeclined: false,
     activeLayer: 0,
     tool: 'stamp',
     filledRect: false,
@@ -390,6 +393,7 @@ async function load(session: MapSession): Promise<void> {
     const parsedDoc = normalizeMap(raw)
     session.history = createHistory({ doc: parsedDoc })
     session.tilesetReorderSeen = typeof (raw as SavedMap).tilesetReorderSeen === 'number' ? (raw as SavedMap).tilesetReorderSeen! : null
+    session.reorderDeclined = false
     session.error = null
     await loadTileset(session)
   } catch (error) {
@@ -693,7 +697,10 @@ async function replayPersistedReorders(session: MapSession): Promise<void> {
     `The tileset "${doc(session).tileset}" was reorganized ${result.applied} time${result.applied === 1 ? '' : 's'} ` +
       `since this map was last opened. Renumber this map's tiles to match?`
   )
-  if (!confirmed) return
+  if (!confirmed) {
+    session.reorderDeclined = true
+    return
+  }
   session.history = createHistory({ doc: result.doc })
   session.tilesetReorderSeen = result.seenAt
   markDirty(session)
@@ -789,6 +796,12 @@ export async function saveSession(session: MapSession): Promise<void> {
   // What is on the canvas is what gets saved — a float left hanging would be
   // in the picture the user saw and not in the file.
   await dropFloat(session)
+  // What is saved is in the tileset's current numbering, so it says so: without
+  // a stamp, the next open — and the build, which then replays nothing — could
+  // not tell this map from one that missed every reorder in the log. Not after
+  // a declined renumber: the map is behind, and should go on saying so.
+  const log = useTilesetStore().reorderLog(doc(session).tileset)
+  if (session.tilesetReorderSeen === null && !session.reorderDeclined) session.tilesetReorderSeen = log.at(-1)?.at ?? 0
   const content: SavedMap = { ...doc(session) }
   if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
   await window.api.invoke('fs:write', { path: session.path, content: serializeResource({ kind: 'map', doc: content }) })
@@ -846,6 +859,7 @@ export async function setTileset(session: MapSession, tilesetPath: string): Prom
     layers: current.layers.map((layer) => ({ ...layer, placements: [] }))
   })
   session.tilesetReorderSeen = null
+  session.reorderDeclined = false
   await loadTileset(session)
 
   // A bitmap tileset *states* its geometry, so take it rather than guess: the

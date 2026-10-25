@@ -215,7 +215,7 @@ export async function removeMetaFromTileset(
     ? ` and ${placements ? `${plural(placements, 'placement')} from` : 'it from'} ${names}`
     : ''
   const tiles = result.removed
-    ? ` ${plural(result.removed, 'tile')} went with it; the tiles above them moved down.`
+    ? ` ${plural(result.removed, 'tile')} went with it; the other tiles renumbered to match.`
     : result.refused
       ? ` Its tiles stay as art: ${result.refused}`
       : ' Its tiles stay — something else still shows them.'

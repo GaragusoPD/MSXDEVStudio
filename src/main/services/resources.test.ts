@@ -346,6 +346,34 @@ describe('meta-tiles that own their pixels, exported from the files alone', () =
 })
 
 describe('exportResourceFile', () => {
+  it("exports a closed map in its tileset's current numbering, but only a stamped one", () => {
+    const root = scratch('reorder-replay')
+    writeTileset(root, 'res/hero.tiles.json')
+    const path = join(root, 'res/hero.tiles.json')
+    // Tiles 0 and 1 swapped after the map last saw the log.
+    const swap = Array.from({ length: 256 }, (_, i) => (i === 0 ? 1 : i === 1 ? 0 : i))
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf-8')), reorderLog: [{ path: 'res/hero.tiles.json', mapping: swap, at: 20 }] }))
+    const map = normalizeMap({
+      tileset: 'res/hero.tiles.json',
+      width: 2,
+      height: 1,
+      layers: [{ name: 'bg', data: [0, 1] }],
+      export: defaultExport('res/level.map.json')
+    })
+    const exported = (seen: number | null): string => {
+      const content = JSON.parse(serializeResource({ kind: 'map', doc: map }))
+      if (seen !== null) content.tilesetReorderSeen = seen
+      writeFileSync(join(root, 'res/level.map.json'), JSON.stringify(content))
+      exportResourceFile(root, 'res/level.map.json', { force: true })
+      return readFileSync(join(root, 'content/level_map.c'), 'utf-8')
+    }
+    const asWritten = exported(null)
+    expect(exported(20)).toBe(asWritten)
+    const replayed = exported(10)
+    expect(replayed).not.toBe(asWritten)
+    expect(replayed.replace(/0x01, 0x00/, '0x00, 0x01')).toBe(asWritten)
+  })
+
   it('writes a deterministic C header to the export target', () => {
     const root = scratch('export')
     writeTileset(root, 'art/hero.tiles.json')

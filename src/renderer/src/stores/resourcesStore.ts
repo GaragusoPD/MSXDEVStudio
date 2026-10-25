@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import type { ConversionResult, ResourceEntry } from '../../../shared/ipc'
-import { createMapDoc, SCREEN_COLS, SCREEN_ROWS } from '../../../shared/msx/map'
+import { createMapDoc, SCREEN_COLS, SCREEN_ROWS, stampFresh } from '../../../shared/msx/map'
 import { defaultExport, serializeResource } from '../../../shared/msx/resource'
 import { createTilesDoc } from '../../../shared/msx/tile'
 import type { SheetDestination } from '../editors/sheet-import'
@@ -114,7 +114,7 @@ export const useResourcesStore = defineStore('resources', {
       })
       await window.api.invoke('fs:write', {
         path: map,
-        content: serializeResource({ kind: 'map', doc: { ...createMapDoc(tileset, SCREEN_COLS, SCREEN_ROWS), export: defaultExport(map) } })
+        content: serializeResource({ kind: 'map', doc: stampFresh({ ...createMapDoc(tileset, SCREEN_COLS, SCREEN_ROWS), export: defaultExport(map) }) })
       })
       await this.refresh()
       return { tileset, map }
