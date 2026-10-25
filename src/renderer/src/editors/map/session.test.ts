@@ -1392,8 +1392,7 @@ describe('paint mode', () => {
 
     it('promotion drops every session reference that named a tile by number', async () => {
       // The brush and clipboard would stamp old indices as bank art on the
-      // next click; a picked-but-unplaced meta names old tiles too, and the
-      // blocker only refuses *placements*. `setTileset` is the precedent.
+      // next click. A picked meta stays, re-pointed at the shared region.
       const session = await openMap()
       resize(session, 32, SCREEN_ROWS)
       pickTile(session, 2, [1, 2], { width: 2, height: 1, tiles: [1, 2] })
@@ -1410,7 +1409,8 @@ describe('paint mode', () => {
       expect(session.brushBlock).toBeNull()
       expect(session.brushMeta).toBeNull()
       expect(session.pickerSelection).toEqual([0])
-      expect(doc(session).metas).toEqual([])
+      const tileset = useTilesetStore().patternDoc(TILES)!
+      expect(doc(session).metas[0].cells.every((tile) => tile >= MAX_TILES - tileset.sharedTiles)).toBe(true)
     })
 
     it('refuses promotion on a taller map and says why', async () => {
@@ -1452,13 +1452,16 @@ describe('paint mode', () => {
       expect(useTilesetStore().patternDoc(TILES)).toBe(tileset)
     })
 
-    it('refuses promotion while the map places meta-tiles, which name tiles by number', async () => {
+    it('refuses promotion while the map bakes meta-tiles, whose tiles are in the grid', async () => {
       const session = await openMap()
       resize(session, 32, SCREEN_ROWS)
       pickMeta(session, META)
       placeMetaAt(session, 2, 2)
+      expect(promotionBlocker(session)).toBeNull()
+      selectPlacementAt(session, 2, 2)
+      setBaked(session, true)
 
-      expect(promotionBlocker(session)).toContain('meta-tiles')
+      expect(promotionBlocker(session)).toContain('baked meta-tiles')
       expect(canPromoteToBanked(session)).toBe(false)
     })
 

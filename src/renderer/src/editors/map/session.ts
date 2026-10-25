@@ -29,7 +29,6 @@ import {
   isIndexedLayer,
   MAX_MAP_METAS,
   metaSlotOf,
-  metaUseCount,
   setLayerIndexed as setLayerIndexedPure,
   validateMap,
   movePlacement,
@@ -1491,11 +1490,24 @@ export function repackBlocker(session: MapSession): string | null {
       'the others would keep the old tile numbering. Remove or merge them first.'
     )
   }
-  if (metaUseCount(current) > 0) {
+  // Live placements of attached metas survive: the repack moves their art to
+  // the shared region and re-points them (`metasToShared`). A baked one's
+  // tiles are in the grid, and a meta this map does not own names old numbers.
+  const placed = current.layers.flatMap((layer) => layer.placements)
+  if (placed.some((placement) => placement.baked)) {
+    return 'Repacking the screen renumbers every tile, and this map has baked meta-tiles whose tiles are in the grid. Make them live first.'
+  }
+  const attached = new Set(tileset.metas.map((binding) => binding.path))
+  const foreign = [...new Set(placed.map((placement) => current.metas[placement.slot]?.path ?? '?'))].filter((path) => !attached.has(path))
+  if (foreign.length) {
     return (
-      'Repacking the screen renumbers every tile, and this map places meta-tiles that name tiles by number. ' +
-      'Remove the placements first.'
+      `Repacking the screen renumbers every tile, and this map places ${foreign.map(fileOf).join(', ')}, ` +
+      'which name tiles by number. Remove those placements first.'
     )
+  }
+  if (!isBanked(tileset)) {
+    const unread = tileset.metas.filter((binding) => !session.ownedMetas.has(binding.path)).map((binding) => fileOf(binding.path))
+    if (unread.length) return `Repacking the screen moves every attached meta-tile's art, and ${unread.join(', ')} could not be read.`
   }
   return null
 }
@@ -1512,8 +1524,9 @@ export function canPromoteToBanked(session: MapSession): boolean {
  * rewrite.
  */
 const BANKING_CONSEQUENCES =
-  'This renumbers every tile in the tileset: any other map or meta-tile drawn with it will show ' +
-  "wrong art until it is repainted, and the tileset's named blocks and tile flags are cleared."
+  'This renumbers every tile in the tileset: any other map drawn with it will show wrong art until it is ' +
+  "repainted, attached meta-tiles keep their art in tiles every bank shares, and the tileset's named blocks " +
+  'and tile flags are cleared.'
 
 export const PROMOTION_PROMPT =
   `This screen is out of tiles. Switch to banked (three banks of ${MAX_TILES})? ${BANKING_CONSEQUENCES} ` +
@@ -1731,13 +1744,35 @@ function repackBanked(session: MapSession, indices: ArrayLike<number>, width: nu
   if (!tileset || !layer) return null
 
   const sharedStart = MAX_TILES - tileset.sharedTiles
-  const shared = isBanked(tileset) ? tileset.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(tileset.mode)) : []
-  const packed = packBankedTiles(indices, width, height, tileset.mode, { shared })
+  let shared: TileEntry[] = tileset.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(tileset.mode))
+  let metas = tileset.metas
+  if (!isBanked(tileset)) {
+    const moved = metasToShared(session, tileset)
+    if (typeof moved === 'string') {
+      session.status = moved
+      return null
+    }
+    ;({ shared, metas } = moved)
+  }
+  // A cell a live placement draws over is never seen, so it is packed blank
+  // and costs no tile. ponytail: what was under it is gone if the placement
+  // is later removed; keep it when that matters more than the bank budget.
+  const visible = Uint8Array.from(indices)
+  for (const placement of layer.placements) {
+    const ref = current.metas[placement.slot]
+    ref?.cells?.forEach((tile, i) => {
+      const cx = placement.x + (i % ref.width)
+      const cy = placement.y + Math.floor(i / ref.width)
+      if (!tile || cx >= current.width || cy >= current.height) return
+      for (let y = 0; y < TILE_SIZE; y++) visible.fill(0, (cy * TILE_SIZE + y) * width + cx * TILE_SIZE, (cy * TILE_SIZE + y) * width + cx * TILE_SIZE + TILE_SIZE)
+    })
+  }
+  const packed = packBankedTiles(visible, width, height, tileset.mode, { shared })
 
   // An empty cell stays the see-through tile 0 rather than whatever blank the
   // packer numbered first in its band.
   const { bankTiles, layout: data, unplaced } = tileset.reserveTile0
-    ? reserveBankTile0(packed, tileset.mode, current.width, (cell) => layer.data[cell] === 0 && isBlankCell(indices, width, cell))
+    ? reserveBankTile0(packed, tileset.mode, current.width, (cell) => isBlankCell(visible, width, cell) && (layer.data[cell] === 0 || !isBlankCell(indices, width, cell)))
     : { bankTiles: packed.doc.bankTiles, layout: packed.layout, unplaced: packed.unplaced }
 
   // Through `normalizeTiles`, so what the session holds is byte-for-byte what
@@ -1747,22 +1782,48 @@ function repackBanked(session: MapSession, indices: ArrayLike<number>, width: nu
   const merged = normalizeTiles({
     ...packed.doc,
     bankTiles,
+    metas,
     palette: tileset.palette,
     reserveTile0: tileset.reserveTile0,
     export: tileset.export
   })
-  const layers = current.layers.map((entry, i) => (i === session.activeLayer ? { ...entry, data } : entry))
+  let next: MapDoc = { ...current, layers: current.layers.map((entry, i) => (i === session.activeLayer ? { ...entry, data } : entry)) }
+  // A meta the tileset does not carry names the old numbering; the blocker
+  // made sure none is placed, so dropping it only shifts slot numbers.
+  for (let slot = next.metas.length - 1; slot >= 0; slot--) {
+    if (!metas.some((binding) => binding.path === next.metas[slot].path)) next = removeMetaRef(next, slot)
+  }
 
   publishTileset(session, merged)
-  // `metas: []` as `setTileset` does: a meta picked but not yet placed (the
-  // blocker only refuses placements) names tiles by the old numbering.
-  session.history = createHistory({ doc: { ...current, layers, metas: [] } })
+  session.history = createHistory({ doc: next })
+  rebuildMetaViews(session)
+  refreshMetaRefs(session)
   markDirty(session)
   forgetTileNumbers(session)
 
   const counts = merged.bankTiles.map((bank) => bank.length).join('/')
   const short = unplaced.reduce((sum, count) => sum + count, 0)
   return `${counts} tiles in banks 1-3` + (short ? `, ${short} cells could not be placed` : '')
+}
+
+/**
+ * The tileset's attached metas resolved again into an empty banked set, so
+ * their art lands in the shared region (255 down) that every bank shows — how
+ * a banked tileset keeps a meta's tiles. The bindings name those indices,
+ * which `packBankedTiles` keeps given the same `shared` tiles.
+ */
+function metasToShared(session: MapSession, tileset: TilesDoc): { shared: TileEntry[]; metas: TilesDoc['metas'] } | string {
+  if (!tileset.metas.length) return { shared: [], metas: [] }
+  const loaded = new Map<string, LoadedMeta>()
+  for (const binding of tileset.metas) {
+    const meta = session.ownedMetas.get(binding.path)
+    if (!meta) return `${fileOf(binding.path)} could not be read, so its art cannot be moved into the banks.`
+    loaded.set(binding.path, { meta, name: meta.export?.name || defaultExport(binding.path).name })
+  }
+  const empty = normalizeTiles({ mode: tileset.mode, count: 1, bankTiles: [[blankTileEntry(tileset.mode)], [], []], metas: tileset.metas })
+  const { doc: resolved, problems } = refreshMetas(empty, loaded)
+  if (problems.length) return problems[0]
+  return { shared: resolved.tiles.slice(MAX_TILES - resolved.sharedTiles, MAX_TILES), metas: resolved.metas }
 }
 
 /**
