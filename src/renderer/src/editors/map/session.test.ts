@@ -43,6 +43,9 @@ import {
   paintDotSize,
   paintDrag,
   paintPointAt,
+  maxZoom,
+  setZoom,
+  MAX_ZOOM,
   paintPreviewPoints,
   pickerBankOffset,
   pickMeta,
@@ -879,6 +882,35 @@ describe('paint mode', () => {
     })
   })
 
+  describe('zoom', () => {
+    const sized = (session: ReturnType<typeof mapSession>, width: number, height: number): void => {
+      session.history = { ...session.history, present: { ...session.history.present, doc: { ...doc(session), width, height } } }
+    }
+    it('goes up to 32 pixels a dot on a screen-sized map, in whole pixels a dot past 48', async () => {
+      const session = await openMap()
+      sized(session, 32, 24)
+      expect(maxZoom(session)).toBe(208) // 26 pixels a dot: 6656×4992, inside the canvas budget
+      setZoom(session, 1000)
+      expect(session.zoom).toBe(208)
+      setZoom(session, 61)
+      expect(session.zoom).toBe(64)
+      setZoom(session, 13)
+      expect(session.zoom).toBe(13)
+      setZoom(session, 1)
+      expect(session.zoom).toBe(4)
+    })
+
+    it('a small map reaches the slider’s end; a big one stops where its canvas would be refused', async () => {
+      const session = await openMap()
+      sized(session, 8, 8)
+      expect(maxZoom(session)).toBe(MAX_ZOOM)
+      sized(session, 256, 64)
+      const max = maxZoom(session)
+      expect(256 * max).toBeLessThanOrEqual(16384)
+      expect(256 * 64 * max * max).toBeLessThanOrEqual(32 * 1024 * 1024)
+    })
+  })
+
   it('paintPointAt turns a canvas offset into a dot at the session zoom (pixels per cell)', async () => {
     const session = await openMap()
     session.zoom = 16 // one dot is two canvas pixels
@@ -893,8 +925,9 @@ describe('paint mode', () => {
       const session = await openMap()
       // The slider runs 4..48 in steps of 2, so most zooms give a fractional dot
       // (zoom 12 is 1.5 canvas pixels): the case a rounded size drifts on, and
-      // the one a single zoom-16 check can never see.
-      for (let zoom = 4; zoom <= 48; zoom += 2) {
+      // the one a single zoom-16 check can never see. Past 48 it goes in whole
+      // dots, up to MAX_ZOOM.
+      for (let zoom = 4; zoom <= MAX_ZOOM; zoom += zoom < 48 ? 2 : 8) {
         session.zoom = zoom
         const size = paintDotSize(session)
         // Eight dots span exactly one cell, or the preview walks off the grid.

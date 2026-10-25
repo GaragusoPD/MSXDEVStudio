@@ -33,6 +33,8 @@ import {
   doc,
   dropFloat,
   mapSession,
+  maxZoom,
+  MIN_ZOOM,
   nudgeSelection,
   pasteClipboard,
   pruneMapSessions,
@@ -42,6 +44,7 @@ import {
   setMode,
   setPaintTool,
   setTool,
+  setZoom,
   undo,
 } from './session'
 
@@ -50,6 +53,14 @@ const resourcesStore = useResourcesStore()
 
 const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed(() => mapSession(path.value))
+
+// A map grown past what its canvas can take at this zoom comes back down to it.
+watch(
+  () => maxZoom(session.value),
+  (max) => {
+    if (session.value.zoom > max) setZoom(session.value, max)
+  }
+)
 
 const TOOLS: { id: MapTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'stamp', icon: 'edit', title: 'Stamp — drag to paint the picked tile(s)' },
@@ -322,11 +333,13 @@ onMounted(() => void resourcesStore.refresh())
         >
           <Icon name="zoom_in" />
           <input
-            v-model.number="session.zoom"
+            :value="session.zoom"
             type="range"
-            :min="4"
-            :max="48"
+            :min="MIN_ZOOM"
+            :max="maxZoom(session)"
             :step="2"
+            :title="`${session.zoom / 8} pixels a dot`"
+            @input="setZoom(session, Number(($event.target as HTMLInputElement).value))"
           >
         </label>
         <label class="inline">

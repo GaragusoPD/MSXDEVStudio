@@ -1182,6 +1182,37 @@ export function renderMapPixels(
   return { width, height, indices }
 }
 
+/** The slider's ends, in pixels per cell: 256 is 32 pixels a dot, for paint mode. */
+export const MIN_ZOOM = 4
+export const MAX_ZOOM = 256
+/**
+ * The most pixels the map's canvas may hold. It is one canvas the size of the
+ * whole map, redrawn whole on every change, and a browser refuses one past
+ * 16384 a side — blank, not an error.
+ * ponytail: a whole-map canvas caps zoom on big maps; drawing only the part in
+ * view would lift the cap, if pixel-level work on a large map ever needs it.
+ */
+const MAX_STAGE_PIXELS = 32 * 1024 * 1024
+const MAX_STAGE_SIDE = 16384
+
+/**
+ * The highest zoom this map's canvas can take. Past 48 it comes in whole
+ * multiples of `TILE_SIZE`, so every dot is a whole number of pixels.
+ */
+export function maxZoom(session: MapSession): number {
+  const { width, height } = doc(session)
+  const fit = Math.min(Math.sqrt(MAX_STAGE_PIXELS / Math.max(1, width * height)), MAX_STAGE_SIDE / Math.max(1, width, height))
+  const zoom = fit > 48 ? Math.floor(fit / TILE_SIZE) * TILE_SIZE : Math.floor(fit / 2) * 2
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom))
+}
+
+/** Sets the zoom within what this map's canvas can take — past 48, to whole pixels a dot. */
+export function setZoom(session: MapSession, zoom: number): void {
+  const asked = Math.round(zoom) || session.zoom
+  const snapped = asked > 48 ? Math.round(asked / TILE_SIZE) * TILE_SIZE : asked
+  session.zoom = Math.max(MIN_ZOOM, Math.min(maxZoom(session), snapped))
+}
+
 /**
  * Canvas offset to a dot. `session.zoom` is pixels per CELL (`MapCanvas.vue`
  * sizes its stage by it), so a dot is that over `TILE_SIZE`. Not clamped: a
