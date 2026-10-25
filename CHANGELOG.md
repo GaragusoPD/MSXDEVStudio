@@ -7,6 +7,54 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-25
+
+### Added
+
+- **Banks, chosen rather than imposed (SCREEN 2/4).** The map editor's tileset
+  section has a **Repeat ⇄ Banked** switch: one set of 256 tiles in all three
+  thirds of the screen, or a set per third, up to 768 on screen — either way,
+  any time, repacked from what the screen shows so nothing on it changes.
+  Banked, each third can be **filled from another tileset**: its tiles are
+  copied into that bank, the source is remembered, and ↻ copies it again.
+- **Bank choice on every image import.** Importing into a SCREEN 2/4 tileset or
+  map asks **Auto** (one set, banked only when the picture needs more and can
+  be), **Repeat** or **Banked**.
+- **Make a meta-tile from a map selection** — a button beside cut/copy/paste
+  turns the selected cells into a new `.meta-tiles.json` with those pixels as
+  its own art, empty tiles see-through.
+- **Copy and paste between maps and meta-tiles.** A copy keeps the pixels too:
+  pasted into a map with another tileset it becomes that tileset's tiles;
+  pasted into a meta-tile or animation pose it is drawn there, a meta-tile
+  growing to fit. The pose editor gets Copy/Paste and Ctrl+C/V.
+- **Replace a meta-tile's poses from an image** — *Import sheet* into an
+  existing meta-tile or animation can replace its poses instead of adding to
+  them, a meta-tile taking the picture's size: how a placeholder gets real art.
+- **Map editor zoom to 32 pixels a dot**, for painting dot by dot.
+
+### Changed
+
+- **The Resources panel is an accordion of thumbnail cards.** Each kind is a
+  section with its count, several open at once and remembered per project;
+  each resource is a card with a thumbnail — a tileset's tiles, a meta-tile's
+  pose, a map as the game draws it, a sprite, a screen — and its short name.
+- **License: the credit is now any one of** the MSXDEVStudio logo, the text
+  "Made with MSXDEVStudio", or the text "MSXDEVStudio by P.D.Garaguso". Games
+  the wizard makes print "Made with MSXDEVStudio".
+- An image import set to Auto no longer banks a 256×192 picture that fits in
+  one set of 256 tiles.
+
+### Fixed
+
+- **A meta-tile's tiles no longer come back after being deleted, or lose an
+  edit, in the tile editor.** They are its own art, rebuilt from its file, so
+  the tile editor now refuses to paint or delete them and says where to edit
+  them; the grid outlines them and names their meta-tile. Remove the meta-tile
+  (now a labelled **Remove** button) and they become ordinary art. A tileset
+  import that replaces the whole set asks once and removes its meta-tiles
+  first, instead of having them rebuild over the new picture.
+- The map editor's edit mode forks a meta-tile's tile instead of rewriting it.
+
 ## [0.2.5] - 2026-10-14
 
 ### Added
