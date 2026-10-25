@@ -52,14 +52,17 @@ You may not:
 
 3. ATTRIBUTION
 
-Software you create using MSXDEVStudio must credit the author. Use the wording:
+Software you create using MSXDEVStudio must credit it in any one of these
+ways — any one of them is enough:
 
-    Built with MSXDEVStudio by P.D. Garaguso
+  a) display the MSXDEVStudio logo;
 
-or any similar wording that names the author. Place it somewhere a user can
-reasonably find it: a title screen, a credits screen, an about box, a README
-file, or accompanying documentation. This mirrors the attribution the MSXgl
-library asks of the games built with it.
+  b) display the text:  Made with MSXDEVStudio
+
+  c) display the text:  MSXDEVStudio by P.D.Garaguso
+
+Place it somewhere a user can reasonably find it: a title screen, a credits
+screen, an about box, a README file, or accompanying documentation.
 
 The credit must remain factual and neutral. It must not state or imply that
 Pablo D. Garaguso endorses, sponsors, approves of, or is affiliated with your

@@ -211,7 +211,7 @@ export function suggestTarget(request: Pick<NewGameRequest, 'kit' | 'displayMode
 
 export function attributionLines(request: Pick<NewGameRequest, 'audio'>): string[] {
   const lines = [
-    'Built with MSXDEVStudio by P.D. Garaguso',
+    'Made with MSXDEVStudio',
     "Powered by MSXgl + MSXtk by Guillaume 'Aoineko' Blanchard (CC BY-SA 4.0)",
     'Compiled with SDCC',
     'Not endorsed by the above.'

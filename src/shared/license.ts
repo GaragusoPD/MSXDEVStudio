@@ -26,7 +26,7 @@ export const LICENSE_SUMMARY = {
     'Remove or alter this license, the copyright notice, or the credit below.'
   ],
   must: [
-    'Credit the author in software you make with it — "Built with MSXDEVStudio by P.D. Garaguso", or similar wording that names the author, anywhere a user can find it.',
+    'Credit MSXDEVStudio in software you make with it — the MSXDEVStudio logo, "Made with MSXDEVStudio", or "MSXDEVStudio by P.D.Garaguso", any one of them, anywhere a user can find it.',
     'Comply with the licenses of MSXgl, SDCC, openMSX and the other tools MSXDEVStudio drives. They are not covered by this license.'
   ]
 } as const

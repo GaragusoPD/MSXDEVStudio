@@ -115,7 +115,7 @@ describe('suggestTarget', () => {
 describe('attributionLines', () => {
   it('always names MSXDEVStudio, MSXgl and SDCC, and never GrafxKid', () => {
     const lines = attributionLines(req({ kit: 'text' }))
-    expect(lines.join('\n')).toContain('Built with MSXDEVStudio by P.D. Garaguso')
+    expect(lines.join('\n')).toContain('Made with MSXDEVStudio')
     expect(lines.join('\n')).toContain("Guillaume 'Aoineko' Blanchard")
     expect(lines.join('\n')).toContain('CC BY-SA 4.0')
     expect(lines.join('\n')).toContain('Compiled with SDCC')

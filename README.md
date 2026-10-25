@@ -488,11 +488,11 @@ author in what you make.**
 
 **You must:**
 
-- Credit the author in software you create with MSXDEVStudio. Wording such as
-  *"Built with MSXDEVStudio by P.D. Garaguso"*, or anything similar that names the
-  author, placed anywhere a user can reasonably find it: a title screen, a
-  credits screen, an about box, a README, or accompanying documentation. This
-  mirrors what MSXgl asks of the games built with it.
+- Credit MSXDEVStudio in software you create with it, in any one of three ways:
+  the MSXDEVStudio logo, the text *"Made with MSXDEVStudio"*, or the text
+  *"MSXDEVStudio by P.D.Garaguso"* — placed anywhere a user can reasonably find
+  it: a title screen, a credits screen, an about box, a README, or accompanying
+  documentation.
 - Keep that credit factual and neutral. It must not state or imply that Pablo D.
   Garaguso endorses, sponsors, approves of or is affiliated with your product.
 

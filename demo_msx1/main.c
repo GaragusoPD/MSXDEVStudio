@@ -70,7 +70,7 @@
 //  build on its code and art in your own projects, commercial or not, with no
 //  obligation to credit this demo. See README.md for the full notice.
 //
-//  Built with MSXDEVStudio by P.D. Garaguso.
+//  Made with MSXDEVStudio.
 //  Powered by MSXgl and MSXtk by Guillaume "Aoineko" Blanchard (CC BY-SA 4.0),
 //  compiled with SDCC, sound in Shiru's ayFX format.
 //  None of the above endorse this demo. The in-game credits screen says the
