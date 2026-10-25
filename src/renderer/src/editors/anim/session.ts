@@ -40,6 +40,9 @@ import {
   type TileAnimDoc
 } from '../../../../shared/msx/tile-anim'
 import { tilePixels, type AnimLoop, type TileBlock } from '../../../../shared/msx/tile'
+import { paletteToRgb } from '../../../../shared/msx/palette'
+import { pictureTiles } from '../../../../shared/msx/sheet-convert'
+import { pictureClipboard } from '../picture-clipboard'
 import { applyRoleStroke, splitBlockPoints, type Point, type TileTool } from '../../../../shared/tile-editor'
 import { canRedo, canUndo, createHistory, pushHistory, redo as redoHistory, undo as undoHistory, type History } from '../../../../shared/history'
 import { parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
@@ -420,19 +423,21 @@ export function setLoop(session: AnimSession, loop: AnimLoop): void {
  * be up to `MAX_META_SIZE` a side; only what *moves* in it is a window.
  */
 export function resize(session: AnimSession, width: number, height: number): void {
-  const current = doc(session)
+  const next = resized(doc(session), width, height)
+  if (typeof next === 'string') session.status = next
+  else commit(session, next)
+}
+
+/** The document at another size, or why it cannot be — `resize`'s rule, also used by a paste that grows a meta. */
+function resized(current: PoseFile, width: number, height: number): PoseFile | string {
   const w = Math.max(1, Math.round(width) || 1)
   const h = Math.max(1, Math.round(height) || 1)
   if (isOwnedMeta(current)) {
-    if (w > MAX_META_SIZE || h > MAX_META_SIZE) {
-      session.status = `A meta-tile is at most ${MAX_META_SIZE}×${MAX_META_SIZE} tiles.`
-      return
-    }
+    if (w > MAX_META_SIZE || h > MAX_META_SIZE) return `A meta-tile is at most ${MAX_META_SIZE}×${MAX_META_SIZE} tiles.`
   } else if (w * h > MAX_ANIM_CELLS) {
-    session.status = `An animation window holds at most ${MAX_ANIM_CELLS} tiles.`
-    return
+    return `An animation window holds at most ${MAX_ANIM_CELLS} tiles.`
   }
-  if (w === current.width && h === current.height) return
+  if (w === current.width && h === current.height) return current
   const blank = normalizeTileAnim({ mode: current.mode, frames: [{}] }).frames[0].tiles[0]
   const frames = current.frames.map((frame) => ({
     ...frame,
@@ -449,10 +454,66 @@ export function resize(session: AnimSession, width: number, height: number): voi
       const y = Math.floor(i / w)
       return x < current.width && y < current.height ? current.holes[y * current.width + x] : false
     })
-    commit(session, { ...current, width: w, height: h, frames, holes })
+    return { ...current, width: w, height: h, frames, holes }
+  }
+  return { ...current, width: w, height: h, frames }
+}
+
+// ── the pixel clipboard (`picture-clipboard.ts`) ─────────────────────────────
+
+/** Copies the current pose's pixels, for a paste into a map or another meta-tile. */
+export function copyPose(session: AnimSession): void {
+  const current = doc(session)
+  pictureClipboard.value = { picture: posePixels(session, session.frame), rgb: paletteToRgb(null), mode: current.mode, from: session.path }
+  session.status = `Copied pose ${session.frame + 1} (${current.width}×${current.height} tiles).`
+}
+
+/**
+ * Pastes the clipboard's pixels into the current pose, top-left on top-left,
+ * as one undo step. A meta-tile grows to fit (up to its limit); an animation
+ * keeps its window's size and the picture is cut to it. A tile the picture
+ * draws into stops being see-through.
+ */
+export function pastePose(session: AnimSession): void {
+  const clip = pictureClipboard.value
+  if (!clip) {
+    session.status = 'Copy something first — a selection in a map, or a pose.'
     return
   }
-  commit(session, { ...current, width: w, height: h, frames })
+  const cols = Math.ceil(clip.picture.width / 8)
+  const rows = Math.ceil(clip.picture.height / 8)
+  let current = doc(session)
+  if (isOwnedMeta(current)) {
+    const grown = resized(current, Math.min(MAX_META_SIZE, Math.max(current.width, cols)), Math.min(MAX_META_SIZE, Math.max(current.height, rows)))
+    if (typeof grown === 'string') {
+      session.status = grown
+      return
+    }
+    current = grown
+  }
+  const { tiles, lossy } = pictureTiles(current.mode, clip.picture, current.mode === 'sc1' ? current.pair : undefined)
+  const at = (i: number): number | null => {
+    const x = i % current.width
+    const y = Math.floor(i / current.width)
+    return x < cols && y < rows ? y * cols + x : null
+  }
+  const frames = current.frames.map((frame, f) =>
+    f !== session.frame ? frame : { ...frame, tiles: frame.tiles.map((tile, i) => (at(i) === null ? tile : tiles[at(i)!])) }
+  )
+  const drawn = (i: number): boolean => {
+    const k = at(i)
+    return k !== null && (tiles[k].pattern.some(Boolean) || tiles[k].color.some(Boolean))
+  }
+  const next: PoseFile = isOwnedMeta(current)
+    ? { ...current, frames, holes: current.holes.map((hole, i) => hole && !drawn(i)) }
+    : { ...current, frames }
+  commit(session, next)
+  const cut = cols > current.width || rows > current.height
+  session.status =
+    `Pasted ${cols}×${rows} tiles into pose ${session.frame + 1}` +
+    (lossy ? ` (${lossy} reduced to two colours a row)` : '') +
+    (cut ? ` — cut to ${current.width}×${current.height}` : '') +
+    '.'
 }
 
 // ── meta-tiles: footprint and flags ─────────────────────────────────────────

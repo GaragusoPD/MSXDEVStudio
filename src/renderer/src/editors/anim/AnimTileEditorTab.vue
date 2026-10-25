@@ -19,10 +19,13 @@ import { useTabsStore } from '../../stores/tabsStore'
 import AnimCanvas from './AnimCanvas.vue'
 import AnimFrameBar from './AnimFrameBar.vue'
 import AnimSidePanel from './AnimSidePanel.vue'
+import { pictureClipboard } from '../picture-clipboard'
 import {
   animSession,
   canRedo,
   canUndo,
+  copyPose,
+  pastePose,
   doc,
   ownedMeta,
   pruneAnimSessions,
@@ -79,6 +82,12 @@ function onKeydown(event: KeyboardEvent): void {
   } else if (key === 's') {
     event.preventDefault()
     void save()
+  } else if (key === 'c') {
+    event.preventDefault()
+    copyPose(session.value)
+  } else if (key === 'v') {
+    event.preventDefault()
+    pastePose(session.value)
   }
 }
 
@@ -140,6 +149,21 @@ watch(
           @click="redo(session)"
         >
           <Icon name="redo" />
+        </button>
+        <button
+          type="button"
+          title="Copy this pose's pixels (Ctrl+C) — paste them into a map, or another meta-tile"
+          @click="copyPose(session)"
+        >
+          <Icon name="content_copy" />
+        </button>
+        <button
+          type="button"
+          title="Paste pixels copied in a map or a pose into this pose, top-left (Ctrl+V) — a meta-tile grows to fit"
+          :disabled="!pictureClipboard"
+          @click="pastePose(session)"
+        >
+          <Icon name="content_paste" />
         </button>
         <button
           type="button"

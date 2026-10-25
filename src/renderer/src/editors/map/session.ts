@@ -83,7 +83,8 @@ import { compactTileset, composePicture, pictureExtent, placePicture, type Pictu
 import { defaultExport, parseResource, RESOURCE_DIR, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
 import { cellsToOwnedMeta } from '../../../../shared/msx/sheet-convert'
 import { screenPixels } from '../../../../shared/msx/screen'
-import type { Rgb } from '../../../../shared/msx/palette'
+import { paletteToRgb, type Rgb } from '../../../../shared/msx/palette'
+import { pictureClipboard, pixelsFromElsewhere } from '../picture-clipboard'
 import { clampFloat, clipRect, floatRect, liftFloat, placeFloat, type Float } from '../../../../shared/floating'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
 import {
@@ -2404,15 +2405,46 @@ export function cancelFloat(session: MapSession): void {
 export function copySelection(session: MapSession): void {
   const float = session.float
   if (float?.kind === 'picture') return
+  let top: number
   if (float) {
     session.clipboard = { width: float.clip.width, height: float.clip.height, tiles: Array.from(float.clip.values) }
+    top = float.y
   } else {
     const current = doc(session)
     const layer = current.layers[session.activeLayer]
     if (!layer || !session.selection) return
     session.clipboard = copyRect(current, layer, session.selection)
+    top = session.selection.y
+  }
+  // The pixels too, for a paste into another map or a meta-tile
+  // (`picture-clipboard.ts`); this map's own paste keeps the tile numbers.
+  const tileset = session.tileset
+  if (tileset && canPaint(session)) {
+    pictureClipboard.value = {
+      picture: stampPixels(tileset, session.clipboard, top),
+      rgb: paletteToRgb(tileset.palette),
+      mode: tileset.mode,
+      from: session.path
+    }
   }
   session.status = `Copied ${session.clipboard.width}×${session.clipboard.height}`
+}
+
+/** What a stamp of tile numbers draws, its first row at map row `top` — which picks each row's bank on a banked tileset. */
+function stampPixels(tileset: TilesDoc, stamp: Stamp, top: number): { width: number; height: number; indices: Uint8Array } {
+  const width = stamp.width * TILE_SIZE
+  const indices = new Uint8Array(width * stamp.height * TILE_SIZE)
+  const banked = isBanked(tileset)
+  for (let cy = 0; cy < stamp.height; cy++) {
+    for (let cx = 0; cx < stamp.width; cx++) {
+      const tile = stamp.tiles[cy * stamp.width + cx] ?? 0
+      const pixels = banked ? bankTilePixels(tileset, bankOfRow(top + cy), tile) : tilePixels(tileset, tile)
+      for (let y = 0; y < TILE_SIZE; y++) {
+        indices.set(pixels.subarray(y * TILE_SIZE, (y + 1) * TILE_SIZE), (cy * TILE_SIZE + y) * width + cx * TILE_SIZE)
+      }
+    }
+  }
+  return { width, height: stamp.height * TILE_SIZE, indices }
 }
 
 /**
@@ -2445,6 +2477,13 @@ export function cutSelection(session: MapSession): void {
  * which is the one that drags it.
  */
 export function pasteClipboard(session: MapSession, at?: Point): void {
+  // Copied in another map or a meta-tile: its pixels, placed as an imported
+  // picture is — so another tileset's art lands as this tileset's tiles.
+  const pixels = pixelsFromElsewhere(session.path)
+  if (pixels && session.tileset && canPaint(session)) {
+    floatPicture(session, { ...pixels.picture, rgb: pixels.rgb }, session.tileset.mode)
+    return
+  }
   const clip = session.clipboard
   if (!clip || refuseIndexed(session)) return
   void dropFloat(session)

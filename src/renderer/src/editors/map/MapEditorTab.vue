@@ -20,6 +20,7 @@ import MapPicker from './MapPicker.vue'
 import MapSidePanel from './MapSidePanel.vue'
 import Icon from '../../components/Icon.vue'
 import { isTypingTarget } from '../../commands'
+import { pixelsFromElsewhere } from '../picture-clipboard'
 import {
   cancelFloat,
   canPaint,
@@ -276,8 +277,8 @@ onMounted(() => void resourcesStore.refresh())
           </button>
           <button
             type="button"
-            title="Paste — it floats until you drag it into place and press Enter (Ctrl+V)"
-            :disabled="!session.clipboard"
+            title="Paste — it floats until you drag it into place and press Enter (Ctrl+V). Art copied in another map or a meta-tile comes in as pixels, made into this tileset's tiles."
+            :disabled="!session.clipboard && !pixelsFromElsewhere(session.path)"
             @click="pasteClipboard(session)"
           >
             <Icon name="content_paste" />

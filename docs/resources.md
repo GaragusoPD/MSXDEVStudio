@@ -141,6 +141,16 @@ that bank, so the cells there draw its art. It is a copy, edited here from then
 on; ↻ copies it again after the source changed. The map editor's zoom goes to
 32 pixels a dot, for painting dot by dot.
 
+**Copying between maps and meta-tiles** — a copy (Ctrl+C) in a map or in a
+meta-tile's pose editor also keeps the *pixels*. Pasted into the same map it is
+the same tile numbers; pasted into a map drawn with another tileset it floats as
+a picture and becomes that tileset's tiles when you drop it; pasted into a pose
+it is drawn there, top-left, and a meta-tile grows to fit. To turn part of a map
+into a meta-tile directly — an imported picture, say — select it and press the
+**meta-tile** button beside cut/copy/paste: a new `res/<map>_meta<n>.meta-tiles.json`
+gets those pixels as its own art, empty tiles see-through, and the map is left
+as it is.
+
 Every **Import image…** into a SCREEN 2/4 tileset or map asks the same thing:
 **Banks: Auto** (one set, banked only when the picture needs more than 256 tiles
 and can be), **Repeat** (one set, never banked) or **Banked** (a set per third —

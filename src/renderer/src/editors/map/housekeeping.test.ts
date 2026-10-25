@@ -18,6 +18,9 @@ import {
   doc,
   importPicture,
   metaFromSelection,
+  copySelection,
+  pasteClipboard,
+  dropFloat,
   mapSession,
   pruneMapSessions,
   removeUnusedTiles,
@@ -33,6 +36,7 @@ import {
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
+import { pictureClipboard, type PictureClip } from '../picture-clipboard'
 
 const MAP = 'res/level.map.json'
 const OTHER = 'res/other.map.json'
@@ -452,5 +456,38 @@ describe('metaFromSelection', () => {
     session.selection = { x: 0, y: 0, width: 17, height: 2 }
     await metaFromSelection(session)
     expect(session.status).toMatch(/at most 16×16/)
+  })
+})
+
+describe('copying between maps', () => {
+  it('a copy in one map pastes into a map with another tileset as pixels, made into that tileset\'s tiles', async () => {
+    pictureClipboard.value = null
+    const OTHER_TILES = 'res/other.tiles.json'
+    files[OTHER_TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 1, reserveTile0: true }) })
+    files[OTHER] = mapFile(new Array(64).fill(0), 8, 8, OTHER_TILES)
+
+    const from = await openMap()
+    from.selection = { x: 0, y: 0, width: 2, height: 1 }
+    copySelection(from)
+    const clipped = (): PictureClip | null => pictureClipboard.value
+    expect(clipped()?.from).toBe(MAP)
+
+    const into = await openMap(OTHER)
+    pasteClipboard(into)
+    expect(into.float?.kind).toBe('picture')
+    await dropFloat(into)
+    // The same dots as the source cells, drawn with the other tileset's own new tiles.
+    const source = renderMapPixels(doc(from), from.tileset!, 0).indices
+    const pasted = renderMapPixels(doc(into), into.tileset!, 0).indices
+    for (let y = 0; y < 8; y++) expect(pasted.slice(y * 64, y * 64 + 16)).toEqual(source.slice(y * 64, y * 64 + 16))
+    expect(into.tileset!.count).toBeGreaterThan(1)
+  })
+
+  it('within the same map, a paste keeps the tile numbers', async () => {
+    const session = await openMap()
+    session.selection = { x: 0, y: 0, width: 2, height: 1 }
+    copySelection(session)
+    pasteClipboard(session)
+    expect(session.float?.kind).toBe('cells')
   })
 })

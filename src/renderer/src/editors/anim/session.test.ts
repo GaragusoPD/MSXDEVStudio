@@ -6,6 +6,8 @@ import { normalizeTileAnim, type TileAnimDoc } from '../../../../shared/msx/tile
 import {
   addFrame,
   animSession,
+  copyPose,
+  pastePose,
   beginStroke,
   canUndo,
   doc,
@@ -27,6 +29,8 @@ import {
 import { onAnimSaved, type AnimSavedEvent } from './events'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { resetExternalWatches } from '../external-changes'
+import { pictureClipboard } from '../picture-clipboard'
+import { createOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 
 const PATH = 'res/coin.anim-tiles.json'
 let files: Record<string, string>
@@ -190,5 +194,51 @@ describe('what a step costs', () => {
     const recoloured = { ...same, frames: [same.frames[0], { ...same.frames[1], tiles: same.frames[1].tiles.map((t) => ({ ...t, color: new Array(8).fill(0x41) })) }] }
     expect(stepBytes(recoloured)).toBe(96)
     expect(stepBytes(normalizeTileAnim({ mode: 'sc1', width: 2 }))).toBe(16)
+  })
+})
+
+describe('the pixel clipboard', () => {
+  const META = 'res/rock.meta-tiles.json'
+  /** `cols × rows` tiles of pixels, every dot `color` except the last tile column, left empty. */
+  function clip(cols: number, rows: number, color: number) {
+    const width = cols * 8
+    const indices = new Uint8Array(width * rows * 8)
+    for (let y = 0; y < rows * 8; y++) for (let x = 0; x < (cols - 1) * 8; x++) indices[y * width + x] = color
+    return { picture: { width, height: rows * 8, indices }, rgb: [], mode: 'sc2' as const, from: 'res/level.map.json' }
+  }
+
+  it('a paste into a meta-tile grows it to fit, as one undo step, and the drawn tiles stop being see-through', async () => {
+    files[META] = serializeResource({ kind: 'metatiles', doc: { ...createOwnedMeta('sc2', 1, 1), holes: [true] } })
+    const session = animSession(META)
+    await settled()
+    pictureClipboard.value = clip(3, 2, 6)
+    pastePose(session)
+
+    const meta = doc(session) as OwnedMetaDoc
+    expect([meta.width, meta.height]).toEqual([3, 2])
+    expect(meta.holes).toEqual([false, false, false, false, false, false])
+    const pixels = posePixels(session, 0)
+    expect(pixels.indices[0]).toBe(6)
+    expect(pixels.indices[2 * 8]).toBe(0) // the empty tile column pasted as empty
+    undo(session)
+    expect([doc(session).width, doc(session).height]).toEqual([1, 1])
+  })
+
+  it('an animation keeps its window size and the paste is cut to it', async () => {
+    const session = animSession(PATH)
+    await settled()
+    pictureClipboard.value = clip(3, 2, 6)
+    pastePose(session)
+    expect([doc(session).width, doc(session).height]).toEqual([1, 1])
+    expect(posePixels(session, 0).indices[0]).toBe(6)
+    expect(session.status).toMatch(/cut to 1×1/)
+  })
+
+  it('a copied pose is on the clipboard, named after its file', async () => {
+    const session = animSession(PATH)
+    await settled()
+    copyPose(session)
+    expect(pictureClipboard.value?.from).toBe(PATH)
+    expect(pictureClipboard.value?.picture.width).toBe(8)
   })
 })

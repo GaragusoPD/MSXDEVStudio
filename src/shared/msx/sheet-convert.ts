@@ -197,6 +197,16 @@ function poseTiles(cell: SheetCell, mode: TileMode, sc1: { fg: number; bg: numbe
   return { tiles, lossy }
 }
 
+/**
+ * A picture as pattern tiles, row-major, in `mode` — what a paste into a pose
+ * draws. SCREEN 1 draws in `pair`, the document's ink and paper, or else the
+ * picture's own two most-used colours.
+ */
+export function pictureTiles(mode: TileMode, cell: SheetCell, pair?: number): { tiles: TileEntry[]; lossy: number } {
+  const sc1 = mode !== 'sc1' ? null : pair === undefined ? sc1Pair([cell]) : { fg: (pair >> 4) & 0x0f, bg: pair & 0x0f }
+  return poseTiles(cell, mode, sc1)
+}
+
 export interface SheetPosesResult<T> {
   doc: T
   /** Tiles the mode's colour rule could not draw exactly. */
