@@ -15,6 +15,8 @@ import {
   mergeColorByte,
   normalizeTiles,
   packBankedTiles,
+  packChosen,
+  reserveBankTile0,
   packTiles,
   paintPixel,
   regroupAfterTile0Shift,
@@ -840,5 +842,62 @@ describe('packBankedTiles — the importer\'s own three-bank path', () => {
     expect(layout.slice(0, 4)).toEqual([0, 1, 0, 1])
     expect(isBanked(doc)).toBe(true)
     expect(validateTiles(doc)).toEqual([])
+  })
+})
+
+describe('packChosen — the import\'s bank choice', () => {
+  /** A 256-dot-wide picture `rows` tiles tall whose first `distinct` cells all differ (row 0 spells the cell number). */
+  function picture(rows: number, distinct: number): Uint8Array {
+    const indices = new Uint8Array(256 * rows * 8)
+    for (let cell = 0; cell < distinct; cell++) {
+      const ox = (cell % 32) * 8
+      const oy = Math.floor(cell / 32) * 8
+      for (let bit = 0; bit < 9; bit++) if (cell & (1 << bit)) indices[(oy + (bit >> 3)) * 256 + ox + (bit & 7)] = 15
+    }
+    return indices
+  }
+
+  it('auto keeps one set while the picture fits in it', () => {
+    const packed = packChosen(picture(24, 100), 256, 192, 'sc2', 'auto', { dedup: true })
+    expect(typeof packed !== 'string' && packed.banked).toBe(false)
+  })
+
+  it('auto banks a full screen that needs more than one set', () => {
+    const packed = packChosen(picture(24, 300), 256, 192, 'sc2', 'auto')
+    expect(typeof packed !== 'string' && packed.banked).toBe(true)
+  })
+
+  it('repeat keeps one set even when it overflows', () => {
+    const packed = packChosen(picture(24, 300), 256, 192, 'sc2', 'repeat')
+    expect(typeof packed !== 'string' && packed.banked).toBe(false)
+  })
+
+  it('banked needs the picture to be the screen\'s height, and SCREEN 2/4', () => {
+    expect(packChosen(picture(8, 10), 256, 64, 'sc2', 'banked')).toMatch(/exactly 192 dots/)
+    expect(packChosen(picture(24, 10), 256, 192, 'sc1', 'banked')).toMatch(/SC1 has one pattern table/)
+    const packed = packChosen(picture(24, 10), 256, 192, 'sc4', 'banked')
+    expect(typeof packed !== 'string' && packed.banked).toBe(true)
+  })
+
+  it('auto on a picture that cannot be banked keeps one set, short', () => {
+    const packed = packChosen(picture(16, 300), 256, 128, 'sc2', 'auto')
+    expect(typeof packed !== 'string' && packed.banked).toBe(false)
+  })
+})
+
+describe('reserveBankTile0', () => {
+  it('prepends the blank to every bank and shifts the layout, leaving blank cells on 0', () => {
+    const indices = new Uint8Array(256 * 192)
+    for (let y = 0; y < 192; y++) indices.fill(y < 64 ? 0 : y < 128 ? 2 : 3, y * 256, y * 256 + 256)
+    indices[0] = 7 // one cell of the top third that is not blank
+    const packed = packBankedTiles(indices, 256, 192, 'sc2')
+    const blank = (cell: number): boolean => cell !== 0 && cell < 256
+    const { bankTiles, layout, unplaced } = reserveBankTile0(packed, 'sc2', 32, blank)
+    expect(bankTiles.map((bank) => bank.length)).toEqual(packed.doc.bankTiles.map((bank) => bank.length + 1))
+    expect(bankTiles.every((bank) => bank[0].pattern.every((byte) => byte === 0))).toBe(true)
+    expect(layout[0]).toBe(packed.layout[0] + 1)
+    expect(layout[1]).toBe(0)
+    expect(layout[256]).toBe(packed.layout[256] + 1)
+    expect(unplaced).toEqual([0, 0, 0])
   })
 })

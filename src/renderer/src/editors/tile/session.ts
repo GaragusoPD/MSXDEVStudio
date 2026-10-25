@@ -35,6 +35,7 @@ import {
   colorByteAt,
   createTilesDoc,
   isBanked,
+  isBlankCell,
   isMetaPath,
   MAX_BLOCK,
   MAX_TILES,
@@ -43,14 +44,17 @@ import {
   animWindowProblems,
   convertTileMode,
   normalizeTiles,
-  packTiles,
+  packChosen,
   regroupAfterTile0Shift,
+  reserveBankTile0,
   removeTile,
   reorderTiles,
   swapRowColors,
   TILE_SIZE,
   tileModeConversionLossy,
   tilePixels,
+  type BankChoice,
+  type BankedPackResult,
   type MetaBinding,
   type PaintConflict,
   type TileAnimBinding,
@@ -285,10 +289,28 @@ export async function importImage(
   session: TileSession,
   result: ImportResult,
   mode: 'replace' | 'merge',
-  dedup: boolean
+  dedup: boolean,
+  banks: BankChoice = 'repeat'
 ): Promise<void> {
+  // A merge appends to the common set; banks are rebuilt whole or not at all.
+  if (banks === 'banked' && mode === 'merge') {
+    session.status = 'A banked import rebuilds all three banks — choose Replace to import it banked.'
+    return
+  }
+  // Decided before anything is removed: a refusal must leave the tileset as it was.
+  const sharedStart = MAX_TILES - session.doc.sharedTiles
+  const shared = session.doc.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(session.doc.mode))
+  const chosen = packChosen(result.indices, result.width, result.height, session.doc.mode, mode === 'merge' ? 'repeat' : banks, { dedup, shared })
+  if (typeof chosen === 'string') {
+    session.status = chosen
+    return
+  }
   if (mode === 'replace' && session.doc.metas.length && !(await removeMetasForReplace(session))) return
-  const packed = packTiles(result.indices, result.width, result.height, session.doc.mode, { dedup })
+  if (chosen.banked) {
+    await importBanked(session, result, chosen)
+    return
+  }
+  const packed = chosen
   // Replacing into a bank that already reserves tile 0 would otherwise let
   // `normalizeTiles` blank the freshly imported top-left tile in place below —
   // silently losing it, since `packTiles`'s own layout always starts at index
@@ -370,6 +392,44 @@ export async function importImage(
       ? `; ${dropped} tile${dropped === 1 ? '' : 's'} could not be added — the bank is full, and this map will not export until it has room for them`
       : '')
 
+  await saveWithMap(session, status, packed.layout, cols, rows, offset)
+}
+
+/**
+ * The banked half of `importImage`: the picture's three thirds become the three
+ * banks, a replace of the whole set. The shared meta-tile region survives at
+ * its own indices, as a replace always keeps it; under `reserveTile0` each
+ * bank's tile 0 stays the blank and the picture's empty cells point at it.
+ */
+async function importBanked(session: TileSession, result: ImportResult, packed: BankedPackResult): Promise<void> {
+  const cols = Math.floor(result.width / TILE_SIZE)
+  const rows = Math.floor(result.height / TILE_SIZE)
+  const { bankTiles, layout, unplaced } = session.doc.reserveTile0
+    ? reserveBankTile0(packed, session.doc.mode, cols, (cell) => isBlankCell(result.indices, result.width, cell))
+    : { bankTiles: packed.doc.bankTiles, layout: packed.layout, unplaced: packed.unplaced }
+  // A fresh document, as the map's own repack makes one: flags and blocks
+  // name tiles by number and every number changed.
+  const doc = normalizeTiles({
+    ...packed.doc,
+    bankTiles,
+    palette: session.doc.mode === 'sc4' ? (result.palette ?? session.doc.palette) : null,
+    reserveTile0: session.doc.reserveTile0,
+    export: session.doc.export
+  })
+  commit(session, doc, 'import image (banked)')
+  const short = unplaced.reduce((sum, count) => sum + count, 0)
+  const status =
+    `Imported into three banks — ${doc.bankTiles.map((bank) => bank.length).join('/')} tiles` +
+    (packed.lossyTiles.length ? `, ${packed.lossyTiles.length} needed color reduction` : '') +
+    (short ? `; ${short} cells could not be placed (a bank filled at ${MAX_TILES} tiles)` : '')
+  await saveWithMap(session, status, layout, cols, rows, 0)
+}
+
+/**
+ * Saves an import and, unless a map already sits beside the tileset, writes
+ * the arrangement it computed as one. `offset` is added to every layout index.
+ */
+async function saveWithMap(session: TileSession, status: string, layout: number[], cols: number, rows: number, offset: number): Promise<void> {
   // The map has to describe what a build will actually read — the tileset as
   // it lands on disk, not just the in-memory doc `commit` above updated — so
   // it must not be written until the save succeeds, and never on its own if
@@ -399,7 +459,7 @@ export async function importImage(
     return
   }
 
-  const map = mapFromLayout(session.path, packed.layout, cols, rows, offset)
+  const map = mapFromLayout(session.path, layout, cols, rows, offset)
   map.export = defaultExport(mapPath)
   session.status = status
   try {

@@ -9,7 +9,7 @@
  */
 import { computed, ref } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
-import { isBanked, TILE_SIZE } from '../../../../shared/msx/tile'
+import { isBanked, TILE_SIZE, type BankChoice } from '../../../../shared/msx/tile'
 import type { ScreenMode } from '../../../../shared/msx/modes'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
@@ -47,8 +47,8 @@ async function run(action: () => Promise<void> | void): Promise<void> {
 }
 
 /** The picture floats over the map; dropping it is what turns it into tiles (`dropFloat`). */
-function onImported(result: ImportResult, _file: File | null, mode: ScreenMode): void {
-  floatPicture(props.session, result, mode)
+function onImported(result: ImportResult, _file: File | null, mode: ScreenMode, banks: BankChoice): void {
+  floatPicture(props.session, result, mode, banks)
 }
 
 /** The tileset's own palette — programmable on V9938, the fixed MSX1 set otherwise — read as the tile editor reads it. */
@@ -211,6 +211,7 @@ const budget = computed(() => paintBudgetLabel(props.session))
       current-palette-label="This tileset's palette"
       :prefer-current="session.tileset.palette !== null"
       use-label="Place this image"
+      banking="screen"
       @close="importing = false"
       @imported="onImported"
     />

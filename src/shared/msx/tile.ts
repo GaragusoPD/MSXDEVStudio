@@ -922,6 +922,85 @@ export function packBankedTiles(
   return { doc, layout, lossyTiles, unplaced }
 }
 
+/** Whether cell `cell` of a `width`-dot-wide picture is every dot colour 0. */
+export function isBlankCell(indices: ArrayLike<number>, width: number, cell: number): boolean {
+  const cols = width / TILE_SIZE
+  const ox = (cell % cols) * TILE_SIZE
+  const oy = Math.floor(cell / cols) * TILE_SIZE
+  for (let y = 0; y < TILE_SIZE; y++) {
+    for (let x = 0; x < TILE_SIZE; x++) if (indices[(oy + y) * width + ox + x]) return false
+  }
+  return true
+}
+
+/**
+ * Keeps tile 0 the reserved blank on a banked pack. `packBankedTiles` numbers
+ * each bank from 0, so a blank is prepended per bank and every layout index
+ * shifts by one; a cell `blank(cell)` says is empty stays tile 0, so its
+ * see-through survives. A bank that had all its slots in use loses its last
+ * tile to the shift — placed as tile 0 and counted in `unplaced`, the way the
+ * packer counts a cell it has no room for. `cols` is the picture's width in tiles.
+ */
+export function reserveBankTile0(
+  packed: BankedPackResult,
+  mode: TileMode,
+  cols: number,
+  blank: (cell: number) => boolean
+): { bankTiles: TileEntry[][]; layout: number[]; unplaced: number[] } {
+  const budget = MAX_TILES - packed.doc.sharedTiles
+  const bandRows = packed.layout.length / cols / BANK_COUNT
+  const unplaced = packed.unplaced.slice()
+  const bankTiles = packed.doc.bankTiles.map((bank) => [blankTileEntry(mode), ...bank].slice(0, budget))
+  const layout = packed.layout.map((index, cell) => {
+    if (blank(cell)) return 0
+    const shifted = index + 1
+    if (shifted < budget) return shifted
+    unplaced[Math.min(BANK_COUNT - 1, Math.floor(cell / cols / bandRows))]++
+    return 0
+  })
+  return { bankTiles, layout, unplaced }
+}
+
+/**
+ * How an image import uses SCREEN 2/4's three pattern banks: one set of 256
+ * repeated in every third of the screen, a set per third (up to 768 tiles on
+ * screen), or — `auto` — one set unless the picture needs more than 256 and
+ * can be banked.
+ */
+export type BankChoice = 'auto' | 'repeat' | 'banked'
+
+/** Why a picture `height` dots tall cannot be split into the three banks in `mode`, or null. */
+export function bankedPackBlocker(mode: TileMode, height: number): string | null {
+  if (mode !== 'sc2' && mode !== 'sc4') return `${mode.toUpperCase()} has one pattern table — banks are SCREEN 2 and 4 only.`
+  const tall = BANK_COUNT * 8 * TILE_SIZE
+  if (height !== tall) {
+    return `Banked splits the picture into the screen's three thirds, so it must be exactly ${tall} dots (24 tiles) tall — this one is ${height}.`
+  }
+  return null
+}
+
+export type ChosenPack = ({ banked: false } & PackResult) | ({ banked: true } & BankedPackResult)
+
+/**
+ * Packs an imported picture the way `banks` says. A string when `banked` was
+ * asked for and cannot be done; `auto` falls back to one set when it cannot.
+ */
+export function packChosen(
+  indices: ArrayLike<number>,
+  width: number,
+  height: number,
+  mode: TileMode,
+  banks: BankChoice,
+  options: { dedup?: boolean; shared?: TileEntry[] } = {}
+): ChosenPack | string {
+  const banked = (): ChosenPack => ({ banked: true, ...packBankedTiles(indices, width, height, mode, { shared: options.shared }) })
+  if (banks === 'banked') return bankedPackBlocker(mode, height) ?? banked()
+  const single = packTiles(indices, width, height, mode, { dedup: options.dedup })
+  const short = Math.floor(width / TILE_SIZE) * Math.floor(height / TILE_SIZE) > single.layout.length
+  if (banks === 'auto' && short && bankedPackBlocker(mode, height) === null) return banked()
+  return { banked: false, ...single }
+}
+
 /**
  * Fixes up `groupColors` after prepending exactly one blank tile at index 0
  * (`reserveTile0`'s migration, and the tile editor's own import into a bank

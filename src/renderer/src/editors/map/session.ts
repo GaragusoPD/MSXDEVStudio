@@ -55,6 +55,9 @@ import {
   MAX_TILES,
   normalizeTiles,
   packBankedTiles,
+  reserveBankTile0,
+  isBlankCell,
+  type BankChoice,
   TILE_SIZE,
   tilePixels,
   type TileEntry,
@@ -1580,25 +1583,12 @@ function repackBanked(session: MapSession, indices: ArrayLike<number>, width: nu
   const sharedStart = MAX_TILES - tileset.sharedTiles
   const shared = isBanked(tileset) ? tileset.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(tileset.mode)) : []
   const packed = packBankedTiles(indices, width, height, tileset.mode, { shared })
-  const budget = MAX_TILES - packed.doc.sharedTiles
 
-  const reserve = tileset.reserveTile0
-  const unplaced = packed.unplaced.slice()
-  const bankTiles = packed.doc.bankTiles.map((bank) =>
-    reserve ? [blankTileEntry(tileset.mode), ...bank].slice(0, budget) : bank
-  )
-  const data = packed.layout.map((index, cell) => {
-    if (!reserve) return index
-    // An empty cell stays the see-through tile 0 rather than whatever blank
-    // the packer numbered first in its band.
-    if (layer.data[cell] === 0 && isBlankCell(indices, width, cell)) return 0
-    const shifted = index + 1
-    if (shifted < budget) return shifted
-    // The tile the shift pushed past the budget. Placed as tile 0 and counted,
-    // the way the packer itself treats a cell it has no room for.
-    unplaced[bankForRow(Math.floor(cell / current.width))]++
-    return 0
-  })
+  // An empty cell stays the see-through tile 0 rather than whatever blank the
+  // packer numbered first in its band.
+  const { bankTiles, layout: data, unplaced } = tileset.reserveTile0
+    ? reserveBankTile0(packed, tileset.mode, current.width, (cell) => layer.data[cell] === 0 && isBlankCell(indices, width, cell))
+    : { bankTiles: packed.doc.bankTiles, layout: packed.layout, unplaced: packed.unplaced }
 
   // Through `normalizeTiles`, so what the session holds is byte-for-byte what
   // the next load will read back — it is what blanks common tile 0 under
@@ -1623,17 +1613,6 @@ function repackBanked(session: MapSession, indices: ArrayLike<number>, width: nu
   const counts = merged.bankTiles.map((bank) => bank.length).join('/')
   const short = unplaced.reduce((sum, count) => sum + count, 0)
   return `${counts} tiles in banks 1-3` + (short ? `, ${short} cells could not be placed` : '')
-}
-
-/** Whether cell `cell` of a `width`-dot-wide picture is every dot colour 0. */
-function isBlankCell(indices: ArrayLike<number>, width: number, cell: number): boolean {
-  const cols = width / TILE_SIZE
-  const ox = (cell % cols) * TILE_SIZE
-  const oy = Math.floor(cell / cols) * TILE_SIZE
-  for (let y = 0; y < TILE_SIZE; y++) {
-    for (let x = 0; x < TILE_SIZE; x++) if (indices[(oy + y) * width + ox + x]) return false
-  }
-  return true
 }
 
 /**
@@ -1875,13 +1854,18 @@ export const REBUILD_PROMPT =
  *    is banked already: offers to repack the screen, picture included, into
  *    three banks.
  * 3. Otherwise refuses, saying how far it got. Nothing is half-imported.
+ *
+ * `banks` is the import's choice: `auto` is the order above, `repeat` never
+ * banks the screen (step 2 is skipped), and `banked` goes to step 2 straight
+ * away on a screen that is not banked yet.
  */
 export async function importPicture(
   session: MapSession,
   picture: Picture,
   mode: string,
   at: Point = { x: 0, y: 0 },
-  transparent: number | null = null
+  transparent: number | null = null,
+  banks: BankChoice = 'auto'
 ): Promise<boolean> {
   const blocker = housekeepingBlocker(session)
   if (blocker) {
@@ -1909,6 +1893,8 @@ export async function importPicture(
   }
   const bankOf = paintBankOf(session) ?? undefined
   const grid = { width: current.width, height: current.height, tiles: layer.data }
+
+  if (banks === 'banked' && !isBanked(tileset)) return bankPicture(session, pixels, base, cols, rows, null)
 
   const direct = placePicture(grid, tileset, pixels, cols, rows, { bankOf, origin })
   if (!direct.refused) {
@@ -1953,17 +1939,38 @@ export async function importPicture(
     }
   }
 
-  // Banks are the last resort: they need the whole 32×24 screen repacked.
-  const repack = repackBlocker(session)
-  if (repack !== null) {
-    session.status = `${direct.refused} ${repack}`
+  if (banks === 'repeat') {
+    session.status = `${direct.refused} (The import asked for one repeated set — choose Banks: Auto or Banked to bank the screen.)`
     return false
   }
-  const prompt = isBanked(tileset)
-    ? `${direct.refused} Rebuild the three banks from the screen with the picture on it? ${REBUILD_CONSEQUENCES}`
-    : `${direct.refused} Switch this screen to banked (three banks of ${MAX_TILES}) and import it there? ${BANKING_CONSEQUENCES}`
+  // Banks are the last resort: they need the whole 32×24 screen repacked.
+  return bankPicture(session, pixels, base, cols, rows, direct.refused)
+}
+
+/**
+ * Repacks the screen with the picture on it into three banks — switching it
+ * to banked, or rebuilding the banks it has — after asking. `refused` is why
+ * the picture did not fit as it is, or null when banks were asked for.
+ */
+function bankPicture(
+  session: MapSession,
+  pixels: ArrayLike<number>,
+  base: { width: number; height: number },
+  cols: number,
+  rows: number,
+  refused: string | null
+): boolean {
+  const why = refused ? `${refused} ` : ''
+  const repack = repackBlocker(session)
+  if (repack !== null) {
+    session.status = `${why}${repack}`
+    return false
+  }
+  const prompt = isBanked(session.tileset!)
+    ? `${why}Rebuild the three banks from the screen with the picture on it? ${REBUILD_CONSEQUENCES}`
+    : `${why}Switch this screen to banked (three banks of ${MAX_TILES}) and import it there? ${BANKING_CONSEQUENCES}`
   if (!window.confirm(prompt)) {
-    session.status = direct.refused
+    session.status = refused ?? 'Import cancelled — the screen is unchanged.'
     return false
   }
   const counts = repackBanked(session, pixels, base.width, base.height)
@@ -1977,7 +1984,7 @@ export async function importPicture(
  * Nothing is decided until it is dropped — the tiles, the budget, the offer to
  * bank — because only then is it known which cells the picture covers.
  */
-export function floatPicture(session: MapSession, picture: Picture & { rgb: Rgb[] }, mode: string): void {
+export function floatPicture(session: MapSession, picture: Picture & { rgb: Rgb[] }, mode: string, banks: BankChoice = 'auto'): void {
   const blocker = housekeepingBlocker(session)
   if (blocker) {
     session.status = blocker
@@ -1997,6 +2004,7 @@ export function floatPicture(session: MapSession, picture: Picture & { rgb: Rgb[
     picture: { width: picture.width, height: picture.height, indices: picture.indices },
     rgb: picture.rgb,
     mode,
+    banks,
     ...clampFloat(pasteCorner(session), cols, rows, current.width, current.height)
   }
   session.float = float
@@ -2034,6 +2042,8 @@ export interface PictureFloat {
   /** The colours the dialog converted it with, to draw it in while it floats. */
   rgb: Rgb[]
   mode: string
+  /** The import's bank choice, acted on when it is dropped (`importPicture`). */
+  banks: BankChoice
   x: number
   y: number
 }
@@ -2138,7 +2148,7 @@ export async function dropFloat(session: MapSession): Promise<void> {
   session.float = null
   const current = doc(session)
   if (float.kind === 'picture') {
-    const placed = await importPicture(session, float.picture, float.mode, { x: float.x, y: float.y }, 0)
+    const placed = await importPicture(session, float.picture, float.mode, { x: float.x, y: float.y }, 0, float.banks)
     // A placed picture is not selected: the next import would otherwise start on top of it.
     if (placed) session.selection = null
     else if (!session.float) session.float = float

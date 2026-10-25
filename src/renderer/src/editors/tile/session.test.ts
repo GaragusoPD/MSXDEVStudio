@@ -103,6 +103,49 @@ beforeEach(() => {
   pruneTileSessions(new Set())
 })
 
+describe('importImage with banks', () => {
+  /** A 256×192 picture: blank top third, then a solid band of colour 2, then one of colour 3. */
+  function screen(): ImportResult {
+    const width = 256
+    const height = 192
+    const indices = new Uint8Array(width * height)
+    for (let y = 64; y < height; y++) indices.fill(y < 128 ? 2 : 3, y * width, y * width + width)
+    return { width, height, indices, palette: null, rgb: [], report: { colorsUsed: 0, colorsMerged: 0, rowsAltered: 0, pixelsChanged: 0 } }
+  }
+
+  it('a banked replace makes the three thirds the three banks, and the map beside it points into them', async () => {
+    files[PATH] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 8, reserveTile0: true }) })
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, screen(), 'replace', false, 'banked')
+
+    const written = useTilesetStore().patternDoc(PATH)!
+    // Each bank: the reserved blank, then its band's art — the packer's own blank, for the empty top third.
+    expect(written.bankTiles.map((bank) => bank.length)).toEqual([2, 2, 2])
+    expect(written.reserveTile0).toBe(true)
+    const map = parseResource('res/main.map.json', files['res/main.map.json']).doc as MapDoc
+    expect(map.layers[0].data[0]).toBe(0) // a blank cell is the see-through tile 0
+    expect(map.layers[0].data[32 * 8]).toBe(1) // the middle third's first own tile
+    expect(session.status).toMatch(/Imported into three banks — 2\/2\/2 tiles/)
+  })
+
+  it('a banked merge is refused: banks are rebuilt whole', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, screen(), 'merge', false, 'banked')
+    expect(session.doc.count).toBe(8)
+    expect(session.status).toMatch(/choose Replace/)
+  })
+
+  it('a picture that cannot be banked is refused before anything changes', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, picture(2), 'replace', false, 'banked')
+    expect(session.doc.count).toBe(8)
+    expect(session.status).toMatch(/exactly 192 dots/)
+  })
+})
+
 // ── a meta-tile's tiles ──────────────────────────────────────────────────────
 
 const ROCK = 'res/rock.meta-tiles.json'

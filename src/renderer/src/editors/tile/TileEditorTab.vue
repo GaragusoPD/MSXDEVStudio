@@ -11,6 +11,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import type { TileTool, TileTransform } from '../../../../shared/tile-editor'
+import type { ScreenMode } from '../../../../shared/msx/modes'
+import type { BankChoice } from '../../../../shared/msx/tile'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import TileCanvas from './TileCanvas.vue'
@@ -76,8 +78,8 @@ async function exportNow(): Promise<void> {
 }
 
 /** The branching logic lives in `session.ts`'s `importImage` — testable there, not here. */
-async function onImported(result: ImportResult): Promise<void> {
-  await importImage(session.value, result, importMode.value, importDedup.value)
+async function onImported(result: ImportResult, _file: File | null, _mode: ScreenMode, banks: BankChoice): Promise<void> {
+  await importImage(session.value, result, importMode.value, importDedup.value, banks)
   await resourcesStore.refresh()
 }
 
@@ -256,6 +258,7 @@ watch(
       v-if="importVisible"
       :mode="session.doc.mode"
       :standalone="false"
+      banking="picture"
       @close="importVisible = false"
       @imported="onImported"
     />

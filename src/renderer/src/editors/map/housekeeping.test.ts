@@ -290,4 +290,36 @@ describe('importPicture', () => {
     // Every dot of the screen is the picture's.
     expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(pic.indices)
   })
+
+  /** A 32×24 screen on an empty tileset, and a picture of it with `distinct` different cells. */
+  async function screenWith(distinct: number): Promise<{ session: MapSession; pic: ReturnType<typeof picture> }> {
+    files[TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 1 }) })
+    files[MAP] = mapFile(new Array(32 * SCREEN_ROWS).fill(0), 32, SCREEN_ROWS)
+    const session = await openMap()
+    const pic = picture(32, SCREEN_ROWS, () => 0)
+    for (let cell = 0; cell < distinct; cell++) {
+      const ox = (cell % 32) * TILE_SIZE
+      const oy = Math.floor(cell / 32) * TILE_SIZE
+      for (let bit = 0; bit < 9; bit++) if (cell & (1 << bit)) pic.indices[(oy + (bit >> 3)) * pic.width + ox + (bit & 7)] = 15
+    }
+    return { session, pic }
+  }
+
+  it('Banks: Repeat never banks the screen — it says how to, and leaves it alone', async () => {
+    const { session, pic } = await screenWith(300)
+    const before = doc(session)
+    await importPicture(session, pic, 'sc2', { x: 0, y: 0 }, null, 'repeat')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(isBanked(session.tileset!)).toBe(false)
+    expect(doc(session)).toBe(before)
+    expect(session.status).toMatch(/choose Banks: Auto or Banked/)
+  })
+
+  it('Banks: Banked switches the screen to banked even when one set would do', async () => {
+    const { session, pic } = await screenWith(10)
+    await importPicture(session, pic, 'sc2', { x: 0, y: 0 }, null, 'banked')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(isBanked(session.tileset!)).toBe(true)
+    expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(pic.indices)
+  })
 })
