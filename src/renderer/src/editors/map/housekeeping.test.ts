@@ -21,6 +21,8 @@ import {
   removeUnusedTiles,
   renderMapPixels,
   resize,
+  switchToBanked,
+  switchToRepeat,
   undo,
   type MapSession
 } from './session'
@@ -321,5 +323,64 @@ describe('importPicture', () => {
     expect(confirm).toHaveBeenCalledOnce()
     expect(isBanked(session.tileset!)).toBe(true)
     expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(pic.indices)
+  })
+})
+
+describe('the Repeat/Banked switch', () => {
+  /** A 32×24 screen on `tiles`, whose first `distinct` cells draw different art (tile i is art(i)). */
+  async function screen(distinct: number, reserveTile0 = false): Promise<MapSession> {
+    const count = Math.min(distinct + 1, MAX_TILES)
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count, reserveTile0, tiles: Array.from({ length: count }, (_, i) => art(i)) })
+    })
+    const data = new Array(32 * SCREEN_ROWS).fill(0)
+    for (let i = 0; i < distinct; i++) data[i] = (i % (count - 1)) + 1
+    files[MAP] = mapFile(data, 32, SCREEN_ROWS)
+    return openMap()
+  }
+
+  it('goes to banked and back, and the screen shows the same dots all the way', async () => {
+    const session = await screen(40, true)
+    const before = renderMapPixels(doc(session), session.tileset!, 0).indices
+
+    switchToBanked(session)
+    expect(isBanked(session.tileset!)).toBe(true)
+    expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(before)
+
+    switchToRepeat(session)
+    expect(isBanked(session.tileset!)).toBe(false)
+    expect(session.tileset!.reserveTile0).toBe(true)
+    expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(before)
+    expect(doc(session).layers[0].data[32 * 23]).toBe(0) // an empty cell is still the see-through tile 0
+    expect(confirm).toHaveBeenCalledTimes(2)
+  })
+
+  it('stays banked when the screen draws more than one set holds', async () => {
+    files[TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 1 }) })
+    files[MAP] = mapFile(new Array(32 * SCREEN_ROWS).fill(0), 32, SCREEN_ROWS)
+    const session = await openMap()
+    const pic = { width: 256, height: 192, indices: new Uint8Array(256 * 192) }
+    for (let cell = 0; cell < 300; cell++) {
+      const ox = (cell % 32) * TILE_SIZE
+      const oy = Math.floor(cell / 32) * TILE_SIZE
+      for (let bit = 0; bit < 9; bit++) if (cell & (1 << bit)) pic.indices[(oy + (bit >> 3)) * 256 + ox + (bit & 7)] = 15
+    }
+    await importPicture(session, pic, 'sc2', { x: 0, y: 0 }, null, 'banked')
+    expect(isBanked(session.tileset!)).toBe(true)
+    confirm.mockClear()
+
+    switchToRepeat(session)
+    expect(isBanked(session.tileset!)).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(session.status).toMatch(/has to stay banked/)
+  })
+
+  it('a declined switch changes nothing', async () => {
+    const session = await screen(10)
+    confirm.mockReturnValue(false)
+    const before = session.tileset
+    switchToBanked(session)
+    expect(session.tileset).toBe(before)
   })
 })

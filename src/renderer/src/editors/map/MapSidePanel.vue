@@ -8,8 +8,9 @@
 import { computed, ref, watch } from 'vue'
 import { mapExport } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
+import { isBanked, MAX_TILES } from '../../../../shared/msx/tile'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
-import { addLayer, commit, doc, indexedSummary, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setIndexed, setTileset, setTransparent, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, bankSwitchBlocker, commit, doc, indexedSummary, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setIndexed, setTileset, setTransparent, switchToBanked, switchToRepeat, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 import MapPaintPanel from './MapPaintPanel.vue'
@@ -50,6 +51,10 @@ async function chooseTileset(path: string): Promise<void> {
   }
   await setTileset(props.session, path)
 }
+
+/** SCREEN 2/4 tilesets only: the modes with three pattern tables. */
+const bankable = computed(() => props.session.tileset?.mode === 'sc2' || props.session.tileset?.mode === 'sc4')
+const bankedNow = computed(() => (props.session.tileset ? isBanked(props.session.tileset) : false))
 
 /** The placement the canvas has selected, with the meta it names. */
 const selectedPlacement = computed(() => {
@@ -187,6 +192,35 @@ const packing = computed(() => {
       >
         Tileset reloaded.
       </p>
+      <template v-if="bankable">
+        <div
+          class="banks-row"
+          role="radiogroup"
+          aria-label="Banks"
+        >
+          <span>Banks</span>
+          <button
+            type="button"
+            role="radio"
+            :aria-checked="!bankedNow"
+            :class="{ active: !bankedNow }"
+            :title="bankedNow ? (bankSwitchBlocker(session, 'repeat') ?? 'One set of tiles, repeated in all three thirds of the screen') : 'One set of tiles, repeated in all three thirds of the screen'"
+            @click="bankedNow && switchToRepeat(session)"
+          >
+            Repeat
+          </button>
+          <button
+            type="button"
+            role="radio"
+            :aria-checked="bankedNow"
+            :class="{ active: bankedNow }"
+            :title="bankedNow ? `A set of ${MAX_TILES} per third` : (bankSwitchBlocker(session, 'banked') ?? `A set of ${MAX_TILES} per third — up to ${3 * MAX_TILES} tiles on screen`)"
+            @click="!bankedNow && switchToBanked(session)"
+          >
+            Banked
+          </button>
+        </div>
+      </template>
       <p
         v-if="mapDoc.metas.length"
         class="hint"
@@ -719,6 +753,33 @@ label > span:first-child {
 
 .tileset-row button:disabled {
   opacity: 0.4;
+}
+
+.banks-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.banks-row span {
+  flex: 1;
+}
+
+.banks-row button {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.banks-row button.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
 }
 
 .hint {

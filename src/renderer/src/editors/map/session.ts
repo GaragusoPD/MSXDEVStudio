@@ -55,6 +55,7 @@ import {
   MAX_TILES,
   normalizeTiles,
   packBankedTiles,
+  packTiles,
   reserveBankTile0,
   isBlankCell,
   type BankChoice,
@@ -1477,19 +1478,19 @@ export function repackBlocker(session: MapSession): string | null {
   }
   if (current.width !== 32 || current.height !== SCREEN_ROWS) {
     return (
-      `Switching to banked needs a map exactly 32 wide and ${SCREEN_ROWS} rows tall — ` +
+      `Repacking the screen needs a map exactly 32 wide and ${SCREEN_ROWS} rows tall — ` +
       `this one is ${current.width}×${current.height}.`
     )
   }
   if (current.layers.length > 1) {
     return (
-      `Switching to banked repacks one layer, and this map has ${current.layers.length} — ` +
+      `Repacking the screen works on one layer, and this map has ${current.layers.length} — ` +
       'the others would keep the old tile numbering. Remove or merge them first.'
     )
   }
   if (metaUseCount(current) > 0) {
     return (
-      'Switching to banked renumbers every tile, and this map places meta-tiles that name tiles by number. ' +
+      'Repacking the screen renumbers every tile, and this map places meta-tiles that name tiles by number. ' +
       'Remove the placements first.'
     )
   }
@@ -1558,6 +1559,86 @@ export function promoteToBanked(session: MapSession): void {
   const { width, height, indices } = renderMapPixels(doc(session), session.tileset!, session.activeLayer)
   const counts = repackBanked(session, indices, width, height)
   if (counts) session.status = `Switched to banked — ${counts}. Draw the last stroke again.`
+}
+
+/**
+ * Why this screen cannot be switched to `to` right now, or null when it can —
+ * the one answer behind the side panel's Repeat/Banked toggle and the switch
+ * itself.
+ */
+export function bankSwitchBlocker(session: MapSession, to: 'repeat' | 'banked'): string | null {
+  const tileset = session.tileset
+  if (!tileset || !canPaint(session)) return 'This map has no pattern tileset to bank.'
+  if (to === 'banked') return promotionBlocker(session)
+  if (!isBanked(tileset)) return 'This tileset already repeats one set in all three thirds.'
+  if (tileset.sharedTiles || tileset.metas.length) {
+    // A meta's tiles live at fixed indices in the shared region, which only a
+    // banked tileset has; one set has nowhere to keep them.
+    return 'This tileset has meta-tiles attached, whose art lives in the banks\' shared region. Remove them in the tile editor first.'
+  }
+  return repackBlocker(session)
+}
+
+/**
+ * Switches the screen to banked — three sets of 256, one per third — whenever
+ * the user asks, not only when painting runs out of room. The same repack as
+ * `promoteToBanked`, after the same warning.
+ */
+export function switchToBanked(session: MapSession): void {
+  const blocker = bankSwitchBlocker(session, 'banked')
+  if (blocker) {
+    session.status = blocker
+    return
+  }
+  if (!window.confirm(`Switch this screen to banked (three banks of ${MAX_TILES})? ${BANKING_CONSEQUENCES}`)) return
+  const { width, height, indices } = renderMapPixels(doc(session), session.tileset!, session.activeLayer)
+  const counts = repackBanked(session, indices, width, height)
+  if (counts) session.status = `Switched to banked — ${counts}. Each third now has its own tiles.`
+}
+
+/**
+ * Switches a banked screen back to one set of 256 repeated in all three thirds:
+ * renders what the screen shows and packs it again, identical cells merged, so
+ * nothing on screen changes. Refused, saying how many it would take, when the
+ * screen draws more than one set holds.
+ */
+export function switchToRepeat(session: MapSession): void {
+  const blocker = bankSwitchBlocker(session, 'repeat')
+  if (blocker) {
+    session.status = blocker
+    return
+  }
+  const tileset = session.tileset!
+  const current = doc(session)
+  const layer = current.layers[session.activeLayer]
+  const { width, height, indices } = renderMapPixels(current, tileset, session.activeLayer)
+  const packed = packTiles(indices, width, height, tileset.mode, { dedup: true })
+  const reserve = tileset.reserveTile0
+  const needed = packed.doc.count + (reserve ? 1 : 0)
+  if (packed.layout.length < current.width * current.height || needed > MAX_TILES) {
+    session.status = `This screen draws more different tiles than one set of ${MAX_TILES} holds, so it has to stay banked.`
+    return
+  }
+  if (!window.confirm(`Switch this screen to one set of ${MAX_TILES}, repeated in all three thirds? ${BANKING_CONSEQUENCES}`)) return
+  // Under `reserveTile0` a blank goes first and every index shifts by one, as
+  // a replacing import does; an empty cell that was 0 stays the see-through 0.
+  const tiles = reserve ? [blankTileEntry(tileset.mode), ...packed.doc.tiles.slice(0, packed.doc.count)] : packed.doc.tiles
+  const data = packed.layout.map((index, cell) =>
+    !reserve ? index : layer.data[cell] === 0 && isBlankCell(indices, width, cell) ? 0 : index + 1
+  )
+  const merged = normalizeTiles({
+    ...packed.doc,
+    count: tiles.length,
+    tiles,
+    palette: tileset.palette,
+    reserveTile0: reserve,
+    export: tileset.export
+  })
+  publishTileset(session, merged)
+  session.history = createHistory({ doc: { ...current, layers: current.layers.map((entry, i) => (i === session.activeLayer ? { ...entry, data } : entry)), metas: [] } })
+  markDirty(session)
+  forgetTileNumbers(session)
+  session.status = `Switched to one repeated set — ${merged.count} tiles.`
 }
 
 /**
