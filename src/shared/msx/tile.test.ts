@@ -873,15 +873,24 @@ describe('packChosen — the import\'s bank choice', () => {
     expect(typeof packed !== 'string' && packed.banked).toBe(false)
   })
 
-  it('banked needs the picture to be the screen\'s height, and SCREEN 2/4', () => {
-    expect(packChosen(picture(8, 10), 256, 64, 'sc2', 'banked')).toMatch(/exactly 192 dots/)
+  it('banked needs the picture to fit the screen\'s height, and SCREEN 2/4', () => {
+    expect(packChosen(picture(32, 10), 256, 256, 'sc2', 'banked')).toMatch(/at most 192 dots/)
     expect(packChosen(picture(24, 10), 256, 192, 'sc1', 'banked')).toMatch(/SC1 has one pattern table/)
     const packed = packChosen(picture(24, 10), 256, 192, 'sc4', 'banked')
     expect(typeof packed !== 'string' && packed.banked).toBe(true)
   })
 
+  it('auto banks a shorter picture by the screen\'s thirds, padded to 24 rows', () => {
+    // 21 rows, as a 256×168 picture: rows 0-7 are bank 0, 8-15 bank 1, 16-20 bank 2.
+    const packed = packChosen(picture(21, 300), 256, 168, 'sc2', 'auto')
+    if (typeof packed === 'string' || !packed.banked) throw new Error('not banked')
+    expect(packed.layout).toHaveLength(32 * 24)
+    expect(packed.doc.bankTiles.map((bank) => bank.length)).toEqual([256, 45, 1])
+    expect(packed.unplaced).toEqual([0, 0, 0])
+  })
+
   it('auto on a picture that cannot be banked keeps one set, short', () => {
-    const packed = packChosen(picture(16, 300), 256, 128, 'sc2', 'auto')
+    const packed = packChosen(picture(32, 300), 256, 256, 'sc2', 'auto')
     expect(typeof packed !== 'string' && packed.banked).toBe(false)
   })
 })

@@ -403,7 +403,8 @@ export async function importImage(
  */
 async function importBanked(session: TileSession, result: ImportResult, packed: BankedPackResult): Promise<void> {
   const cols = Math.floor(result.width / TILE_SIZE)
-  const rows = Math.floor(result.height / TILE_SIZE)
+  // A shorter picture is padded to the full 24 rows a banked map must have.
+  const rows = packed.layout.length / cols
   const { bankTiles, layout, unplaced } = session.doc.reserveTile0
     ? reserveBankTile0(packed, session.doc.mode, cols, (cell) => isBlankCell(result.indices, result.width, cell))
     : { bankTiles: packed.doc.bankTiles, layout: packed.layout, unplaced: packed.unplaced }

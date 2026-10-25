@@ -140,9 +140,9 @@ describe('importImage with banks', () => {
   it('a picture that cannot be banked is refused before anything changes', async () => {
     const session = tileSession(PATH)
     await settled()
-    await importImage(session, picture(2), 'replace', false, 'banked')
+    await importImage(session, { ...picture(2), height: 200, indices: new Uint8Array(16 * 200) }, 'replace', false, 'banked')
     expect(session.doc.count).toBe(8)
-    expect(session.status).toMatch(/exactly 192 dots/)
+    expect(session.status).toMatch(/at most 192 dots/)
   })
 })
 

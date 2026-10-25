@@ -889,10 +889,11 @@ export interface BankedPackResult {
  * appended after it — bands are appended positionally, not each into a fresh
  * array, so `layout` must stay exactly `cols × rows` long.
  *
- * Only ever called for sc2/sc4 at exactly 256×192 (the caller's own gate —
- * see `ImportImageDialog.vue`): sc1 has one pattern table, not three, so
- * there is no bank for this to fill, and any other size doesn't divide into
- * three whole eight-tile-row bands.
+ * Only ever called for sc2/sc4 at most 192 dots tall (`bankedPackBlocker`):
+ * sc1 has one pattern table, not three, so there is no bank for this to fill.
+ * The bands are always the screen's eight tile-rows each, so a shorter picture
+ * is packed as a full screen with blank rows below it — `layout` is always
+ * `cols × 24`, the height a map against a banked tileset must have.
  */
 export function packBankedTiles(
   indices: ArrayLike<number>,
@@ -902,7 +903,7 @@ export function packBankedTiles(
   options: { shared?: TileEntry[] } = {}
 ): BankedPackResult {
   const cols = Math.floor(width / TILE_SIZE)
-  const bandRows = Math.floor(height / BANK_COUNT / TILE_SIZE)
+  const bandRows = 8
   // `shared[i]` is the entry `sharedPatternBytes`/`sharedColorBytes` read at
   // hardware index `sharedStart + i` on the doc it came from — the same
   // ordering, so re-threading it below (`sharedStart + i` again) reproduces
@@ -929,7 +930,8 @@ export function packBankedTiles(
         const pixels = new Uint8Array(TILE_SIZE * TILE_SIZE)
         for (let y = 0; y < TILE_SIZE; y++) {
           for (let x = 0; x < TILE_SIZE; x++) {
-            pixels[y * TILE_SIZE + x] = indices[(absRow * TILE_SIZE + y) * width + tx * TILE_SIZE + x] ?? 0
+            const py = absRow * TILE_SIZE + y
+            pixels[y * TILE_SIZE + x] = py < height ? (indices[py * width + tx * TILE_SIZE + x] ?? 0) : 0
           }
         }
         const { pattern, color, lossyRows } = tileFromPixels(pixels)
@@ -1026,8 +1028,8 @@ export type BankChoice = 'auto' | 'repeat' | 'banked'
 export function bankedPackBlocker(mode: TileMode, height: number): string | null {
   if (mode !== 'sc2' && mode !== 'sc4') return `${mode.toUpperCase()} has one pattern table — banks are SCREEN 2 and 4 only.`
   const tall = BANK_COUNT * 8 * TILE_SIZE
-  if (height !== tall) {
-    return `Banked splits the picture into the screen's three thirds, so it must be exactly ${tall} dots (24 tiles) tall — this one is ${height}.`
+  if (height > tall) {
+    return `Banked splits the picture into the screen's three thirds, so it can be at most ${tall} dots (24 tiles) tall — this one is ${height}.`
   }
   return null
 }

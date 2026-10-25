@@ -163,9 +163,9 @@ async function saveTileset(): Promise<void> {
     }
 
     // SCREEN 2/4 has three pattern banks of 256 tiles, not one — a full
-    // 256×192 screen can use up to 768 distinct tiles across them. Anything
-    // smaller (or sc1, which has one pattern table) has no third bank to
-    // fill, so it keeps going down `packTiles`'s single-bank path unchanged.
+    // 256×192 screen can use up to 768 distinct tiles across them. A shorter
+    // picture banks by the same thirds, its map padded to 24 rows; sc1 has
+    // one pattern table and always goes down `packTiles`'s single-bank path.
     const packed = packChosen(result.indices, result.width, result.height, importer.options.mode, bankable.value ? banks.value : 'repeat', { dedup: true })
     if (typeof packed === 'string') {
       saved.value = `Not saved — ${packed}`
@@ -183,7 +183,8 @@ async function saveTileset(): Promise<void> {
     // The tiles alone cannot rebuild the picture. `layout` is the arrangement
     // the conversion already worked out, and without this it was discarded.
     const cols = Math.floor(result.width / TILE_SIZE)
-    const rows = Math.floor(result.height / TILE_SIZE)
+    // Banked pads a shorter picture to the 24 rows a banked map must have.
+    const rows = packed.banked ? layout.length / cols : Math.floor(result.height / TILE_SIZE)
     const map = mapFromLayout(path, layout, cols, rows)
     map.export = defaultExport(mapPath)
     await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })

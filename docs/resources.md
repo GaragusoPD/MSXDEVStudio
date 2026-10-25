@@ -162,8 +162,10 @@ as it is.
 Every **Import image…** into a SCREEN 2/4 tileset or map asks the same thing:
 **Banks: Auto** (one set, banked only when the picture needs more than 256 tiles
 and can be), **Repeat** (one set, never banked) or **Banked** (a set per third —
-into a tileset that needs a picture exactly 192 dots tall, and replaces the whole
-set).
+into a tileset that needs a picture at most 192 dots tall, and replaces the whole
+set). Banks follow the screen's thirds — rows 0–7, 8–15, 16–23 — so a shorter
+picture fills fewer of them, and its map is padded with blank rows to the 24 a
+banked map must have.
 
 In a **bitmap mode** a layered map needs to know which cell means "nothing",
 because a cell index is an atlas position and 0 is a picture like any other. So
