@@ -103,7 +103,9 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
     mode: initial.mode ?? 'sc2',
     palette: Array.isArray(initial.palette) ? [...initial.palette] : (initial.palette ?? 'optimized'),
     freeEntries: initial.freeEntries ? [...initial.freeEntries] : [],
-    dither: initial.dither ?? 'none'
+    dither: initial.dither ?? 'none',
+    fitWidth: initial.fitWidth,
+    fitHeight: initial.fitHeight
   })
 
   const worker = new Worker(new URL('../workers/quantize.worker.ts', import.meta.url), { type: 'module' })

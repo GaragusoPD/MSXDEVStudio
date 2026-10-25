@@ -7,7 +7,7 @@
 import { computed, ref, watch } from 'vue'
 import { BITMAP_MODES, MODES, TILE_MODES, isTileMode, type ScreenMode } from '../../../shared/msx/modes'
 import { mapFromLayout } from '../../../shared/msx/map'
-import { MAX_TILES, packBankedTiles, packTiles, TILE_SIZE } from '../../../shared/msx/tile'
+import { bankedPackBlocker, MAX_TILES, packChosen, TILE_SIZE, type BankChoice } from '../../../shared/msx/tile'
 import { RESOURCE_DIR, defaultExport, serializeResource } from '../../../shared/msx/resource'
 import { useImageImport, type ImportResult } from '../composables/useImageImport'
 import { useProjectStore } from '../stores/projectStore'
@@ -36,6 +36,12 @@ const props = withDefaults(
     preferCurrent?: boolean
     /** The label of the button that hands the result over; the target decides what accepting it does. */
     useLabel?: string
+    /**
+     * Whether to offer SCREEN 2/4's bank choice, and what has to fit it: `picture` — the picture itself is
+     * split into the three banks (a tileset import), `screen` — the screen it lands on is (a map import).
+     * Null hides it. The standalone import is always `picture`.
+     */
+    banking?: 'picture' | 'screen' | null
   }>(),
   {
     mode: 'sc2',
@@ -45,14 +51,15 @@ const props = withDefaults(
     freeEntries: null,
     currentPaletteLabel: "This screen's palette",
     preferCurrent: false,
-    useLabel: 'Use this image'
+    useLabel: 'Use this image',
+    banking: null
   }
 )
 /** `file`/`mode` are extra (Spec 10): the picked file itself, for a target that wants to keep the
  *  original's bytes, and which mode the dialog actually converted to, since the dropdown lets the
  *  user change it away from the `mode` prop. Existing single-arg `@imported` handlers (Specs
  *  08/09) keep working — the params are simply ignored. */
-const emit = defineEmits<{ close: []; imported: [result: ImportResult, file: File | null, mode: ScreenMode] }>()
+const emit = defineEmits<{ close: []; imported: [result: ImportResult, file: File | null, mode: ScreenMode, banks: BankChoice] }>()
 
 const projectStore = useProjectStore()
 const resourcesStore = useResourcesStore()
@@ -70,6 +77,15 @@ const saved = ref<string | null>(null)
 const pickedFile = ref<File | null>(null)
 
 const MODE_IDS = [...TILE_MODES, ...BITMAP_MODES] as ScreenMode[]
+const banks = ref<BankChoice>('auto')
+/** SCREEN 2/4 only: the other modes have one pattern table. */
+const bankable = computed(() => (props.standalone || props.banking !== null) && (importer.options.mode === 'sc2' || importer.options.mode === 'sc4'))
+/** Why the picture cannot be banked, said before the user presses anything — a map import's screen is checked on drop. */
+const bankHint = computed(() => {
+  const result = importer.result.value
+  if (!bankable.value || banks.value !== 'banked' || !result || (!props.standalone && props.banking !== 'picture')) return null
+  return bankedPackBlocker(importer.options.mode as 'sc2' | 'sc4', result.height)
+})
 const info = computed(() => MODES[importer.options.mode])
 /** Only MSX2 bitmap modes have a programmable palette to choose. */
 const paletteChoosable = computed(() => info.value.palette === 'grb333')
@@ -147,16 +163,17 @@ async function saveTileset(): Promise<void> {
     }
 
     // SCREEN 2/4 has three pattern banks of 256 tiles, not one — a full
-    // 256×192 screen can use up to 768 distinct tiles across them. Anything
-    // smaller (or sc1, which has one pattern table) has no third bank to
-    // fill, so it keeps going down `packTiles`'s single-bank path unchanged.
-    const useBanks =
-      (importer.options.mode === 'sc2' || importer.options.mode === 'sc4') &&
-      result.width === 256 &&
-      result.height === 192
-    const { doc, layout, lossyTiles, unplaced } = useBanks
-      ? packBankedTiles(result.indices, result.width, result.height, importer.options.mode)
-      : { ...packTiles(result.indices, result.width, result.height, importer.options.mode, { dedup: true }), unplaced: [] as number[] }
+    // 256×192 screen can use up to 768 distinct tiles across them. A shorter
+    // picture banks by the same thirds, its map padded to 24 rows; sc1 has
+    // one pattern table and always goes down `packTiles`'s single-bank path.
+    const packed = packChosen(result.indices, result.width, result.height, importer.options.mode, bankable.value ? banks.value : 'repeat', { dedup: true })
+    if (typeof packed === 'string') {
+      saved.value = `Not saved — ${packed}`
+      return
+    }
+    const useBanks = packed.banked
+    const { doc, layout, lossyTiles } = packed
+    const unplaced = packed.banked ? packed.unplaced : []
     doc.export = defaultExport(path)
     // `fs:write` doesn't create parent folders, and a project whose res/ was
     // never made (or was deleted) hasn't got one. mkdir is idempotent.
@@ -166,7 +183,8 @@ async function saveTileset(): Promise<void> {
     // The tiles alone cannot rebuild the picture. `layout` is the arrangement
     // the conversion already worked out, and without this it was discarded.
     const cols = Math.floor(result.width / TILE_SIZE)
-    const rows = Math.floor(result.height / TILE_SIZE)
+    // Banked pads a shorter picture to the 24 rows a banked map must have.
+    const rows = packed.banked ? layout.length / cols : Math.floor(result.height / TILE_SIZE)
     const map = mapFromLayout(path, layout, cols, rows)
     map.export = defaultExport(mapPath)
     await window.api.invoke('fs:write', { path: mapPath, content: serializeResource({ kind: 'map', doc: map }) })
@@ -200,7 +218,7 @@ async function saveTileset(): Promise<void> {
 }
 
 function use(): void {
-  if (importer.result.value) emit('imported', importer.result.value, pickedFile.value, importer.options.mode)
+  if (importer.result.value) emit('imported', importer.result.value, pickedFile.value, importer.options.mode, bankable.value ? banks.value : 'repeat')
   emit('close')
 }
 </script>
@@ -263,6 +281,17 @@ function use(): void {
             <option value="msx1">Fixed MSX1 palette</option>
           </select>
         </label>
+        <label
+          v-if="bankable"
+          title="SCREEN 2/4 has three pattern tables, one per third of the screen"
+        >
+          <span>Banks</span>
+          <select v-model="banks">
+            <option value="auto">Auto — banked only if it needs more than {{ MAX_TILES }} tiles</option>
+            <option value="repeat">Repeat — one set of {{ MAX_TILES }} in all three thirds</option>
+            <option value="banked">Banked — a set per third, up to {{ 3 * MAX_TILES }} tiles</option>
+          </select>
+        </label>
         <label>
           <span>Dither</span>
           <select v-model="importer.options.dither">
@@ -273,6 +302,12 @@ function use(): void {
         </label>
       </div>
 
+      <p
+        v-if="bankHint"
+        class="error"
+      >
+        {{ bankHint }}
+      </p>
       <p
         v-if="!paletteChoosable && importer.source.value"
         class="hint"
@@ -348,7 +383,7 @@ function use(): void {
           <button
             type="button"
             class="primary"
-            :disabled="!importer.result.value || saving || !isTileMode(importer.options.mode) || !projectStore.open"
+            :disabled="!importer.result.value || saving || !isTileMode(importer.options.mode) || !projectStore.open || !!bankHint"
             @click="saveTileset"
           >
             Create tileset
@@ -358,7 +393,7 @@ function use(): void {
           v-else
           type="button"
           class="primary"
-          :disabled="!importer.result.value"
+          :disabled="!importer.result.value || !!bankHint"
           @click="use"
         >
           {{ useLabel }}

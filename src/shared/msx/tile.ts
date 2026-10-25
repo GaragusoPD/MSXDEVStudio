@@ -82,6 +82,14 @@ export interface TilesDoc {
   sharedTiles: number
 
   /**
+   * Where each bank's own art was copied from — another tileset's path, per
+   * bank, or null — so the map editor can copy it again on demand. A record,
+   * not a link: the art is this tileset's from then on, edited here, and
+   * nothing rebuilds it behind the user's back. Absent until a bank has one.
+   */
+  bankSources?: (string | null)[]
+
+  /**
    * Animations attached to this tileset (`*.anim-tiles.json`), each driving a
    * window of consecutive slots. Empty in every file written before animations
    * were their own resource. See `TileAnimBinding`.
@@ -248,6 +256,41 @@ export function bankTileAt(doc: TilesDoc, bank: number, index: number): TileEntr
 }
 
 /**
+ * Bank `bank` of `doc`, its art replaced by a copy of `source`'s — the tiles
+ * `source` shows in that same third of the screen, which for an unbanked
+ * source is its one set. `path` is recorded in `bankSources` so the copy can
+ * be made again. A string is why it cannot be done.
+ *
+ * Capped beneath the shared meta-tile region, as every bank is; `dropped`
+ * says how many did not fit. A window an animation drives in this bank would
+ * go on writing its poses over the new art, so that refuses. The source's
+ * attached meta-tiles do not come along — their tiles arrive as plain art.
+ */
+export function fillBank(
+  doc: TilesDoc,
+  bank: number,
+  source: TilesDoc,
+  path: string
+): { doc: TilesDoc; copied: number; dropped: number } | string {
+  if (!isBanked(doc)) return 'Switch the screen to Banked first — a repeated set has no bank of its own to fill.'
+  if (bank < 0 || bank >= BANK_COUNT) return `There is no bank ${bank + 1}.`
+  if (source.mode !== doc.mode) return `${path.split('/').pop()} is ${source.mode.toUpperCase()}, and this tileset is ${doc.mode.toUpperCase()}.`
+  const animated = doc.animations.find((binding) => binding.bank === bank)
+  if (animated) return `An animation (${animated.path.split('/').pop()}) plays in bank ${bank + 1}. Detach it first.`
+  const length = Math.max(source.count, source.bankTiles[bank]?.length ?? 0)
+  const art = Array.from({ length }, (_, i) => bankTileAt(source, bank, i))
+  const budget = MAX_TILES - doc.sharedTiles
+  const copy = art.slice(0, budget).map((entry) => ({ pattern: entry.pattern.slice(), color: entry.color.slice() }))
+  const sources = Array.from({ length: BANK_COUNT }, (_, b) => (b === bank ? path : (doc.bankSources?.[b] ?? null)))
+  const next = normalizeTiles({
+    ...doc,
+    bankTiles: doc.bankTiles.map((tiles, b) => (b === bank ? copy : tiles)),
+    bankSources: sources
+  })
+  return { doc: next, copied: copy.length, dropped: art.length - copy.length }
+}
+
+/**
  * How many more tiles this bank can take before its own art would collide with
  * the shared reservation at the top. The shared tiles cost every bank, which is
  * the price of a meta index meaning one picture everywhere.
@@ -386,9 +429,19 @@ export function normalizeTiles(raw: unknown): TilesDoc {
     export: (input.export as ExportBlock | undefined) ?? null,
     bankTiles,
     sharedTiles,
+    ...normalizeBankSources(input.bankSources, bankTiles),
     animations: normalizeAnimBindings(input.animations, bankTiles.some((bank) => bank.length > 0)),
     metas: normalizeMetaBindings(input.metas)
   }
+}
+
+/** A bank's source only means something while the bank has art; none at all leaves the field out of the file. */
+function normalizeBankSources(raw: unknown, bankTiles: TileEntry[][]): { bankSources?: (string | null)[] } {
+  const list = Array.isArray(raw) ? raw : []
+  const sources = Array.from({ length: BANK_COUNT }, (_, b) =>
+    typeof list[b] === 'string' && list[b] && bankTiles[b].length ? (list[b] as string) : null
+  )
+  return sources.some((source) => source !== null) ? { bankSources: sources } : {}
 }
 
 /** Meta-tiles are capped at 16 tiles a side; see `MAX_META_SIZE` in `meta-tile.ts`. */
@@ -534,6 +587,17 @@ export function animWindowSlotsIn(doc: TilesDoc, bank: number | null): Set<numbe
     for (let i = 0; i < animCells(binding); i++) slots.add(binding.slot + i)
   }
   return slots
+}
+
+/**
+ * The attached meta-tile a still cell of which shows tile `index`, or null.
+ * That tile is derived: `resolveMeta` rebuilds the meta's art from its own file
+ * every time the tileset opens and before every export, so an edit or a delete
+ * made to it here would not survive. 0 is never one — a meta's 0 is a hole.
+ */
+export function metaOwning(doc: TilesDoc, index: number): MetaBinding | null {
+  if (index === 0) return null
+  return doc.metas.find((binding) => binding.cells.includes(index)) ?? null
 }
 
 /** Clamps a block list to the grid limits and to tiles that actually exist. */
@@ -825,10 +889,11 @@ export interface BankedPackResult {
  * appended after it — bands are appended positionally, not each into a fresh
  * array, so `layout` must stay exactly `cols × rows` long.
  *
- * Only ever called for sc2/sc4 at exactly 256×192 (the caller's own gate —
- * see `ImportImageDialog.vue`): sc1 has one pattern table, not three, so
- * there is no bank for this to fill, and any other size doesn't divide into
- * three whole eight-tile-row bands.
+ * Only ever called for sc2/sc4 at most 192 dots tall (`bankedPackBlocker`):
+ * sc1 has one pattern table, not three, so there is no bank for this to fill.
+ * The bands are always the screen's eight tile-rows each, so a shorter picture
+ * is packed as a full screen with blank rows below it — `layout` is always
+ * `cols × 24`, the height a map against a banked tileset must have.
  */
 export function packBankedTiles(
   indices: ArrayLike<number>,
@@ -838,7 +903,7 @@ export function packBankedTiles(
   options: { shared?: TileEntry[] } = {}
 ): BankedPackResult {
   const cols = Math.floor(width / TILE_SIZE)
-  const bandRows = Math.floor(height / BANK_COUNT / TILE_SIZE)
+  const bandRows = 8
   // `shared[i]` is the entry `sharedPatternBytes`/`sharedColorBytes` read at
   // hardware index `sharedStart + i` on the doc it came from — the same
   // ordering, so re-threading it below (`sharedStart + i` again) reproduces
@@ -865,7 +930,8 @@ export function packBankedTiles(
         const pixels = new Uint8Array(TILE_SIZE * TILE_SIZE)
         for (let y = 0; y < TILE_SIZE; y++) {
           for (let x = 0; x < TILE_SIZE; x++) {
-            pixels[y * TILE_SIZE + x] = indices[(absRow * TILE_SIZE + y) * width + tx * TILE_SIZE + x] ?? 0
+            const py = absRow * TILE_SIZE + y
+            pixels[y * TILE_SIZE + x] = py < height ? (indices[py * width + tx * TILE_SIZE + x] ?? 0) : 0
           }
         }
         const { pattern, color, lossyRows } = tileFromPixels(pixels)
@@ -909,6 +975,85 @@ export function packBankedTiles(
   for (let i = 0; i < sharedTiles; i++) tiles[sharedStart + i] = shared[i]
   const doc = normalizeTiles({ mode, count: 1, tiles, bankTiles, sharedTiles })
   return { doc, layout, lossyTiles, unplaced }
+}
+
+/** Whether cell `cell` of a `width`-dot-wide picture is every dot colour 0. */
+export function isBlankCell(indices: ArrayLike<number>, width: number, cell: number): boolean {
+  const cols = width / TILE_SIZE
+  const ox = (cell % cols) * TILE_SIZE
+  const oy = Math.floor(cell / cols) * TILE_SIZE
+  for (let y = 0; y < TILE_SIZE; y++) {
+    for (let x = 0; x < TILE_SIZE; x++) if (indices[(oy + y) * width + ox + x]) return false
+  }
+  return true
+}
+
+/**
+ * Keeps tile 0 the reserved blank on a banked pack. `packBankedTiles` numbers
+ * each bank from 0, so a blank is prepended per bank and every layout index
+ * shifts by one; a cell `blank(cell)` says is empty stays tile 0, so its
+ * see-through survives. A bank that had all its slots in use loses its last
+ * tile to the shift — placed as tile 0 and counted in `unplaced`, the way the
+ * packer counts a cell it has no room for. `cols` is the picture's width in tiles.
+ */
+export function reserveBankTile0(
+  packed: BankedPackResult,
+  mode: TileMode,
+  cols: number,
+  blank: (cell: number) => boolean
+): { bankTiles: TileEntry[][]; layout: number[]; unplaced: number[] } {
+  const budget = MAX_TILES - packed.doc.sharedTiles
+  const bandRows = packed.layout.length / cols / BANK_COUNT
+  const unplaced = packed.unplaced.slice()
+  const bankTiles = packed.doc.bankTiles.map((bank) => [blankTileEntry(mode), ...bank].slice(0, budget))
+  const layout = packed.layout.map((index, cell) => {
+    if (blank(cell)) return 0
+    const shifted = index + 1
+    if (shifted < budget) return shifted
+    unplaced[Math.min(BANK_COUNT - 1, Math.floor(cell / cols / bandRows))]++
+    return 0
+  })
+  return { bankTiles, layout, unplaced }
+}
+
+/**
+ * How an image import uses SCREEN 2/4's three pattern banks: one set of 256
+ * repeated in every third of the screen, a set per third (up to 768 tiles on
+ * screen), or — `auto` — one set unless the picture needs more than 256 and
+ * can be banked.
+ */
+export type BankChoice = 'auto' | 'repeat' | 'banked'
+
+/** Why a picture `height` dots tall cannot be split into the three banks in `mode`, or null. */
+export function bankedPackBlocker(mode: TileMode, height: number): string | null {
+  if (mode !== 'sc2' && mode !== 'sc4') return `${mode.toUpperCase()} has one pattern table — banks are SCREEN 2 and 4 only.`
+  const tall = BANK_COUNT * 8 * TILE_SIZE
+  if (height > tall) {
+    return `Banked splits the picture into the screen's three thirds, so it can be at most ${tall} dots (24 tiles) tall — this one is ${height}.`
+  }
+  return null
+}
+
+export type ChosenPack = ({ banked: false } & PackResult) | ({ banked: true } & BankedPackResult)
+
+/**
+ * Packs an imported picture the way `banks` says. A string when `banked` was
+ * asked for and cannot be done; `auto` falls back to one set when it cannot.
+ */
+export function packChosen(
+  indices: ArrayLike<number>,
+  width: number,
+  height: number,
+  mode: TileMode,
+  banks: BankChoice,
+  options: { dedup?: boolean; shared?: TileEntry[] } = {}
+): ChosenPack | string {
+  const banked = (): ChosenPack => ({ banked: true, ...packBankedTiles(indices, width, height, mode, { shared: options.shared }) })
+  if (banks === 'banked') return bankedPackBlocker(mode, height) ?? banked()
+  const single = packTiles(indices, width, height, mode, { dedup: options.dedup })
+  const short = Math.floor(width / TILE_SIZE) * Math.floor(height / TILE_SIZE) > single.layout.length
+  if (banks === 'auto' && short && bankedPackBlocker(mode, height) === null) return banked()
+  return { banked: false, ...single }
 }
 
 /**

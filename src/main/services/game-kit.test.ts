@@ -95,17 +95,17 @@ describe('createGameProject', () => {
   it('always writes the license attributions as comments, even without a credits screen', () => {
     const opened = createGameProject(request({ kit: 'text', screens: ['play'] }), fakeMsxgl())
     const screens = readFileSync(join(opened.root, GAME_SOURCE_DIR, 'screens.c'), 'utf-8')
-    expect(screens).toContain('Built with MSXDEVStudio by P.D. Garaguso')
+    expect(screens).toContain('Made with MSXDEVStudio')
     expect(screens).toContain("Guillaume 'Aoineko' Blanchard")
     expect(screens).toContain('Compiled with SDCC')
     expect(screens).not.toMatch(/GrafxKid/i)
-    expect(screens).not.toContain('Print_DrawText("Built with MSXDEVStudio by P.D. Garaguso")')
+    expect(screens).not.toContain('Print_DrawText("Made with MSXDEVStudio")')
   })
 
   it('prints the attributions when the credits screen is selected', () => {
     const opened = createGameProject(request({ kit: 'text', screens: ['play', 'credits'] }), fakeMsxgl())
     const screens = readFileSync(join(opened.root, GAME_SOURCE_DIR, 'screens.c'), 'utf-8')
-    expect(screens).toContain('Print_DrawText("Built with MSXDEVStudio by P.D. Garaguso")')
+    expect(screens).toContain('Print_DrawText("Made with MSXDEVStudio")')
     expect(screens).toContain('Your name here')
     expect(screens).toContain("Guillaume 'Aoineko' Blanchard")
     for (const line of screens.split('\n')) {
@@ -188,6 +188,6 @@ describe('createGameProject', () => {
     const guide = readFileSync(join(opened.root, 'CLAUDE.md'), 'utf-8')
     expect(guide).toContain('src/play.c')
     expect(guide).toContain('src/screens.c')
-    expect(guide).toContain('Built with MSXDEVStudio by P.D. Garaguso')
+    expect(guide).toContain('Made with MSXDEVStudio')
   })
 })

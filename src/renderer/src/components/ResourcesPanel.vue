@@ -4,12 +4,14 @@
  * their editors (Specs 08–11), the manual export command, and the standalone
  * entry point for the Import-image dialog.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import type { MaterialSymbol } from '@material-symbols/font-400'
 import {
   RESOURCE_DIR,
   RESOURCE_SUFFIXES,
   defaultExport,
   parseResource,
+  resourceKindOf,
   serializeResource,
   type ResourceKind
 } from '../../../shared/msx/resource'
@@ -22,6 +24,7 @@ import Icon from './Icon.vue'
 import { useTabsStore } from '../stores/tabsStore'
 import ImportImageDialog from './ImportImageDialog.vue'
 import Modal from './Modal.vue'
+import { thumbnailUrl } from './resource-thumbnails'
 
 const projectStore = useProjectStore()
 const resourcesStore = useResourcesStore()
@@ -144,8 +147,100 @@ const grouped = computed<[string, typeof resourcesStore.entries][]>(() => {
 
 const imgRuleCount = computed(() => projectStore.project?.resources.imgRules.length ?? 0)
 
-onMounted(() => void resourcesStore.refresh())
-watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
+// ── the groups: an accordion of cards ───────────────────────────────────────
+
+/** What a card shows when its resource has no picture of its own. */
+const KIND_ICONS: Record<ResourceKind, MaterialSymbol> = {
+  tiles: 'grid_view',
+  btiles: 'grid_on',
+  metatiles: 'widgets',
+  metabtiles: 'widgets',
+  anim: 'animation',
+  sprites: 'person',
+  swsprites: 'directions_run',
+  map: 'map',
+  screen: 'image',
+  sfx: 'graphic_eq',
+  music: 'music_note'
+}
+const kindIcon = (kind: string): MaterialSymbol => KIND_ICONS[kind as ResourceKind] ?? 'draft'
+
+/** The file's name without its folder or its kind's suffix — `board_king`, not `res/board_king.meta-tiles.json`. */
+function shortName(path: string, kind: string): string {
+  const file = path.split('/').pop() ?? path
+  const suffix = RESOURCE_SUFFIXES[kind as ResourceKind]
+  return suffix && file.endsWith(suffix) ? file.slice(0, -suffix.length) : file
+}
+
+/**
+ * Which groups are open, remembered per project in this browser's storage — a
+ * convenience, so a storage that refuses (or forgets) just starts them closed.
+ */
+const openKinds = ref(new Set<string>())
+const storageKey = (): string => `msxdevstudio.resources.open:${projectStore.open?.root ?? ''}`
+
+function loadOpenKinds(): void {
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey()) ?? '[]') as unknown
+    openKinds.value = new Set(Array.isArray(saved) ? saved.filter((kind): kind is string => typeof kind === 'string') : [])
+  } catch {
+    openKinds.value = new Set()
+  }
+}
+
+function onToggle(kind: string, event: Event): void {
+  const open = (event.target as HTMLDetailsElement).open
+  if (open === openKinds.value.has(kind)) return
+  const next = new Set(openKinds.value)
+  if (open) next.add(kind)
+  else next.delete(kind)
+  openKinds.value = next
+  try {
+    localStorage.setItem(storageKey(), JSON.stringify([...next]))
+  } catch {
+    // Not remembered this time; the panel works the same.
+  }
+}
+
+/** Image URLs by path, for the cards of the open groups only — a closed group reads nothing. */
+const thumbs = reactive<Record<string, string | null>>({})
+let loading = 0
+
+async function loadThumbs(): Promise<void> {
+  const run = ++loading
+  for (const entry of resourcesStore.entries) {
+    if (!openKinds.value.has(entry.kind)) continue
+    const url = await thumbnailUrl(entry.path)
+    if (run !== loading) return
+    thumbs[entry.path] = url
+  }
+}
+
+watch([() => resourcesStore.entries, openKinds], () => void loadThumbs())
+
+/** A resource saved anywhere — or a tileset a map is drawn with — redraws, once the burst of writes settles. */
+let redraw: ReturnType<typeof setTimeout> | null = null
+const stopWatching = window.api.on('fs:changed', (event) => {
+  if (resourceKindOf(event.path) === null) return
+  if (redraw) clearTimeout(redraw)
+  redraw = setTimeout(() => void loadThumbs(), 300)
+})
+onUnmounted(() => {
+  stopWatching()
+  if (redraw) clearTimeout(redraw)
+})
+
+onMounted(() => {
+  loadOpenKinds()
+  void resourcesStore.refresh()
+})
+watch(
+  () => projectStore.open?.root,
+  () => {
+    loadOpenKinds()
+    void resourcesStore.refresh()
+  }
+)
 </script>
 
 <template>
@@ -231,37 +326,65 @@ watch(() => projectStore.open?.root, () => void resourcesStore.refresh())
         <code>.screen.json</code> files yet.
       </p>
 
-      <section
+      <details
         v-for="[kind, entries] in grouped"
         :key="kind"
+        class="group"
+        :open="openKinds.has(kind)"
+        @toggle="onToggle(kind, $event)"
       >
-        <h3>{{ label(kind) }}</h3>
+        <summary>
+          <Icon
+            name="chevron_right"
+            :size="16"
+            class="chevron"
+          />
+          <span class="group-name">{{ label(kind) }}</span>
+          <span class="count">{{ entries.length }}</span>
+        </summary>
         <div
-          v-for="entry in entries"
-          :key="entry.path"
-          class="row"
+          v-if="openKinds.has(kind)"
+          class="cards"
         >
-          <button
-            type="button"
-            class="path"
-            :title="`Open ${entry.path} in its editor`"
-            @click="openResource(entry.path)"
+          <div
+            v-for="entry in entries"
+            :key="entry.path"
+            class="card"
           >
-            {{ entry.path }}
-          </button>
-          <span
-            class="out"
-            :title="entry.out ?? 'No export target set'"
-          >{{ entry.out ?? '—' }}</span>
-          <button
-            type="button"
-            title="Export this resource now"
-            @click="resourcesStore.exportOne(entry.path)"
-          >
-            <Icon name="refresh" />
-          </button>
+            <button
+              type="button"
+              class="open"
+              :title="`${entry.path}\nExports to ${entry.out ?? '— no export target set'}\nClick to open it in its editor`"
+              @click="openResource(entry.path)"
+            >
+              <span class="thumb">
+                <img
+                  v-if="thumbs[entry.path]"
+                  :src="thumbs[entry.path]!"
+                  alt=""
+                >
+                <Icon
+                  v-else
+                  :name="kindIcon(kind)"
+                  :size="28"
+                />
+              </span>
+              <span class="name">{{ shortName(entry.path, kind) }}</span>
+            </button>
+            <button
+              type="button"
+              class="export"
+              :title="`Export ${entry.path} now → ${entry.out ?? 'no export target set'}`"
+              @click.stop="resourcesStore.exportOne(entry.path)"
+            >
+              <Icon
+                name="refresh"
+                :size="14"
+              />
+            </button>
+          </div>
         </div>
-      </section>
+      </details>
 
       <section>
         <h3>Image rules</h3>
@@ -433,49 +556,133 @@ h3 {
   min-width: 60px;
 }
 
-.row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-  font-size: 12px;
+.group {
+  margin-top: 6px;
+  border-top: 1px solid var(--color-border);
 }
 
-.row .path {
+.group summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0 4px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.group summary::-webkit-details-marker {
+  display: none;
+}
+
+.group summary:hover {
+  color: var(--color-text);
+}
+
+.group .chevron {
+  transition: transform 0.1s;
+}
+
+.group[open] .chevron {
+  transform: rotate(90deg);
+}
+
+.group-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 0;
-  border: none;
+}
+
+.count {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--color-bg-hover);
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 6px;
+  padding: 2px 0 8px;
+}
+
+.card {
+  position: relative;
+  min-width: 0;
+}
+
+.card .open {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
   background: none;
-  text-align: left;
-  font-size: 12px;
   color: var(--color-text);
   cursor: pointer;
 }
 
-.row .path:hover {
-  color: var(--color-accent);
-  text-decoration: underline;
+.card .open:hover,
+.card .open:focus-visible {
+  border-color: var(--color-accent);
+  background: var(--color-bg-hover);
 }
 
-.out {
-  max-width: 40%;
+.thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 64px;
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
+  overflow: hidden;
+}
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: var(--color-text-muted);
+  text-align: center;
 }
 
-.row button {
-  padding: 0 5px;
+.card .export {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  padding: 2px;
+  border: none;
+  border-radius: 3px;
+  background: var(--color-bg);
   color: var(--color-text-muted);
+  opacity: 0;
 }
 
-.row button:hover {
+.card:hover .export,
+.card .export:focus-visible {
+  opacity: 1;
+}
+
+.card .export:hover {
   color: var(--color-text);
 }
 

@@ -261,6 +261,18 @@ describe("paintGrid write: 'edit'", () => {
     expect(result.tileEdits).toEqual([])
   })
 
+  it("edit mode forks instead of rewriting a meta-tile's still cell, which the meta would rebuild", () => {
+    const plain = createTilesDoc('sc2', 4)
+    const tiles = { ...plain, metas: [{ path: 'res/rock.meta-tiles.json', name: 'g_Rock', width: 1, height: 1, flags: 0, frames: 1, cells: [2] }] }
+    const grid = { width: 1, height: 1, tiles: [2] }
+
+    const result = paintGrid(grid, tiles, [{ x: 1, y: 1 }], 7, undefined, { write: 'edit' })
+
+    expect(result.tiles.tiles[2]).toEqual(tiles.tiles[2]) // the meta's art is untouched
+    expect(result.grid.tiles[0]).not.toBe(2) // forked instead
+    expect(result.tileEdits).toEqual([])
+  })
+
   it('fork mode records no tileEdits', () => {
     const tiles = createTilesDoc('sc2', 4)
     const result = paintGrid({ width: 1, height: 1, tiles: [2] }, tiles, [{ x: 0, y: 0 }], 7)

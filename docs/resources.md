@@ -19,10 +19,18 @@ in your project that an editor owns, and each one exports a C header your game
 
 ## Creating and opening
 
-In the **Resources** panel (side bar): pick a kind, type a name, press **New**.
-The file is created in the project's **`res/`** folder and its editor opens.
-Click any listed resource to reopen it later — or open the file from the
-Explorer.
+In the **Resources** panel (side bar): **New resource…**, pick a kind, type a
+name, press **Create**. The file is created in the project's **`res/`** folder
+and its editor opens.
+
+The panel lists the project's resources by kind, each kind a section you open
+and close — as many open at once as you like, and they stay as you left them.
+An open section shows a card per resource: a thumbnail of it (a tileset's
+first tiles, a meta-tile's or animation's first pose, a map as the game draws
+it, meta-tiles and all, a sprite's first frame, a screen) with its name under
+it. Sound shows an icon. Click a card to open it; hover it for its path and
+where it exports, and for the button that exports it now. Thumbnails follow the
+files, so they redraw when one is saved. Or open the file from the Explorer.
 
 **New tiled screen…** (File menu, or the Resources panel) makes the pair a
 SCREEN 2 picture is drawn as — `res/name.tiles.json` with tile 0 reserved
@@ -130,6 +138,35 @@ stamp, fill, rectangle and erase. Shift+click or drag in the tile picker takes
 a multi-tile stamp. A 32×24 map is exactly one screen; larger maps get a screen
 outline overlay for designing scrolling worlds.
 
+**Banks (SCREEN 2/4)** — the screen has three pattern tables, one per third
+(rows 0–7, 8–15, 16–23). Under the tileset picker, **Repeat** uses one set of
+256 tiles in all three thirds; **Banked** gives each third its own 256, up to
+768 on screen. Switching either way repacks the 32×24 screen from what it
+shows, so nothing on screen changes — Repeat is refused when the screen draws
+more than one set holds. Banked, each third can be **filled from another
+tileset**: pick it beside *Rows 0–7* (and so on) and its tiles are copied into
+that bank, so the cells there draw its art. It is a copy, edited here from then
+on; ↻ copies it again after the source changed. The map editor's zoom goes to
+32 pixels a dot, for painting dot by dot.
+
+**Copying between maps and meta-tiles** — a copy (Ctrl+C) in a map or in a
+meta-tile's pose editor also keeps the *pixels*. Pasted into the same map it is
+the same tile numbers; pasted into a map drawn with another tileset it floats as
+a picture and becomes that tileset's tiles when you drop it; pasted into a pose
+it is drawn there, top-left, and a meta-tile grows to fit. To turn part of a map
+into a meta-tile directly — an imported picture, say — select it and press the
+**meta-tile** button beside cut/copy/paste: a new `res/<map>_meta<n>.meta-tiles.json`
+gets those pixels as its own art, empty tiles see-through, and the map is left
+as it is.
+
+Every **Import image…** into a SCREEN 2/4 tileset or map asks the same thing:
+**Banks: Auto** (one set, banked only when the picture needs more than 256 tiles
+and can be), **Repeat** (one set, never banked) or **Banked** (a set per third —
+into a tileset that needs a picture at most 192 dots tall, and replaces the whole
+set). Banks follow the screen's thirds — rows 0–7, 8–15, 16–23 — so a shorter
+picture fills fewer of them, and its map is padded with blank rows to the 24 a
+banked map must have.
+
 In a **bitmap mode** a layered map needs to know which cell means "nothing",
 because a cell index is an atlas position and 0 is a picture like any other. So
 a layered bitmap map names its own **transparent cell** (the checkbox under
@@ -170,7 +207,16 @@ only rewrites the chimney. Save the meta and every tileset it is attached to
 follows: tiles that still show the right art are kept, what changed is appended,
 and nothing else drawn with the tileset moves.
 
-**Removing** one from a tileset — the unlink button beside it in the tile
+So a meta's tiles are **its** art, not the tileset's: the tile grid outlines
+them (dashed violet, and the readout names the meta), and the tile editor
+refuses to paint or delete them — an edit there would be rebuilt from the
+meta's file the next time the tileset opens. Paint them in the meta-tile's own
+editor; to delete them, remove the meta first. An image import that
+**replaces** the whole tileset asks once and removes every attached meta first,
+for the same reason; **merge** keeps them. The map editor's edit mode forks
+such a tile instead of rewriting it, as it does an animation's.
+
+**Removing** one from a tileset — the **Remove** button beside it in the tile
 editor's **Meta-tiles** list, or beside the tileset in the meta-tile's own
 *Attached to* list — takes it off every map drawn with that tileset too, after a
 confirm naming them: a map cannot place a meta its tileset does not have. An
@@ -362,6 +408,20 @@ turns idle, walk and jump rows into separate animations in one import, named
 after the file and numbered. **Trim** cuts sprite frames to the box that holds
 the content of all of them — so a 20×24 figure in 32×32 cells is a 2×2
 metasprite only where it has to be — and meta-tiles to whole tiles of it.
+
+Imported into an **existing** animated tile or meta-tile, the cells are added as
+new poses — unless you tick **Replace its poses**, which is how a placeholder
+gets its real art. A meta-tile then takes the cells' size (its flags, loop and
+export stay); an animated tile keeps its own, because its window is what the
+tilesets it is attached to have room for. Set the grid's cell size to the whole
+picture to import it as a single pose.
+
+For one picture, the pose editor's own **Import image…** is quicker: the
+picture is shrunk to fit the meta-tile (or animated tile), floats over the
+current pose, and is dragged — or nudged with the arrow keys, Shift for a whole
+tile — to where it goes. **Place** (Enter) cuts it in at the pose's size and in
+its mode's colours, as one undo step; colour 0 leaves the pose under it, and a
+see-through cell it draws into becomes opaque. Esc drops it.
 
 A sprite plane has one colour: per sprite in mode 1, per line in mode 2. The
 importer stacks planes for a figure drawn in several colours, up to **Max

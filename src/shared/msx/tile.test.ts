@@ -15,6 +15,9 @@ import {
   mergeColorByte,
   normalizeTiles,
   packBankedTiles,
+  packChosen,
+  fillBank,
+  reserveBankTile0,
   packTiles,
   paintPixel,
   regroupAfterTile0Shift,
@@ -840,5 +843,120 @@ describe('packBankedTiles — the importer\'s own three-bank path', () => {
     expect(layout.slice(0, 4)).toEqual([0, 1, 0, 1])
     expect(isBanked(doc)).toBe(true)
     expect(validateTiles(doc)).toEqual([])
+  })
+})
+
+describe('packChosen — the import\'s bank choice', () => {
+  /** A 256-dot-wide picture `rows` tiles tall whose first `distinct` cells all differ (row 0 spells the cell number). */
+  function picture(rows: number, distinct: number): Uint8Array {
+    const indices = new Uint8Array(256 * rows * 8)
+    for (let cell = 0; cell < distinct; cell++) {
+      const ox = (cell % 32) * 8
+      const oy = Math.floor(cell / 32) * 8
+      for (let bit = 0; bit < 9; bit++) if (cell & (1 << bit)) indices[(oy + (bit >> 3)) * 256 + ox + (bit & 7)] = 15
+    }
+    return indices
+  }
+
+  it('auto keeps one set while the picture fits in it', () => {
+    const packed = packChosen(picture(24, 100), 256, 192, 'sc2', 'auto', { dedup: true })
+    expect(typeof packed !== 'string' && packed.banked).toBe(false)
+  })
+
+  it('auto banks a full screen that needs more than one set', () => {
+    const packed = packChosen(picture(24, 300), 256, 192, 'sc2', 'auto')
+    expect(typeof packed !== 'string' && packed.banked).toBe(true)
+  })
+
+  it('repeat keeps one set even when it overflows', () => {
+    const packed = packChosen(picture(24, 300), 256, 192, 'sc2', 'repeat')
+    expect(typeof packed !== 'string' && packed.banked).toBe(false)
+  })
+
+  it('banked needs the picture to fit the screen\'s height, and SCREEN 2/4', () => {
+    expect(packChosen(picture(32, 10), 256, 256, 'sc2', 'banked')).toMatch(/at most 192 dots/)
+    expect(packChosen(picture(24, 10), 256, 192, 'sc1', 'banked')).toMatch(/SC1 has one pattern table/)
+    const packed = packChosen(picture(24, 10), 256, 192, 'sc4', 'banked')
+    expect(typeof packed !== 'string' && packed.banked).toBe(true)
+  })
+
+  it('auto banks a shorter picture by the screen\'s thirds, padded to 24 rows', () => {
+    // 21 rows, as a 256×168 picture: rows 0-7 are bank 0, 8-15 bank 1, 16-20 bank 2.
+    const packed = packChosen(picture(21, 300), 256, 168, 'sc2', 'auto')
+    if (typeof packed === 'string' || !packed.banked) throw new Error('not banked')
+    expect(packed.layout).toHaveLength(32 * 24)
+    expect(packed.doc.bankTiles.map((bank) => bank.length)).toEqual([256, 45, 1])
+    expect(packed.unplaced).toEqual([0, 0, 0])
+  })
+
+  it('auto on a picture that cannot be banked keeps one set, short', () => {
+    const packed = packChosen(picture(32, 300), 256, 256, 'sc2', 'auto')
+    expect(typeof packed !== 'string' && packed.banked).toBe(false)
+  })
+})
+
+describe('reserveBankTile0', () => {
+  it('prepends the blank to every bank and shifts the layout, leaving blank cells on 0', () => {
+    const indices = new Uint8Array(256 * 192)
+    for (let y = 0; y < 192; y++) indices.fill(y < 64 ? 0 : y < 128 ? 2 : 3, y * 256, y * 256 + 256)
+    indices[0] = 7 // one cell of the top third that is not blank
+    const packed = packBankedTiles(indices, 256, 192, 'sc2')
+    const blank = (cell: number): boolean => cell !== 0 && cell < 256
+    const { bankTiles, layout, unplaced } = reserveBankTile0(packed, 'sc2', 32, blank)
+    expect(bankTiles.map((bank) => bank.length)).toEqual(packed.doc.bankTiles.map((bank) => bank.length + 1))
+    expect(bankTiles.every((bank) => bank[0].pattern.every((byte) => byte === 0))).toBe(true)
+    expect(layout[0]).toBe(packed.layout[0] + 1)
+    expect(layout[1]).toBe(0)
+    expect(layout[256]).toBe(packed.layout[256] + 1)
+    expect(unplaced).toEqual([0, 0, 0])
+  })
+})
+
+describe('fillBank — a bank copied from another tileset', () => {
+  const mark = (value: number): TileEntry => ({ pattern: new Array(8).fill(value), color: new Array(8).fill(0xf1) })
+  const banked = (): TilesDoc =>
+    normalizeTiles({ mode: 'sc2', count: 4, tiles: [0, 1, 2, 3].map(mark), bankTiles: [[mark(10)], [mark(11)], [mark(12)]] })
+
+  it('copies an unbanked source\'s set into the bank and records where it came from', () => {
+    const source = normalizeTiles({ mode: 'sc2', count: 3, tiles: [mark(20), mark(21), mark(22)] })
+    const result = fillBank(banked(), 1, source, 'res/other.tiles.json')
+    if (typeof result === 'string') throw new Error(result)
+    expect(result.doc.bankTiles[1].map((tile) => tile.pattern[0])).toEqual([20, 21, 22])
+    expect(result.doc.bankTiles[0].map((tile) => tile.pattern[0])).toEqual([10]) // the other banks are untouched
+    expect(result.doc.bankSources).toEqual([null, 'res/other.tiles.json', null])
+    expect([result.copied, result.dropped]).toEqual([3, 0])
+  })
+
+  it('from a banked source, copies what the source shows in the same third', () => {
+    const source = normalizeTiles({ mode: 'sc2', count: 2, tiles: [mark(30), mark(31)], bankTiles: [[], [], [mark(42)]] })
+    const result = fillBank(banked(), 2, source, 'res/other.tiles.json')
+    if (typeof result === 'string') throw new Error(result)
+    // Index 0 is bank 2's own; index 1 falls back to the source's common set.
+    expect(result.doc.bankTiles[2].map((tile) => tile.pattern[0])).toEqual([42, 31])
+  })
+
+  it('stays beneath the shared meta-tile region and says how many did not fit', () => {
+    const doc = normalizeTiles({ ...banked(), sharedTiles: 250 })
+    const source = normalizeTiles({ mode: 'sc2', count: 10, tiles: Array.from({ length: 10 }, (_, i) => mark(i)) })
+    const result = fillBank(doc, 0, source, 'res/other.tiles.json')
+    if (typeof result === 'string') throw new Error(result)
+    expect([result.copied, result.dropped]).toEqual([6, 4])
+  })
+
+  it('refuses a repeated set, another mode, and a bank an animation plays in', () => {
+    const source = normalizeTiles({ mode: 'sc2', count: 1 })
+    expect(fillBank(normalizeTiles({ mode: 'sc2', count: 4 }), 0, source, 'res/a.tiles.json')).toMatch(/Switch the screen to Banked first/)
+    expect(fillBank(banked(), 0, normalizeTiles({ mode: 'sc4', count: 1 }), 'res/a.tiles.json')).toMatch(/SC4/)
+    const animated = normalizeTiles({
+      ...banked(),
+      animations: [{ path: 'res/coin.anim-tiles.json', slot: 0, bank: 1, name: 'g_Coin', width: 1, height: 1, frames: 2, colorsVary: false, loop: 'loop' }]
+    })
+    expect(fillBank(animated, 1, source, 'res/a.tiles.json')).toMatch(/coin\.anim-tiles\.json/)
+  })
+
+  it('leaves the field out of a tileset no bank was copied into, and drops a source whose bank has no art', () => {
+    expect('bankSources' in banked()).toBe(false)
+    const doc = normalizeTiles({ ...banked(), bankTiles: [[mark(1)], [], []], bankSources: ['res/a.tiles.json', 'res/b.tiles.json', null] })
+    expect(doc.bankSources).toEqual(['res/a.tiles.json', null, null])
   })
 })

@@ -8,22 +8,31 @@
  * A shell: the canvas, the pose strip and the side panel are their own
  * components, and every mutation is a call into `./session`.
  */
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { movingCells } from '../../../../shared/msx/meta-owned'
 import type { MaterialSymbol } from '@material-symbols/font-400'
 import { isTypingTarget } from '../../commands'
 import type { TileTool } from '../../../../shared/tile-editor'
 import Icon from '../../components/Icon.vue'
+import ImportImageDialog from '../../components/ImportImageDialog.vue'
+import type { ImportResult } from '../../composables/useImageImport'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import AnimCanvas from './AnimCanvas.vue'
 import AnimFrameBar from './AnimFrameBar.vue'
 import AnimSidePanel from './AnimSidePanel.vue'
+import { pictureClipboard } from '../picture-clipboard'
 import {
   animSession,
   canRedo,
   canUndo,
+  copyPose,
+  pastePose,
   doc,
+  dropFloat,
+  floatImage,
+  moveFloat,
+  placeFloat,
   ownedMeta,
   pruneAnimSessions,
   redo,
@@ -44,6 +53,11 @@ const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed<AnimSession>(() => animSession(path.value))
 const anim = computed(() => doc(session.value))
 const meta = computed(() => ownedMeta(session.value))
+const importing = ref(false)
+
+function onImported(result: ImportResult): void {
+  floatImage(session.value, result)
+}
 
 function pickTool(tool: TileTool): void {
   setHoleMode(session.value, false)
@@ -68,6 +82,18 @@ async function exportNow(): Promise<void> {
 
 function onKeydown(event: KeyboardEvent): void {
   if (isTypingTarget(event)) return
+  const float = session.value.float
+  if (float && !event.ctrlKey) {
+    const step = event.shiftKey ? 8 : 1
+    const moves: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }
+    const move = moves[event.key]
+    if (event.key === 'Enter') placeFloat(session.value)
+    else if (event.key === 'Escape') dropFloat(session.value)
+    else if (move) moveFloat(session.value, float.x + move[0], float.y + move[1])
+    else return
+    event.preventDefault()
+    return
+  }
   if (!event.ctrlKey) return
   const key = event.key.toLowerCase()
   if (key === 'z' && !event.shiftKey) {
@@ -79,6 +105,12 @@ function onKeydown(event: KeyboardEvent): void {
   } else if (key === 's') {
     event.preventDefault()
     void save()
+  } else if (key === 'c') {
+    event.preventDefault()
+    copyPose(session.value)
+  } else if (key === 'v') {
+    event.preventDefault()
+    pastePose(session.value)
   }
 }
 
@@ -143,6 +175,21 @@ watch(
         </button>
         <button
           type="button"
+          title="Copy this pose's pixels (Ctrl+C) — paste them into a map, or another meta-tile"
+          @click="copyPose(session)"
+        >
+          <Icon name="content_copy" />
+        </button>
+        <button
+          type="button"
+          title="Paste pixels copied in a map or a pose into this pose, top-left (Ctrl+V) — a meta-tile grows to fit"
+          :disabled="!pictureClipboard"
+          @click="pastePose(session)"
+        >
+          <Icon name="content_paste" />
+        </button>
+        <button
+          type="button"
           title="Zoom out"
           @click="setZoom(session, session.zoom - 4)"
         >
@@ -159,9 +206,33 @@ watch(
 
       <div class="group right">
         <span class="status">{{ session.status }}</span>
+        <template v-if="session.float">
+          <button
+            type="button"
+            title="Cut the picture into this pose at the meta-tile's size and colours (Enter)"
+            @click="placeFloat(session)"
+          >
+            Place
+          </button>
+          <button
+            type="button"
+            title="Drop the picture (Esc)"
+            @click="dropFloat(session)"
+          >
+            Cancel
+          </button>
+        </template>
+        <button
+          v-else
+          type="button"
+          title="Import one picture, move it over this pose, then place it — cut to this size and its colours"
+          @click="importing = true"
+        >
+          Import image…
+        </button>
         <button
           type="button"
-          title="Add poses cut from a sheet of animation frames"
+          title="Add poses cut from an image or a sheet of frames — or replace them (tick Replace its poses)"
           @click="resourcesStore.sheetImport = { destination: session.kind === 'metatiles' ? 'meta' : 'anim', target: session.path }"
         >
           Import sheet…
@@ -198,6 +269,18 @@ watch(
       </template>
       pose {{ session.frame + 1 }} of {{ anim.frames.length }}, held {{ anim.frames[session.frame]?.duration }} frames
     </footer>
+
+    <ImportImageDialog
+      v-if="importing"
+      :mode="anim.mode"
+      :fit-width="anim.width * 8"
+      :fit-height="anim.height * 8"
+      :standalone="false"
+      lock-mode
+      use-label="Place this image"
+      @close="importing = false"
+      @imported="onImported"
+    />
   </div>
 </template>
 

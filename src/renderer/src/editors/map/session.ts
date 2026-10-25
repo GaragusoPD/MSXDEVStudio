@@ -29,7 +29,6 @@ import {
   isIndexedLayer,
   MAX_MAP_METAS,
   metaSlotOf,
-  metaUseCount,
   setLayerIndexed as setLayerIndexedPure,
   validateMap,
   movePlacement,
@@ -50,11 +49,16 @@ import type { ScreenDoc } from '../../../../shared/msx/screen'
 import {
   BANK_COUNT,
   bankTilePixels,
+  fillBank,
   blankTileEntry,
   isBanked,
   MAX_TILES,
   normalizeTiles,
   packBankedTiles,
+  packTiles,
+  reserveBankTile0,
+  isBlankCell,
+  type BankChoice,
   TILE_SIZE,
   tilePixels,
   type TileEntry,
@@ -62,7 +66,7 @@ import {
 } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
-import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { MAX_META_SIZE, normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { isOwnedMeta, normalizeOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { animModesCompatible } from '../../../../shared/msx/tile-anim'
 import { onAnimSaved } from '../anim/events'
@@ -75,9 +79,11 @@ import {
   type TileEdit
 } from '../../../../shared/msx/meta-paint'
 import { compactTileset, composePicture, pictureExtent, placePicture, type Picture } from '../../../../shared/msx/tile-compact'
-import { defaultExport, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { defaultExport, parseResource, RESOURCE_DIR, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { cellsToOwnedMeta } from '../../../../shared/msx/sheet-convert'
 import { screenPixels } from '../../../../shared/msx/screen'
-import type { Rgb } from '../../../../shared/msx/palette'
+import { paletteToRgb, type Rgb } from '../../../../shared/msx/palette'
+import { pictureClipboard, pixelsFromElsewhere } from '../picture-clipboard'
 import { clampFloat, clipRect, floatRect, liftFloat, placeFloat, type Float } from '../../../../shared/floating'
 import { atlasSheet, bitmapTilesetSheet, tilesetSheet, type Sheet } from './sheet'
 import {
@@ -1182,6 +1188,37 @@ export function renderMapPixels(
   return { width, height, indices }
 }
 
+/** The slider's ends, in pixels per cell: 256 is 32 pixels a dot, for paint mode. */
+export const MIN_ZOOM = 4
+export const MAX_ZOOM = 256
+/**
+ * The most pixels the map's canvas may hold. It is one canvas the size of the
+ * whole map, redrawn whole on every change, and a browser refuses one past
+ * 16384 a side — blank, not an error.
+ * ponytail: a whole-map canvas caps zoom on big maps; drawing only the part in
+ * view would lift the cap, if pixel-level work on a large map ever needs it.
+ */
+const MAX_STAGE_PIXELS = 32 * 1024 * 1024
+const MAX_STAGE_SIDE = 16384
+
+/**
+ * The highest zoom this map's canvas can take. Past 48 it comes in whole
+ * multiples of `TILE_SIZE`, so every dot is a whole number of pixels.
+ */
+export function maxZoom(session: MapSession): number {
+  const { width, height } = doc(session)
+  const fit = Math.min(Math.sqrt(MAX_STAGE_PIXELS / Math.max(1, width * height)), MAX_STAGE_SIDE / Math.max(1, width, height))
+  const zoom = fit > 48 ? Math.floor(fit / TILE_SIZE) * TILE_SIZE : Math.floor(fit / 2) * 2
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom))
+}
+
+/** Sets the zoom within what this map's canvas can take — past 48, to whole pixels a dot. */
+export function setZoom(session: MapSession, zoom: number): void {
+  const asked = Math.round(zoom) || session.zoom
+  const snapped = asked > 48 ? Math.round(asked / TILE_SIZE) * TILE_SIZE : asked
+  session.zoom = Math.max(MIN_ZOOM, Math.min(maxZoom(session), snapped))
+}
+
 /**
  * Canvas offset to a dot. `session.zoom` is pixels per CELL (`MapCanvas.vue`
  * sizes its stage by it), so a dot is that over `TILE_SIZE`. Not clamped: a
@@ -1443,21 +1480,34 @@ export function repackBlocker(session: MapSession): string | null {
   }
   if (current.width !== 32 || current.height !== SCREEN_ROWS) {
     return (
-      `Switching to banked needs a map exactly 32 wide and ${SCREEN_ROWS} rows tall — ` +
+      `Repacking the screen needs a map exactly 32 wide and ${SCREEN_ROWS} rows tall — ` +
       `this one is ${current.width}×${current.height}.`
     )
   }
   if (current.layers.length > 1) {
     return (
-      `Switching to banked repacks one layer, and this map has ${current.layers.length} — ` +
+      `Repacking the screen works on one layer, and this map has ${current.layers.length} — ` +
       'the others would keep the old tile numbering. Remove or merge them first.'
     )
   }
-  if (metaUseCount(current) > 0) {
+  // Live placements of attached metas survive: the repack moves their art to
+  // the shared region and re-points them (`metasToShared`). A baked one's
+  // tiles are in the grid, and a meta this map does not own names old numbers.
+  const placed = current.layers.flatMap((layer) => layer.placements)
+  if (placed.some((placement) => placement.baked)) {
+    return 'Repacking the screen renumbers every tile, and this map has baked meta-tiles whose tiles are in the grid. Make them live first.'
+  }
+  const attached = new Set(tileset.metas.map((binding) => binding.path))
+  const foreign = [...new Set(placed.map((placement) => current.metas[placement.slot]?.path ?? '?'))].filter((path) => !attached.has(path))
+  if (foreign.length) {
     return (
-      'Switching to banked renumbers every tile, and this map places meta-tiles that name tiles by number. ' +
-      'Remove the placements first.'
+      `Repacking the screen renumbers every tile, and this map places ${foreign.map(fileOf).join(', ')}, ` +
+      'which name tiles by number. Remove those placements first.'
     )
+  }
+  if (!isBanked(tileset)) {
+    const unread = tileset.metas.filter((binding) => !session.ownedMetas.has(binding.path)).map((binding) => fileOf(binding.path))
+    if (unread.length) return `Repacking the screen moves every attached meta-tile's art, and ${unread.join(', ')} could not be read.`
   }
   return null
 }
@@ -1474,8 +1524,9 @@ export function canPromoteToBanked(session: MapSession): boolean {
  * rewrite.
  */
 const BANKING_CONSEQUENCES =
-  'This renumbers every tile in the tileset: any other map or meta-tile drawn with it will show ' +
-  "wrong art until it is repainted, and the tileset's named blocks and tile flags are cleared."
+  'This renumbers every tile in the tileset: any other map drawn with it will show wrong art until it is ' +
+  "repainted, attached meta-tiles keep their art in tiles every bank shares, and the tileset's named blocks " +
+  'and tile flags are cleared.'
 
 export const PROMOTION_PROMPT =
   `This screen is out of tiles. Switch to banked (three banks of ${MAX_TILES})? ${BANKING_CONSEQUENCES} ` +
@@ -1527,6 +1578,152 @@ export function promoteToBanked(session: MapSession): void {
 }
 
 /**
+ * Why this screen cannot be switched to `to` right now, or null when it can —
+ * the one answer behind the side panel's Repeat/Banked toggle and the switch
+ * itself.
+ */
+export function bankSwitchBlocker(session: MapSession, to: 'repeat' | 'banked'): string | null {
+  const tileset = session.tileset
+  if (!tileset || !canPaint(session)) return 'This map has no pattern tileset to bank.'
+  if (to === 'banked') return promotionBlocker(session)
+  if (!isBanked(tileset)) return 'This tileset already repeats one set in all three thirds.'
+  if (tileset.sharedTiles || tileset.metas.length) {
+    // A meta's tiles live at fixed indices in the shared region, which only a
+    // banked tileset has; one set has nowhere to keep them.
+    return 'This tileset has meta-tiles attached, whose art lives in the banks\' shared region. Remove them in the tile editor first.'
+  }
+  return repackBlocker(session)
+}
+
+/**
+ * Switches the screen to banked — three sets of 256, one per third — whenever
+ * the user asks, not only when painting runs out of room. The same repack as
+ * `promoteToBanked`, after the same warning.
+ */
+export function switchToBanked(session: MapSession): void {
+  const blocker = bankSwitchBlocker(session, 'banked')
+  if (blocker) {
+    session.status = blocker
+    return
+  }
+  if (!window.confirm(`Switch this screen to banked (three banks of ${MAX_TILES})? ${BANKING_CONSEQUENCES}`)) return
+  const { width, height, indices } = renderMapPixels(doc(session), session.tileset!, session.activeLayer)
+  const counts = repackBanked(session, indices, width, height)
+  if (counts) session.status = `Switched to banked — ${counts}. Each third now has its own tiles.`
+}
+
+/**
+ * Switches a banked screen back to one set of 256 repeated in all three thirds:
+ * renders what the screen shows and packs it again, identical cells merged, so
+ * nothing on screen changes. Refused, saying how many it would take, when the
+ * screen draws more than one set holds.
+ */
+export function switchToRepeat(session: MapSession): void {
+  const blocker = bankSwitchBlocker(session, 'repeat')
+  if (blocker) {
+    session.status = blocker
+    return
+  }
+  const tileset = session.tileset!
+  const current = doc(session)
+  const layer = current.layers[session.activeLayer]
+  const { width, height, indices } = renderMapPixels(current, tileset, session.activeLayer)
+  const packed = packTiles(indices, width, height, tileset.mode, { dedup: true })
+  const reserve = tileset.reserveTile0
+  const needed = packed.doc.count + (reserve ? 1 : 0)
+  if (packed.layout.length < current.width * current.height || needed > MAX_TILES) {
+    session.status = `This screen draws more different tiles than one set of ${MAX_TILES} holds, so it has to stay banked.`
+    return
+  }
+  if (!window.confirm(`Switch this screen to one set of ${MAX_TILES}, repeated in all three thirds? ${BANKING_CONSEQUENCES}`)) return
+  // Under `reserveTile0` a blank goes first and every index shifts by one, as
+  // a replacing import does; an empty cell that was 0 stays the see-through 0.
+  const tiles = reserve ? [blankTileEntry(tileset.mode), ...packed.doc.tiles.slice(0, packed.doc.count)] : packed.doc.tiles
+  const data = packed.layout.map((index, cell) =>
+    !reserve ? index : layer.data[cell] === 0 && isBlankCell(indices, width, cell) ? 0 : index + 1
+  )
+  const merged = normalizeTiles({
+    ...packed.doc,
+    count: tiles.length,
+    tiles,
+    palette: tileset.palette,
+    reserveTile0: reserve,
+    export: tileset.export
+  })
+  publishTileset(session, merged)
+  session.history = createHistory({ doc: { ...current, layers: current.layers.map((entry, i) => (i === session.activeLayer ? { ...entry, data } : entry)), metas: [] } })
+  markDirty(session)
+  forgetTileNumbers(session)
+  session.status = `Switched to one repeated set — ${merged.count} tiles.`
+}
+
+/**
+ * Fills bank `bank` (0-2, the screen's thirds) with a copy of the tileset at
+ * `path` — how a banked screen shows a different tileset in each third. The
+ * cells of that third keep their numbers and now draw the copy's art, which
+ * is the point; it is a copy, so it is edited here from then on, and
+ * `reloadBank` copies it again when the source has changed. Asks first: the
+ * bank's own art is replaced, and the tileset's changes are not on the map's
+ * undo history.
+ */
+export async function fillBankFrom(session: MapSession, bank: number, path: string): Promise<void> {
+  const tileset = session.tileset
+  if (!tileset || !canPaint(session)) {
+    session.status = 'This map has no pattern tileset to bank.'
+    return
+  }
+  let source: TilesDoc
+  try {
+    const parsed = parseResource(path, await window.api.invoke('fs:read', { path }))
+    if (parsed.kind !== 'tiles') {
+      session.status = `${fileOf(path)} is not a pattern tileset.`
+      return
+    }
+    source = parsed.doc
+  } catch (error) {
+    session.status = `Couldn't read ${path}: ${String(error)}`
+    return
+  }
+  if (session.tileset !== tileset) {
+    session.status = 'The tileset changed while it was being read — try again.'
+    return
+  }
+  const result = fillBank(tileset, bank, source, path)
+  if (typeof result === 'string') {
+    session.status = result
+    return
+  }
+  const rows = `rows ${bank * 8}–${bank * 8 + 7}`
+  if (
+    !window.confirm(
+      `Replace bank ${bank + 1}'s art (${rows}) with a copy of ${fileOf(path)}'s ${result.copied} tiles? ` +
+        `The cells there keep their numbers and draw the new art. This is not on the map's undo history.`
+    )
+  ) {
+    return
+  }
+  publishTileset(session, result.doc)
+  markDirty(session)
+  session.status =
+    `Bank ${bank + 1} (${rows}) now holds ${result.copied} tiles copied from ${fileOf(path)}` +
+    (result.dropped ? `; ${result.dropped} did not fit beneath the shared meta-tile region` : '') +
+    (source.metas.length ? `; its meta-tiles came across as plain tiles` : '') +
+    '.'
+}
+
+/** Copies bank `bank`'s source again — after the source tileset was edited. */
+export async function reloadBank(session: MapSession, bank: number): Promise<void> {
+  const path = session.tileset?.bankSources?.[bank]
+  if (!path) {
+    session.status = `Bank ${bank + 1} was not copied from another tileset.`
+    return
+  }
+  await fillBankFrom(session, bank, path)
+}
+
+const fileOf = (path: string): string => path.split('/').pop() ?? path
+
+/**
  * Replaces the tileset with three banks packed from `indices` (a 256×192
  * picture of the whole screen) and points the active layer at them. The
  * mechanism behind promotion, a banked screen's rebuild and an image import
@@ -1547,27 +1744,36 @@ function repackBanked(session: MapSession, indices: ArrayLike<number>, width: nu
   if (!tileset || !layer) return null
 
   const sharedStart = MAX_TILES - tileset.sharedTiles
-  const shared = isBanked(tileset) ? tileset.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(tileset.mode)) : []
-  const packed = packBankedTiles(indices, width, height, tileset.mode, { shared })
-  const budget = MAX_TILES - packed.doc.sharedTiles
+  let shared: TileEntry[] = tileset.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(tileset.mode))
+  let metas = tileset.metas
+  if (!isBanked(tileset)) {
+    const moved = metasToShared(session, tileset)
+    if (typeof moved === 'string') {
+      session.status = moved
+      return null
+    }
+    ;({ shared, metas } = moved)
+  }
+  // A cell a live placement draws over is never seen, so it is packed blank
+  // and costs no tile. ponytail: what was under it is gone if the placement
+  // is later removed; keep it when that matters more than the bank budget.
+  const visible = Uint8Array.from(indices)
+  for (const placement of layer.placements) {
+    const ref = current.metas[placement.slot]
+    ref?.cells?.forEach((tile, i) => {
+      const cx = placement.x + (i % ref.width)
+      const cy = placement.y + Math.floor(i / ref.width)
+      if (!tile || cx >= current.width || cy >= current.height) return
+      for (let y = 0; y < TILE_SIZE; y++) visible.fill(0, (cy * TILE_SIZE + y) * width + cx * TILE_SIZE, (cy * TILE_SIZE + y) * width + cx * TILE_SIZE + TILE_SIZE)
+    })
+  }
+  const packed = packBankedTiles(visible, width, height, tileset.mode, { shared })
 
-  const reserve = tileset.reserveTile0
-  const unplaced = packed.unplaced.slice()
-  const bankTiles = packed.doc.bankTiles.map((bank) =>
-    reserve ? [blankTileEntry(tileset.mode), ...bank].slice(0, budget) : bank
-  )
-  const data = packed.layout.map((index, cell) => {
-    if (!reserve) return index
-    // An empty cell stays the see-through tile 0 rather than whatever blank
-    // the packer numbered first in its band.
-    if (layer.data[cell] === 0 && isBlankCell(indices, width, cell)) return 0
-    const shifted = index + 1
-    if (shifted < budget) return shifted
-    // The tile the shift pushed past the budget. Placed as tile 0 and counted,
-    // the way the packer itself treats a cell it has no room for.
-    unplaced[bankForRow(Math.floor(cell / current.width))]++
-    return 0
-  })
+  // An empty cell stays the see-through tile 0 rather than whatever blank the
+  // packer numbered first in its band.
+  const { bankTiles, layout: data, unplaced } = tileset.reserveTile0
+    ? reserveBankTile0(packed, tileset.mode, current.width, (cell) => isBlankCell(visible, width, cell) && (layer.data[cell] === 0 || !isBlankCell(indices, width, cell)))
+    : { bankTiles: packed.doc.bankTiles, layout: packed.layout, unplaced: packed.unplaced }
 
   // Through `normalizeTiles`, so what the session holds is byte-for-byte what
   // the next load will read back — it is what blanks common tile 0 under
@@ -1576,16 +1782,22 @@ function repackBanked(session: MapSession, indices: ArrayLike<number>, width: nu
   const merged = normalizeTiles({
     ...packed.doc,
     bankTiles,
+    metas,
     palette: tileset.palette,
     reserveTile0: tileset.reserveTile0,
     export: tileset.export
   })
-  const layers = current.layers.map((entry, i) => (i === session.activeLayer ? { ...entry, data } : entry))
+  let next: MapDoc = { ...current, layers: current.layers.map((entry, i) => (i === session.activeLayer ? { ...entry, data } : entry)) }
+  // A meta the tileset does not carry names the old numbering; the blocker
+  // made sure none is placed, so dropping it only shifts slot numbers.
+  for (let slot = next.metas.length - 1; slot >= 0; slot--) {
+    if (!metas.some((binding) => binding.path === next.metas[slot].path)) next = removeMetaRef(next, slot)
+  }
 
   publishTileset(session, merged)
-  // `metas: []` as `setTileset` does: a meta picked but not yet placed (the
-  // blocker only refuses placements) names tiles by the old numbering.
-  session.history = createHistory({ doc: { ...current, layers, metas: [] } })
+  session.history = createHistory({ doc: next })
+  rebuildMetaViews(session)
+  refreshMetaRefs(session)
   markDirty(session)
   forgetTileNumbers(session)
 
@@ -1594,15 +1806,24 @@ function repackBanked(session: MapSession, indices: ArrayLike<number>, width: nu
   return `${counts} tiles in banks 1-3` + (short ? `, ${short} cells could not be placed` : '')
 }
 
-/** Whether cell `cell` of a `width`-dot-wide picture is every dot colour 0. */
-function isBlankCell(indices: ArrayLike<number>, width: number, cell: number): boolean {
-  const cols = width / TILE_SIZE
-  const ox = (cell % cols) * TILE_SIZE
-  const oy = Math.floor(cell / cols) * TILE_SIZE
-  for (let y = 0; y < TILE_SIZE; y++) {
-    for (let x = 0; x < TILE_SIZE; x++) if (indices[(oy + y) * width + ox + x]) return false
+/**
+ * The tileset's attached metas resolved again into an empty banked set, so
+ * their art lands in the shared region (255 down) that every bank shows — how
+ * a banked tileset keeps a meta's tiles. The bindings name those indices,
+ * which `packBankedTiles` keeps given the same `shared` tiles.
+ */
+function metasToShared(session: MapSession, tileset: TilesDoc): { shared: TileEntry[]; metas: TilesDoc['metas'] } | string {
+  if (!tileset.metas.length) return { shared: [], metas: [] }
+  const loaded = new Map<string, LoadedMeta>()
+  for (const binding of tileset.metas) {
+    const meta = session.ownedMetas.get(binding.path)
+    if (!meta) return `${fileOf(binding.path)} could not be read, so its art cannot be moved into the banks.`
+    loaded.set(binding.path, { meta, name: meta.export?.name || defaultExport(binding.path).name })
   }
-  return true
+  const empty = normalizeTiles({ mode: tileset.mode, count: 1, bankTiles: [[blankTileEntry(tileset.mode)], [], []], metas: tileset.metas })
+  const { doc: resolved, problems } = refreshMetas(empty, loaded)
+  if (problems.length) return problems[0]
+  return { shared: resolved.tiles.slice(MAX_TILES - resolved.sharedTiles, MAX_TILES), metas: resolved.metas }
 }
 
 /**
@@ -1844,13 +2065,18 @@ export const REBUILD_PROMPT =
  *    is banked already: offers to repack the screen, picture included, into
  *    three banks.
  * 3. Otherwise refuses, saying how far it got. Nothing is half-imported.
+ *
+ * `banks` is the import's choice: `auto` is the order above, `repeat` never
+ * banks the screen (step 2 is skipped), and `banked` goes to step 2 straight
+ * away on a screen that is not banked yet.
  */
 export async function importPicture(
   session: MapSession,
   picture: Picture,
   mode: string,
   at: Point = { x: 0, y: 0 },
-  transparent: number | null = null
+  transparent: number | null = null,
+  banks: BankChoice = 'auto'
 ): Promise<boolean> {
   const blocker = housekeepingBlocker(session)
   if (blocker) {
@@ -1878,6 +2104,8 @@ export async function importPicture(
   }
   const bankOf = paintBankOf(session) ?? undefined
   const grid = { width: current.width, height: current.height, tiles: layer.data }
+
+  if (banks === 'banked' && !isBanked(tileset)) return bankPicture(session, pixels, base, cols, rows, null)
 
   const direct = placePicture(grid, tileset, pixels, cols, rows, { bankOf, origin })
   if (!direct.refused) {
@@ -1922,17 +2150,38 @@ export async function importPicture(
     }
   }
 
-  // Banks are the last resort: they need the whole 32×24 screen repacked.
-  const repack = repackBlocker(session)
-  if (repack !== null) {
-    session.status = `${direct.refused} ${repack}`
+  if (banks === 'repeat') {
+    session.status = `${direct.refused} (The import asked for one repeated set — choose Banks: Auto or Banked to bank the screen.)`
     return false
   }
-  const prompt = isBanked(tileset)
-    ? `${direct.refused} Rebuild the three banks from the screen with the picture on it? ${REBUILD_CONSEQUENCES}`
-    : `${direct.refused} Switch this screen to banked (three banks of ${MAX_TILES}) and import it there? ${BANKING_CONSEQUENCES}`
+  // Banks are the last resort: they need the whole 32×24 screen repacked.
+  return bankPicture(session, pixels, base, cols, rows, direct.refused)
+}
+
+/**
+ * Repacks the screen with the picture on it into three banks — switching it
+ * to banked, or rebuilding the banks it has — after asking. `refused` is why
+ * the picture did not fit as it is, or null when banks were asked for.
+ */
+function bankPicture(
+  session: MapSession,
+  pixels: ArrayLike<number>,
+  base: { width: number; height: number },
+  cols: number,
+  rows: number,
+  refused: string | null
+): boolean {
+  const why = refused ? `${refused} ` : ''
+  const repack = repackBlocker(session)
+  if (repack !== null) {
+    session.status = `${why}${repack}`
+    return false
+  }
+  const prompt = isBanked(session.tileset!)
+    ? `${why}Rebuild the three banks from the screen with the picture on it? ${REBUILD_CONSEQUENCES}`
+    : `${why}Switch this screen to banked (three banks of ${MAX_TILES}) and import it there? ${BANKING_CONSEQUENCES}`
   if (!window.confirm(prompt)) {
-    session.status = direct.refused
+    session.status = refused ?? 'Import cancelled — the screen is unchanged.'
     return false
   }
   const counts = repackBanked(session, pixels, base.width, base.height)
@@ -1946,7 +2195,7 @@ export async function importPicture(
  * Nothing is decided until it is dropped — the tiles, the budget, the offer to
  * bank — because only then is it known which cells the picture covers.
  */
-export function floatPicture(session: MapSession, picture: Picture & { rgb: Rgb[] }, mode: string): void {
+export function floatPicture(session: MapSession, picture: Picture & { rgb: Rgb[] }, mode: string, banks: BankChoice = 'auto'): void {
   const blocker = housekeepingBlocker(session)
   if (blocker) {
     session.status = blocker
@@ -1966,6 +2215,7 @@ export function floatPicture(session: MapSession, picture: Picture & { rgb: Rgb[
     picture: { width: picture.width, height: picture.height, indices: picture.indices },
     rgb: picture.rgb,
     mode,
+    banks,
     ...clampFloat(pasteCorner(session), cols, rows, current.width, current.height)
   }
   session.float = float
@@ -2003,6 +2253,8 @@ export interface PictureFloat {
   /** The colours the dialog converted it with, to draw it in while it floats. */
   rgb: Rgb[]
   mode: string
+  /** The import's bank choice, acted on when it is dropped (`importPicture`). */
+  banks: BankChoice
   x: number
   y: number
 }
@@ -2035,6 +2287,82 @@ export function displayDoc(session: MapSession): MapDoc {
 export function setViewOrigin(session: MapSession, origin: Point): void {
   if (origin.x !== session.viewOrigin.x || origin.y !== session.viewOrigin.y) session.viewOrigin = origin
 }
+
+/** The dots the active layer shows inside `rect` (in cells), cut out of the whole screen's render. */
+export function selectionPixels(session: MapSession, rect: Rect): { width: number; height: number; indices: Uint8Array } {
+  const full = renderMapPixels(doc(session), session.tileset!, session.activeLayer)
+  const width = rect.width * TILE_SIZE
+  const height = rect.height * TILE_SIZE
+  const indices = new Uint8Array(width * height)
+  for (let y = 0; y < height; y++) {
+    const from = (rect.y * TILE_SIZE + y) * full.width + rect.x * TILE_SIZE
+    indices.set(full.indices.subarray(from, from + width), y * width)
+  }
+  return { width, height, indices }
+}
+
+/**
+ * Turns the selection into a new meta-tile: what the active layer shows there,
+ * as pixels, written to `res/<map>_meta<n>.meta-tiles.json` and opened. It owns
+ * those pixels from then on — the map is untouched, and placing the meta
+ * attaches it to the tileset, where identical art is shared rather than
+ * duplicated. A tile empty in the picture is a see-through cell. Live
+ * meta-tile placements are not in the grid, so they are not in the picture.
+ */
+export async function metaFromSelection(session: MapSession): Promise<void> {
+  const rect = session.selection
+  const tileset = session.tileset
+  if (!tileset || !canPaint(session)) {
+    session.status = 'A meta-tile is cut from a pattern tileset’s map — this one has none.'
+    return
+  }
+  if (!rect) {
+    session.status = 'Select the cells to make the meta-tile from first.'
+    return
+  }
+  if (rect.width > MAX_META_SIZE || rect.height > MAX_META_SIZE) {
+    session.status = `A meta-tile is at most ${MAX_META_SIZE}×${MAX_META_SIZE} tiles, and the selection is ${rect.width}×${rect.height}.`
+    return
+  }
+  const made = cellsToOwnedMeta(tileset.mode, [selectionPixels(session, rect)])
+  if (typeof made === 'string') {
+    session.status = made
+    return
+  }
+  const base = fileOf(session.path).replace(/\.map\.json$/, '')
+  const pathFor = (n: number): string => `${RESOURCE_DIR}/${base}_meta${n}.meta-tiles.json`
+  let n = 1
+  while (await window.api.invoke('fs:stat', { path: pathFor(n) })) n++
+  const path = pathFor(n)
+  try {
+    await window.api.invoke('fs:create', { path: RESOURCE_DIR, kind: 'directory' })
+    await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'metatiles', doc: { ...made.doc, export: defaultExport(path) } }) })
+  } catch (error) {
+    session.status = `Couldn't write ${path}: ${String(error)}`
+    return
+  }
+  await useResourcesStore().refresh()
+  useTabsStore().openFile(path, fileOf(path))
+  const live = livePlacementRects(session).some((placement) => overlaps(placement, rect))
+  session.status =
+    `Made ${fileOf(path)} from the ${rect.width}×${rect.height} selection` +
+    (made.lossy ? ` (${made.lossy} tile${made.lossy === 1 ? '' : 's'} reduced to two colours a row)` : '') +
+    '. Place it from the meta-tile picker; rename it in the Resources panel.' +
+    (live ? ' The live meta-tiles over it are not in the picture — only what the grid holds.' : '')
+}
+
+/** The active layer's live (not baked) placements, with their sizes. */
+function livePlacementRects(session: MapSession): Rect[] {
+  const map = doc(session)
+  const layer = map.layers[session.activeLayer]
+  if (!layer) return []
+  return layer.placements.flatMap((placement) => {
+    const ref = map.metas[placement.slot]
+    return ref && !placement.baked ? [{ x: placement.x, y: placement.y, width: ref.width, height: ref.height }] : []
+  })
+}
+
+const overlaps = (a: Rect, b: Rect): boolean => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 
 /** Where a paste or an import first appears: the selection's corner, or else the top-left of what is in view. */
 function pasteCorner(session: MapSession): Point {
@@ -2107,7 +2435,7 @@ export async function dropFloat(session: MapSession): Promise<void> {
   session.float = null
   const current = doc(session)
   if (float.kind === 'picture') {
-    const placed = await importPicture(session, float.picture, float.mode, { x: float.x, y: float.y }, 0)
+    const placed = await importPicture(session, float.picture, float.mode, { x: float.x, y: float.y }, 0, float.banks)
     // A placed picture is not selected: the next import would otherwise start on top of it.
     if (placed) session.selection = null
     else if (!session.float) session.float = float
@@ -2138,15 +2466,46 @@ export function cancelFloat(session: MapSession): void {
 export function copySelection(session: MapSession): void {
   const float = session.float
   if (float?.kind === 'picture') return
+  let top: number
   if (float) {
     session.clipboard = { width: float.clip.width, height: float.clip.height, tiles: Array.from(float.clip.values) }
+    top = float.y
   } else {
     const current = doc(session)
     const layer = current.layers[session.activeLayer]
     if (!layer || !session.selection) return
     session.clipboard = copyRect(current, layer, session.selection)
+    top = session.selection.y
+  }
+  // The pixels too, for a paste into another map or a meta-tile
+  // (`picture-clipboard.ts`); this map's own paste keeps the tile numbers.
+  const tileset = session.tileset
+  if (tileset && canPaint(session)) {
+    pictureClipboard.value = {
+      picture: stampPixels(tileset, session.clipboard, top),
+      rgb: paletteToRgb(tileset.palette),
+      mode: tileset.mode,
+      from: session.path
+    }
   }
   session.status = `Copied ${session.clipboard.width}×${session.clipboard.height}`
+}
+
+/** What a stamp of tile numbers draws, its first row at map row `top` — which picks each row's bank on a banked tileset. */
+function stampPixels(tileset: TilesDoc, stamp: Stamp, top: number): { width: number; height: number; indices: Uint8Array } {
+  const width = stamp.width * TILE_SIZE
+  const indices = new Uint8Array(width * stamp.height * TILE_SIZE)
+  const banked = isBanked(tileset)
+  for (let cy = 0; cy < stamp.height; cy++) {
+    for (let cx = 0; cx < stamp.width; cx++) {
+      const tile = stamp.tiles[cy * stamp.width + cx] ?? 0
+      const pixels = banked ? bankTilePixels(tileset, bankOfRow(top + cy), tile) : tilePixels(tileset, tile)
+      for (let y = 0; y < TILE_SIZE; y++) {
+        indices.set(pixels.subarray(y * TILE_SIZE, (y + 1) * TILE_SIZE), (cy * TILE_SIZE + y) * width + cx * TILE_SIZE)
+      }
+    }
+  }
+  return { width, height: stamp.height * TILE_SIZE, indices }
 }
 
 /**
@@ -2179,6 +2538,13 @@ export function cutSelection(session: MapSession): void {
  * which is the one that drags it.
  */
 export function pasteClipboard(session: MapSession, at?: Point): void {
+  // Copied in another map or a meta-tile: its pixels, placed as an imported
+  // picture is — so another tileset's art lands as this tileset's tiles.
+  const pixels = pixelsFromElsewhere(session.path)
+  if (pixels && session.tileset && canPaint(session)) {
+    floatPicture(session, { ...pixels.picture, rgb: pixels.rgb }, session.tileset.mode)
+    return
+  }
   const clip = session.clipboard
   if (!clip || refuseIndexed(session)) return
   void dropFloat(session)

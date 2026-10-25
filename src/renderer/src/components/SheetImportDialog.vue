@@ -153,6 +153,8 @@ const onePerRow = ref(true)
 const skipEmpty = ref(true)
 const trim = ref(true)
 const duration = ref(8)
+/** An existing animated tile or meta-tile: replace its poses rather than add to them. */
+const replacePoses = ref(false)
 const maxPlanes = ref(3)
 const info = ref<TargetInfo | null>(null)
 
@@ -350,7 +352,8 @@ async function doImport(): Promise<void> {
     blocks: blocks.value,
     withMap: withMap.value,
     duration: duration.value,
-    maxPlanes: maxPlanes.value
+    maxPlanes: maxPlanes.value,
+    replacePoses: replacePoses.value
   })
   busy.value = false
   // A new file now exists: the next import of the same name has to pick another.
@@ -903,6 +906,14 @@ const summary = computed((): string[] => {
               v-model="trim"
               type="checkbox"
             ><span>Trim to the content of all frames</span></label>
+            <label
+              v-if="target && (destination === 'anim' || destination === 'meta')"
+              class="inline"
+              :title="destination === 'meta' ? 'Its flags, loop and export stay; its size becomes the cells’ size' : 'Its loop and export stay; the cells must be its size'"
+            ><input
+              v-model="replacePoses"
+              type="checkbox"
+            ><span>Replace its poses instead of adding to them</span></label>
             <label class="inline"><input
               v-model="skipEmpty"
               type="checkbox"

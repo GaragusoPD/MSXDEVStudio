@@ -20,6 +20,7 @@ import MapPicker from './MapPicker.vue'
 import MapSidePanel from './MapSidePanel.vue'
 import Icon from '../../components/Icon.vue'
 import { isTypingTarget } from '../../commands'
+import { pixelsFromElsewhere } from '../picture-clipboard'
 import {
   cancelFloat,
   canPaint,
@@ -33,6 +34,9 @@ import {
   doc,
   dropFloat,
   mapSession,
+  maxZoom,
+  metaFromSelection,
+  MIN_ZOOM,
   nudgeSelection,
   pasteClipboard,
   pruneMapSessions,
@@ -42,6 +46,7 @@ import {
   setMode,
   setPaintTool,
   setTool,
+  setZoom,
   undo,
 } from './session'
 
@@ -50,6 +55,14 @@ const resourcesStore = useResourcesStore()
 
 const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed(() => mapSession(path.value))
+
+// A map grown past what its canvas can take at this zoom comes back down to it.
+watch(
+  () => maxZoom(session.value),
+  (max) => {
+    if (session.value.zoom > max) setZoom(session.value, max)
+  }
+)
 
 const TOOLS: { id: MapTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'stamp', icon: 'edit', title: 'Stamp — drag to paint the picked tile(s)' },
@@ -264,11 +277,19 @@ onMounted(() => void resourcesStore.refresh())
           </button>
           <button
             type="button"
-            title="Paste — it floats until you drag it into place and press Enter (Ctrl+V)"
-            :disabled="!session.clipboard"
+            title="Paste — it floats until you drag it into place and press Enter (Ctrl+V). Art copied in another map or a meta-tile comes in as pixels, made into this tileset's tiles."
+            :disabled="!session.clipboard && !pixelsFromElsewhere(session.path)"
             @click="pasteClipboard(session)"
           >
             <Icon name="content_paste" />
+          </button>
+          <button
+            type="button"
+            title="Make a new meta-tile from the selection — its pixels become the meta-tile's own art, and the map is left as it is"
+            :disabled="!session.selection || !!session.float"
+            @click="metaFromSelection(session)"
+          >
+            <Icon name="widgets" />
           </button>
           <button
             type="button"
@@ -322,11 +343,13 @@ onMounted(() => void resourcesStore.refresh())
         >
           <Icon name="zoom_in" />
           <input
-            v-model.number="session.zoom"
+            :value="session.zoom"
             type="range"
-            :min="4"
-            :max="48"
+            :min="MIN_ZOOM"
+            :max="maxZoom(session)"
             :step="2"
+            :title="`${session.zoom / 8} pixels a dot`"
+            @input="setZoom(session, Number(($event.target as HTMLInputElement).value))"
           >
         </label>
         <label class="inline">

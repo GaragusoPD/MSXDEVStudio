@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { expandIndexedLayer, normalizeMap } from '../../../../shared/msx/map'
 import { normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
-import { normalizeTiles, type TileEntry } from '../../../../shared/msx/tile'
+import { isBanked, MAX_TILES, normalizeTiles, type TileEntry } from '../../../../shared/msx/tile'
 import { emitAnimSaved } from '../anim/events'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
@@ -32,6 +32,7 @@ import {
   setBaked,
   saveSession as saveMap,
   setIndexed,
+  switchToBanked,
   undo,
   unattachedMetas
 } from './session'
@@ -180,6 +181,22 @@ describe('placing one on a map', () => {
     // The map's mirror and its view of the meta both moved with it.
     expect(doc(session).metas[0].cells).toEqual([cell, 0])
     expect(session.metaDocs.get(ROCK)!.frames[0].tiles).toEqual([cell, 0])
+  })
+
+  it('survives the screen switching to banked: its art moves to the tiles every bank shares', async () => {
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 32, height: 24 })
+    const session = await open(() => mapSession(MAP))
+    pickMeta(session, ROCK)
+    placeMetaAt(session, 2, 3)
+    switchToBanked(session)
+    const tileset = useTilesetStore().patternDoc(TILES)!
+    expect(isBanked(tileset)).toBe(true)
+    const cell = tileset.metas[0].cells[0]
+    expect(cell).toBe(MAX_TILES - 1)
+    expect(tileset.sharedTiles).toBe(1)
+    expect(tileset.tiles[cell].pattern[0]).toBe(0x81)
+    expect(doc(session).metas[0].cells).toEqual([cell, 0])
+    expect(doc(session).layers[0].placements).toEqual([{ slot: 0, x: 2, y: 3 }])
   })
 
   it('is not offered to a tileset that cannot show its mode', async () => {

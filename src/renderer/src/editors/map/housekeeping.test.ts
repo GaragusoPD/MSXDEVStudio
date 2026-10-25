@@ -9,24 +9,34 @@
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { serializeResource } from '../../../../shared/msx/resource'
+import { parseResource, serializeResource } from '../../../../shared/msx/resource'
+import type { OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { isBanked, MAX_TILES, normalizeTiles, TILE_SIZE, tilePixels, type TileEntry } from '../../../../shared/msx/tile'
 import { SCREEN_ROWS } from '../../../../shared/msx/map'
 import {
   canUndo,
   doc,
   importPicture,
+  metaFromSelection,
+  copySelection,
+  pasteClipboard,
+  dropFloat,
   mapSession,
   pruneMapSessions,
   removeUnusedTiles,
   renderMapPixels,
+  reloadBank,
   resize,
+  fillBankFrom,
+  switchToBanked,
+  switchToRepeat,
   undo,
   type MapSession
 } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
+import { pictureClipboard, type PictureClip } from '../picture-clipboard'
 
 const MAP = 'res/level.map.json'
 const OTHER = 'res/other.map.json'
@@ -72,6 +82,8 @@ beforeEach(() => {
           files[args.path] = args.content ?? ''
           return undefined
         }
+        if (channel === 'fs:stat') return args.path in files ? { kind: 'file' } : null
+        if (channel === 'fs:create' || channel === 'resources:list') return channel === 'resources:list' ? [] : undefined
         throw new Error(`unexpected channel ${channel}`)
       })
     }
@@ -289,5 +301,193 @@ describe('importPicture', () => {
     expect(isBanked(session.tileset!)).toBe(true)
     // Every dot of the screen is the picture's.
     expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(pic.indices)
+  })
+
+  /** A 32×24 screen on an empty tileset, and a picture of it with `distinct` different cells. */
+  async function screenWith(distinct: number): Promise<{ session: MapSession; pic: ReturnType<typeof picture> }> {
+    files[TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 1 }) })
+    files[MAP] = mapFile(new Array(32 * SCREEN_ROWS).fill(0), 32, SCREEN_ROWS)
+    const session = await openMap()
+    const pic = picture(32, SCREEN_ROWS, () => 0)
+    for (let cell = 0; cell < distinct; cell++) {
+      const ox = (cell % 32) * TILE_SIZE
+      const oy = Math.floor(cell / 32) * TILE_SIZE
+      for (let bit = 0; bit < 9; bit++) if (cell & (1 << bit)) pic.indices[(oy + (bit >> 3)) * pic.width + ox + (bit & 7)] = 15
+    }
+    return { session, pic }
+  }
+
+  it('Banks: Repeat never banks the screen — it says how to, and leaves it alone', async () => {
+    const { session, pic } = await screenWith(300)
+    const before = doc(session)
+    await importPicture(session, pic, 'sc2', { x: 0, y: 0 }, null, 'repeat')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(isBanked(session.tileset!)).toBe(false)
+    expect(doc(session)).toBe(before)
+    expect(session.status).toMatch(/choose Banks: Auto or Banked/)
+  })
+
+  it('Banks: Banked switches the screen to banked even when one set would do', async () => {
+    const { session, pic } = await screenWith(10)
+    await importPicture(session, pic, 'sc2', { x: 0, y: 0 }, null, 'banked')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(isBanked(session.tileset!)).toBe(true)
+    expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(pic.indices)
+  })
+})
+
+describe('the Repeat/Banked switch', () => {
+  /** A 32×24 screen on `tiles`, whose first `distinct` cells draw different art (tile i is art(i)). */
+  async function screen(distinct: number, reserveTile0 = false): Promise<MapSession> {
+    const count = Math.min(distinct + 1, MAX_TILES)
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count, reserveTile0, tiles: Array.from({ length: count }, (_, i) => art(i)) })
+    })
+    const data = new Array(32 * SCREEN_ROWS).fill(0)
+    for (let i = 0; i < distinct; i++) data[i] = (i % (count - 1)) + 1
+    files[MAP] = mapFile(data, 32, SCREEN_ROWS)
+    return openMap()
+  }
+
+  it('goes to banked and back, and the screen shows the same dots all the way', async () => {
+    const session = await screen(40, true)
+    const before = renderMapPixels(doc(session), session.tileset!, 0).indices
+
+    switchToBanked(session)
+    expect(isBanked(session.tileset!)).toBe(true)
+    expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(before)
+
+    switchToRepeat(session)
+    expect(isBanked(session.tileset!)).toBe(false)
+    expect(session.tileset!.reserveTile0).toBe(true)
+    expect(renderMapPixels(doc(session), session.tileset!, 0).indices).toEqual(before)
+    expect(doc(session).layers[0].data[32 * 23]).toBe(0) // an empty cell is still the see-through tile 0
+    expect(confirm).toHaveBeenCalledTimes(2)
+  })
+
+  it('stays banked when the screen draws more than one set holds', async () => {
+    files[TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 1 }) })
+    files[MAP] = mapFile(new Array(32 * SCREEN_ROWS).fill(0), 32, SCREEN_ROWS)
+    const session = await openMap()
+    const pic = { width: 256, height: 192, indices: new Uint8Array(256 * 192) }
+    for (let cell = 0; cell < 300; cell++) {
+      const ox = (cell % 32) * TILE_SIZE
+      const oy = Math.floor(cell / 32) * TILE_SIZE
+      for (let bit = 0; bit < 9; bit++) if (cell & (1 << bit)) pic.indices[(oy + (bit >> 3)) * 256 + ox + (bit & 7)] = 15
+    }
+    await importPicture(session, pic, 'sc2', { x: 0, y: 0 }, null, 'banked')
+    expect(isBanked(session.tileset!)).toBe(true)
+    confirm.mockClear()
+
+    switchToRepeat(session)
+    expect(isBanked(session.tileset!)).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(session.status).toMatch(/has to stay banked/)
+  })
+
+  it('fills a bank from another tileset, and copies it again on Reload once that tileset changed', async () => {
+    const session = await screen(10)
+    switchToBanked(session)
+    const SOURCE = 'res/source.tiles.json'
+    const sourceWith = (first: number): string =>
+      serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 3, tiles: [art(0), art(first), art(first + 1)] }) })
+    files[SOURCE] = sourceWith(100)
+
+    await fillBankFrom(session, 2, SOURCE)
+    expect(session.tileset!.bankTiles[2].map((tile) => tile.pattern[0])).toEqual([0, 100, 101])
+    expect(session.tileset!.bankSources).toEqual([null, null, SOURCE])
+    expect(session.status).toMatch(/Bank 3 \(rows 16–23\) now holds 3 tiles copied from source\.tiles\.json/)
+
+    files[SOURCE] = sourceWith(200)
+    await reloadBank(session, 2)
+    expect(session.tileset!.bankTiles[2].map((tile) => tile.pattern[0])).toEqual([0, 200, 201])
+  })
+
+  it('will not fill a bank of a repeated set', async () => {
+    const session = await screen(10)
+    files['res/source.tiles.json'] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 2 }) })
+    await fillBankFrom(session, 0, 'res/source.tiles.json')
+    expect(isBanked(session.tileset!)).toBe(false)
+    expect(session.status).toMatch(/Switch the screen to Banked first/)
+  })
+
+  it('a declined switch changes nothing', async () => {
+    const session = await screen(10)
+    confirm.mockReturnValue(false)
+    const before = session.tileset
+    switchToBanked(session)
+    expect(session.tileset).toBe(before)
+  })
+})
+
+describe('metaFromSelection', () => {
+  it('writes the selection\'s pixels as a new meta-tile, empty cells see-through, and leaves the map alone', async () => {
+    // Cells 0 and 1 draw art 1 and 3; row 1 is tile 0, the reserved blank.
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 8, reserveTile0: true, tiles: Array.from({ length: 8 }, (_, i) => art(i)) })
+    })
+    const session = await openMap()
+    const before = doc(session)
+    session.selection = { x: 0, y: 0, width: 2, height: 2 }
+    await metaFromSelection(session)
+
+    const path = 'res/level_meta1.meta-tiles.json'
+    expect(files[path]).toBeDefined()
+    const meta = parseResource(path, files[path]).doc as OwnedMetaDoc
+    expect([meta.width, meta.height, meta.frames.length]).toEqual([2, 2, 1])
+    expect(meta.holes).toEqual([false, false, true, true])
+    // art(3): every row two dots of ink 15 on paper 1 — encoded either way round.
+    const tile = meta.frames[0].tiles[1]
+    const ink = tile.pattern[0] === 3 ? tile.color[0] >> 4 : tile.color[0] & 0x0f
+    expect([3, 252]).toContain(tile.pattern[0])
+    expect(ink).toBe(15)
+    expect(doc(session)).toBe(before)
+    expect(session.status).toMatch(/Made level_meta1\.meta-tiles\.json from the 2×2 selection/)
+
+    await metaFromSelection(session)
+    expect(files['res/level_meta2.meta-tiles.json']).toBeDefined() // never over an existing one
+  })
+
+  it('refuses a selection bigger than a meta-tile can be', async () => {
+    files[MAP] = mapFile(new Array(20 * 20).fill(1), 20, 20)
+    const session = await openMap()
+    session.selection = { x: 0, y: 0, width: 17, height: 2 }
+    await metaFromSelection(session)
+    expect(session.status).toMatch(/at most 16×16/)
+  })
+})
+
+describe('copying between maps', () => {
+  it('a copy in one map pastes into a map with another tileset as pixels, made into that tileset\'s tiles', async () => {
+    pictureClipboard.value = null
+    const OTHER_TILES = 'res/other.tiles.json'
+    files[OTHER_TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 1, reserveTile0: true }) })
+    files[OTHER] = mapFile(new Array(64).fill(0), 8, 8, OTHER_TILES)
+
+    const from = await openMap()
+    from.selection = { x: 0, y: 0, width: 2, height: 1 }
+    copySelection(from)
+    const clipped = (): PictureClip | null => pictureClipboard.value
+    expect(clipped()?.from).toBe(MAP)
+
+    const into = await openMap(OTHER)
+    pasteClipboard(into)
+    expect(into.float?.kind).toBe('picture')
+    await dropFloat(into)
+    // The same dots as the source cells, drawn with the other tileset's own new tiles.
+    const source = renderMapPixels(doc(from), from.tileset!, 0).indices
+    const pasted = renderMapPixels(doc(into), into.tileset!, 0).indices
+    for (let y = 0; y < 8; y++) expect(pasted.slice(y * 64, y * 64 + 16)).toEqual(source.slice(y * 64, y * 64 + 16))
+    expect(into.tileset!.count).toBeGreaterThan(1)
+  })
+
+  it('within the same map, a paste keeps the tile numbers', async () => {
+    const session = await openMap()
+    session.selection = { x: 0, y: 0, width: 2, height: 1 }
+    copySelection(session)
+    pasteClipboard(session)
+    expect(session.float?.kind).toBe('cells')
   })
 })

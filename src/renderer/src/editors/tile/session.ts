@@ -35,21 +35,27 @@ import {
   colorByteAt,
   createTilesDoc,
   isBanked,
+  isBlankCell,
   isMetaPath,
   MAX_BLOCK,
   MAX_TILES,
+  metaOwning,
   animCells,
   animWindowProblems,
   convertTileMode,
   normalizeTiles,
-  packTiles,
+  packChosen,
   regroupAfterTile0Shift,
+  reserveBankTile0,
   removeTile,
   reorderTiles,
   swapRowColors,
   TILE_SIZE,
   tileModeConversionLossy,
   tilePixels,
+  type BankChoice,
+  type BankedPackResult,
+  type MetaBinding,
   type PaintConflict,
   type TileAnimBinding,
   type TileBlock,
@@ -283,9 +289,28 @@ export async function importImage(
   session: TileSession,
   result: ImportResult,
   mode: 'replace' | 'merge',
-  dedup: boolean
+  dedup: boolean,
+  banks: BankChoice = 'repeat'
 ): Promise<void> {
-  const packed = packTiles(result.indices, result.width, result.height, session.doc.mode, { dedup })
+  // A merge appends to the common set; banks are rebuilt whole or not at all.
+  if (banks === 'banked' && mode === 'merge') {
+    session.status = 'A banked import rebuilds all three banks — choose Replace to import it banked.'
+    return
+  }
+  // Decided before anything is removed: a refusal must leave the tileset as it was.
+  const sharedStart = MAX_TILES - session.doc.sharedTiles
+  const shared = session.doc.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(session.doc.mode))
+  const chosen = packChosen(result.indices, result.width, result.height, session.doc.mode, mode === 'merge' ? 'repeat' : banks, { dedup, shared })
+  if (typeof chosen === 'string') {
+    session.status = chosen
+    return
+  }
+  if (mode === 'replace' && session.doc.metas.length && !(await removeMetasForReplace(session))) return
+  if (chosen.banked) {
+    await importBanked(session, result, chosen)
+    return
+  }
+  const packed = chosen
   // Replacing into a bank that already reserves tile 0 would otherwise let
   // `normalizeTiles` blank the freshly imported top-left tile in place below —
   // silently losing it, since `packTiles`'s own layout always starts at index
@@ -367,6 +392,45 @@ export async function importImage(
       ? `; ${dropped} tile${dropped === 1 ? '' : 's'} could not be added — the bank is full, and this map will not export until it has room for them`
       : '')
 
+  await saveWithMap(session, status, packed.layout, cols, rows, offset)
+}
+
+/**
+ * The banked half of `importImage`: the picture's three thirds become the three
+ * banks, a replace of the whole set. The shared meta-tile region survives at
+ * its own indices, as a replace always keeps it; under `reserveTile0` each
+ * bank's tile 0 stays the blank and the picture's empty cells point at it.
+ */
+async function importBanked(session: TileSession, result: ImportResult, packed: BankedPackResult): Promise<void> {
+  const cols = Math.floor(result.width / TILE_SIZE)
+  // A shorter picture is padded to the full 24 rows a banked map must have.
+  const rows = packed.layout.length / cols
+  const { bankTiles, layout, unplaced } = session.doc.reserveTile0
+    ? reserveBankTile0(packed, session.doc.mode, cols, (cell) => isBlankCell(result.indices, result.width, cell))
+    : { bankTiles: packed.doc.bankTiles, layout: packed.layout, unplaced: packed.unplaced }
+  // A fresh document, as the map's own repack makes one: flags and blocks
+  // name tiles by number and every number changed.
+  const doc = normalizeTiles({
+    ...packed.doc,
+    bankTiles,
+    palette: session.doc.mode === 'sc4' ? (result.palette ?? session.doc.palette) : null,
+    reserveTile0: session.doc.reserveTile0,
+    export: session.doc.export
+  })
+  commit(session, doc, 'import image (banked)')
+  const short = unplaced.reduce((sum, count) => sum + count, 0)
+  const status =
+    `Imported into three banks — ${doc.bankTiles.map((bank) => bank.length).join('/')} tiles` +
+    (packed.lossyTiles.length ? `, ${packed.lossyTiles.length} needed color reduction` : '') +
+    (short ? `; ${short} cells could not be placed (a bank filled at ${MAX_TILES} tiles)` : '')
+  await saveWithMap(session, status, layout, cols, rows, 0)
+}
+
+/**
+ * Saves an import and, unless a map already sits beside the tileset, writes
+ * the arrangement it computed as one. `offset` is added to every layout index.
+ */
+async function saveWithMap(session: TileSession, status: string, layout: number[], cols: number, rows: number, offset: number): Promise<void> {
   // The map has to describe what a build will actually read — the tileset as
   // it lands on disk, not just the in-memory doc `commit` above updated — so
   // it must not be written until the save succeeds, and never on its own if
@@ -396,7 +460,7 @@ export async function importImage(
     return
   }
 
-  const map = mapFromLayout(session.path, packed.layout, cols, rows, offset)
+  const map = mapFromLayout(session.path, layout, cols, rows, offset)
   map.export = defaultExport(mapPath)
   session.status = status
   try {
@@ -554,7 +618,7 @@ export function paint(session: TileSession, points: Point[], role?: 'fg' | 'bg')
       session.status = bankEditRefusal(session.doc, tile)
       continue
     }
-    if (refuseAnimated(session, [tile])) continue
+    if (refuseDerived(session, [tile])) continue
     if (role) {
       // Left button paints the row's ink, right its paper — the same model as
       // the meta-tile editor, and the reason a second colour lands instead of
@@ -741,22 +805,79 @@ export function animationAt(session: TileSession, index: number): TileAnimBindin
 }
 
 /**
- * Refuses an edit to a window slot, saying where to make it instead. A
- * window's art is the animation's frame 0, rewritten from the animation file
- * before every export — an edit here would look like it worked and vanish at
- * the next build.
+ * The attached meta-tile a still cell of which shows `index` in the view the
+ * canvas shows, or null. A bank's own override at that index is the bank's
+ * art, not the meta's.
  */
-function refuseAnimated(session: TileSession, indices: readonly number[]): boolean {
-  const hit = indices.map((index) => [index, animationAt(session, index)] as const).find(([, binding]) => binding)
-  if (!hit) return false
-  const [index, binding] = hit
-  session.status = isMetaPath(binding!.path)
-    ? `Tile ${index} is a moving part of the meta-tile ${binding!.path.split('/').pop()} — edit its poses there; ` +
-      'this tile is rewritten from it at every build.'
-    : `Tile ${index} shows the animation ${binding!.path.split('/').pop()} — edit its poses there; ` +
-      'this tile is rewritten from it at every build.'
-  return true
+export function metaAt(session: TileSession, index: number): MetaBinding | null {
+  const bank = activeBank(session)
+  if (bank !== null && session.doc.bankTiles[bank]?.[index]) return null
+  return metaOwning(session.doc, index)
 }
+
+/**
+ * Why `index` cannot be edited here, or null. A window's art is its
+ * animation's frame 0, and a meta-tile's still cells are its own art: both are
+ * rebuilt from their files when the tileset opens and before every export, so
+ * an edit here would look like it worked and vanish.
+ */
+function derivedRefusal(session: TileSession, index: number): string | null {
+  const binding = animationAt(session, index)
+  if (binding) {
+    return isMetaPath(binding.path)
+      ? `Tile ${index} is a moving part of the meta-tile ${fileOf(binding.path)} — edit its poses there; ` +
+          'this tile is rewritten from it at every build.'
+      : `Tile ${index} shows the animation ${fileOf(binding.path)} — edit its poses there; ` +
+          'this tile is rewritten from it at every build.'
+  }
+  const meta = metaAt(session, index)
+  return meta
+    ? `Tile ${index} is part of the meta-tile ${fileOf(meta.path)} — edit it there (open it from the Meta-tiles panel); ` +
+        'this tile is rebuilt from it every time the tileset opens and before every build.'
+    : null
+}
+
+/** Refuses an edit to a derived tile, saying where to make it instead. */
+function refuseDerived(session: TileSession, indices: readonly number[]): boolean {
+  for (const index of indices) {
+    const reason = derivedRefusal(session, index)
+    if (reason) {
+      session.status = reason
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Why these tiles cannot be deleted, or null. A meta-tile's tiles — still
+ * cells and window alike — come back the next time it is resolved, so the
+ * delete would undo itself; remove the meta from the tileset first, and its
+ * tiles become ordinary art. A plain animation's window is detached instead
+ * (`deleteTiles`), as it always was.
+ */
+function deleteRefusal(session: TileSession, indices: readonly number[]): string | null {
+  for (const index of indices) {
+    const window = animationAt(session, index)
+    const meta = window && isMetaPath(window.path) ? window : metaAt(session, index)
+    if (meta) {
+      return (
+        `Tile ${index} is part of the meta-tile ${fileOf(meta.path)}, and would come back the next time the tileset opens. ` +
+        'Remove the meta-tile in the Meta-tiles panel first — its tiles then stay as ordinary art you can delete.'
+      )
+    }
+  }
+  return null
+}
+
+/** Refuses a delete of derived tiles with the reason, before anything asks the user to confirm it. */
+export function refuseDelete(session: TileSession, indices: readonly number[]): boolean {
+  const reason = deleteRefusal(session, indices)
+  if (reason) session.status = reason
+  return reason !== null
+}
+
+const fileOf = (path: string): string => path.split('/').pop() ?? path
 
 async function readAnimation(path: string): Promise<TileAnimDoc | string> {
   try {
@@ -972,13 +1093,46 @@ export async function attachMetaFile(session: TileSession, path: string): Promis
  * step here.
  */
 export async function removeMetaFile(session: TileSession, path: string): Promise<void> {
-  const status = await removeMetaFromTileset(session.path, path, () => {
-    const next = detachMeta(session.doc, path)
-    if (next === session.doc) return false
-    commit(session, next, 'remove meta-tile')
-    return true
-  })
+  const status = await removeMetaFromTileset(session.path, path, () => detachStep(session, path))
   if (status !== null) session.status = status
+}
+
+/** The tileset's half of a removal: one undo step, false when it was not attached. */
+function detachStep(session: TileSession, path: string): boolean {
+  const next = detachMeta(session.doc, path)
+  if (next === session.doc) return false
+  commit(session, next, 'remove meta-tile')
+  return true
+}
+
+/**
+ * Before an import replaces the whole set: removes every attached meta-tile,
+ * from the maps that place them too, after one question for all of them. Left
+ * attached, each would rebuild its art over the new picture the next time the
+ * tileset opens — the import would look like it half-worked. False when the
+ * user declined or a removal could not be done; the import stops there.
+ */
+async function removeMetasForReplace(session: TileSession): Promise<boolean> {
+  const names = session.doc.metas.map((binding) => fileOf(binding.path).replace(/\.meta-tiles\.json$/, ''))
+  if (
+    !window.confirm(
+      `Replacing the whole tileset removes its ${names.length === 1 ? 'meta-tile' : `${names.length} meta-tiles`} ` +
+        `(${names.join(', ')}), and takes their placements off every map drawn with it — otherwise they would rebuild ` +
+        'their art over the new picture the next time the tileset opens. Their art stays in their own files; ' +
+        'importing with Merge keeps them attached. Continue?'
+    )
+  ) {
+    session.status = 'Import cancelled — the tileset is unchanged.'
+    return false
+  }
+  for (const { path } of [...session.doc.metas]) {
+    const status = await removeMetaFromTileset(session.path, path, () => detachStep(session, path), { persist: true, confirmed: true })
+    if (session.doc.metas.some((binding) => binding.path === path)) {
+      session.status = status ?? `Couldn't remove ${fileOf(path)}, so nothing was imported.`
+      return false
+    }
+  }
+  return true
 }
 
 /** The meta-tiles in the project not attached here yet, by path. */
@@ -1038,7 +1192,7 @@ export function pasteClipboard(session: TileSession): void {
   // A paste that lands on a window would be overwritten by the animation's
   // frame 0 at the next export — say so now, not after the build.
   const landed = doc.tiles.flatMap((tile, index) => (tile !== session.doc.tiles[index] ? [index] : []))
-  if (refuseAnimated(session, landed)) return
+  if (refuseDerived(session, landed)) return
   if (!pasted) {
     session.status = 'Nothing pasted — that corner leaves no room for the clipboard.'
     return
@@ -1055,7 +1209,7 @@ export function pasteClipboard(session: TileSession): void {
 // ── the rest of the toolbar ─────────────────────────────────────────────────
 
 export function transform(session: TileSession, op: TileTransform): void {
-  if (refuseAnimated(session, [session.active])) return
+  if (refuseDerived(session, [session.active])) return
   const bank = activeBank(session)
   if (bank !== null) {
     if (!bankIndexEditable(session.doc, session.active)) {
@@ -1089,7 +1243,7 @@ function colorTargets(session: TileSession): number[] {
 }
 
 export function swapRow(session: TileSession, y: number): void {
-  if (refuseAnimated(session, colorTargets(session))) return
+  if (refuseDerived(session, colorTargets(session))) return
   const bank = activeBank(session)
   if (bank !== null) {
     if (!bankIndexEditable(session.doc, session.active)) {
@@ -1105,7 +1259,7 @@ export function swapRow(session: TileSession, y: number): void {
 }
 
 export function setRow(session: TileSession, y: number, fg: number, bg: number): void {
-  if (refuseAnimated(session, colorTargets(session))) return
+  if (refuseDerived(session, colorTargets(session))) return
   const bank = activeBank(session)
   if (bank !== null) {
     if (!bankIndexEditable(session.doc, session.active)) {
@@ -1184,6 +1338,7 @@ export function deleteTiles(session: TileSession, indices: readonly number[]): v
     session.status = 'A tileset needs at least one tile.'
     return
   }
+  if (refuseDelete(session, doomed)) return
 
   let next = session.doc
   let mapping = session.doc.tiles.map((_, i) => i)
