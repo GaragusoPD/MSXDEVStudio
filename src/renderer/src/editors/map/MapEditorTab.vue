@@ -34,6 +34,7 @@ import {
   dropFloat,
   mapSession,
   maxZoom,
+  metaFromSelection,
   MIN_ZOOM,
   nudgeSelection,
   pasteClipboard,
@@ -280,6 +281,14 @@ onMounted(() => void resourcesStore.refresh())
             @click="pasteClipboard(session)"
           >
             <Icon name="content_paste" />
+          </button>
+          <button
+            type="button"
+            title="Make a new meta-tile from the selection — its pixels become the meta-tile's own art, and the map is left as it is"
+            :disabled="!session.selection || !!session.float"
+            @click="metaFromSelection(session)"
+          >
+            <Icon name="widgets" />
           </button>
           <button
             type="button"

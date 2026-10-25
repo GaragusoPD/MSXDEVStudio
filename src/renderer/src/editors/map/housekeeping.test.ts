@@ -9,13 +9,15 @@
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { serializeResource } from '../../../../shared/msx/resource'
+import { parseResource, serializeResource } from '../../../../shared/msx/resource'
+import type { OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { isBanked, MAX_TILES, normalizeTiles, TILE_SIZE, tilePixels, type TileEntry } from '../../../../shared/msx/tile'
 import { SCREEN_ROWS } from '../../../../shared/msx/map'
 import {
   canUndo,
   doc,
   importPicture,
+  metaFromSelection,
   mapSession,
   pruneMapSessions,
   removeUnusedTiles,
@@ -76,6 +78,8 @@ beforeEach(() => {
           files[args.path] = args.content ?? ''
           return undefined
         }
+        if (channel === 'fs:stat') return args.path in files ? { kind: 'file' } : null
+        if (channel === 'fs:create' || channel === 'resources:list') return channel === 'resources:list' ? [] : undefined
         throw new Error(`unexpected channel ${channel}`)
       })
     }
@@ -410,5 +414,43 @@ describe('the Repeat/Banked switch', () => {
     const before = session.tileset
     switchToBanked(session)
     expect(session.tileset).toBe(before)
+  })
+})
+
+describe('metaFromSelection', () => {
+  it('writes the selection\'s pixels as a new meta-tile, empty cells see-through, and leaves the map alone', async () => {
+    // Cells 0 and 1 draw art 1 and 3; row 1 is tile 0, the reserved blank.
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({ mode: 'sc2', count: 8, reserveTile0: true, tiles: Array.from({ length: 8 }, (_, i) => art(i)) })
+    })
+    const session = await openMap()
+    const before = doc(session)
+    session.selection = { x: 0, y: 0, width: 2, height: 2 }
+    await metaFromSelection(session)
+
+    const path = 'res/level_meta1.meta-tiles.json'
+    expect(files[path]).toBeDefined()
+    const meta = parseResource(path, files[path]).doc as OwnedMetaDoc
+    expect([meta.width, meta.height, meta.frames.length]).toEqual([2, 2, 1])
+    expect(meta.holes).toEqual([false, false, true, true])
+    // art(3): every row two dots of ink 15 on paper 1 — encoded either way round.
+    const tile = meta.frames[0].tiles[1]
+    const ink = tile.pattern[0] === 3 ? tile.color[0] >> 4 : tile.color[0] & 0x0f
+    expect([3, 252]).toContain(tile.pattern[0])
+    expect(ink).toBe(15)
+    expect(doc(session)).toBe(before)
+    expect(session.status).toMatch(/Made level_meta1\.meta-tiles\.json from the 2×2 selection/)
+
+    await metaFromSelection(session)
+    expect(files['res/level_meta2.meta-tiles.json']).toBeDefined() // never over an existing one
+  })
+
+  it('refuses a selection bigger than a meta-tile can be', async () => {
+    files[MAP] = mapFile(new Array(20 * 20).fill(1), 20, 20)
+    const session = await openMap()
+    session.selection = { x: 0, y: 0, width: 17, height: 2 }
+    await metaFromSelection(session)
+    expect(session.status).toMatch(/at most 16×16/)
   })
 })

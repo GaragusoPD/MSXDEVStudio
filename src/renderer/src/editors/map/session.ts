@@ -67,7 +67,7 @@ import {
 } from '../../../../shared/msx/tile'
 import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-tile'
 import type { TileBlock } from '../../../../shared/msx/tile'
-import { normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
+import { MAX_META_SIZE, normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { isOwnedMeta, normalizeOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { animModesCompatible } from '../../../../shared/msx/tile-anim'
 import { onAnimSaved } from '../anim/events'
@@ -80,7 +80,8 @@ import {
   type TileEdit
 } from '../../../../shared/msx/meta-paint'
 import { compactTileset, composePicture, pictureExtent, placePicture, type Picture } from '../../../../shared/msx/tile-compact'
-import { defaultExport, parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { defaultExport, parseResource, RESOURCE_DIR, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { cellsToOwnedMeta } from '../../../../shared/msx/sheet-convert'
 import { screenPixels } from '../../../../shared/msx/screen'
 import type { Rgb } from '../../../../shared/msx/palette'
 import { clampFloat, clipRect, floatRect, liftFloat, placeFloat, type Float } from '../../../../shared/floating'
@@ -2224,6 +2225,82 @@ export function displayDoc(session: MapSession): MapDoc {
 export function setViewOrigin(session: MapSession, origin: Point): void {
   if (origin.x !== session.viewOrigin.x || origin.y !== session.viewOrigin.y) session.viewOrigin = origin
 }
+
+/** The dots the active layer shows inside `rect` (in cells), cut out of the whole screen's render. */
+export function selectionPixels(session: MapSession, rect: Rect): { width: number; height: number; indices: Uint8Array } {
+  const full = renderMapPixels(doc(session), session.tileset!, session.activeLayer)
+  const width = rect.width * TILE_SIZE
+  const height = rect.height * TILE_SIZE
+  const indices = new Uint8Array(width * height)
+  for (let y = 0; y < height; y++) {
+    const from = (rect.y * TILE_SIZE + y) * full.width + rect.x * TILE_SIZE
+    indices.set(full.indices.subarray(from, from + width), y * width)
+  }
+  return { width, height, indices }
+}
+
+/**
+ * Turns the selection into a new meta-tile: what the active layer shows there,
+ * as pixels, written to `res/<map>_meta<n>.meta-tiles.json` and opened. It owns
+ * those pixels from then on — the map is untouched, and placing the meta
+ * attaches it to the tileset, where identical art is shared rather than
+ * duplicated. A tile empty in the picture is a see-through cell. Live
+ * meta-tile placements are not in the grid, so they are not in the picture.
+ */
+export async function metaFromSelection(session: MapSession): Promise<void> {
+  const rect = session.selection
+  const tileset = session.tileset
+  if (!tileset || !canPaint(session)) {
+    session.status = 'A meta-tile is cut from a pattern tileset’s map — this one has none.'
+    return
+  }
+  if (!rect) {
+    session.status = 'Select the cells to make the meta-tile from first.'
+    return
+  }
+  if (rect.width > MAX_META_SIZE || rect.height > MAX_META_SIZE) {
+    session.status = `A meta-tile is at most ${MAX_META_SIZE}×${MAX_META_SIZE} tiles, and the selection is ${rect.width}×${rect.height}.`
+    return
+  }
+  const made = cellsToOwnedMeta(tileset.mode, [selectionPixels(session, rect)])
+  if (typeof made === 'string') {
+    session.status = made
+    return
+  }
+  const base = fileOf(session.path).replace(/\.map\.json$/, '')
+  const pathFor = (n: number): string => `${RESOURCE_DIR}/${base}_meta${n}.meta-tiles.json`
+  let n = 1
+  while (await window.api.invoke('fs:stat', { path: pathFor(n) })) n++
+  const path = pathFor(n)
+  try {
+    await window.api.invoke('fs:create', { path: RESOURCE_DIR, kind: 'directory' })
+    await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'metatiles', doc: { ...made.doc, export: defaultExport(path) } }) })
+  } catch (error) {
+    session.status = `Couldn't write ${path}: ${String(error)}`
+    return
+  }
+  await useResourcesStore().refresh()
+  useTabsStore().openFile(path, fileOf(path))
+  const live = livePlacementRects(session).some((placement) => overlaps(placement, rect))
+  session.status =
+    `Made ${fileOf(path)} from the ${rect.width}×${rect.height} selection` +
+    (made.lossy ? ` (${made.lossy} tile${made.lossy === 1 ? '' : 's'} reduced to two colours a row)` : '') +
+    '. Place it from the meta-tile picker; rename it in the Resources panel.' +
+    (live ? ' The live meta-tiles over it are not in the picture — only what the grid holds.' : '')
+}
+
+/** The active layer's live (not baked) placements, with their sizes. */
+function livePlacementRects(session: MapSession): Rect[] {
+  const map = doc(session)
+  const layer = map.layers[session.activeLayer]
+  if (!layer) return []
+  return layer.placements.flatMap((placement) => {
+    const ref = map.metas[placement.slot]
+    return ref && !placement.baked ? [{ x: placement.x, y: placement.y, width: ref.width, height: ref.height }] : []
+  })
+}
+
+const overlaps = (a: Rect, b: Rect): boolean => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 
 /** Where a paste or an import first appears: the selection's corner, or else the top-left of what is in view. */
 function pasteCorner(session: MapSession): Point {
