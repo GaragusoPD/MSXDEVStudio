@@ -71,7 +71,13 @@ editor only. There is no older tileset-referencing pattern meta any more — a
 file from before reads as a blank meta at its own size. Removing a meta from a
 tileset takes it off every map drawn with that tileset (`editors/meta-removal.ts`:
 open maps by event, closed ones rewritten), since a map cannot place a meta its
-tileset does not have — the export refuses it.
+tileset does not have — the export refuses it. Its tiles go too (`removeMeta`:
+`compactTileset` restricted to the meta's own cells and window, keeping what a
+map grid, a block or another meta still shows), and the renumbering goes out
+on the reorder seam. When the tileset is saved with it (the pose editor's
+remove), closed maps that carry a `tilesetReorderSeen` are rewritten in the new
+numbering on the spot, because the exporter does not replay a tileset's reorder
+log; the rest replay it on open. Unbanked only.
 
 Tile 0 is the seam that makes a group *transparent*: `TilesDoc.reserveTile0` locks it all-blank, and a meta cell holding 0 is a **skipped write**, which is the only see-through a name table has. Off in every pre-existing file, because tile 0 is real art in `demo_msx1`. A map *places* metas (`MapLayer.placements`, over a mirrored `MapDoc.metas`) beside its ordinary tile grid; `baked` trades the runtime draw for grid bytes. An **indexed** layer (`MapLayer.indexed`) is the other way round: its placements — pattern metas, free to overlap, stacked in list order — *are* its content, exported as one byte per meta in reading order (`indexedLayerStream`; slot + 1, or 0 for an empty cell) plus overlay records (slot + 1, x, y) for the metas reading order cannot carry, and expanded by the game into a RAM tile map (`_Expand`). `indexedLayerPlan` decides which go where: a meta goes to the overlays when its top-left is covered, when another starts at the same cell, or when an opaque overlap would come out in the wrong order. `decodeIndexedStream`/`expandIndexedLayer` walk it exactly as the C does, and are what the tests hold the C to. Its metas are not in `_Placements`; its stream is never RLEp-packed, whatever the map's other layers are.
 

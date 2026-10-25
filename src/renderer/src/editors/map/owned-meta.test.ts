@@ -117,14 +117,45 @@ describe('attaching from the tile editor', () => {
     expect(session.status).toMatch(/_Animate\(\) every frame/)
   })
 
-  it('removing it keeps the art, and asks nothing when no map places it', async () => {
+  it('removing it takes its tiles too, and asks nothing when no map places it', async () => {
     const session = await open(() => tileSession(TILES))
     await attachMetaFile(session, ROCK)
     await removeMetaFile(session, ROCK)
     expect(window.confirm).not.toHaveBeenCalled()
     expect(session.doc.metas).toEqual([])
+    expect(session.doc.count).toBe(4)
+    expect(session.status).toMatch(/Removed rock\.meta-tiles\.json from main\.tiles\.json\. 1 tile went with it/)
+  })
+
+  it('removing it keeps a tile another meta shares or a map shows, and renumbers the closed maps', async () => {
+    const STONE = 'res/stone.meta-tiles.json'
+    const PEBBLE = 'res/pebble.meta-tiles.json'
+    const CLOSED = 'res/closed.map.json'
+    // Stone's left half is the rock's art, so the two share tile 4; its right half is tile 5, the pebble 6.
+    files[STONE] = serializeResource({
+      kind: 'metatiles',
+      doc: normalizeOwnedMeta({ ...rock(), holes: [false, false], frames: [{ tiles: [tile(0x81), tile(0x42)], duration: 4 }] })
+    })
+    files[PEBBLE] = serializeResource({ kind: 'metatiles', doc: rock(0x99) })
+    const session = await open(() => tileSession(TILES))
+    for (const path of [ROCK, STONE, PEBBLE]) await attachMetaFile(session, path)
+    expect(session.doc.metas.map((binding) => binding.cells)).toEqual([[4, 0], [4, 5], [6, 0]])
+    files[CLOSED] = JSON.stringify({ version: 1, tileset: TILES, width: 2, height: 1, layers: [{ name: 'bg', data: [3, 6] }] })
+
+    await removeMetaFile(session, STONE)
+    expect(session.doc.count).toBe(6)
     expect(session.doc.tiles[4].pattern[0]).toBe(0x81)
-    expect(session.status).toMatch(/Removed rock\.meta-tiles\.json from main\.tiles\.json\. Its tiles stay as art/)
+    expect(session.doc.tiles[5].pattern[0]).toBe(0x99)
+    expect(session.doc.metas.map((binding) => binding.cells)).toEqual([[4, 0], [5, 0]])
+    // The tileset is unsaved, so the closed map is left to replay the log on open.
+    expect(JSON.parse(files[CLOSED]).layers[0].data).toEqual([3, 6])
+    expect(useTilesetStore().reorderLog(TILES).at(-1)!.mapping.slice(4, 7)).toEqual([4, 0, 5])
+
+    // A map that shows a meta's tile keeps it.
+    files[CLOSED] = JSON.stringify({ version: 1, tileset: TILES, width: 2, height: 1, layers: [{ name: 'bg', data: [3, 5] }] })
+    await removeMetaFile(session, PEBBLE)
+    expect(session.doc.count).toBe(6)
+    expect(session.status).toMatch(/Its tiles stay — something else still shows them/)
   })
 
   it('opening a tileset whose meta changed on disk gives it its new tiles', async () => {
@@ -296,10 +327,11 @@ describe('removing one from a tileset', () => {
     expect(doc(map).layers[0].placements).toEqual([])
     expect(map.dirty).toBe(true)
     expect(map.status).toMatch(/removed from main\.tiles\.json, and from this map with it/)
-    // The closed map: rewritten on disk, its reorder bookmark kept.
+    // The closed map: rewritten on disk.
     const other = JSON.parse(files[OTHER])
     expect(normalizeMap(other).metas).toEqual([])
     expect(normalizeMap(other).layers[0].placements).toEqual([])
+    // The tileset is unsaved: the renumbering waits in its log for the map to open.
     expect(other.tilesetReorderSeen).toBe(1234)
     expect(tiles.status).toMatch(/Removed rock\.meta-tiles\.json from main\.tiles\.json and 3 placements from level\.map\.json, other\.map\.json/)
 
@@ -337,6 +369,8 @@ describe('removing one from a tileset', () => {
     expect(normalizeMap(JSON.parse(files[MAP])).metas).toEqual([])
     expect(map.status).toMatch(/— saved\.$/)
     expect(normalizeMap(JSON.parse(files[OTHER])).metas).toEqual([])
+    // Saved with the tileset, so the closed map took the renumbering on disk.
+    expect(JSON.parse(files[OTHER]).tilesetReorderSeen).toBe(JSON.parse(files[TILES]).reorderLog.at(-1).at)
     expect(meta.attachedTo).toEqual([])
     expect(meta.status).toMatch(/^Removed rock\.meta-tiles\.json from main\.tiles\.json/)
   })

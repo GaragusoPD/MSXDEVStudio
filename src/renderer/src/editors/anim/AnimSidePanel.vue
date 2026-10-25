@@ -272,7 +272,7 @@ function openTileset(path: string): void {
             v-if="meta"
             type="button"
             class="remove"
-            :title="`Remove from ${attachment.tileset.split('/').pop()}, and from the maps drawn with it that place it — its tiles stay as art`"
+            :title="`Remove from ${attachment.tileset.split('/').pop()}, and from the maps drawn with it that place it — its tiles go too, unless a map still shows them`"
             @click="removeFromTileset(session, attachment.tileset)"
           >
             <Icon

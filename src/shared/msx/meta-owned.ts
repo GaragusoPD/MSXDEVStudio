@@ -26,6 +26,7 @@
 import { defineName, type EmitTable, type HelperC } from './emitC'
 import { findOrCreateTile, sameEntry } from './meta-paint'
 import { MAX_META_SIZE } from './meta-tile'
+import { compactTileset } from './tile-compact'
 import { isTileMode, type TileMode } from './modes'
 import type { ExportBlock } from './resource'
 import {
@@ -379,6 +380,40 @@ export function detachMeta(tiles: TilesDoc, path: string): TilesDoc {
     metas: tiles.metas.filter((binding) => binding.path !== path),
     animations: tiles.animations.filter((binding) => binding.path !== path)
   }
+}
+
+export interface RemovedMeta {
+  doc: TilesDoc
+  /** The renumbering to publish on the reorder seam, or null when no tile moved. */
+  mapping: number[] | null
+  /** Tiles dropped with it. */
+  removed: number
+  /** Why its tiles stayed, when they could not go (a banked tileset, sc1 packing). */
+  refused?: string
+}
+
+/**
+ * Detaches the meta at `path` and drops the tiles it brought: its still cells
+ * and its window. A tile something else still shows stays — `used` is what
+ * the maps drawn with the tileset show, and `compactTileset` keeps blocks,
+ * tile 0 and the cells of every other meta (which may share a tile with this
+ * one) by itself. Everything else in the set keeps its art; the tiles above a
+ * dropped one shift down, so `mapping` has to reach every file drawn with it.
+ */
+export function removeMeta(tiles: TilesDoc, path: string, used: Iterable<number>): RemovedMeta {
+  const detached = detachMeta(tiles, path)
+  if (detached === tiles) return { doc: tiles, mapping: null, removed: 0 }
+  const own = new Set<number>()
+  for (const binding of tiles.metas) if (binding.path === path) for (const tile of binding.cells) if (tile) own.add(tile)
+  for (const binding of tiles.animations) {
+    if (binding.path === path && binding.bank === null) for (let i = 0; i < animCells(binding); i++) own.add(binding.slot + i)
+  }
+  const keep = new Set(used)
+  for (let i = 0; i < detached.count; i++) if (!own.has(i)) keep.add(i)
+  const result = compactTileset(detached, keep)
+  if (result.refused) return { doc: detached, mapping: null, removed: 0, refused: result.refused }
+  if (result.doc === detached) return { doc: detached, mapping: null, removed: 0 }
+  return { doc: result.doc, mapping: result.mapping, removed: result.removed }
 }
 
 /** A meta read for a refresh, or why it could not be. */

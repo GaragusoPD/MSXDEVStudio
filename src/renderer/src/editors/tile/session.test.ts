@@ -197,8 +197,10 @@ describe("a meta-tile's tiles", () => {
 
     await removeMetaFile(session, ROCK)
     expect(session.doc.metas).toEqual([])
-    deleteTiles(session, [2, 4])
-    expect(marks(session)).toEqual([0, 1, 3, 5, 6, 7])
+    // Its two tiles went with it.
+    expect(marks(session)).toEqual([0, 1, 2, 5, 6, 7])
+    deleteTiles(session, [2])
+    expect(marks(session)).toEqual([0, 1, 5, 6, 7])
   })
 
   it('a replace import removes the metas first, after one question, so they cannot rebuild over it', async () => {

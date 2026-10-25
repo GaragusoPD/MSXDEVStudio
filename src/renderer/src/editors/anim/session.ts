@@ -24,7 +24,7 @@
 
 import { shallowReactive } from 'vue'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
-import { detachMeta, isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
+import { isOwnedMeta, removeMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import {
   animDocCells,
   colorsVary,
@@ -219,7 +219,8 @@ export async function findAttachments(session: AnimSession): Promise<void> {
 /**
  * Removes this meta-tile from one tileset it is attached to, and from the maps
  * drawn with that tileset (`meta-removal.ts`), asking first when one places
- * it. The tileset is saved straight away unless it already had unsaved edits:
+ * it. Its tiles go with it, except those something else still shows
+ * (`removeMeta`). The tileset is saved straight away unless it already had unsaved edits:
  * the maps beside it are rewritten on disk now (open ones with nothing else
  * unsaved included), and no tab may have it open to show it dirty.
  */
@@ -238,12 +239,12 @@ export async function removeFromTileset(session: AnimSession, tileset: string): 
     const status = await removeMetaFromTileset(
       tileset,
       session.path,
-      () => {
+      (used) => {
         const current = store.patternDoc(tileset)
-        const next = current && detachMeta(current, session.path)
-        if (!current || !next || next === current) return false
-        store.set(tileset, next, session.path)
-        return true
+        const result = current && removeMeta(current, session.path, used)
+        if (!current || !result || result.doc === current) return null
+        store.set(tileset, result.doc, session.path)
+        return result
       },
       { persist: !wasDirty }
     )

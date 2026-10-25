@@ -653,7 +653,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
             <button
               type="button"
               class="labelled"
-              title="Remove from this tileset, and from the maps that place it — its tiles stay as art"
+              title="Remove from this tileset, and from the maps that place it — its tiles go too, unless a map still shows them"
               @click.stop="removeMetaFile(session, binding.path)"
             >
               <Icon

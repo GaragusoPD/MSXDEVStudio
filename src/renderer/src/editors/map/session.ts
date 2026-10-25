@@ -754,20 +754,25 @@ onAnimSaved((event) => {
  * to the tileset again — which placing it does.
  *
  * When the tileset is saved with the removal, a map with nothing else unsaved
- * is saved too, so the two files agree on disk, where the build reads them.
+ * is saved too, so the two files agree on disk, where the build reads them —
+ * a map that never placed the meta included, since the meta's tiles leaving
+ * renumbered it (`onTilesReordered`, which has already run).
  */
 onMetaRemoved((event) => {
   for (const session of sessions.values()) {
     const current = doc(session)
     if (!samePath(current.tileset, event.tileset)) continue
+    const save = event.persist && event.clean.some((path) => samePath(path, session.path))
     const slot = current.metas.findIndex((ref) => samePath(ref.path, event.path))
-    if (slot < 0) continue
-    const wasDirty = session.dirty
+    if (slot < 0) {
+      if (save && session.dirty) void saveSession(session).catch((error) => (session.status = `Saving the renumbered map failed: ${String(error)}`))
+      continue
+    }
     commit(session, removeMetaRef(current, slot))
     session.selectedPlacement = null
     if (session.brushMeta && samePath(session.brushMeta, event.path)) session.brushMeta = null
     const what = `${event.path.split('/').pop()} was removed from ${event.tileset.split('/').pop()}, and from this map with it`
-    if (event.persist && !wasDirty) {
+    if (save) {
       void saveSession(session).then(
         () => (session.status = `${what} — saved.`),
         (error) => (session.status = `${what}, but saving the map failed: ${String(error)}`)
@@ -778,7 +783,7 @@ onMetaRemoved((event) => {
   }
 })
 
-provideOpenMaps(() => [...sessions.values()].map((session) => ({ path: session.path, doc: doc(session) })))
+provideOpenMaps(() => [...sessions.values()].map((session) => ({ path: session.path, doc: doc(session), dirty: session.dirty })))
 
 export async function saveSession(session: MapSession): Promise<void> {
   // What is on the canvas is what gets saved — a float left hanging would be

@@ -7,6 +7,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-25
+
+### Fixed
+
+- **Removing a meta-tile from a tileset takes its tiles with it.** Its still
+  tiles and its animation window leave the bank, except those a map's grid, a
+  named block or another meta-tile still shows; the tiles above them move down,
+  and every map drawn with the tileset follows. A banked tileset still keeps
+  them.
+
 ## [0.3.2] - 2026-10-25
 
 ### Added

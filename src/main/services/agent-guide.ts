@@ -353,7 +353,10 @@ changed — nothing else drawn with the tileset moves. Don't hand-edit a
 \`.tiles.json\`'s \`metas\` list: it is derived. To take a meta out of a
 tileset, remove it in the tile editor's *Meta-tiles* panel — that removes it
 from every map drawn with the tileset too, because a map that places a meta its
-tileset does not have will not export.
+tileset does not have will not export. Its tiles leave the tileset with it
+(unless a map's grid, a block or another meta still shows them), so the tiles
+above them renumber: re-read the tileset header's constants rather than keep
+tile numbers in C.
 
 ### Placing meta-tiles on a map
 

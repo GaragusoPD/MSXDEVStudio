@@ -23,7 +23,7 @@ import {
   withAnimFrame,
   type TileAnimDoc
 } from '../../../../shared/msx/tile-anim'
-import { detachMeta, isOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta } from '../../../../shared/msx/meta-owned'
+import { detachMeta, isOwnedMeta, refreshMetas, removeMeta, resolveMeta, type LoadedMeta, type RemovedMeta } from '../../../../shared/msx/meta-owned'
 import { onAnimSaved } from '../anim/events'
 import { removeMetaFromTileset } from '../meta-removal'
 import { useResourcesStore } from '../../stores/resourcesStore'
@@ -1088,21 +1088,26 @@ export async function attachMetaFile(session: TileSession, path: string): Promis
 
 /**
  * Removes it from this tileset, and from every map drawn with it that places
- * it (`meta-removal.ts`) — asking first when one does. Its tiles stay as
- * ordinary art and its window stops moving; the tileset's half is one undo
- * step here.
+ * it (`meta-removal.ts`) — asking first when one does. Its tiles go with it,
+ * except those something else still shows; the tileset's half is one undo
+ * step here, renumbering included.
  */
 export async function removeMetaFile(session: TileSession, path: string): Promise<void> {
-  const status = await removeMetaFromTileset(session.path, path, () => detachStep(session, path))
+  const status = await removeMetaFromTileset(session.path, path, (used) => detachStep(session, path, used))
   if (status !== null) session.status = status
 }
 
-/** The tileset's half of a removal: one undo step, false when it was not attached. */
-function detachStep(session: TileSession, path: string): boolean {
-  const next = detachMeta(session.doc, path)
-  if (next === session.doc) return false
-  commit(session, next, 'remove meta-tile')
-  return true
+/**
+ * The tileset's half of a removal: one undo step, null when it was not
+ * attached. `used` null only detaches, keeping its tiles — for a set about to
+ * be replaced, where renumbering the maps would buy nothing.
+ */
+function detachStep(session: TileSession, path: string, used: ReadonlySet<number> | null): RemovedMeta | null {
+  const result: RemovedMeta = used ? removeMeta(session.doc, path, used) : { doc: detachMeta(session.doc, path), mapping: null, removed: 0 }
+  if (result.doc === session.doc) return null
+  commit(session, result.doc, 'remove meta-tile', result.mapping ?? undefined)
+  if (session.active >= result.doc.count) select(session, result.doc.count - 1)
+  return result
 }
 
 /**
@@ -1126,7 +1131,7 @@ async function removeMetasForReplace(session: TileSession): Promise<boolean> {
     return false
   }
   for (const { path } of [...session.doc.metas]) {
-    const status = await removeMetaFromTileset(session.path, path, () => detachStep(session, path), { persist: true, confirmed: true })
+    const status = await removeMetaFromTileset(session.path, path, () => detachStep(session, path, null), { persist: true, confirmed: true })
     if (session.doc.metas.some((binding) => binding.path === path)) {
       session.status = status ?? `Couldn't remove ${fileOf(path)}, so nothing was imported.`
       return false
