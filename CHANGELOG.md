@@ -7,6 +7,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-25
+
+### Fixed
+
+- **A picture shorter than the screen now imports banked.** Banks follow the
+  screen's thirds, so a 256×168 picture fills rows 0–20 across all three banks
+  and its map is padded to 24 rows. Before, Auto fell back to one set of 256
+  and left every cell after that blank.
+
 ## [0.3.0] - 2026-10-25
 
 ### Added
