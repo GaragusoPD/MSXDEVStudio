@@ -561,20 +561,47 @@ function activeBank(session: TileSession): number | null {
 }
 
 /**
- * False for a shared (meta-tile) index — editing one from a bank view would
- * silently repaint all three banks while the user is looking at one, which is
- * exactly the lie this editor must not tell — and for index 0 when
- * `reserveTile0` locks it blank in every bank, the same rule the common
- * tileset already enforces.
+ * The index an edit of `index` in bank `bank` lands on, or null (with the
+ * status saying why) when it cannot.
+ *
+ * Tile 0 is refused when `reserveTile0` locks it blank in every bank. A shared
+ * tile is the same picture in every bank, so editing it in place would repaint
+ * all three while one is on screen; instead it is copied into this bank first
+ * (`forkSharedTile`) and the edit lands on the copy. An attached meta-tile's
+ * shared art never gets here — `refuseDerived` turns it down first.
  */
-function bankIndexEditable(doc: TilesDoc, index: number): boolean {
-  return index < MAX_TILES - doc.sharedTiles && !(doc.reserveTile0 && index === 0)
+function bankEditTarget(session: TileSession, bank: number, index: number): number | null {
+  if (session.doc.reserveTile0 && index === 0) {
+    session.status = 'Tile 0 is reserved blank in every bank.'
+    return null
+  }
+  return index >= MAX_TILES - session.doc.sharedTiles ? forkSharedTile(session, bank, index) : index
 }
 
-function bankEditRefusal(doc: TilesDoc, index: number): string {
-  return index >= MAX_TILES - doc.sharedTiles
-    ? `Tile ${index} is shared meta-tile art — the same picture in every bank. Edit it from the meta-tile editor.`
-    : 'Tile 0 is reserved blank in every bank.'
+/**
+ * Gives bank `bank` its own copy of shared tile `index`, at the next index the
+ * bank shows nothing of its own, and points that bank's rows of every map at
+ * it: a bank-scoped renumbering (`TilesReorderEvent.bank`), so the other two
+ * banks go on showing the shared tile. Nothing looks different until the copy
+ * is edited. One undo step of its own, which points the rows back.
+ */
+function forkSharedTile(session: TileSession, bank: number, index: number): number | null {
+  const slot = bankEnd(session.doc, bank)
+  if (slot >= MAX_TILES - session.doc.sharedTiles) {
+    session.status = `Bank ${bank + 1} is full, so shared tile ${index} cannot get a copy of its own there.`
+    return null
+  }
+  const art = session.doc.tiles[index] ?? blankTileEntry(session.doc.mode)
+  const next = writeBankTile(session.doc, bank, slot, { pattern: art.pattern.slice(), color: art.color.slice() })
+  const mapping = Array.from({ length: MAX_TILES }, (_, i) => (i === index ? slot : i))
+  const unmap = Array.from({ length: MAX_TILES }, (_, i) => (i === slot ? index : i))
+  publishRemap(session, mapping, bank)
+  commit(session, next, `copy tile ${index} into bank ${bank + 1}`, mapping, { unmap, bank })
+  // A stroke under way restarts from here, so a cancelled one keeps the copy the history already holds.
+  if (session.strokeBase) session.strokeBase = session.doc
+  select(session, slot)
+  session.status = `Shared tile ${index} copied into bank ${bank + 1} as tile ${slot} — this bank's rows of the maps now show the copy.`
+  return slot
 }
 
 /**
@@ -627,12 +654,10 @@ export function paint(session: TileSession, points: Point[], role?: 'fg' | 'bg')
   // popover answers for one tile, and the rest of the stroke is dropped, the
   // same as a single-tile stroke that gets interrupted. Blocks never open on a
   // banked tileset (see `activeBlock`), so a bank stroke is always one tile.
-  for (const [tile, tilePoints] of strokesByTile(session, points)) {
-    if (bank !== null && !bankIndexEditable(session.doc, tile)) {
-      session.status = bankEditRefusal(session.doc, tile)
-      continue
-    }
-    if (refuseDerived(session, [tile])) continue
+  for (const [picked, tilePoints] of strokesByTile(session, points)) {
+    if (refuseDerived(session, [picked])) continue
+    const tile = bank !== null ? bankEditTarget(session, bank, picked) : picked
+    if (tile === null) continue
     if (role) {
       // Left button paints the row's ink, right its paper — the same model as
       // the meta-tile editor, and the reason a second colour lands instead of
@@ -1233,10 +1258,7 @@ export function transform(session: TileSession, op: TileTransform): void {
   if (refuseDerived(session, [session.active])) return
   const bank = activeBank(session)
   if (bank !== null) {
-    if (!bankIndexEditable(session.doc, session.active)) {
-      session.status = bankEditRefusal(session.doc, session.active)
-      return
-    }
+    if (bankEditTarget(session, bank, session.active) === null) return
     const { doc: editedView, lossyRows } = transformTile(bankView(session.doc, bank, session.active), session.active, op)
     commit(session, writeBankTile(session.doc, bank, session.active, editedView.tiles[session.active]), op)
     session.status = lossyRows.length
@@ -1267,10 +1289,7 @@ export function swapRow(session: TileSession, y: number): void {
   if (refuseDerived(session, colorTargets(session))) return
   const bank = activeBank(session)
   if (bank !== null) {
-    if (!bankIndexEditable(session.doc, session.active)) {
-      session.status = bankEditRefusal(session.doc, session.active)
-      return
-    }
+    if (bankEditTarget(session, bank, session.active) === null) return
     commit(session, editBankEntry(session.doc, bank, session.active, (view) => swapRowColors(view, session.active, y)), 'swap FG/BG')
     return
   }
@@ -1283,10 +1302,7 @@ export function setRow(session: TileSession, y: number, fg: number, bg: number):
   if (refuseDerived(session, colorTargets(session))) return
   const bank = activeBank(session)
   if (bank !== null) {
-    if (!bankIndexEditable(session.doc, session.active)) {
-      session.status = bankEditRefusal(session.doc, session.active)
-      return
-    }
+    if (bankEditTarget(session, bank, session.active) === null) return
     commit(
       session,
       editBankEntry(session.doc, bank, session.active, (view) => setRowColors(view, session.active, y, fg, bg)),

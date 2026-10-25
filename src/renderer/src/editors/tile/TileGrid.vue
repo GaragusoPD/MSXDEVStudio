@@ -236,9 +236,9 @@ watchEffect(() => {
     }
   }
 
-  // The shared (meta-tile) region: the same picture in every bank, so a
-  // stroke here would rewrite all three at once while only one is on screen —
-  // marked rather than editable, per `bankIndexEditable` in session.ts.
+  // The shared (meta-tile) region: the same picture in every bank. Marked,
+  // because editing one from here copies it into this bank first
+  // (`forkSharedTile` in session.ts) rather than rewriting all three.
   if (banked.value && doc.sharedTiles > 0) {
     context.fillStyle = 'rgba(255, 210, 78, 0.16)'
     context.strokeStyle = 'rgba(255, 210, 78, 0.55)'

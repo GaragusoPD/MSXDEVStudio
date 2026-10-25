@@ -619,7 +619,7 @@ describe('bank editing', () => {
     expect(splitColorByte(session.doc.bankTiles[0][1].color[0]).fg).toBe(9)
   })
 
-  it('refuses to paint a shared tile from a bank view', async () => {
+  it('painting a shared tile from a bank view paints a copy of its own in that bank', async () => {
     files[PATH] = serializeResource({
       kind: 'tiles',
       doc: normalizeTiles({ mode: 'sc2', count: 1, bankTiles: [[mark(1)], [], []], sharedTiles: 2 })
@@ -634,8 +634,17 @@ describe('bank editing', () => {
     paint(session, [{ x: 0, y: 0 }], 'fg')
     endStroke(session, 'paint')
 
-    expect(session.doc.bankTiles[0]).toHaveLength(1) // unchanged
-    expect(session.status).toMatch(/shared/i)
+    // The copy lands on the bank's next index, and the stroke paints it.
+    expect(session.active).toBe(1)
+    expect(session.doc.bankTiles[0]).toHaveLength(2)
+    expect(session.doc.bankTiles[0][1].pattern[0]).toBe(0x80)
+    expect(session.doc.tiles[MAX_TILES - 1].pattern[0]).toBe(0)
+    expect(session.status).toMatch(/copied into bank 1 as tile 1/)
+    // Two steps: the paint, then the copy.
+    undo(session)
+    expect(session.doc.bankTiles[0][1].pattern[0]).toBe(0)
+    undo(session)
+    expect(session.doc.bankTiles[0]).toHaveLength(1)
   })
 
   it('refuses to paint tile 0 in a bank view when reserveTile0 locks it', async () => {

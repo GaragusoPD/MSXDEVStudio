@@ -18,7 +18,21 @@ import { emitAnimSaved } from '../anim/events'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
-import { attachableMetas, attachMetaFile, deleteTiles, pruneTileSessions, removeMetaFile, setBank, tileSession, undo as undoTiles } from '../tile/session'
+import {
+  attachableMetas,
+  attachMetaFile,
+  beginStroke,
+  deleteTiles,
+  endStroke,
+  paint,
+  pruneTileSessions,
+  removeMetaFile,
+  select,
+  setBank,
+  setColor,
+  tileSession,
+  undo as undoTiles
+} from '../tile/session'
 import { animSession, findAttachments, pruneAnimSessions, removeFromTileset } from '../anim/session'
 import {
   doc,
@@ -437,7 +451,7 @@ describe('removing one from a tileset', () => {
 })
 
 describe('deleting tiles from a banked tileset', () => {
-  /** Three banks of four tiles each, two orphaned shared tiles above them; the map shows tile 3 in every third of the screen. */
+  /** Three banks of four tiles each, two orphaned shared tiles above them; the map shows tile 3 in every third of the screen, and 255 in the top two. */
   async function setUp(): Promise<{ tiles: ReturnType<typeof tileSession>; map: ReturnType<typeof mapSession> }> {
     const shared: TileEntry[] = []
     shared[254] = tile(0xbb)
@@ -456,6 +470,7 @@ describe('deleting tiles from a banked tileset', () => {
     const data = new Array(32 * 24).fill(0)
     for (const row of [0, 8, 16]) data[row * 32] = 3
     data[1] = 255
+    data[8 * 32 + 1] = 255
     files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 32, height: 24, layers: [{ name: 'bg', data }], tilesetReorderSeen: 1 })
     const tiles = await open(() => tileSession(TILES))
     const map = await open(() => mapSession(MAP))
@@ -477,6 +492,25 @@ describe('deleting tiles from a banked tileset', () => {
     expect([0, 8, 16].map((row) => closed.layers[0].data[row * 32])).toEqual([3, 2, 3])
     undoTiles(tiles)
     expect(column(map)).toEqual([3, 3, 3])
+  })
+
+  it("painting a shared tile in one bank gives that bank a copy, and only that bank's rows show it", async () => {
+    const { tiles, map } = await setUp()
+    setBank(tiles, 1)
+    select(tiles, 255)
+    setColor(tiles, 9)
+    beginStroke(tiles)
+    paint(tiles, [{ x: 0, y: 0 }], 'fg')
+    endStroke(tiles, 'paint')
+    expect(tiles.active).toBe(4)
+    expect(tiles.doc.bankTiles[1][4]).not.toEqual(tiles.doc.tiles[255])
+    expect(tiles.doc.sharedTiles).toBe(2)
+    // Row 0 is bank 1's (index 0), row 8 bank 2's: only row 8 moves to the copy.
+    expect([doc(map).layers[0].data[1], doc(map).layers[0].data[8 * 32 + 1]]).toEqual([255, 4])
+    undoTiles(tiles)
+    undoTiles(tiles)
+    expect(doc(map).layers[0].data[8 * 32 + 1]).toBe(255)
+    expect(tiles.doc.bankTiles[1]).toHaveLength(4)
   })
 
   it('deletes an orphaned shared tile: the region closes up, every bank keeps its numbers', async () => {

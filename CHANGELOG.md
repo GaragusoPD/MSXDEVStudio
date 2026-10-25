@@ -7,6 +7,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-10-25
+
+### Changed
+
+- **Shared tiles can be painted from a bank view.** The first edit copies the
+  shared tile into the bank on screen as a tile of its own, and that bank's
+  rows of every map switch to the copy; the other banks keep showing the
+  shared tile. The copy is its own undo step. A tile an attached meta-tile
+  owns still has to be edited in the meta-tile's editor.
+
 ## [0.3.5] - 2026-10-25
 
 ### Fixed
