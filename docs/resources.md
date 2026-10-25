@@ -170,7 +170,16 @@ only rewrites the chimney. Save the meta and every tileset it is attached to
 follows: tiles that still show the right art are kept, what changed is appended,
 and nothing else drawn with the tileset moves.
 
-**Removing** one from a tileset — the unlink button beside it in the tile
+So a meta's tiles are **its** art, not the tileset's: the tile grid outlines
+them (dashed violet, and the readout names the meta), and the tile editor
+refuses to paint or delete them — an edit there would be rebuilt from the
+meta's file the next time the tileset opens. Paint them in the meta-tile's own
+editor; to delete them, remove the meta first. An image import that
+**replaces** the whole tileset asks once and removes every attached meta first,
+for the same reason; **merge** keeps them. The map editor's edit mode forks
+such a tile instead of rewriting it, as it does an animation's.
+
+**Removing** one from a tileset — the **Remove** button beside it in the tile
 editor's **Meta-tiles** list, or beside the tileset in the meta-tile's own
 *Attached to* list — takes it off every map drawn with that tileset too, after a
 confirm naming them: a map cannot place a meta its tileset does not have. An
@@ -362,6 +371,13 @@ turns idle, walk and jump rows into separate animations in one import, named
 after the file and numbered. **Trim** cuts sprite frames to the box that holds
 the content of all of them — so a 20×24 figure in 32×32 cells is a 2×2
 metasprite only where it has to be — and meta-tiles to whole tiles of it.
+
+Imported into an **existing** animated tile or meta-tile, the cells are added as
+new poses — unless you tick **Replace its poses**, which is how a placeholder
+gets its real art. A meta-tile then takes the cells' size (its flags, loop and
+export stay); an animated tile keeps its own, because its window is what the
+tilesets it is attached to have room for. Set the grid's cell size to the whole
+picture to import it as a single pose.
 
 A sprite plane has one colour: per sprite in mode 1, per line in mode 2. The
 importer stacks planes for a figure drawn in several colours, up to **Max

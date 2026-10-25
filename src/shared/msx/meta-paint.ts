@@ -48,6 +48,7 @@ import { BAYER4 } from './quantize'
 import type { Point } from '../tile-editor'
 import {
   animWindowSlotsIn,
+  metaOwning,
   bankCapacityLeft,
   bankTileAt,
   blankTileEntry,
@@ -374,9 +375,12 @@ export function paintGrid(
     // so an in-place write there vanishes on the next open — and until then
     // shows in every transparent cell of every map. Fork instead.
     // A window is the animation's art, rewritten from it before every export:
-    // an in-place edit would vanish at the next build. Fork it too.
+    // an in-place edit would vanish at the next build. Fork it too — and a
+    // meta-tile's still cell, which `resolveMeta` rebuilds from the meta's file
+    // the same way. A bank's own override there is the bank's art, not the meta's.
     const animated = animWindowSlotsIn(nextTiles, bank).has(currentTile)
-    const editable = options.write === 'edit' && !(currentTile === 0 && nextTiles.reserveTile0) && !animated
+    const owned = !(bank !== null && nextTiles.bankTiles[bank]?.[currentTile]) && metaOwning(nextTiles, currentTile) !== null
+    const editable = options.write === 'edit' && !(currentTile === 0 && nextTiles.reserveTile0) && !animated && !owned
     if (editable) {
       // An edit has to land where this row's bank actually READS. When the bank
       // overrides the index, `tiles[index]` is art the bank never shows, so

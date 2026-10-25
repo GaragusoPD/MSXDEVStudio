@@ -17,7 +17,9 @@ import {
   animationAt,
   bankBudgetLabel,
   copySelection,
+  refuseDelete,
   deleteTiles,
+  metaAt,
   pasteClipboard,
   reorder,
   setBank,
@@ -49,6 +51,8 @@ const sharedStart = computed(() => MAX_TILES - props.session.doc.sharedTiles)
  */
 function confirmDelete(): void {
   const doomed = props.session.selection.length ? props.session.selection : [props.session.active]
+  // Say no before asking, not after the user has agreed.
+  if (refuseDelete(props.session, doomed)) return
   const what =
     doomed.length === 1
       ? `Delete tile ${doomed[0]}?`
@@ -56,6 +60,12 @@ function confirmDelete(): void {
   if (window.confirm(`${what} Maps and blocks using them fall back to tile 0, and every tile above is renumbered.`)) {
     deleteTiles(props.session, doomed)
   }
+}
+
+/** The readout's note on a derived tile: whose art it is. */
+function ownerLabel(index: number): string {
+  const owner = animationAt(props.session, index) ?? metaAt(props.session, index)
+  return owner ? ` · ${owner.path.split('/').pop()?.replace(/\.(meta|anim)-tiles\.json$/, '')}` : ''
 }
 
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -263,6 +273,18 @@ watchEffect(() => {
     context.fill()
   }
 
+  // A meta-tile's still cells: its own art, rebuilt from its file, so they are
+  // marked as not this editor's to paint or delete either — `metaAt`.
+  context.strokeStyle = 'rgba(200, 140, 255, 0.9)'
+  context.setLineDash([3, 2])
+  for (let index = 0; index < slotCount.value; index++) {
+    if (animationAt(props.session, index) || !metaAt(props.session, index)) continue
+    const x = (index % COLUMNS.value) * size
+    const y = Math.floor(index / COLUMNS.value) * height
+    context.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1)
+  }
+  context.setLineDash([])
+
   // The marquee: a tint on every selected cell, and one outline around the
   // rectangle they span — that rectangle is what the canvas is editing.
   const xs = selection.map((index) => index % COLUMNS.value)
@@ -325,7 +347,7 @@ watchEffect(() => {
         v-else
         class="title"
       >{{ session.doc.count }} tiles</span>
-      <span class="readout">{{ hover ?? session.active }} · {{ hex(hover ?? session.active) }}</span>
+      <span class="readout">{{ hover ?? session.active }} · {{ hex(hover ?? session.active) }}{{ ownerLabel(hover ?? session.active) }}</span>
       <label
         class="zoom"
         title="Zoom"

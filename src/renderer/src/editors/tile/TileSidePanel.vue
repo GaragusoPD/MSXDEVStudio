@@ -535,6 +535,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
             <span class="dims">{{ windowLabel(binding) }} · {{ binding.frames }} poses</span>
             <button
               type="button"
+              class="labelled"
               title="Detach — the tiles keep the pose they show"
               @click.stop="detachAnim(session, binding.path)"
             >
@@ -542,6 +543,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
                 name="link_off"
                 :size="14"
               />
+              <span>Detach</span>
             </button>
           </div>
         </li>
@@ -626,7 +628,9 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
         A meta-tile (<code>.meta-tiles.json</code>) attached here gets tiles for its art — shared with
         any identical ones — and a window for the cells that move, played by this tileset's
         <code>_Animate()</code>. Maps drawn with this tileset can then place it; removing it here
-        takes it off those maps too, and leaves its tiles as art.
+        takes it off those maps too, and leaves its tiles as art. Its tiles are outlined in the
+        grid: they are rebuilt from the meta-tile's own file, so paint them there, and remove the
+        meta-tile here before deleting them.
       </p>
       <ul
         v-if="doc.metas.length"
@@ -648,6 +652,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
             <span class="dims">{{ metaLabel(binding) }}</span>
             <button
               type="button"
+              class="labelled"
               title="Remove from this tileset, and from the maps that place it — its tiles stay as art"
               @click.stop="removeMetaFile(session, binding.path)"
             >
@@ -655,6 +660,7 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
                 name="link_off"
                 :size="14"
               />
+              <span>Remove</span>
             </button>
           </div>
         </li>
@@ -828,6 +834,12 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
   display: flex;
   padding: 0 3px;
   color: var(--color-text-muted);
+}
+
+.block-row button.labelled {
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
 }
 
 .new-block {

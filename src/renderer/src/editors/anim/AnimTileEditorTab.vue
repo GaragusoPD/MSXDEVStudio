@@ -161,7 +161,7 @@ watch(
         <span class="status">{{ session.status }}</span>
         <button
           type="button"
-          title="Add poses cut from a sheet of animation frames"
+          title="Add poses cut from an image or a sheet of frames — or replace them (tick Replace its poses)"
           @click="resourcesStore.sheetImport = { destination: session.kind === 'metatiles' ? 'meta' : 'anim', target: session.path }"
         >
           Import sheet…

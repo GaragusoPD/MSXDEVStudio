@@ -106,7 +106,8 @@ async function mapsUsing(tileset: string, meta: string): Promise<MapUse[]> {
  * disk, which no undo reaches. `detach` takes the meta out of the tileset
  * itself; it runs once the user has agreed and before any map changes, and
  * answers false when there was nothing to detach. `persist` says the caller
- * saves the tileset afterwards (see `MetaRemovedEvent.persist`).
+ * saves the tileset afterwards (see `MetaRemovedEvent.persist`). `confirmed`
+ * says the caller already asked about this removal, so it is not asked again.
  *
  * Returns the status line to show, or null when the user declined.
  */
@@ -114,7 +115,7 @@ export async function removeMetaFromTileset(
   tileset: string,
   meta: string,
   detach: () => boolean,
-  { persist = false }: { persist?: boolean } = {}
+  { persist = false, confirmed = false }: { persist?: boolean; confirmed?: boolean } = {}
 ): Promise<string | null> {
   let uses: MapUse[]
   try {
@@ -127,6 +128,7 @@ export async function removeMetaFromTileset(
   const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
   if (
     uses.length &&
+    !confirmed &&
     !window.confirm(
       `Remove ${fileName(meta)} from ${fileName(tileset)}? ${names} ${uses.length === 1 ? 'uses' : 'use'} it, and ` +
         `${placements === 1 ? 'its placement goes' : `its ${placements} placements go`} with it — a map cannot place a ` +

@@ -14,6 +14,7 @@ import { parseResource, serializeResource } from '../../../../shared/msx/resourc
 import type { MapDoc } from '../../../../shared/msx/map'
 import { colorByteAt, MAX_TILES, normalizeTiles, splitColorByte, type TileEntry } from '../../../../shared/msx/tile'
 import { onTilesReordered, type TilesReorderEvent } from '../../../../shared/tile-editor'
+import { createOwnedMeta } from '../../../../shared/msx/meta-owned'
 import {
   addTile,
   bankBudgetLabel,
@@ -24,6 +25,7 @@ import {
   importImage,
   paint,
   pruneTileSessions,
+  removeMetaFile,
   reorder,
   resolveConflict,
   select,
@@ -79,6 +81,7 @@ beforeEach(() => {
   files = { [PATH]: bank() }
   failWrites = new Set()
   ;(globalThis as { window?: unknown }).window = {
+    confirm: vi.fn(() => true),
     api: {
       // The tileset store registers a file watcher on load, so `on` has to
       // exist even when a test never fires an event through it.
@@ -91,11 +94,91 @@ beforeEach(() => {
           files[args.path] = args.content ?? ''
           return undefined
         }
+        // A meta-tile's removal looks for the maps that place it.
+        if (channel === 'resources:list') return []
         throw new Error(`unexpected channel ${channel}`)
       })
     }
   }
   pruneTileSessions(new Set())
+})
+
+// ── a meta-tile's tiles ──────────────────────────────────────────────────────
+
+const ROCK = 'res/rock.meta-tiles.json'
+
+/**
+ * `bank()` with a 2×1 meta attached whose art is tiles 3 and 4, exactly — so
+ * opening it re-resolves the meta to the same tiles and changes nothing.
+ */
+function withRock(): void {
+  const tiles = parseResource(PATH, bank()).doc as ReturnType<typeof normalizeTiles>
+  const art = [tiles.tiles[3], tiles.tiles[4]]
+  files[ROCK] = serializeResource({ kind: 'metatiles', doc: { ...createOwnedMeta('sc2', 2, 1), frames: [{ tiles: art, duration: 8 }] } })
+  files[PATH] = serializeResource({
+    kind: 'tiles',
+    doc: { ...tiles, metas: [{ path: ROCK, name: 'g_Rock', width: 2, height: 1, flags: 0, frames: 1, cells: [3, 4] }] }
+  })
+}
+
+describe("a meta-tile's tiles", () => {
+  it('open unchanged when the meta still shows them', async () => {
+    withRock()
+    const session = tileSession(PATH)
+    await settled()
+    expect(session.doc.count).toBe(8)
+    expect(session.doc.metas[0].cells).toEqual([3, 4])
+  })
+
+  it('cannot be painted, and the status says where to edit them', async () => {
+    withRock()
+    const session = tileSession(PATH)
+    await settled()
+    const before = session.doc.tiles[3]
+    select(session, 3)
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+    expect(session.doc.tiles[3]).toEqual(before)
+    expect(session.status).toMatch(/part of the meta-tile rock\.meta-tiles\.json — edit it there/)
+  })
+
+  it('cannot be deleted while the meta is attached — and can once it is removed', async () => {
+    withRock()
+    const session = tileSession(PATH)
+    await settled()
+    deleteTiles(session, [2, 4])
+    expect(session.doc.count).toBe(8)
+    expect(session.status).toMatch(/Remove the meta-tile in the Meta-tiles panel first/)
+
+    await removeMetaFile(session, ROCK)
+    expect(session.doc.metas).toEqual([])
+    deleteTiles(session, [2, 4])
+    expect(marks(session)).toEqual([0, 1, 3, 5, 6, 7])
+  })
+
+  it('a replace import removes the metas first, after one question, so they cannot rebuild over it', async () => {
+    withRock()
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, picture(2), 'replace', false)
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    const written = useTilesetStore().patternDoc(PATH)!
+    expect(written.metas).toEqual([])
+    expect(written.count).toBe(2)
+  })
+
+  it('a declined replace import changes nothing', async () => {
+    withRock()
+    ;(window.confirm as ReturnType<typeof vi.fn>).mockReturnValue(false)
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, picture(2), 'replace', false)
+    expect(session.doc.count).toBe(8)
+    expect(session.doc.metas).toHaveLength(1)
+    expect(session.status).toMatch(/Import cancelled/)
+  })
 })
 
 describe('deleting a selection', () => {

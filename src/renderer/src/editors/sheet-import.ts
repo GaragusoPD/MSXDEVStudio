@@ -233,6 +233,13 @@ export interface SheetImport {
   withMap: boolean
   /** Frames each pose is held. */
   duration: number
+  /**
+   * An existing animated tile or meta-tile: replace its poses with the cells
+   * instead of adding them. A meta-tile also takes the cells' size; an
+   * animation keeps its own, since its window's size is what attached
+   * tilesets have room for.
+   */
+  replacePoses?: boolean
   /** Sprites: planes per cell at most. */
   maxPlanes: number
 }
@@ -399,15 +406,17 @@ async function importPoses(request: SheetImport): Promise<SheetImportOutcome> {
       ? cellsToOwnedMeta(current.mode, request.cells, request.duration, pair)
       : cellsToTileAnim(current.mode, request.cells, request.duration, pair)
     if (typeof made === 'string') return failed(made)
-    if (made.doc.width !== current.width || made.doc.height !== current.height) {
+    const replace = request.replacePoses === true || untouched(current)
+    if ((!replace || !meta) && (made.doc.width !== current.width || made.doc.height !== current.height)) {
       return failed(
         `${fileName(request.target)} is ${current.width}×${current.height} tiles and the cells are ${made.doc.width}×${made.doc.height}. ` +
-          'Resize one of them, or import into a new file.'
+          (meta ? 'Tick “Replace its poses” to take the cells’ size, resize one of them, or import into a new file.' : 'Resize one of them, or import into a new file.')
       )
     }
     let next: TileAnimDoc | OwnedMetaDoc
-    if (untouched(current)) {
-      // A fresh file's blank pose is a placeholder, not art to keep.
+    if (replace) {
+      // A fresh file's blank pose is a placeholder, not art to keep — and a
+      // replace says the same of a drawn one. What the file *means* stays.
       next = { ...made.doc, loop: current.loop, export: current.export, ...(isOwnedMeta(current) ? { flags: current.flags } : {}) } as typeof current
     } else {
       const frames = [...current.frames, ...made.doc.frames]
@@ -418,7 +427,8 @@ async function importPoses(request: SheetImport): Promise<SheetImportOutcome> {
         : { ...current, frames }
     }
     commitPoses(session, next)
-    session.status = `Added ${plural(made.doc.frames.length, 'pose')}${made.lossy ? ` (${plural(made.lossy, 'tile')} reduced to two colours a row)` : ''}.`
+    session.frame = Math.min(session.frame, next.frames.length - 1)
+    session.status = `${replace ? 'Replaced the poses with' : 'Added'} ${plural(made.doc.frames.length, 'pose')}${made.lossy ? ` (${plural(made.lossy, 'tile')} reduced to two colours a row)` : ''}.`
     return { status: `${session.status} ${fileName(request.target)} is open, unsaved.` }
   }
 

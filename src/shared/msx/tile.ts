@@ -536,6 +536,17 @@ export function animWindowSlotsIn(doc: TilesDoc, bank: number | null): Set<numbe
   return slots
 }
 
+/**
+ * The attached meta-tile a still cell of which shows tile `index`, or null.
+ * That tile is derived: `resolveMeta` rebuilds the meta's art from its own file
+ * every time the tileset opens and before every export, so an edit or a delete
+ * made to it here would not survive. 0 is never one — a meta's 0 is a hole.
+ */
+export function metaOwning(doc: TilesDoc, index: number): MetaBinding | null {
+  if (index === 0) return null
+  return doc.metas.find((binding) => binding.cells.includes(index)) ?? null
+}
+
 /** Clamps a block list to the grid limits and to tiles that actually exist. */
 function normalizeBlocks(raw: unknown, count: number): TileBlock[] {
   if (!Array.isArray(raw)) return []

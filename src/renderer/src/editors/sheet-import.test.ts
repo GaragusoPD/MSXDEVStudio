@@ -212,6 +212,28 @@ describe('animated tiles and meta-tiles', () => {
     expect(meta.holes).toEqual([false, true, false, true])
   })
 
+  it('a drawn meta-tile can have its poses replaced instead, taking the cells’ size and keeping its flags', async () => {
+    const pose = (mark: number): TileEntry => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf1) })
+    files['res/rock.meta-tiles.json'] = serializeResource({
+      kind: 'metatiles',
+      doc: normalizeOwnedMeta({ version: 3, mode: 'sc2', width: 1, height: 1, flags: 5, frames: [{ tiles: [pose(0x81)] }, { tiles: [pose(0x42)] }] })
+    })
+    const outcome = await applySheetImport(request({ destination: 'meta', target: 'res/rock.meta-tiles.json', cells: [bar(15)], replacePoses: true }))
+    expect(outcome.status).toMatch(/Replaced the poses with 1 pose/)
+    const session = animSession('res/rock.meta-tiles.json')
+    const meta = session.history.present as ReturnType<typeof createOwnedMeta>
+    expect([meta.width, meta.height, meta.frames.length, meta.flags]).toEqual([2, 2, 1, 5])
+    expect(session.frame).toBe(0)
+  })
+
+  it('an animated tile’s poses are replaced only at its own size — its window is what tilesets have room for', async () => {
+    files['res/coin.anim-tiles.json'] = serializeResource({ kind: 'anim', doc: createTileAnimDoc('sc2', 2, 2) })
+    const outcome = await applySheetImport(
+      request({ destination: 'anim', target: 'res/coin.anim-tiles.json', cells: [cell(8, 8, () => 15)], replacePoses: true })
+    )
+    expect(outcome.failed).toBe(true)
+  })
+
   it('refuses poses of another size than the file’s', async () => {
     files['res/coin.anim-tiles.json'] = serializeResource({ kind: 'anim', doc: createTileAnimDoc('sc2', 2, 2) })
     expect(await describeTarget('anim', 'res/coin.anim-tiles.json')).toMatchObject({ size: { width: 2, height: 2 } })
