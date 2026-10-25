@@ -50,6 +50,7 @@ import type { ScreenDoc } from '../../../../shared/msx/screen'
 import {
   BANK_COUNT,
   bankTilePixels,
+  fillBank,
   blankTileEntry,
   isBanked,
   MAX_TILES,
@@ -1640,6 +1641,72 @@ export function switchToRepeat(session: MapSession): void {
   forgetTileNumbers(session)
   session.status = `Switched to one repeated set — ${merged.count} tiles.`
 }
+
+/**
+ * Fills bank `bank` (0-2, the screen's thirds) with a copy of the tileset at
+ * `path` — how a banked screen shows a different tileset in each third. The
+ * cells of that third keep their numbers and now draw the copy's art, which
+ * is the point; it is a copy, so it is edited here from then on, and
+ * `reloadBank` copies it again when the source has changed. Asks first: the
+ * bank's own art is replaced, and the tileset's changes are not on the map's
+ * undo history.
+ */
+export async function fillBankFrom(session: MapSession, bank: number, path: string): Promise<void> {
+  const tileset = session.tileset
+  if (!tileset || !canPaint(session)) {
+    session.status = 'This map has no pattern tileset to bank.'
+    return
+  }
+  let source: TilesDoc
+  try {
+    const parsed = parseResource(path, await window.api.invoke('fs:read', { path }))
+    if (parsed.kind !== 'tiles') {
+      session.status = `${fileOf(path)} is not a pattern tileset.`
+      return
+    }
+    source = parsed.doc
+  } catch (error) {
+    session.status = `Couldn't read ${path}: ${String(error)}`
+    return
+  }
+  if (session.tileset !== tileset) {
+    session.status = 'The tileset changed while it was being read — try again.'
+    return
+  }
+  const result = fillBank(tileset, bank, source, path)
+  if (typeof result === 'string') {
+    session.status = result
+    return
+  }
+  const rows = `rows ${bank * 8}–${bank * 8 + 7}`
+  if (
+    !window.confirm(
+      `Replace bank ${bank + 1}'s art (${rows}) with a copy of ${fileOf(path)}'s ${result.copied} tiles? ` +
+        `The cells there keep their numbers and draw the new art. This is not on the map's undo history.`
+    )
+  ) {
+    return
+  }
+  publishTileset(session, result.doc)
+  markDirty(session)
+  session.status =
+    `Bank ${bank + 1} (${rows}) now holds ${result.copied} tiles copied from ${fileOf(path)}` +
+    (result.dropped ? `; ${result.dropped} did not fit beneath the shared meta-tile region` : '') +
+    (source.metas.length ? `; its meta-tiles came across as plain tiles` : '') +
+    '.'
+}
+
+/** Copies bank `bank`'s source again — after the source tileset was edited. */
+export async function reloadBank(session: MapSession, bank: number): Promise<void> {
+  const path = session.tileset?.bankSources?.[bank]
+  if (!path) {
+    session.status = `Bank ${bank + 1} was not copied from another tileset.`
+    return
+  }
+  await fillBankFrom(session, bank, path)
+}
+
+const fileOf = (path: string): string => path.split('/').pop() ?? path
 
 /**
  * Replaces the tileset with three banks packed from `indices` (a 256×192

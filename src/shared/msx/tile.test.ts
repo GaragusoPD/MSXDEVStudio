@@ -16,6 +16,7 @@ import {
   normalizeTiles,
   packBankedTiles,
   packChosen,
+  fillBank,
   reserveBankTile0,
   packTiles,
   paintPixel,
@@ -899,5 +900,54 @@ describe('reserveBankTile0', () => {
     expect(layout[1]).toBe(0)
     expect(layout[256]).toBe(packed.layout[256] + 1)
     expect(unplaced).toEqual([0, 0, 0])
+  })
+})
+
+describe('fillBank — a bank copied from another tileset', () => {
+  const mark = (value: number): TileEntry => ({ pattern: new Array(8).fill(value), color: new Array(8).fill(0xf1) })
+  const banked = (): TilesDoc =>
+    normalizeTiles({ mode: 'sc2', count: 4, tiles: [0, 1, 2, 3].map(mark), bankTiles: [[mark(10)], [mark(11)], [mark(12)]] })
+
+  it('copies an unbanked source\'s set into the bank and records where it came from', () => {
+    const source = normalizeTiles({ mode: 'sc2', count: 3, tiles: [mark(20), mark(21), mark(22)] })
+    const result = fillBank(banked(), 1, source, 'res/other.tiles.json')
+    if (typeof result === 'string') throw new Error(result)
+    expect(result.doc.bankTiles[1].map((tile) => tile.pattern[0])).toEqual([20, 21, 22])
+    expect(result.doc.bankTiles[0].map((tile) => tile.pattern[0])).toEqual([10]) // the other banks are untouched
+    expect(result.doc.bankSources).toEqual([null, 'res/other.tiles.json', null])
+    expect([result.copied, result.dropped]).toEqual([3, 0])
+  })
+
+  it('from a banked source, copies what the source shows in the same third', () => {
+    const source = normalizeTiles({ mode: 'sc2', count: 2, tiles: [mark(30), mark(31)], bankTiles: [[], [], [mark(42)]] })
+    const result = fillBank(banked(), 2, source, 'res/other.tiles.json')
+    if (typeof result === 'string') throw new Error(result)
+    // Index 0 is bank 2's own; index 1 falls back to the source's common set.
+    expect(result.doc.bankTiles[2].map((tile) => tile.pattern[0])).toEqual([42, 31])
+  })
+
+  it('stays beneath the shared meta-tile region and says how many did not fit', () => {
+    const doc = normalizeTiles({ ...banked(), sharedTiles: 250 })
+    const source = normalizeTiles({ mode: 'sc2', count: 10, tiles: Array.from({ length: 10 }, (_, i) => mark(i)) })
+    const result = fillBank(doc, 0, source, 'res/other.tiles.json')
+    if (typeof result === 'string') throw new Error(result)
+    expect([result.copied, result.dropped]).toEqual([6, 4])
+  })
+
+  it('refuses a repeated set, another mode, and a bank an animation plays in', () => {
+    const source = normalizeTiles({ mode: 'sc2', count: 1 })
+    expect(fillBank(normalizeTiles({ mode: 'sc2', count: 4 }), 0, source, 'res/a.tiles.json')).toMatch(/Switch the screen to Banked first/)
+    expect(fillBank(banked(), 0, normalizeTiles({ mode: 'sc4', count: 1 }), 'res/a.tiles.json')).toMatch(/SC4/)
+    const animated = normalizeTiles({
+      ...banked(),
+      animations: [{ path: 'res/coin.anim-tiles.json', slot: 0, bank: 1, name: 'g_Coin', width: 1, height: 1, frames: 2, colorsVary: false, loop: 'loop' }]
+    })
+    expect(fillBank(animated, 1, source, 'res/a.tiles.json')).toMatch(/coin\.anim-tiles\.json/)
+  })
+
+  it('leaves the field out of a tileset no bank was copied into, and drops a source whose bank has no art', () => {
+    expect('bankSources' in banked()).toBe(false)
+    const doc = normalizeTiles({ ...banked(), bankTiles: [[mark(1)], [], []], bankSources: ['res/a.tiles.json', 'res/b.tiles.json', null] })
+    expect(doc.bankSources).toEqual(['res/a.tiles.json', null, null])
   })
 })

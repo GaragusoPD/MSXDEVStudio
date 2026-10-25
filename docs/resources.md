@@ -130,6 +130,23 @@ stamp, fill, rectangle and erase. Shift+click or drag in the tile picker takes
 a multi-tile stamp. A 32×24 map is exactly one screen; larger maps get a screen
 outline overlay for designing scrolling worlds.
 
+**Banks (SCREEN 2/4)** — the screen has three pattern tables, one per third
+(rows 0–7, 8–15, 16–23). Under the tileset picker, **Repeat** uses one set of
+256 tiles in all three thirds; **Banked** gives each third its own 256, up to
+768 on screen. Switching either way repacks the 32×24 screen from what it
+shows, so nothing on screen changes — Repeat is refused when the screen draws
+more than one set holds. Banked, each third can be **filled from another
+tileset**: pick it beside *Rows 0–7* (and so on) and its tiles are copied into
+that bank, so the cells there draw its art. It is a copy, edited here from then
+on; ↻ copies it again after the source changed. The map editor's zoom goes to
+32 pixels a dot, for painting dot by dot.
+
+Every **Import image…** into a SCREEN 2/4 tileset or map asks the same thing:
+**Banks: Auto** (one set, banked only when the picture needs more than 256 tiles
+and can be), **Repeat** (one set, never banked) or **Banked** (a set per third —
+into a tileset that needs a picture exactly 192 dots tall, and replaces the whole
+set).
+
 In a **bitmap mode** a layered map needs to know which cell means "nothing",
 because a cell index is an atlas position and 0 is a picture like any other. So
 a layered bitmap map names its own **transparent cell** (the checkbox under

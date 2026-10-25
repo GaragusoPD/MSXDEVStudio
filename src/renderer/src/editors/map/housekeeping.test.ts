@@ -20,7 +20,9 @@ import {
   pruneMapSessions,
   removeUnusedTiles,
   renderMapPixels,
+  reloadBank,
   resize,
+  fillBankFrom,
   switchToBanked,
   switchToRepeat,
   undo,
@@ -374,6 +376,32 @@ describe('the Repeat/Banked switch', () => {
     expect(isBanked(session.tileset!)).toBe(true)
     expect(confirm).not.toHaveBeenCalled()
     expect(session.status).toMatch(/has to stay banked/)
+  })
+
+  it('fills a bank from another tileset, and copies it again on Reload once that tileset changed', async () => {
+    const session = await screen(10)
+    switchToBanked(session)
+    const SOURCE = 'res/source.tiles.json'
+    const sourceWith = (first: number): string =>
+      serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 3, tiles: [art(0), art(first), art(first + 1)] }) })
+    files[SOURCE] = sourceWith(100)
+
+    await fillBankFrom(session, 2, SOURCE)
+    expect(session.tileset!.bankTiles[2].map((tile) => tile.pattern[0])).toEqual([0, 100, 101])
+    expect(session.tileset!.bankSources).toEqual([null, null, SOURCE])
+    expect(session.status).toMatch(/Bank 3 \(rows 16–23\) now holds 3 tiles copied from source\.tiles\.json/)
+
+    files[SOURCE] = sourceWith(200)
+    await reloadBank(session, 2)
+    expect(session.tileset!.bankTiles[2].map((tile) => tile.pattern[0])).toEqual([0, 200, 201])
+  })
+
+  it('will not fill a bank of a repeated set', async () => {
+    const session = await screen(10)
+    files['res/source.tiles.json'] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 2 }) })
+    await fillBankFrom(session, 0, 'res/source.tiles.json')
+    expect(isBanked(session.tileset!)).toBe(false)
+    expect(session.status).toMatch(/Switch the screen to Banked first/)
   })
 
   it('a declined switch changes nothing', async () => {

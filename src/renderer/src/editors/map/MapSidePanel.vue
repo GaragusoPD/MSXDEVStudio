@@ -10,7 +10,7 @@ import { mapExport } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
 import { isBanked, MAX_TILES } from '../../../../shared/msx/tile'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
-import { addLayer, bankSwitchBlocker, commit, doc, indexedSummary, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setIndexed, setTileset, setTransparent, switchToBanked, switchToRepeat, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, bankSwitchBlocker, commit, doc, fillBankFrom, reloadBank, indexedSummary, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setIndexed, setTileset, setTransparent, switchToBanked, switchToRepeat, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 import MapPaintPanel from './MapPaintPanel.vue'
@@ -55,6 +55,10 @@ async function chooseTileset(path: string): Promise<void> {
 /** SCREEN 2/4 tilesets only: the modes with three pattern tables. */
 const bankable = computed(() => props.session.tileset?.mode === 'sc2' || props.session.tileset?.mode === 'sc4')
 const bankedNow = computed(() => (props.session.tileset ? isBanked(props.session.tileset) : false))
+/** What a bank can be filled from: every other pattern tileset in the project. */
+const bankSourceOptions = computed(() =>
+  resourcesStore.entries.filter((entry) => entry.kind === 'tiles' && entry.path !== mapDoc.value.tileset).map((entry) => entry.path)
+)
 
 /** The placement the canvas has selected, with the meta it names. */
 const selectedPlacement = computed(() => {
@@ -220,6 +224,43 @@ const packing = computed(() => {
             Banked
           </button>
         </div>
+        <template v-if="bankedNow">
+          <div
+            v-for="bank in 3"
+            :key="bank"
+            class="tileset-row bank-source"
+          >
+            <span :title="`Bank ${bank}: name-table rows ${(bank - 1) * 8}–${(bank - 1) * 8 + 7}`">Rows {{ (bank - 1) * 8 }}–{{ (bank - 1) * 8 + 7 }}</span>
+            <select
+              :value="session.tileset?.bankSources?.[bank - 1] ?? ''"
+              :title="`Fill bank ${bank} with a copy of another tileset's tiles`"
+              @change="fillBankFrom(session, bank - 1, ($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = session.tileset?.bankSources?.[bank - 1] ?? ''"
+            >
+              <option value="">
+                its own art ({{ session.tileset?.bankTiles[bank - 1]?.length ?? 0 }} tiles)
+              </option>
+              <option
+                v-for="path in bankSourceOptions"
+                :key="path"
+                :value="path"
+              >
+                {{ path.split('/').pop() }}
+              </option>
+            </select>
+            <button
+              type="button"
+              :title="`Copy ${session.tileset?.bankSources?.[bank - 1] ?? 'its source'} into bank ${bank} again`"
+              :disabled="!session.tileset?.bankSources?.[bank - 1]"
+              @click="reloadBank(session, bank - 1)"
+            >
+              <Icon name="refresh" />
+            </button>
+          </div>
+          <p class="hint">
+            Each third of the screen draws from its own bank. Pick a tileset to copy into a bank —
+            a copy, edited here from then on; ↻ copies it again.
+          </p>
+        </template>
       </template>
       <p
         v-if="mapDoc.metas.length"
@@ -753,6 +794,17 @@ label > span:first-child {
 
 .tileset-row button:disabled {
   opacity: 0.4;
+}
+
+.bank-source {
+  align-items: center;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.bank-source span {
+  flex: none;
+  width: 64px;
 }
 
 .banks-row {

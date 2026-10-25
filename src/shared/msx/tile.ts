@@ -82,6 +82,14 @@ export interface TilesDoc {
   sharedTiles: number
 
   /**
+   * Where each bank's own art was copied from — another tileset's path, per
+   * bank, or null — so the map editor can copy it again on demand. A record,
+   * not a link: the art is this tileset's from then on, edited here, and
+   * nothing rebuilds it behind the user's back. Absent until a bank has one.
+   */
+  bankSources?: (string | null)[]
+
+  /**
    * Animations attached to this tileset (`*.anim-tiles.json`), each driving a
    * window of consecutive slots. Empty in every file written before animations
    * were their own resource. See `TileAnimBinding`.
@@ -248,6 +256,41 @@ export function bankTileAt(doc: TilesDoc, bank: number, index: number): TileEntr
 }
 
 /**
+ * Bank `bank` of `doc`, its art replaced by a copy of `source`'s — the tiles
+ * `source` shows in that same third of the screen, which for an unbanked
+ * source is its one set. `path` is recorded in `bankSources` so the copy can
+ * be made again. A string is why it cannot be done.
+ *
+ * Capped beneath the shared meta-tile region, as every bank is; `dropped`
+ * says how many did not fit. A window an animation drives in this bank would
+ * go on writing its poses over the new art, so that refuses. The source's
+ * attached meta-tiles do not come along — their tiles arrive as plain art.
+ */
+export function fillBank(
+  doc: TilesDoc,
+  bank: number,
+  source: TilesDoc,
+  path: string
+): { doc: TilesDoc; copied: number; dropped: number } | string {
+  if (!isBanked(doc)) return 'Switch the screen to Banked first — a repeated set has no bank of its own to fill.'
+  if (bank < 0 || bank >= BANK_COUNT) return `There is no bank ${bank + 1}.`
+  if (source.mode !== doc.mode) return `${path.split('/').pop()} is ${source.mode.toUpperCase()}, and this tileset is ${doc.mode.toUpperCase()}.`
+  const animated = doc.animations.find((binding) => binding.bank === bank)
+  if (animated) return `An animation (${animated.path.split('/').pop()}) plays in bank ${bank + 1}. Detach it first.`
+  const length = Math.max(source.count, source.bankTiles[bank]?.length ?? 0)
+  const art = Array.from({ length }, (_, i) => bankTileAt(source, bank, i))
+  const budget = MAX_TILES - doc.sharedTiles
+  const copy = art.slice(0, budget).map((entry) => ({ pattern: entry.pattern.slice(), color: entry.color.slice() }))
+  const sources = Array.from({ length: BANK_COUNT }, (_, b) => (b === bank ? path : (doc.bankSources?.[b] ?? null)))
+  const next = normalizeTiles({
+    ...doc,
+    bankTiles: doc.bankTiles.map((tiles, b) => (b === bank ? copy : tiles)),
+    bankSources: sources
+  })
+  return { doc: next, copied: copy.length, dropped: art.length - copy.length }
+}
+
+/**
  * How many more tiles this bank can take before its own art would collide with
  * the shared reservation at the top. The shared tiles cost every bank, which is
  * the price of a meta index meaning one picture everywhere.
@@ -386,9 +429,19 @@ export function normalizeTiles(raw: unknown): TilesDoc {
     export: (input.export as ExportBlock | undefined) ?? null,
     bankTiles,
     sharedTiles,
+    ...normalizeBankSources(input.bankSources, bankTiles),
     animations: normalizeAnimBindings(input.animations, bankTiles.some((bank) => bank.length > 0)),
     metas: normalizeMetaBindings(input.metas)
   }
+}
+
+/** A bank's source only means something while the bank has art; none at all leaves the field out of the file. */
+function normalizeBankSources(raw: unknown, bankTiles: TileEntry[][]): { bankSources?: (string | null)[] } {
+  const list = Array.isArray(raw) ? raw : []
+  const sources = Array.from({ length: BANK_COUNT }, (_, b) =>
+    typeof list[b] === 'string' && list[b] && bankTiles[b].length ? (list[b] as string) : null
+  )
+  return sources.some((source) => source !== null) ? { bankSources: sources } : {}
 }
 
 /** Meta-tiles are capped at 16 tiles a side; see `MAX_META_SIZE` in `meta-tile.ts`. */
