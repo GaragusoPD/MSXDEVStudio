@@ -19,10 +19,18 @@ in your project that an editor owns, and each one exports a C header your game
 
 ## Creating and opening
 
-In the **Resources** panel (side bar): pick a kind, type a name, press **New**.
-The file is created in the project's **`res/`** folder and its editor opens.
-Click any listed resource to reopen it later — or open the file from the
-Explorer.
+In the **Resources** panel (side bar): **New resource…**, pick a kind, type a
+name, press **Create**. The file is created in the project's **`res/`** folder
+and its editor opens.
+
+The panel lists the project's resources by kind, each kind a section you open
+and close — as many open at once as you like, and they stay as you left them.
+An open section shows a card per resource: a thumbnail of it (a tileset's
+first tiles, a meta-tile's or animation's first pose, a map as the game draws
+it, meta-tiles and all, a sprite's first frame, a screen) with its name under
+it. Sound shows an icon. Click a card to open it; hover it for its path and
+where it exports, and for the button that exports it now. Thumbnails follow the
+files, so they redraw when one is saved. Or open the file from the Explorer.
 
 **New tiled screen…** (File menu, or the Resources panel) makes the pair a
 SCREEN 2 picture is drawn as — `res/name.tiles.json` with tile 0 reserved
