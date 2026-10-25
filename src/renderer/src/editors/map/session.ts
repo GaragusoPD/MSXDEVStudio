@@ -730,7 +730,7 @@ onTilesReordered((event) => {
     session.tilesetReorderSeen = event.at
     // A floating block holds tile numbers too, and it lands in the new numbering.
     const float = session.float
-    if (float?.kind === 'cells') {
+    if (float?.kind === 'cells' && event.bank === undefined) {
       session.float = { ...float, clip: { ...float.clip, values: Array.from(float.clip.values, (tile) => event.mapping[tile] ?? tile) } }
     }
   }

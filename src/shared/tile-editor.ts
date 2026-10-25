@@ -342,6 +342,8 @@ export interface TileHistoryEntry {
    * tile stayed there (a meta-tile's removal) or went too.
    */
   unmap?: number[]
+  /** The bank `remap` belongs to, published with it (see `TilesReorderEvent.bank`). */
+  bank?: number
 }
 
 export interface TileHistory {
@@ -355,9 +357,15 @@ export function initHistory(doc: TilesDoc): TileHistory {
   return { entries: [{ doc, label: 'open' }], index: 0 }
 }
 
-export function pushHistory(history: TileHistory, doc: TilesDoc, label: string, remap?: number[], unmap?: number[]): TileHistory {
+export function pushHistory(
+  history: TileHistory,
+  doc: TilesDoc,
+  label: string,
+  remap?: number[],
+  extra: { unmap?: number[]; bank?: number } = {}
+): TileHistory {
   const entries = history.entries.slice(0, history.index + 1)
-  entries.push(unmap ? { doc, label, remap, unmap } : { doc, label, remap })
+  entries.push({ doc, label, remap, ...extra })
   const trimmed = entries.slice(Math.max(0, entries.length - HISTORY_LIMIT))
   return { entries: trimmed, index: trimmed.length - 1 }
 }
@@ -386,6 +394,19 @@ export function canRedo(history: TileHistory): boolean {
 export function invertMapping(mapping: readonly number[]): number[] {
   const inverse = mapping.slice()
   mapping.forEach((to, from) => (inverse[to] = from))
+  return inverse
+}
+
+/**
+ * The exact inverse of a mapping that dropped the tiles in `dropped` (each
+ * mapped to 0): they have nothing to come back to, so they never claim 0's
+ * inverse. `invertMapping` cannot tell a dropped tile from one moved to 0.
+ */
+export function invertDrops(mapping: readonly number[], dropped: ReadonlySet<number>): number[] {
+  const inverse = mapping.map((_, i) => i)
+  mapping.forEach((to, from) => {
+    if (!dropped.has(from)) inverse[to] = from
+  })
   return inverse
 }
 
@@ -664,6 +685,11 @@ export interface TilesReorderEvent {
   mapping: number[]
   /** Epoch ms, so a persisted log entry can be matched against what a map already replayed. */
   at: number
+  /**
+   * Set when one bank's own art was renumbered (`removeBankTiles`): only the
+   * map rows that bank covers follow. Absent for the whole set.
+   */
+  bank?: number
 }
 
 type ReorderListener = (event: TilesReorderEvent) => void

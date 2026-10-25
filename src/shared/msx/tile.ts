@@ -1308,6 +1308,79 @@ export function reorderTiles(doc: TilesDoc, from: number, to: number): { doc: Ti
 }
 
 /**
+ * Drops the shared-region tiles in `drop` from a banked tileset and closes the
+ * region up: the survivors move up towards 255 in their order, so only shared
+ * indices change and every index below the region means what it meant — which
+ * is what makes this safe where renumbering a bank's own art is not (see
+ * `removeTile`). Indices in `drop` outside the region are ignored. Returns
+ * `mapping` for the reorder seam, dropped tiles mapping to 0, or null when
+ * nothing was dropped.
+ */
+export function removeSharedTiles(doc: TilesDoc, drop: ReadonlySet<number>): { doc: TilesDoc; mapping: number[] | null } {
+  const mapping = Array.from({ length: MAX_TILES }, (_, i) => i)
+  const survivors: number[] = []
+  for (let i = MAX_TILES - doc.sharedTiles; i < MAX_TILES; i++) {
+    if (drop.has(i)) mapping[i] = 0
+    else survivors.push(i)
+  }
+  if (survivors.length === doc.sharedTiles) return { doc, mapping: null }
+  const tiles = doc.tiles.slice(0, doc.count)
+  const top = MAX_TILES - survivors.length
+  survivors.forEach((old, j) => {
+    tiles[top + j] = doc.tiles[old]
+    mapping[old] = top + j
+  })
+  const next = normalizeTiles({
+    ...doc,
+    tiles,
+    sharedTiles: survivors.length,
+    blocks: doc.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => mapping[tile] ?? tile) })),
+    animations: remapAnimBindings(doc.animations, mapping),
+    metas: remapMetaBindings(doc.metas, mapping)
+  })
+  return { doc: next, mapping }
+}
+
+/** Where the tiles bank `bank` shows end: its own art, or the common set showing through past it. */
+export function bankEnd(doc: TilesDoc, bank: number): number {
+  return Math.min(MAX_TILES - doc.sharedTiles, Math.max(doc.bankTiles[bank]?.length ?? 0, doc.count))
+}
+
+/**
+ * Drops the tiles in `drop` from bank `bank`'s own art on a banked tileset:
+ * the bank's tiles above each one move down, the other banks and the shared
+ * region stay where they are. The mapping is for that bank's rows of a map
+ * only — publish it with `bank` on the reorder event, so `remapTiles` leaves
+ * the other two thirds of the screen alone. A reserved tile 0 is never
+ * dropped; a window an animation drives in this bank moves with its tiles, or
+ * is detached when one of them goes. Null `mapping` when nothing was dropped.
+ */
+export function removeBankTiles(doc: TilesDoc, bank: number, drop: ReadonlySet<number>): { doc: TilesDoc; mapping: number[] | null } {
+  // Past its own art a bank shows the common set; deleting one of those makes
+  // the bank's copy of them its own first, so the indices it keeps still show
+  // what they showed.
+  const end = bankEnd(doc, bank)
+  const shown = doc.bankTiles[bank] ?? []
+  const own = [...drop].some((i) => i >= shown.length && i < end) ? Array.from({ length: end }, (_, i) => bankTileAt(doc, bank, i)) : shown
+  const mapping = Array.from({ length: MAX_TILES }, (_, i) => i)
+  const kept: TileEntry[] = []
+  own.forEach((entry, i) => {
+    if (drop.has(i) && !(i === 0 && doc.reserveTile0)) mapping[i] = 0
+    else {
+      mapping[i] = kept.length
+      kept.push(entry)
+    }
+  })
+  if (kept.length === own.length) return { doc, mapping: null }
+  const animations = doc.animations.flatMap((binding) => {
+    if (binding.bank !== bank) return [binding]
+    const slots = Array.from({ length: animCells(binding) }, (_, i) => binding.slot + i)
+    return slots.some((slot) => drop.has(slot) && slot < own.length) ? [] : [{ ...binding, slot: mapping[binding.slot] }]
+  })
+  return { doc: normalizeTiles({ ...doc, bankTiles: doc.bankTiles.map((tiles, b) => (b === bank ? kept : tiles)), animations }), mapping }
+}
+
+/**
  * Deletes a tile and renumbers everything above it. The tiles that referenced
  * the deleted one — map cells, block cells — fall back to tile 0, the blank
  * one, since there is nothing else honest to point them at.

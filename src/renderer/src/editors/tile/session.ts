@@ -39,6 +39,9 @@ import {
   isMetaPath,
   MAX_BLOCK,
   MAX_TILES,
+  bankEnd,
+  removeBankTiles,
+  removeSharedTiles,
   metaOwning,
   animCells,
   animWindowProblems,
@@ -79,6 +82,7 @@ import {
   emitTilesReordered,
   historyDoc,
   initHistory,
+  invertDrops,
   invertMapping,
   pushHistory,
   redoHistory,
@@ -265,9 +269,15 @@ function markDirty(session: TileSession): void {
 }
 
 /** Replaces the document and pushes one undo step. `remap` is set for reorders only. */
-export function commit(session: TileSession, doc: TilesDoc, label: string, remap?: number[], unmap?: number[]): void {
+export function commit(
+  session: TileSession,
+  doc: TilesDoc,
+  label: string,
+  remap?: number[],
+  extra?: { unmap?: number[]; bank?: number }
+): void {
   session.doc = doc
-  session.history = pushHistory(session.history, doc, label, remap, unmap)
+  session.history = pushHistory(session.history, doc, label, remap, extra)
   useTilesetStore().set(session.path, doc, session.path)
   markDirty(session)
 }
@@ -867,7 +877,7 @@ function deleteRefusal(session: TileSession, indices: readonly number[]): string
     if (meta) {
       return (
         `Tile ${index} is part of the meta-tile ${fileOf(meta.path)}, and would come back the next time the tileset opens. ` +
-        'Remove the meta-tile in the Meta-tiles panel first — its tiles then stay as ordinary art you can delete.'
+        'Remove the meta-tile in the Meta-tiles panel first — its tiles go with it.'
       )
     }
   }
@@ -1109,13 +1119,9 @@ export async function removeMetaFile(session: TileSession, path: string): Promis
 function detachStep(session: TileSession, path: string, used: ReadonlySet<number> | null): RemovedMeta | null {
   const result: RemovedMeta = used ? removeMeta(session.doc, path, used) : { doc: detachMeta(session.doc, path), mapping: null, removed: 0 }
   if (result.doc === session.doc) return null
-  // Tile 0 never belongs to a meta, so it stays at 0 and every other tile
-  // mapped there was dropped: undo brings back only what moved.
-  const unmap = result.mapping?.map((_, i) => i)
-  result.mapping?.forEach((to, from) => {
-    if (unmap && (to !== 0 || from === 0)) unmap[to] = from
-  })
-  commit(session, result.doc, 'remove meta-tile', result.mapping ?? undefined, unmap)
+  // Tile 0 never belongs to a meta, so it stays at 0: undo brings back only what moved.
+  const dropped = new Set(result.mapping?.flatMap((to, from) => (to === 0 && from !== 0 ? [from] : [])))
+  commit(session, result.doc, 'remove meta-tile', result.mapping ?? undefined, result.mapping ? { unmap: invertDrops(result.mapping, dropped) } : {})
   if (session.active >= result.doc.count) select(session, result.doc.count - 1)
   return result
 }
@@ -1306,6 +1312,19 @@ export function setPalette(session: TileSession, index: number, grb: number): vo
 }
 
 export function addTile(session: TileSession): void {
+  // On a banked tileset each bank's own art hides the common set beneath it,
+  // so a new tile goes to the bank on screen — below the shared region.
+  if (isBanked(session.doc)) {
+    const own = session.doc.bankTiles[session.bank] ?? []
+    if (own.length >= MAX_TILES - session.doc.sharedTiles) {
+      session.status = `Bank ${session.bank + 1} is full: its own tiles reach the shared meta-tile tiles at the top.`
+      return
+    }
+    const bankTiles = session.doc.bankTiles.map((tiles, b) => (b === session.bank ? [...tiles, blankTileEntry(session.doc.mode)] : tiles))
+    commit(session, normalizeTiles({ ...session.doc, bankTiles }), 'add tile')
+    select(session, own.length)
+    return
+  }
   // Same reservation `createBlock` respects: a new common tile must not land
   // on an index the shared region already owns.
   if (session.doc.count >= MAX_TILES - session.doc.sharedTiles) return
@@ -1332,17 +1351,10 @@ export function deleteTile(session: TileSession, index: number): void {
  * mapping that maps and blocks replay.
  */
 export function deleteTiles(session: TileSession, indices: readonly number[]): void {
-  // `removeTile` itself now refuses a common-range removal on a banked
-  // tileset (see `shared/msx/tile.ts`) — a bank's own overrides are
-  // self-contained art anchored at fixed hardware indices, not references
-  // into `tiles`, so they never move with a renumber, and that cannot be
-  // fixed for `replayReorders` (`shared/map-editor.ts`), which replays a
-  // logged mapping onto a map opened later rather than one already open. This
-  // guard is no longer the enforcement, only the user-facing message over it:
-  // a status the user can read beats the silent no-op `removeTile` would
-  // otherwise hand back.
+  // A banked tileset renumbers per bank or in its shared region, never the
+  // common set under the banks (`removeTile` refuses that): see `deleteBankedTiles`.
   if (isBanked(session.doc)) {
-    session.status = "Deleting renumbers the common tileset, and a bank's own art does not renumber with it — not available on a banked tileset."
+    deleteBankedTiles(session, indices)
     return
   }
   const doomed = [...new Set(indices)]
@@ -1375,6 +1387,47 @@ export function deleteTiles(session: TileSession, indices: readonly number[]): v
   selectBlock(session, null)
   // Land on the lowest index that was removed — where the gap now is.
   select(session, Math.min(doomed[doomed.length - 1], next.count - 1))
+}
+
+/**
+ * `deleteTiles` on a banked tileset, where a tile is one of two things: shared
+ * meta-tile art at the top, the same picture in every bank, whose region
+ * closes up (`removeSharedTiles`); or the bank on screen's own art, which
+ * renumbers in that bank alone (`removeBankTiles`) — the reorder event names
+ * the bank, so only the rows of a map that bank draws follow. One kind per
+ * delete: each is its own renumbering, and an undo step holds one.
+ */
+function deleteBankedTiles(session: TileSession, indices: readonly number[]): void {
+  const bank = session.bank
+  const sharedStart = MAX_TILES - session.doc.sharedTiles
+  const end = bankEnd(session.doc, bank)
+  const doomed = [...new Set(indices)].filter((index) => index >= sharedStart || index < end).sort((a, b) => a - b)
+  if (!doomed.length) {
+    session.status = `Nothing to delete there — bank ${bank + 1} shows ${end} tiles below the shared ones.`
+    return
+  }
+  const shared = doomed.filter((index) => index >= sharedStart)
+  if (shared.length && shared.length < doomed.length) {
+    session.status = "Delete the shared tiles at the top and this bank's own tiles separately — each renumbers differently."
+    return
+  }
+  if (session.doc.reserveTile0 && doomed.includes(0)) {
+    session.status = 'Tile 0 stays blank in every bank — it is what a see-through meta-tile cell shows.'
+    return
+  }
+  if (refuseDelete(session, doomed)) return
+  const drop = new Set(doomed)
+  const { doc: next, mapping } = shared.length ? removeSharedTiles(session.doc, drop) : removeBankTiles(session.doc, bank, drop)
+  if (!mapping) return
+  const bankOfRemap = shared.length ? undefined : bank
+  publishRemap(session, mapping, bankOfRemap)
+  const label = doomed.length === 1 ? `delete tile ${doomed[0]}` : `delete ${doomed.length} tiles`
+  commit(session, next, label, mapping, { unmap: invertDrops(mapping, drop), bank: bankOfRemap })
+  selectBlock(session, null)
+  // Land where the gap was, or on the nearest tile still there.
+  const top = MAX_TILES - next.sharedTiles
+  const last = (next.bankTiles[bank]?.length ?? 1) - 1
+  select(session, shared.length ? (next.sharedTiles ? Math.max(top, Math.min(doomed[0], MAX_TILES - 1)) : last) : Math.min(doomed[0], last))
 }
 
 /**
@@ -1453,8 +1506,8 @@ export function reorder(session: TileSession, from: number, to: number): void {
   select(session, to)
 }
 
-function publishRemap(session: TileSession, mapping: number[]): void {
-  const event: TilesReorderEvent = { path: session.path, mapping, at: Date.now() }
+function publishRemap(session: TileSession, mapping: number[], bank?: number): void {
+  const event: TilesReorderEvent = { path: session.path, mapping, at: Date.now(), ...(bank === undefined ? {} : { bank }) }
   // Persisted in the store so it survives the save, and emitted so files that
   // are open renumber now. A file that is closed replays the log on open.
   useTilesetStore().appendReorder(session.path, event)
@@ -1467,7 +1520,7 @@ export function undo(session: TileSession): void {
   if (!canUndo(session.history)) return
   // Undoing a reorder has to renumber maps back, so the seam gets the inverse mapping.
   const leaving = session.history.entries[session.history.index]
-  if (leaving.remap) publishRemap(session, leaving.unmap ?? invertMapping(leaving.remap))
+  if (leaving.remap) publishRemap(session, leaving.unmap ?? invertMapping(leaving.remap), leaving.bank)
   session.history = undoHistory(session.history)
   applyHistory(session)
 }
@@ -1476,7 +1529,7 @@ export function redo(session: TileSession): void {
   if (!canRedo(session.history)) return
   session.history = redoHistory(session.history)
   const entered = session.history.entries[session.history.index]
-  if (entered.remap) publishRemap(session, entered.remap)
+  if (entered.remap) publishRemap(session, entered.remap, entered.bank)
   applyHistory(session)
 }
 

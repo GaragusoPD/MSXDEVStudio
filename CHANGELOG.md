@@ -7,6 +7,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-10-25
+
+### Fixed
+
+- **Tiles can be deleted and added on a banked tileset.** Deleting in a bank
+  renumbers that bank alone — maps follow in the rows that bank draws, and the
+  other two banks keep their numbers. Tiles left in the shared meta-tile region
+  at the top, by a meta-tile removed before 0.3.4, can be deleted too; the
+  region closes up. **+ tile** adds to the bank on screen instead of to the
+  common set every bank hides. Reordering a banked tileset is still not
+  available.
+
 ## [0.3.4] - 2026-10-25
 
 ### Fixed

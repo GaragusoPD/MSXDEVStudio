@@ -57,7 +57,7 @@ function confirmDelete(): void {
     doomed.length === 1
       ? `Delete tile ${doomed[0]}?`
       : `Delete ${doomed.length} tiles (${Math.min(...doomed)}–${Math.max(...doomed)})?`
-  if (window.confirm(`${what} Maps and blocks using them fall back to tile 0, and every tile above is renumbered.`)) {
+  if (window.confirm(`${what} Maps and blocks using them fall back to tile 0, and the tiles around them are renumbered to close the gap.`)) {
     deleteTiles(props.session, doomed)
   }
 }

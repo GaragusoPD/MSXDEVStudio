@@ -364,6 +364,6 @@ export function replayReorders(
 ): { doc: MapDoc; seenAt: number | null; applied: number } {
   const pending = pendingReorders(log, seenAt)
   let next = doc
-  for (const event of pending) next = remapTiles(next, event.mapping)
+  for (const event of pending) next = remapTiles(next, event.mapping, event.bank)
   return { doc: next, seenAt: pending.length ? pending[pending.length - 1].at : seenAt, applied: pending.length }
 }

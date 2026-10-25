@@ -149,7 +149,7 @@ function replayTilesetLog(root: string, resource: ResourceDoc, text: string): vo
   const log = (JSON.parse(readFileSync(abs, 'utf-8')) as { reorderLog?: TilesReorderEvent[] }).reorderLog
   if (!Array.isArray(log)) return
   for (const event of pendingReorders(log, seen)) {
-    if (resource.kind === 'map') resource.doc = remapTiles(resource.doc, event.mapping)
+    if (resource.kind === 'map') resource.doc = remapTiles(resource.doc, event.mapping, event.bank)
     else resource.doc = remapMetaTiles(resource.doc, event.mapping)
   }
 }

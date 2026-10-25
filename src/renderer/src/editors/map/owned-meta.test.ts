@@ -11,13 +11,14 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { expandIndexedLayer, normalizeMap } from '../../../../shared/msx/map'
 import { normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
+import { replayReorders } from '../../../../shared/map-editor'
 import { defaultExport, serializeResource } from '../../../../shared/msx/resource'
 import { isBanked, MAX_TILES, normalizeTiles, type TileEntry } from '../../../../shared/msx/tile'
 import { emitAnimSaved } from '../anim/events'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import { resetExternalWatches } from '../external-changes'
-import { attachableMetas, attachMetaFile, pruneTileSessions, removeMetaFile, tileSession, undo as undoTiles } from '../tile/session'
+import { attachableMetas, attachMetaFile, deleteTiles, pruneTileSessions, removeMetaFile, setBank, tileSession, undo as undoTiles } from '../tile/session'
 import { animSession, findAttachments, pruneAnimSessions, removeFromTileset } from '../anim/session'
 import {
   doc,
@@ -434,3 +435,57 @@ describe('removing one from a tileset', () => {
     expect(map.status).toMatch(/save the map to keep it buildable/)
   })
 })
+
+describe('deleting tiles from a banked tileset', () => {
+  /** Three banks of four tiles each, two orphaned shared tiles above them; the map shows tile 3 in every third of the screen. */
+  async function setUp(): Promise<{ tiles: ReturnType<typeof tileSession>; map: ReturnType<typeof mapSession> }> {
+    const shared: TileEntry[] = []
+    shared[254] = tile(0xbb)
+    shared[255] = tile(0xaa)
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 1,
+        reserveTile0: true,
+        tiles: [tile(0), ...shared.slice(1)],
+        sharedTiles: 2,
+        bankTiles: [0, 1, 2].map((bank) => [tile(0), tile(0x10 + bank), tile(0x20 + bank), tile(0x30 + bank)])
+      })
+    })
+    const data = new Array(32 * 24).fill(0)
+    for (const row of [0, 8, 16]) data[row * 32] = 3
+    data[1] = 255
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 32, height: 24, layers: [{ name: 'bg', data }], tilesetReorderSeen: 1 })
+    const tiles = await open(() => tileSession(TILES))
+    const map = await open(() => mapSession(MAP))
+    return { tiles, map }
+  }
+  const column = (map: ReturnType<typeof mapSession>): number[] => [0, 8, 16].map((row) => doc(map).layers[0].data[row * 32])
+
+  it("renumbers that bank's rows of a map and no others, and undo puts them back", async () => {
+    const { tiles, map } = await setUp()
+    setBank(tiles, 1)
+    deleteTiles(tiles, [1])
+    expect(tiles.doc.bankTiles.map((bank) => bank.length)).toEqual([4, 3, 4])
+    expect(tiles.doc.bankTiles[1][2].pattern[0]).toBe(0x31)
+    expect(column(map)).toEqual([3, 2, 3])
+    // A closed map replays the logged event the same way.
+    const event = useTilesetStore().reorderLog(TILES).at(-1)!
+    expect(event.bank).toBe(1)
+    const closed = replayReorders(normalizeMap(JSON.parse(files[MAP])), [event], null).doc
+    expect([0, 8, 16].map((row) => closed.layers[0].data[row * 32])).toEqual([3, 2, 3])
+    undoTiles(tiles)
+    expect(column(map)).toEqual([3, 3, 3])
+  })
+
+  it('deletes an orphaned shared tile: the region closes up, every bank keeps its numbers', async () => {
+    const { tiles, map } = await setUp()
+    deleteTiles(tiles, [255])
+    expect(tiles.doc.sharedTiles).toBe(1)
+    expect(tiles.doc.tiles[255].pattern[0]).toBe(0xbb)
+    expect(column(map)).toEqual([3, 3, 3])
+    expect(doc(map).layers[0].data[1]).toBe(0)
+  })
+})
+

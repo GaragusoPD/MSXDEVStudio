@@ -370,9 +370,11 @@ export function stampFresh(doc: MapDoc): MapDoc {
   return { ...doc, tilesetReorderSeen: 0 } as MapDoc
 }
 
-export function remapTiles(doc: MapDoc, mapping: readonly number[]): MapDoc {
+export function remapTiles(doc: MapDoc, mapping: readonly number[], bank?: number): MapDoc {
+  // A bank's renumbering reaches only the rows that bank draws (`bankForRow`).
+  const follows = (cell: number): boolean => bank === undefined || bankForRow(Math.floor(cell / doc.width)) === bank
   const layers = doc.layers.map((layer) =>
-    layer.kind === 'tiles' ? { ...layer, data: layer.data.map((value) => mapping[value] ?? value) } : layer
+    layer.kind === 'tiles' ? { ...layer, data: layer.data.map((value, cell) => (follows(cell) ? (mapping[value] ?? value) : value)) } : layer
   )
   return { ...doc, layers }
 }

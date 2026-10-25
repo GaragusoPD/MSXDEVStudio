@@ -742,7 +742,7 @@ describe('bank editing', () => {
     expect(session.doc.bankTiles[0]).toHaveLength(MAX_TILES - 3) // refused; capacity unchanged
   })
 
-  it('refuses to delete or reorder tiles on a banked tileset — a bank\'s own art does not renumber with the common set', async () => {
+  it('deletes from the bank on screen alone, and still refuses to reorder a banked tileset', async () => {
     files[PATH] = serializeResource({
       kind: 'tiles',
       doc: normalizeTiles({ mode: 'sc2', count: 4, tiles: [mark(0), mark(1), mark(2), mark(3)], bankTiles: [[mark(9)], [], []] })
@@ -750,9 +750,19 @@ describe('bank editing', () => {
     const session = tileSession(PATH)
     await settled()
 
+    // Tile 1 of bank 1 is the common tile showing through: the bank takes its
+    // own copy of what it shows, minus that one. The common set and the other
+    // banks are untouched.
     deleteTiles(session, [1])
+    expect(session.doc.bankTiles[0].map((t) => t.pattern[0])).toEqual([9, 2, 3])
     expect(session.doc.count).toBe(4)
-    expect(session.status).toMatch(/renumber/i)
+    expect(session.doc.bankTiles[1]).toEqual([])
+    undo(session)
+    expect(session.doc.bankTiles[0].map((t) => t.pattern[0])).toEqual([9])
+
+    addTile(session)
+    expect(session.doc.bankTiles[0]).toHaveLength(2)
+    expect(session.doc.count).toBe(4)
 
     reorder(session, 0, 2)
     expect(session.doc.tiles.map((t) => t.pattern[0])).toEqual([0, 1, 2, 3])

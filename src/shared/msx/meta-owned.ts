@@ -38,8 +38,7 @@ import {
   MAX_TILES,
   metaCellSlots,
   normalizeTiles,
-  remapAnimBindings,
-  remapMetaBindings,
+  removeSharedTiles,
   SC1_GROUP,
   TILE_SIZE,
   type AnimLoop,
@@ -436,44 +435,24 @@ function removeBanked(doc: TilesDoc, own: ReadonlySet<number>, window: readonly 
   for (const tile of metaCellSlots(doc)) keep.add(tile)
   for (const block of doc.blocks) for (const tile of block.tiles) keep.add(tile)
   const drops = (tile: number): boolean => own.has(tile) && !keep.has(tile)
-  const mapping = Array.from({ length: MAX_TILES }, (_, i) => i)
-  let removed = 0
 
-  let count = doc.count
+  let next = doc
+  let removed = 0
+  const freed: number[] = []
   const start = window[0]
   const highestBank = Math.max(0, ...doc.bankTiles.map((bank) => bank.length))
-  if (window.length && start > 0 && start + window.length === count && start >= highestBank && window.every(drops)) {
-    for (const tile of window) mapping[tile] = 0
-    count = start
+  if (window.length && start > 0 && start + window.length === doc.count && start >= highestBank && window.every(drops)) {
+    // `normalizeTiles` keeps [0, count) and the shared region, so this is all it takes.
+    next = normalizeTiles({ ...doc, count: start, flags: doc.flags.slice(0, start) })
+    freed.push(...window)
     removed += window.length
   }
-
-  const survivors: number[] = []
-  for (let i = MAX_TILES - doc.sharedTiles; i < MAX_TILES; i++) {
-    if (!drops(i)) survivors.push(i)
-    else {
-      mapping[i] = 0
-      removed++
-    }
-  }
+  const shared = removeSharedTiles(next, new Set([...own].filter(drops)))
+  const mapping = shared.mapping ?? Array.from({ length: MAX_TILES }, (_, i) => i)
+  for (const tile of freed) mapping[tile] = 0
+  removed += shared.mapping ? next.sharedTiles - shared.doc.sharedTiles : 0
   if (!removed) return { doc, mapping: null, removed: 0 }
-  const tiles = doc.tiles.slice(0, count)
-  const top = MAX_TILES - survivors.length
-  survivors.forEach((old, j) => {
-    tiles[top + j] = doc.tiles[old]
-    mapping[old] = top + j
-  })
-  const next = normalizeTiles({
-    ...doc,
-    count,
-    tiles,
-    flags: doc.flags.slice(0, count),
-    sharedTiles: survivors.length,
-    blocks: doc.blocks.map((block) => ({ ...block, tiles: block.tiles.map((tile) => mapping[tile] ?? tile) })),
-    animations: remapAnimBindings(doc.animations, mapping),
-    metas: remapMetaBindings(doc.metas, mapping)
-  })
-  return { doc: next, mapping, removed }
+  return { doc: shared.doc, mapping, removed }
 }
 
 /** A meta read for a refresh, or why it could not be. */
