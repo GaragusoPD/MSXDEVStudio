@@ -15,21 +15,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   panel lists and edits them. A map with entities exports `_Entities` (type, x,
   y, param) with an `_ENT_` define per type. Maps without entities export
   exactly what they did, and their files are unchanged.
-- **Worlds (`*.world.json`).** A grid of rooms for flip-screen games, each room
-  an ordinary map. Rooms side by side connect; an empty cell is a wall; doors
-  connect anything else. The world declares the entity types, so every room
-  numbers its entities alike. It exports every room in one header — the room
-  grid, neighbours, tileset per room, name tables (RLEp-packed on request, all
-  or none), entity lists and doors — and with ready-made C on, `_RoomAt`,
-  `_Neighbour`, `_TilesetOf`, `_RoomData`, `_RoomEntities`, `_DoorAt` and
-  `_DrawRoom`. A map placed in two cells is stored once. The world editor shows
-  the rooms as thumbnails, makes a new room in an empty cell over its
-  neighbours' tileset, swaps rooms by drag, and lists what the build would
-  refuse — the same check the build runs.
+- **Worlds (`*.world.json`).** A grid of rooms for flip-screen games, each
+  room an ordinary map of any size that exports and draws itself — live and
+  animated meta-tiles, banked tilesets and all. Rooms side by side connect; an
+  empty cell is a wall; doors connect anything else. The world declares the
+  entity types, so every room numbers its entities alike. It exports
+  navigation only — the grid, neighbours, room sizes, tileset per room, entity
+  lists and doors — and with ready-made C on, `_RoomAt`, `_Neighbour`,
+  `_RoomW`/`_RoomH`, `_TilesetOf`, `_RoomEntities`, `_DoorAt`, and
+  dispatchers that call the rooms' and tilesets' own helpers: `_LoadTileset`
+  (a banked tileset's own `_Load()`), `_Animate`, `_DrawRoom` (a room's own
+  `_DrawLayer` and `_DrawPlacements`). A project can hold any number of
+  worlds. The world editor shows the rooms as thumbnails, has a library of
+  every map in the project with previews to drag onto cells, makes a new empty
+  room and opens it, imports map files from elsewhere, swaps rooms by drag, and
+  lists what the build would refuse and what the ready-made C leaves to the
+  game.
 - **Slice into rooms…** in the map editor cuts a big map into rooms plus a
-  world that places them, so an overworld can be designed on one canvas and
-  shipped as rooms. Placements and entities go to the room they are in; empty
-  rooms can be left out; nothing already there is overwritten.
+  world, so an overworld can be designed on one canvas and shipped as rooms.
+  Each room exports its own C; placements and entities go to the room they are
+  in; the last column and row are as big as what is left; empty rooms can be
+  left out; nothing already there is overwritten.
 
 ## [0.3.6] - 2026-10-25
 

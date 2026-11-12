@@ -16,7 +16,7 @@ in your project that an editor owns, and each one exports a C header your game
 | screen | `name.screen.json` | Screen editor | Full-screen MSX2 bitmaps (SCREEN 5–8) |
 | sfx | `name.sfx.json` | SFX editor | ayFX sound effects |
 | music | `name.music.json` | Music editor | Background music for the PSG, drawn on a piano roll |
-| world | `name.world.json` | World editor | Flip-screen rooms on a grid — an overworld, its dungeons — with doors and entity types |
+| world | `name.world.json` | World editor | Flip-screen rooms on a grid — an overworld, its dungeons: each room a map that draws itself, linked by neighbours and doors |
 
 ## Creating and opening
 
@@ -261,46 +261,59 @@ decides what each one becomes. A map with entities exports `_Entities` and an
 `_ENT_` define per type (see *Entities* under *Using resources in code*).
 
 **Slice into rooms…** (map editor toolbar) cuts a big map into rooms — one
-screen each by default, or shorter to leave rows for a HUD — and writes them
-beside it as `res/<map>_r<row>_c<col>.map.json`, plus a `res/<map>.world.json`
-that places them. Design the overworld on one canvas, ship it as rooms. The map
-itself is left as it is. Placements go to the room their corner is in (one that
-would hang over a room's edge is left out, and the status line says which);
-entities go to the room they stand in; rooms with nothing in them can be left
-out. It refuses to overwrite rooms or a world already there.
+screen each by default — and writes them beside it as
+`res/<map>_r<row>_c<col>.map.json`, plus a `res/<map>.world.json` that places
+them. Design the overworld on one canvas, ship it as rooms. Each room is a
+complete map with its own export (ready-made C on), its layers, its meta-tiles —
+live, animated ones too — and its entities. When the map is not a whole number
+of rooms, the last column and row are simply smaller. The map itself is left as
+it is. A meta-tile that would hang over a room's edge is left out (the status
+line says which); rooms with nothing in them can be left out; nothing already
+there is overwritten.
 
-**Worlds** — a `.world.json` is a grid of rooms, each an ordinary map: the
-flip-screen world of a Zelda-like or a metroidvania. Why not one big map? A
-16 KB machine cannot unpack an 8×8-screen map (49 KB of name table) to draw a
-piece of it, and a banked SCREEN 2 tileset only works one screen tall. A room
-unpacks into 768 bytes, gets all three banks to itself, and packs into ROM on
-its own.
+**Worlds** — a `.world.json` is a grid of rooms for a flip-screen game: an
+overworld, its dungeons. **Each room is an ordinary map that draws itself**,
+through its own export — its live and animated meta-tiles, its banked tileset,
+everything a map can do — and rooms need not share a size: a one-screen room, a
+short one under a HUD, a tall one you scroll. The world only says how they
+connect. A project can hold as many worlds as it likes — one per dungeon, say.
 
-In the world editor, click a cell to select it, double-click to open its room —
-or, in an empty cell, to make a new one at the world's room size, over the
-tileset its neighbours use. Drag a room onto another cell to swap them;
-**Delete** empties the selected cell. Rooms side by side connect at their edges
-(the bars between cells show it) and an empty cell is a wall, so an overworld
-and its dungeons can share one grid with a gap between them. The side panel
-holds:
+In the world editor:
+
+- **Click** a cell to select it, **double-click** to open its room — or, in an
+  empty cell, to make a new one-screen room over the tileset its neighbours use,
+  opened to paint. **New empty room** in the side panel does the same.
+- **Drag** a room onto another cell to swap them. **Delete** (or *Remove from
+  world*) empties the selected cell; the map file stays.
+- The **Maps** library in the side panel shows every map in the project with a
+  small preview. Drag one onto a cell, or click it to put it in the selected
+  cell; double-click to open it. Maps already in the world are outlined.
+- **Import map files…** copies `.map.json` files from elsewhere into `res/`
+  (renamed past any name already taken) and puts the first into the selected
+  cell when it is empty. A map whose tileset is not in this project still
+  imports — pick its tileset in the map editor.
+
+Rooms side by side connect at their edges (the bars between cells show it) and
+an empty cell is a wall, so an overworld and its dungeons can share one grid
+with a gap between them. The side panel also holds:
 
 - **Doors** for the selected room — connections adjacency cannot express: a
   cave mouth to a dungeon's first room, stairs, a warp. Each has a cell in this
-  room, the room it leads to, and where the player arrives.
-- **Grid** — columns and rows, the size every room must be, and the **top**
-  row it is drawn at (rows above it are free for a HUD). **Layer** names the
-  layer of each room that is its name table; empty means each room's first.
+  room, the room it leads to, and where the player arrives, each checked
+  against its own room's size.
+- **Grid** — columns and rows.
 - **Entity types** — the world's list, numbered from 1. Every room's entities
   are numbered by it, so `_ENT_CHEST` is the same in every room. **Add the
   types the rooms use** declares whatever the rooms have that the list lacks.
   Removing a type renumbers the ones after it, so it asks first.
+- **Left to your code** — the rooms the ready-made `_DrawRoom` cannot draw for
+  you (one bigger than a screen, one without its own ready-made C, a bitmap
+  map) and the tilesets `_LoadTileset` cannot load, each with why. Not an
+  error: those are the game's to draw.
 - **Problems** — what the build would refuse, from the same check the build
-  runs: a room of the wrong size, a missing room, live meta-tiles (bake them —
-  the world carries no placement runtime), an indexed layer, a banked tileset
-  under a HUD, an undeclared entity type, a door into an empty cell.
-- **Export** — the world embeds every room, so the room maps need no export of
-  their own, and a map used in two cells is stored once. *Compress rooms*
-  packs each with RLEp (all or none, like a map's layers).
+  runs: a room that cannot be read, an undeclared entity type, a door into an
+  empty cell or outside its room.
+- **Export** — navigation only; each room exports its own tiles.
 
 The editor keeps up with the rooms: save one in its own tab and the grid
 redraws.
@@ -646,45 +659,54 @@ list numbers them instead — the same in every room.
 
 ### World
 
-The header carries every room and everything that ties them together:
+A world exports navigation, never tile data — each room exports its own:
 
 | Table | What it is |
 |---|---|
 | `_Grid` | room id per grid cell, row-major; `0xFF` is no room |
 | `_Neighbours` | per room: the room north, east, south, west — `0xFF` at a wall |
+| `_RoomSize` | per room: its width and height in tiles |
 | `_RoomTileset` | per room: which tileset it draws with (`_TILESET_` defines) |
-| `_RoomOffsets`, `_Rooms` | each room's name table, RLEp-packed when asked |
-| `_EntityOffsets`, `_Entities` | each room's entities: a count, then type, x, y, param |
+| `_EntityOffsets`, `_Entities` | each room's entities: a count, then type, x, y, param, in the world's ids |
 | `_Doors` | room, x, y, then the room it leads to and where the player arrives |
 
 Room ids count the grid's rooms in reading order. Each room also gets a define
 named after its map file (`res/forest.map.json` → `G_OVER_ROOM_FOREST`), each
 tileset one (`G_OVER_TILESET_CAVE`), each entity type one (`G_OVER_ENT_CHEST`),
-plus `_ROOM_W`, `_ROOM_H`, `_ROOM_BYTES`, `_TOP`, `_NONE` (0xFF) and
-`_NORTH`/`_EAST`/`_SOUTH`/`_WEST`. `_COMPRESSED` is defined only when the rooms
-really are packed. With **Export ready-made C**:
+plus `_NONE` (0xFF), `_NORTH`/`_EAST`/`_SOUTH`/`_WEST` and `_BUFFER_BYTES`. With
+**Export ready-made C**, lookups and two dispatchers that call the rooms' and
+tilesets' **own** helpers:
 
 ```c
 #include "msxgl.h"
 #include "content/over.h"
 
-u8 g_RoomBuffer[G_OVER_ROOM_BYTES];      // a global; packed rooms only
+u8 g_Buffer[G_OVER_BUFFER_BYTES + 1];   // a global; only packed rooms use it
+u8 g_Tileset = G_OVER_NONE;
 
-g_Over_DrawRoom(room, g_RoomBuffer);     // unpack and draw at row G_OVER_TOP
-// g_Over_DrawRoom(room);                // raw rooms draw straight from ROM
+void Enter(u8 room)
+{
+    if (g_Over_TilesetOf(room) != g_Tileset)
+        g_Over_LoadTileset(g_Tileset = g_Over_TilesetOf(room));   // its own loader, _Load() if banked
+    if (!g_Over_DrawRoom(room, g_Buffer))   // its own _DrawLayer + _DrawPlacements
+        DrawBigRoom(room);                  // FALSE: one it leaves to you
+}
 
+g_Over_Animate(g_Tileset);                           // once per frame: animated tiles and meta-tiles
 u8 next = g_Over_Neighbour(room, G_OVER_EAST);       // G_OVER_NONE at a wall
+u8 w = g_Over_RoomW(next);                           // rooms are not all one size
 const u8* e = g_Over_RoomEntities(room);             // e[0] = count
 u8 door = g_Over_DoorAt(room, tileX, tileY);         // index into _Doors, or G_OVER_NONE
-u8 tiles = g_Over_TilesetOf(room);                   // load it when it changes
 ```
 
-The world never loads a tileset — that is the tileset's own header's job, so
-the game loads one when `g_Over_TilesetOf()` changes. Collision reads the
-room's tiles and the tileset's `_Flags`: from the buffer for packed rooms, from
-`g_Over_RoomData(room)` for raw ones. Packed rooms need the **compress** library
-module. Raw rooms are 768 bytes each, so a large world wants compression to fit
-a 32 KB ROM.
+`_DrawRoom` draws a room at the top-left of the name table with its first tile
+layer and its live meta-tiles, so a room needs its own *Export ready-made C* on
+(rooms the world editor makes, slices or imports have it). It returns FALSE for
+a room bigger than a screen — scroll that one with MSXgl's `scroll` module —
+and for the others the editor lists under *Left to your code*. Collision reads
+the room's own layer table (or the buffer, for a packed room) and the
+tileset's `_Flags`. A room packed with RLEp in its own map editor needs the
+**compress** library module.
 
 ### Animated tiles
 
@@ -918,10 +940,11 @@ g_Music_PlayJingle(g_Music_Win);
 g_Music_Update();                    // once per frame
 ```
 
-**Worlds** — the room lookups and one draw call: `_RoomAt`, `_Neighbour`,
-`_TilesetOf`, `_RoomData`, `_RoomEntities`, `_DoorAt` and `_DrawRoom` (see
-*World* above). The game keeps the rules — when to change rooms, what an
-entity becomes.
+**Worlds** — the room lookups (`_RoomAt`, `_Neighbour`, `_RoomW`/`_RoomH`,
+`_TilesetOf`, `_RoomEntities`, `_DoorAt`) and two dispatchers to the rooms' and
+tilesets' own helpers (`_LoadTileset`, `_Animate`, `_DrawRoom`) — see *World*
+above. The game keeps the rules — when to change rooms, what an entity
+becomes.
 
 **Sprite groups** — a metasprite, a stack of superposed planes, or both. The
 header defines where each character starts, and one call places the whole group:

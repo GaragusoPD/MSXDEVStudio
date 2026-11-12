@@ -85,11 +85,14 @@ shipped in 1983.
   ends](docs/images/editor_msx2_bitmap_map_editor.png)
 
 - **World editor** (`*.world.json`) for flip-screen games — a Zelda-style
-  overworld and its dungeons. Rooms are ordinary maps on a grid: neighbours
-  connect at their edges, doors connect the rest, and the world numbers every
-  room's entities from one list. It exports every room in one header —
-  RLEp-packed if you like, a map used twice stored once — with
-  `_DrawRoom()`, `_Neighbour()`, `_RoomEntities()` and `_DoorAt()` ready to call.
+  overworld and its dungeons, as many worlds as you like. Each room is an
+  ordinary map of any size that draws itself — live, animated meta-tiles and
+  banked tilesets included — and the world links them: neighbours on the grid,
+  doors for the rest, one list of entity types for every room. A library of
+  every map in the project, with previews, to drag onto the grid; new empty
+  rooms opened straight into the map editor; map files imported from
+  elsewhere. Its ready-made C finds rooms and calls their own helpers:
+  `_LoadTileset()`, `_DrawRoom()`, `_Neighbour()`, `_DoorAt()`.
   **Slice into rooms…** turns one big map into the rooms and the world, so you
   can design the overworld on a single canvas and ship it as rooms.
 - **Screen editor** for the MSX2 bitmap modes, converting a PNG into SCREEN 5

@@ -42,9 +42,9 @@ import {
   normalizeWorld,
   validateWorld,
   worldConstants,
-  worldExport,
   worldHelperC,
   worldNotes,
+  worldTables,
   type LoadedRoom,
   type WorldDoc
 } from './world'
@@ -600,7 +600,7 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       return tables
     }
     case 'world':
-      return worldExport(resource.doc, worldRooms(resource), compress).tables
+      return worldTables(resource.doc, worldRooms(resource))
     case 'screen': {
       const { doc } = resource
       const pixels = screenPixels(doc)
@@ -734,7 +734,7 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
   const notes = [`Source: ${sourceName}`]
   // Only what actually happened: asking for RLEp and getting it are different
   // things when packing would have made the tables bigger.
-  if (block.compress === 'rlep' && (resource.kind === 'map' || resource.kind === 'screen' || resource.kind === 'world')) {
+  if (block.compress === 'rlep' && (resource.kind === 'map' || resource.kind === 'screen')) {
     notes.push(
       compressionApplied(resource, block.compress)
         ? 'Compression: RLEp (MSXgl "compress" module — unpack with RLEp_UnpackToRAM)'
@@ -884,7 +884,6 @@ export function compressionApplied(resource: ResourceDoc, compress: ExportBlock[
   if (compress !== 'rlep') return false
   if (resource.kind === 'map') return mapExport(resource.doc, compress).compressed
   if (resource.kind === 'screen') return screenDataExport(resource.doc, compress).geometry !== undefined
-  if (resource.kind === 'world') return worldExport(resource.doc, worldRooms(resource), compress).compressed
   return false
 }
 
@@ -972,13 +971,7 @@ function resourceConstants(
     ]
   }
   if (resource.kind === 'swsprites') return swSpriteConstants(resource.doc, name)
-  if (resource.kind === 'world') {
-    const exported = worldExport(resource.doc, worldRooms(resource), compress)
-    return [
-      ...worldConstants(resource.doc, worldRooms(resource), name),
-      ...(exported.compressed ? [`#define ${defineName(name)}_COMPRESSED 1`] : [])
-    ]
-  }
+  if (resource.kind === 'world') return worldConstants(resource.doc, worldRooms(resource), name)
   if (resource.kind === 'music') return musicConstants(resource.doc, name)
   if (resource.kind === 'sfx') return sfxConstants(resource.doc, name)
   if (resource.kind === 'map') {
@@ -1107,7 +1100,8 @@ function resourceCode(
   resource: ResourceDoc,
   name: string,
   compress?: ExportBlock['compress'],
-  doubleBuffer = false
+  doubleBuffer = false,
+  out = ''
 ): HelperC {
   if (resource.kind === 'map') {
     const first = resource.doc.layers[0]
@@ -1151,7 +1145,8 @@ function resourceCode(
     )
   }
   if (resource.kind === 'sfx') return sfxHelperC(resource.doc, name)
-  if (resource.kind === 'world') return worldHelperC(name, worldExport(resource.doc, worldRooms(resource), compress).compressed)
+  // Its includes are relative to its own header, so it needs to know where that is.
+  if (resource.kind === 'world') return worldHelperC(resource.doc, worldRooms(resource), name, out)
   // A pattern meta-tile has no tile numbers of its own to draw with: each
   // tileset it is attached to draws it (`_DrawMeta`), and its window is that
   // tileset's `_Animate()`. A bitmap one blits itself out of its atlas.
@@ -1214,7 +1209,7 @@ export function renderResourceFiles(
     notes: resourceNotes(resource, sourceName, block),
     defines: true,
     constants: resourceConstants(resource, name, block.compress, block.doubleBuffer === true),
-    code: block.helpers ? resourceCode(resource, name, block.compress, block.doubleBuffer === true) : undefined
+    code: block.helpers ? resourceCode(resource, name, block.compress, block.doubleBuffer === true, block.out) : undefined
   })
   return { header, source }
 }

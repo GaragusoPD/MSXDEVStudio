@@ -62,6 +62,7 @@ Each editor keeps its own undo history, and it survives switching tabs.
 | Click / drag with the entity tool | Drop an entity, or pick one up and move it — map editor |
 | Click / double-click a cell | Select it / open its room, or make one in an empty cell — world editor |
 | Drag a room onto another cell | Swap the two — world editor |
+| Drag a map from the library onto a cell | Put it there — world editor |
 | Drag with the cut tool | Name a fragment — screen editor |
 
 ## In the code editor

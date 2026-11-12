@@ -1,6 +1,7 @@
 /**
  * Per-tab state for the world editor (`*.world.json`): the room grid, the
- * doors, the entity types and the export block.
+ * doors, the entity types and the export block. A project can hold any number
+ * of worlds — an overworld, each dungeon — and each tab has its own session.
  *
  * Same shape as the other resource editors: a module-level map keyed by the
  * project-relative path, one `History<WorldDoc>`, and every mutation through
@@ -16,9 +17,8 @@
  */
 
 import { shallowReactive } from 'vue'
-import { createMapDoc, stampFresh, type MapDoc } from '../../../../shared/msx/map'
+import { createMapDoc, SCREEN_COLS, SCREEN_ROWS, stampFresh, type MapDoc } from '../../../../shared/msx/map'
 import { defaultExport, parseResource, RESOURCE_DIR, resourceKindOf, serializeResource, type ExportBlock } from '../../../../shared/msx/resource'
-import { isBanked } from '../../../../shared/msx/tile'
 import {
   addDoor as addDoorPure,
   addEntityType,
@@ -29,9 +29,12 @@ import {
   removeEntityType,
   resizeWorld,
   setRoom,
+  loadedTileset,
   undeclaredEntityTypes,
   updateDoor as updateDoorPure,
   validateWorld,
+  worldNotices,
+  type LoadedTileset,
   type LoadedRoom,
   type WorldDoc,
   type WorldDoor
@@ -57,7 +60,7 @@ export interface WorldSession {
   dirty: boolean
   /** Every room the grid places, as read — keyed by path. A room that could not be read is absent. */
   rooms: Map<string, LoadedRoom>
-  /** A picture per room path, or null while there is none. */
+  /** A picture per map path — the rooms and the map library alike — or null while there is none. */
   thumbnails: Map<string, string | null>
   /** The grid cell the side panel is about. */
   selected: number | null
@@ -89,13 +92,21 @@ export function worldSession(path: string): WorldSession {
     isDirty: () => session.dirty
   })
   let pending: ReturnType<typeof setTimeout> | null = null
+  // Sticky across a burst: a library map changing must not cancel a room reload already due.
+  let roomsDue = false
   session.stopWatchingRooms =
     window.api.on?.('fs:changed', (event: FsChangeEvent) => {
-      if (!watched(session).has(event.path)) return
+      // A room or its tileset: read the rooms again. Any other map: only the
+      // library's picture of it changed.
+      const room = watched(session).has(event.path)
+      if (!room && !event.path.toLowerCase().endsWith('.map.json')) return
+      roomsDue ||= room
       if (pending) clearTimeout(pending)
       pending = setTimeout(() => {
         pending = null
-        void reloadRooms(session)
+        const rooms = roomsDue
+        roomsDue = false
+        void (rooms ? reloadRooms(session) : refreshThumbnails(session))
       }, 150)
     }) ?? null
   void load(session)
@@ -142,32 +153,50 @@ async function load(session: WorldSession): Promise<void> {
  */
 export async function reloadRooms(session: WorldSession): Promise<void> {
   const rooms = new Map<string, LoadedRoom>()
-  const banked = new Map<string, boolean>()
+  const tilesets = new Map<string, LoadedTileset | undefined>()
   for (const path of new Set(doc(session).cells)) {
     if (!path) continue
     try {
       const parsed = parseResource(path, await window.api.invoke('fs:read', { path }))
       if (parsed.kind !== 'map') continue
-      const tileset = parsed.doc.tileset
-      if (tileset && !banked.has(tileset)) {
-        let value = false
+      const tilesetPath = parsed.doc.tileset
+      if (tilesetPath && !tilesets.has(tilesetPath)) {
+        let value: LoadedTileset | undefined
         try {
-          const tiles = parseResource(tileset, await window.api.invoke('fs:read', { path: tileset }))
-          value = tiles.kind === 'tiles' && isBanked(tiles.doc)
+          const tiles = parseResource(tilesetPath, await window.api.invoke('fs:read', { path: tilesetPath }))
+          if (tiles.kind === 'tiles') value = loadedTileset(tilesetPath, tiles.doc)
         } catch {
           // A missing tileset is the room's problem, and its own editor says so.
         }
-        banked.set(tileset, value)
+        tilesets.set(tilesetPath, value)
       }
-      rooms.set(path, { doc: parsed.doc, banked: banked.get(tileset) === true })
+      const tileset = tilesetPath ? tilesets.get(tilesetPath) : undefined
+      rooms.set(path, { doc: parsed.doc, banked: tileset?.banked === true, ...(tileset ? { tileset } : {}) })
     } catch {
       // Unreadable: absent, and reported as such.
     }
   }
   session.rooms = rooms
+  await refreshThumbnails(session)
+}
+
+/**
+ * Pictures for every map in the project — the rooms and the library. Cheap to
+ * repeat: `thumbnailUrl` caches by content.
+ */
+export async function refreshThumbnails(session: WorldSession): Promise<void> {
+  const paths = new Set<string>([...session.rooms.keys(), ...libraryMaps()])
   const thumbnails = new Map<string, string | null>()
-  for (const path of rooms.keys()) thumbnails.set(path, await thumbnailUrl(path))
+  for (const path of paths) thumbnails.set(path, await thumbnailUrl(path))
   session.thumbnails = thumbnails
+}
+
+/** Every map in the project, for the library: what can be dropped into a cell. */
+export function libraryMaps(): string[] {
+  return useResourcesStore()
+    .entries.filter((entry) => entry.kind === 'map')
+    .map((entry) => entry.path)
+    .sort()
 }
 
 export function doc(session: WorldSession): WorldDoc {
@@ -177,6 +206,11 @@ export function doc(session: WorldSession): WorldDoc {
 /** What the build would refuse, right now — the same check, over the same rooms. */
 export function problems(session: WorldSession): string[] {
   return validateWorld(doc(session), session.rooms)
+}
+
+/** What the ready-made C leaves to the game, and why — shown beside the problems, never blocking. */
+export function notices(session: WorldSession): string[] {
+  return worldNotices(doc(session), session.rooms)
 }
 
 /** Entity types the rooms use that the world does not declare yet. */
@@ -246,10 +280,6 @@ export function resize(session: WorldSession, cols: number, rows: number): void 
   commit(session, resizeWorld(doc(session), cols, rows))
 }
 
-export function patchWorld(session: WorldSession, patch: Partial<Pick<WorldDoc, 'roomWidth' | 'roomHeight' | 'top' | 'layer'>>): void {
-  commit(session, { ...doc(session), ...patch })
-}
-
 /** The tileset a new room should start with: a neighbour's, else the first room's. */
 function tilesetFor(session: WorldSession, cell: number): string {
   const current = doc(session)
@@ -270,10 +300,16 @@ function tilesetFor(session: WorldSession, cell: number): string {
   return useResourcesStore().entries.find((entry) => entry.kind === 'tiles')?.path ?? ''
 }
 
+/** The export a room gets: its own C, with the ready-made helpers `_DrawRoom` calls. */
+export function roomExport(path: string): ExportBlock {
+  return { ...defaultExport(path), helpers: true }
+}
+
 /**
- * A blank room for an empty cell: a map at the world's room size, over the
- * tileset its neighbours use, named after the world and the cell. Written
- * without an export block — the world carries it.
+ * A blank one-screen room for an empty cell, over the tileset its neighbours
+ * use, named after the world and the cell, exporting its own C — and opened, so
+ * the next thing is painting it. Resize it in the map editor; rooms need not
+ * share a size.
  */
 export async function newRoom(session: WorldSession, cell: number): Promise<string | null> {
   const current = doc(session)
@@ -284,7 +320,7 @@ export async function newRoom(session: WorldSession, cell: number): Promise<stri
   let n = 0
   while (await window.api.invoke('fs:stat', { path: pathFor(n) })) n++
   const path = pathFor(n)
-  const map: MapDoc = stampFresh({ ...createMapDoc(tilesetFor(session, cell), current.roomWidth, current.roomHeight), export: null })
+  const map: MapDoc = stampFresh({ ...createMapDoc(tilesetFor(session, cell), SCREEN_COLS, SCREEN_ROWS), export: roomExport(path) })
   try {
     await window.api.invoke('fs:create', { path: dir, kind: 'directory' })
     await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'map', doc: map }) })
@@ -294,8 +330,52 @@ export async function newRoom(session: WorldSession, cell: number): Promise<stri
   }
   await useResourcesStore().refresh()
   placeRoom(session, cell, path)
+  session.selected = cell
   session.status = `Made ${path.split('/').pop()}${map.tileset ? ` over ${map.tileset.split('/').pop()}` : ' — pick its tileset in the map editor'}.`
+  useTabsStore().openFile(path, path.split('/').pop() ?? path)
   return path
+}
+
+/**
+ * Copies map files from outside the project into its `res/` folder and, when a
+ * cell is selected and empty, places the first one there. A name already taken
+ * gets a number rather than overwriting anything. A map whose tileset is not in
+ * this project still imports; the map editor is where it gets a new one.
+ */
+export async function importMaps(session: WorldSession, files: readonly { name: string; text: string }[]): Promise<string[]> {
+  const written: string[] = []
+  const problems: string[] = []
+  await window.api.invoke('fs:create', { path: RESOURCE_DIR, kind: 'directory' })
+  for (const file of files) {
+    const stem = file.name.replace(/\.map\.json$/i, '').replace(/\.json$/i, '').replace(/[^A-Za-z0-9_-]/g, '_') || 'room'
+    let path = `${RESOURCE_DIR}/${stem}.map.json`
+    for (let n = 2; await window.api.invoke('fs:stat', { path }); n++) path = `${RESOURCE_DIR}/${stem}_${n}.map.json`
+    let parsed: MapDoc
+    try {
+      const resource = parseResource(path, file.text)
+      if (resource.kind !== 'map') throw new Error('not a map')
+      parsed = resource.doc
+    } catch (error) {
+      problems.push(`${file.name}: ${String(error)}`)
+      continue
+    }
+    // Named after where it lands, so two imports never export to one header.
+    const map = { ...parsed, export: roomExport(path) }
+    await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'map', doc: map }) })
+    written.push(path)
+    if (map.tileset && !(await window.api.invoke('fs:stat', { path: map.tileset }))) {
+      problems.push(`${path.split('/').pop()} names ${map.tileset}, which this project does not have — pick its tileset in the map editor`)
+    }
+  }
+  await useResourcesStore().refresh()
+  const cell = session.selected
+  if (written.length && cell !== null && !doc(session).cells[cell]) placeRoom(session, cell, written[0])
+  else await refreshThumbnails(session)
+  session.status = [
+    written.length ? `Imported ${written.map((path) => path.split('/').pop()).join(', ')}.` : 'Nothing imported.',
+    ...problems
+  ].join(' ')
+  return written
 }
 
 export function openRoom(session: WorldSession, cell: number): void {
@@ -345,7 +425,7 @@ export function removeDoor(session: WorldSession, index: number): void {
 // ── export ─────────────────────────────────────────────────────────────────
 
 export function setupExport(session: WorldSession): void {
-  commit(session, { ...doc(session), export: defaultExport(session.path) })
+  commit(session, { ...doc(session), export: { ...defaultExport(session.path), helpers: true } })
 }
 
 export function patchExport(session: WorldSession, patch: Partial<ExportBlock>): void {

@@ -11,8 +11,9 @@ and ship it as rooms** (slicing).
 
 Why rooms rather than one big map: on a 16 KB MSX1 an 8×8-screen map is 49 KB
 of name table and cannot be unpacked to draw a piece of it; a banked SCREEN 2
-tileset only works 24 rows tall (Spec 10). A room unpacks into 768 bytes, gets
-all three banks to itself, and packs into ROM on its own.
+tileset only works 24 rows tall (Spec 10). A room is a map of its own: it
+unpacks on its own, gets all three banks to itself, and packs into ROM on its
+own.
 
 ## A. Entities (`MapDoc.entities`, `shared/msx/map-entity.ts`)
 
@@ -40,8 +41,6 @@ all three banks to itself, and packs into ROM on its own.
 {
   "version": 1,
   "cols": 8, "rows": 8,
-  "roomWidth": 32, "roomHeight": 22, "top": 2,   // rooms drawn from row 2: a HUD above
-  "layer": "",                                     // which layer is the name table; "" = first
   "cells": ["res/over_r0_c0.map.json", null, …],   // cols*rows, row-major; null = wall
   "entityTypes": ["chest", "bat"],                 // ids 1, 2 — append-only in the editor
   "doors": [ { "room": 9, "x": 5, "y": 10, "to": 40, "toX": 16, "toY": 20 } ],  // grid cells
@@ -49,51 +48,66 @@ all three banks to itself, and packs into ROM on its own.
 }
 ```
 
+- **A room is an ordinary map that draws itself**, through its own export:
+  its layers, live and animated meta-tiles, banked tileset, compression. Rooms
+  need not share a size. The world is navigation only and never restricts what
+  a room contains. A project may hold any number of worlds.
 - **Room ids** count non-empty cells in reading order (`roomIds`); `0xFF` is
   "none" everywhere, so 255 rooms fit.
 - **Neighbours are implicit**: the room in the adjacent cell, N/E/S/W. Regions
-  separated by an empty cell are not connected — an overworld and its dungeons
-  share a grid. **Doors** cover the rest; they reference grid cells and export
-  room ids. Emptying a cell drops its doors; moving a room moves them.
+  separated by an empty cell are not connected. **Doors** cover the rest; they
+  reference grid cells and export room ids. Emptying a cell drops its doors;
+  moving a room moves them.
 - `shared/` cannot open files, so everything takes `LoadedRoom`s
-  (`{ doc, banked }`): `ResourceDoc` gains `{ kind: 'world'; doc; rooms? }`,
-  filled by `loadWorldRooms` in `main/services/resources.ts` (reorder log
-  replayed per room, banked read from its tileset) and by the world editor's
-  session. The loaded rooms are never serialised.
+  (`{ doc, banked, tileset }`, the tileset as a `LoadedTileset`: export name,
+  header, helpers, mode, count, banked, animated — `loadedTileset`).
+  `ResourceDoc` gains `{ kind: 'world'; doc; rooms? }`, filled by
+  `loadWorldRooms` in `main/services/resources.ts` (reorder log replayed per
+  room) and by the world editor's session. The loaded rooms are never serialised.
 - **Validation** (`validateWorld`, used by both the build and the editor's
-  problems list): rooms readable and exactly `roomWidth × roomHeight`;
-  name-table maps only (pattern modes, or SCREEN 3 over 2×2 tiles); the chosen
-  layer exists, is not indexed, and has no live (unbaked) placements; a banked
-  room only with `top` 0 and 24 rows; `top + roomHeight ≤ 24`; every entity
-  type declared; doors in and to rooms, inside the room size.
-- **Export** embeds the rooms (`worldExport`, the single compression decision —
-  all rooms pack or none, since one `_DrawRoom` serves all):
-  `_Grid`, `_Neighbours`, `_RoomTileset`, `_RoomOffsets` + `_Rooms`,
-  `_EntityOffsets` + `_Entities` (count-prefixed per room), `_Doors` (only with
-  doors). A map in several cells is stored once. Offsets are 16-bit; more data
-  than that fails the export. Defines: geometry, `_NONE`, directions, a
-  `_ROOM_<FILE>` per map, a `_TILESET_<FILE>` per tileset, `_ENT_<TYPE>` per
-  type, `_COMPRESSED` when packed.
-- **Ready-made C** (`worldHelperC`): `_RoomAt`, `_Neighbour`, `_TilesetOf`,
-  `_RoomData`, `_RoomEntities`, `_DoorAt`, `_DrawRoom` (`RLEp_UnpackToRAM` into a
-  caller buffer when packed, then `VDP_WriteLayout_GM2` at row `_TOP`). It never
-  loads a tileset. Verified by `world-build.test.ts` against real MSXgl, and by
-  booting the ROM in openMSX and reading the name table back.
+  problems list): rooms readable; at most 255 tiles a side; entity types
+  declared; doors in and to rooms, each coordinate inside *its own* room.
+- **Export** (`worldTables`): `_Grid`, `_Neighbours`, `_RoomSize`,
+  `_RoomTileset`, `_EntityOffsets` + `_Entities` (count-prefixed, world ids),
+  `_Doors` (only with doors). No tile data. Defines: `_NONE`, directions, a
+  `_ROOM_<FILE>` per map, a `_TILESET_<FILE>` per tileset, `_ENT_<TYPE>`,
+  `_BUFFER_BYTES`.
+- **Ready-made C** (`worldHelperC`): lookups (`_RoomAt`, `_Neighbour`,
+  `_RoomW`/`_RoomH`, `_TilesetOf`, `_RoomEntities`, `_DoorAt`) and dispatchers
+  to the rooms' and tilesets' **own** exported helpers, `#include`d relative
+  to the world's header (`includePath`):
+  - `_LoadTileset(id)` — a banked tileset's `_Load()`, else
+    `VDP_LoadPattern_GM2`/`VDP_LoadColor_GM2`; then `_AnimReset()` if it animates.
+  - `_Animate(id)` — the tileset's `_Animate()`; emitted when one animates.
+  - `_DrawRoom(room, buffer)` — the room's `_DrawLayer` (first tile layer,
+    unpacking into `buffer` when packed) and `_DrawPlacements`, at 0,0, through
+    one static function per map (SDCC miscompiles constant arguments inlined
+    into `case 0:`). Returns FALSE for a room it cannot draw in one call
+    (`roomDraw`: no C export, no ready-made C, bitmap mode, bigger than 32×24,
+    an indexed layer); the editor lists those (`worldNotices`).
+  Verified by `world-build.test.ts` against real MSXgl, and by booting the ROMs
+  in openMSX: a live torch in the name table with its flame's pattern changing,
+  a packed 22-row room, a banked room with each bank's own colour.
 - **Dependencies**: a world is stale when any room or any room's tileset is newer
   than its header (`exportDependencies`).
-- Editor (`editors/world`): the grid with room thumbnails and connection bars;
-  click selects, double-click opens the room or makes a new one (world's room
-  size, a neighbour's tileset, no export block), drag swaps; side panel for
-  doors, grid/room geometry, entity types (with "add the types the rooms use"),
-  problems, export. Re-reads rooms on `fs:changed` for a room or its tileset.
+- Editor (`editors/world`): the grid with room thumbnails (fitted, sizes shown)
+  and connection bars; click selects, double-click opens the room or makes a
+  new one-screen room (a neighbour's tileset, its own export with helpers) and
+  opens it; drag swaps; a **library** of every project map with previews, drag
+  onto a cell or click into the selected one; **Import map files…** copies
+  `.map.json` files into `res/` (renamed past existing names, export renamed
+  after the new file); side panel for doors, grid size, entity types, *Left to
+  your code*, problems, export. Re-reads rooms on `fs:changed` for a room or
+  its tileset, and the library's previews for any other map.
 
 ## C. Slice into rooms (`sliceMap`, map editor toolbar)
 
-- Cuts a map into `roomWidth × roomHeight` rooms (default one screen), padding
-  the edge rooms with tile 0. Each room keeps the tileset, cell geometry and
-  meta table; a placement goes to the room its corner is in, and one that
-  would cross a room edge is dropped with a warning; entities go to the room
-  they stand in. No room gets an export block.
+- Cuts a map into `roomWidth × roomHeight` rooms (default one screen); the last
+  column and row are as big as what is left. Each room keeps the tileset, cell
+  geometry, layers and meta table; a placement goes to the room its corner is
+  in, and one that would cross a room edge is dropped with a warning; entities
+  go to the room they stand in. Each room gets its own export (ready-made C on,
+  the source's compression).
 - Writes `res/<map>_r<row>_c<col>.map.json` (with the source's
   `tilesetReorderSeen`) and `res/<map>.world.json` (declaring the map's entity
   types), refuses if any target exists, optionally skips empty rooms, opens

@@ -347,10 +347,15 @@ describe('meta-tiles that own their pixels, exported from the files alone', () =
 })
 
 describe('worlds, exported from the files alone', () => {
-  /** A one-screen room over `res/hero.tiles.json`, tile `fill` from row 8 down. */
+  /** A one-screen room over `res/hero.tiles.json` that exports its own C, as rooms do. */
   function writeRoom(root: string, relative: string, fill: number, extra: object = {}): void {
     const data = new Array<number>(32 * 24).fill(0).map((_, i) => (i >= 32 * 8 ? fill : 0))
-    const doc = { ...normalizeMap({ tileset: 'res/hero.tiles.json', layers: [{ name: 'background', data }] }), ...extra }
+    const stem = relative.split('/').pop()!.replace('.map.json', '')
+    const doc = {
+      ...normalizeMap({ tileset: 'res/hero.tiles.json', layers: [{ name: 'background', data }] }),
+      export: { name: `g_${stem.toUpperCase()}`, format: 'c' as const, out: `content/${stem}.h`, helpers: true },
+      ...extra
+    }
     writeFileSync(join(root, relative), serializeResource({ kind: 'map', doc }), 'utf-8')
   }
 
@@ -360,13 +365,13 @@ describe('worlds, exported from the files alone', () => {
       rows: 1,
       cells: ['res/a.map.json', 'res/b.map.json'],
       entityTypes: ['chest'],
-      export: { name: 'g_Over', format: 'c', out: 'content/over.h', helpers: true, compress: 'rlep' },
+      export: { name: 'g_Over', format: 'c', out: 'content/over.h', helpers: true },
       ...extra
     })
     writeFileSync(join(root, 'res/over.world.json'), serializeResource({ kind: 'world', doc }), 'utf-8')
   }
 
-  it('embeds every room, packed, with the entities numbered by the world', () => {
+  it('exports navigation, and calls each room’s and tileset’s own helpers', () => {
     const root = scratch('world')
     writeTileset(root, 'res/hero.tiles.json')
     writeRoom(root, 'res/a.map.json', 1)
@@ -377,9 +382,13 @@ describe('worlds, exported from the files alone', () => {
     const header = readFileSync(join(root, 'content/over.h'), 'utf-8')
     const source = readFileSync(join(root, 'content/over.c'), 'utf-8')
     expect(header).toContain('#define G_OVER_ROOMS 2')
-    expect(header).toContain('#define G_OVER_COMPRESSED 1')
     expect(header).toContain('#define G_OVER_TILESET_HERO 0')
-    expect(source).toContain('const unsigned char g_Over_Rooms[]')
+    // No tile data of its own: the rooms export that.
+    expect(source).not.toContain('g_Over_Rooms[]')
+    expect(source).toContain('#include "a.h"')
+    expect(source).toContain('#include "hero.h"')
+    expect(source).toContain('g_A_DrawLayer(g_A_Background, 0, 0);')
+    expect(source).toContain('VDP_LoadPattern_GM2(g_Hero_Patterns, 2, 0);')
     // Room b: one chest — count 1, then type 1 at 3,4 with param 5.
     expect(source).toMatch(/g_Over_Entities\[\] =\n\{\n\t0x00, 0x01, 0x01, 0x03, 0x04, 0x05,/)
   })

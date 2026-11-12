@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /**
- * The `.world.json` editor: a grid of rooms, each one a map. Click a cell to
- * select it, double-click to open its room (or make one in an empty cell),
- * drag a room onto another cell to move it. The side panel holds the selected
- * room's doors, the world's size and room geometry, its entity types, what the
- * build would refuse, and the export block.
+ * The `.world.json` editor: a grid of rooms, each one a map that draws itself.
+ * Click a cell to select it, double-click to open its room (or make a new one
+ * in an empty cell), drag a room onto another cell to move it, drag a map from
+ * the library onto a cell to place it. The side panel holds the map library
+ * (every map in the project, with a preview, plus import), the selected room
+ * and its doors, the grid size, the entity types, what the build would refuse,
+ * what the ready-made C leaves to the game, and the export block.
  *
  * Registered for the `world.json` compound extension in `editors/bootstrap.ts`.
  * All the logic is in `./session.ts` and `shared/msx/world.ts`.
@@ -23,13 +25,16 @@ import {
   canRedo,
   canUndo,
   doc,
+  importMaps,
+  libraryMaps,
   moveRoom,
   newRoom,
+  notices,
   openRoom,
   patchExport,
-  patchWorld,
   placeRoom,
   problems,
+  refreshThumbnails,
   pruneWorldSessions,
   redo,
   reloadRooms,
@@ -52,17 +57,43 @@ const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed(() => worldSession(path.value))
 const world = computed(() => doc(session.value))
 
-/** Pixels per room on the grid: a screen's aspect, at a size that shows its art. */
+/** Pixels per grid cell: one screen's aspect, at a size that shows its art. A room of another size is fitted into it. */
 const zoom = ref(4)
 const cellSize = computed(() => ({
-  width: world.value.roomWidth * zoom.value,
-  height: world.value.roomHeight * zoom.value
+  width: SCREEN_COLS * zoom.value,
+  height: SCREEN_ROWS * zoom.value
 }))
 
 const ids = computed(() => roomIds(world.value))
 const links = computed(() => neighbours(world.value))
-const maps = computed(() => resourcesStore.entries.filter((entry) => entry.kind === 'map').map((entry) => entry.path))
+const maps = computed(() => {
+  void resourcesStore.entries
+  return libraryMaps()
+})
 const issues = computed(() => problems(session.value))
+const leftToGame = computed(() => notices(session.value))
+/** Which cells each map fills — the library marks maps already in the world. */
+const placedIn = computed(() => {
+  const counts = new Map<string, number>()
+  for (const roomPath of world.value.cells) if (roomPath) counts.set(roomPath, (counts.get(roomPath) ?? 0) + 1)
+  return counts
+})
+/** A cell's room size, for the door fields' limits — rooms are not all one size. */
+const roomSizeAt = (cell: number): { width: number; height: number } => {
+  const roomPath = world.value.cells[cell]
+  const room = roomPath ? session.value.rooms.get(roomPath)?.doc : undefined
+  return { width: room?.width ?? 256, height: room?.height ?? 256 }
+}
+const sizeOf = (roomPath: string): string => {
+  const room = session.value.rooms.get(roomPath)?.doc
+  return room ? `${room.width}×${room.height}` : ''
+}
+
+// New maps in the project show up in the library with a picture.
+watch(
+  () => resourcesStore.entries.length,
+  () => void refreshThumbnails(session.value)
+)
 const undeclared = computed(() => undeclaredTypes(session.value))
 
 const fileOf = (p: string): string => (p.split('/').pop() ?? p).replace(/\.map\.json$/i, '')
@@ -112,16 +143,49 @@ async function onCellOpen(cell: number): Promise<void> {
   else await newRoom(session.value, cell)
 }
 
-// Dragging a room onto another cell swaps the two.
+// Dragging a room onto another cell swaps the two; dragging a map from the
+// library onto a cell puts it there.
 let dragFrom: number | null = null
+let dragMap: string | null = null
 function onDragStart(cell: number, event: DragEvent): void {
   if (!world.value.cells[cell]) return
   dragFrom = cell
+  dragMap = null
   event.dataTransfer?.setData('text/plain', String(cell))
 }
-function onDrop(cell: number): void {
-  if (dragFrom !== null && dragFrom !== cell) moveRoom(session.value, dragFrom, cell)
+function onLibraryDragStart(mapPath: string, event: DragEvent): void {
+  dragMap = mapPath
   dragFrom = null
+  event.dataTransfer?.setData('text/plain', mapPath)
+}
+function onDrop(cell: number): void {
+  if (dragMap) {
+    placeRoom(session.value, cell, dragMap)
+    select(session.value, cell)
+  } else if (dragFrom !== null && dragFrom !== cell) {
+    moveRoom(session.value, dragFrom, cell)
+  }
+  dragFrom = null
+  dragMap = null
+}
+
+/** A library map clicked: into the selected cell, when there is one. */
+function placeFromLibrary(mapPath: string): void {
+  const cell = session.value.selected
+  if (cell === null) {
+    session.value.status = 'Select a cell first — or drag the map onto one.'
+    return
+  }
+  placeRoom(session.value, cell, mapPath)
+}
+
+const importInput = ref<HTMLInputElement | null>(null)
+async function onImport(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const files = [...(input.files ?? [])]
+  input.value = ''
+  if (!files.length) return
+  await importMaps(session.value, await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() }))))
 }
 
 const newType = ref('')
@@ -288,7 +352,7 @@ watch(
                   v-else
                   class="missing"
                 >{{ session.rooms.has(roomPath) ? '' : 'missing' }}</span>
-                <span class="label">{{ ids[cell] }} · {{ fileOf(roomPath) }}</span>
+                <span class="label">{{ ids[cell] }} · {{ fileOf(roomPath) }} <span class="size">{{ sizeOf(roomPath) }}</span></span>
                 <span
                   v-if="doorCount.get(cell)"
                   class="doors"
@@ -330,17 +394,26 @@ watch(
               <button
                 v-if="!selected.path"
                 type="button"
+                title="Make an empty one-screen map for this cell, over its neighbours' tileset, and open it"
                 @click="newRoom(session, selected.cell)"
               >
-                New room
+                New empty room
               </button>
-              <button
-                v-else
-                type="button"
-                @click="openRoom(session, selected.cell)"
-              >
-                Open
-              </button>
+              <template v-else>
+                <button
+                  type="button"
+                  @click="openRoom(session, selected.cell)"
+                >
+                  Open to edit
+                </button>
+                <button
+                  type="button"
+                  title="Take the room out of this cell — the map file stays"
+                  @click="placeRoom(session, selected.cell, null)"
+                >
+                  Remove from world
+                </button>
+              </template>
             </div>
             <p
               v-if="selected.room"
@@ -370,7 +443,7 @@ watch(
                     <input
                       type="number"
                       min="0"
-                      :max="world.roomWidth - 1"
+                      :max="roomSizeAt(door.room).width - 1"
                       :value="door.x"
                       @change="updateDoor(session, index, { x: num($event) })"
                     >
@@ -380,7 +453,7 @@ watch(
                     <input
                       type="number"
                       min="0"
-                      :max="world.roomHeight - 1"
+                      :max="roomSizeAt(door.room).height - 1"
                       :value="door.y"
                       @change="updateDoor(session, index, { y: num($event) })"
                     >
@@ -407,7 +480,7 @@ watch(
                     <input
                       type="number"
                       min="0"
-                      :max="world.roomWidth - 1"
+                      :max="roomSizeAt(door.to).width - 1"
                       :value="door.toX"
                       @change="updateDoor(session, index, { toX: num($event) })"
                     >
@@ -417,7 +490,7 @@ watch(
                     <input
                       type="number"
                       min="0"
-                      :max="world.roomHeight - 1"
+                      :max="roomSizeAt(door.to).height - 1"
                       :value="door.toY"
                       @change="updateDoor(session, index, { toY: num($event) })"
                     >
@@ -445,9 +518,62 @@ watch(
             <h3>Rooms</h3>
             <p class="hint">
               Click a cell to select it, double-click to open its room — or to make one in an empty
-              cell. Drag a room onto another cell to move it. Rooms side by side connect; an empty
-              cell is a wall.
+              cell. Drag a room onto another cell to move it, or a map from the library below onto a
+              cell to place it. Rooms side by side connect; an empty cell is a wall.
             </p>
+          </section>
+
+          <section>
+            <h3>Maps</h3>
+            <p class="hint">
+              Every map in the project. Drag one onto a cell, or click it to put it in the selected
+              cell.
+            </p>
+            <ul class="library">
+              <li
+                v-for="mapPath in maps"
+                :key="mapPath"
+                draggable="true"
+                :class="{ placed: placedIn.has(mapPath) }"
+                :title="`${mapPath}${placedIn.has(mapPath) ? ` — in ${placedIn.get(mapPath)} cell(s)` : ''}`"
+                @dragstart="onLibraryDragStart(mapPath, $event)"
+                @click="placeFromLibrary(mapPath)"
+                @dblclick="tabsStore.openFile(mapPath, mapPath.split('/').pop() ?? mapPath)"
+              >
+                <img
+                  v-if="session.thumbnails.get(mapPath)"
+                  :src="session.thumbnails.get(mapPath) ?? undefined"
+                  alt=""
+                >
+                <span
+                  v-else
+                  class="blank"
+                />
+                <span class="name">{{ fileOf(mapPath) }}</span>
+              </li>
+            </ul>
+            <p
+              v-if="!maps.length"
+              class="hint"
+            >
+              No maps yet.
+            </p>
+            <input
+              ref="importInput"
+              type="file"
+              accept=".json"
+              multiple
+              hidden
+              @change="onImport"
+            >
+            <button
+              type="button"
+              class="wide"
+              title="Copy .map.json files from elsewhere into this project's res/ folder — into the selected cell, if it is empty"
+              @click="importInput?.click()"
+            >
+              Import map files…
+            </button>
           </section>
 
           <section>
@@ -474,54 +600,10 @@ watch(
                 >
               </label>
             </div>
-            <h3 class="sub">
-              Rooms are
-            </h3>
-            <div class="row">
-              <label>
-                <span>Width</span>
-                <input
-                  type="number"
-                  min="1"
-                  :max="SCREEN_COLS"
-                  :value="world.roomWidth"
-                  @change="patchWorld(session, { roomWidth: Math.min(SCREEN_COLS, Math.max(1, num($event))) })"
-                >
-              </label>
-              <label>
-                <span>Height</span>
-                <input
-                  type="number"
-                  min="1"
-                  :max="SCREEN_ROWS"
-                  :value="world.roomHeight"
-                  @change="patchWorld(session, { roomHeight: Math.min(SCREEN_ROWS, Math.max(1, num($event))) })"
-                >
-              </label>
-              <label>
-                <span>Top row</span>
-                <input
-                  type="number"
-                  min="0"
-                  :max="SCREEN_ROWS - 1"
-                  :value="world.top"
-                  @change="patchWorld(session, { top: Math.min(SCREEN_ROWS - 1, Math.max(0, num($event))) })"
-                >
-              </label>
-            </div>
             <p class="hint">
-              A room is drawn at column 0, row <em>top</em> — leave rows above it for a HUD.
+              Each room is a map of its own size — one screen, a short one under a HUD, a tall one you
+              scroll. Resize it in the map editor.
             </p>
-            <label>
-              <span>Layer</span>
-              <input
-                type="text"
-                spellcheck="false"
-                placeholder="each room's first layer"
-                :value="world.layer"
-                @change="patchWorld(session, { layer: text($event).trim() })"
-              >
-            </label>
           </section>
 
           <section>
@@ -574,6 +656,22 @@ watch(
             </button>
           </section>
 
+          <section v-if="leftToGame.length">
+            <h3>Left to your code</h3>
+            <p class="hint">
+              The ready-made C calls each room's and tileset's own helpers. These it cannot, so
+              <code>_DrawRoom</code> / <code>_LoadTileset</code> return FALSE for them:
+            </p>
+            <ul class="notices">
+              <li
+                v-for="(notice, index) in leftToGame"
+                :key="index"
+              >
+                {{ notice }}
+              </li>
+            </ul>
+          </section>
+
           <section v-if="issues.length">
             <h3>Problems</h3>
             <ul class="problems">
@@ -610,25 +708,14 @@ watch(
               <label class="inline">
                 <input
                   type="checkbox"
-                  :checked="world.export.compress === 'rlep'"
-                  @change="patchExport(session, { compress: ($event.target as HTMLInputElement).checked ? 'rlep' : undefined })"
-                >
-                <span title="Pack each room with MSXgl's RLEp run-length format">Compress rooms (RLEp)</span>
-              </label>
-              <label class="inline">
-                <input
-                  type="checkbox"
                   :checked="world.export.helpers === true"
                   @change="patchExport(session, { helpers: ($event.target as HTMLInputElement).checked })"
                 >
-                <span title="_DrawRoom, _Neighbour, _RoomEntities, _DoorAt… Needs msxgl.h included first.">Export ready-made C</span>
+                <span title="_RoomAt, _Neighbour, _RoomEntities, _DoorAt, and _LoadTileset/_DrawRoom calling the rooms' own helpers. Needs msxgl.h included first.">Export ready-made C</span>
               </label>
-              <p
-                v-if="world.export.compress === 'rlep'"
-                class="hint"
-              >
-                <code>_DrawRoom()</code> unpacks with MSXgl's <code>RLEp_UnpackToRAM</code>: add
-                <strong>compress</strong> to the project's library modules.
+              <p class="hint">
+                The world exports navigation only — the grid, neighbours, doors, entities. Each room
+                exports its own tiles and meta-tiles; compress a room in its own map editor.
               </p>
             </template>
             <button
@@ -771,10 +858,62 @@ button:disabled {
 }
 
 .cell img {
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
   image-rendering: pixelated;
   pointer-events: none;
+}
+
+.cell .label .size {
+  opacity: 0.7;
+}
+
+.library {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.library li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  cursor: grab;
+}
+
+.library li.placed {
+  border-color: var(--color-accent);
+}
+
+.library img,
+.library .blank {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  image-rendering: pixelated;
+  background: #1e1e1e;
+  pointer-events: none;
+}
+
+.library .name {
+  overflow: hidden;
+  font-size: 10px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.notices {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 .cell .label {

@@ -10,12 +10,15 @@ import { parseResource, serializeResource } from '../../../../shared/msx/resourc
 import { normalizeTiles } from '../../../../shared/msx/tile'
 import { normalizeWorld } from '../../../../shared/msx/world'
 import { resetExternalWatches } from '../external-changes'
+import { useTabsStore } from '../../stores/tabsStore'
 import {
   addDoor,
   addUsedTypes,
   doc,
+  importMaps,
   moveRoom,
   newRoom,
+  notices,
   placeRoom,
   problems,
   pruneWorldSessions,
@@ -103,9 +106,11 @@ describe('the world session', () => {
     if (written.kind !== 'map') return
     expect(written.doc.tileset).toBe('res/over.tiles.json')
     expect([written.doc.width, written.doc.height]).toEqual([32, 24])
-    // The world carries it: no export of its own.
-    expect(written.doc.export).toBeNull()
+    // It draws itself: its own export, with the helpers _DrawRoom calls.
+    expect(written.doc.export).toMatchObject({ out: 'content/over_r0_c1_map.h', helpers: true })
     expect(doc(session).cells[1]).toBe(path)
+    // And it is open, ready to paint.
+    expect(useTabsStore().tabs.some((tab) => tab.filePath === path)).toBe(true)
     expect(session.rooms.has(path!)).toBe(true)
     undo(session)
     expect(doc(session).cells[1]).toBeNull()
@@ -136,6 +141,24 @@ describe('the world session', () => {
     }
     await settled()
     expect(problems(session)).toEqual([])
+  })
+
+  it('imports map files into res/, renamed past what exists, into the selected empty cell', async () => {
+    const session = await open()
+    select(session, 1)
+    const written = await importMaps(session, [{ name: 'a.map.json', text: room('res/elsewhere.tiles.json') }])
+    await settled()
+    expect(written).toEqual(['res/a_2.map.json'])
+    expect(doc(session).cells[1]).toBe('res/a_2.map.json')
+    const imported = parseResource('res/a_2.map.json', files['res/a_2.map.json'])
+    expect(imported.kind === 'map' && imported.doc.export?.out).toBe('content/a_2_map.h')
+    expect(session.status).toContain('res/elsewhere.tiles.json, which this project does not have')
+    expect(await importMaps(session, [{ name: 'junk.json', text: '{' }])).toEqual([])
+  })
+
+  it('lists what the ready-made C leaves to the game', async () => {
+    const session = await open()
+    expect(notices(session).join()).toContain('no C export of its own')
   })
 
   it('saves what it shows', async () => {

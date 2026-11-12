@@ -74,7 +74,7 @@ const KIND_HELP: Record<ResourceKind, string> = {
   sfx: 'An ayFX sound-effect bank.',
   music: 'Background music for the PSG: songs drawn on a piano roll, with ready-made instruments and beats. Plays alongside the sound effects.',
   world:
-    'Flip-screen rooms on a grid — an overworld, its dungeons. Each room is a map; the world adds neighbours, doors and entity types, and exports every room in one header.'
+    'Flip-screen rooms on a grid — an overworld, its dungeons. Each room is a map that draws itself, any size; the world links them with neighbours and doors, and numbers their entities alike. Make as many as you like.'
 }
 
 /**

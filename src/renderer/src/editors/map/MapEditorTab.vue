@@ -486,8 +486,9 @@ async function slice(): Promise<void> {
             </label>
           </div>
           <p class="hint">
-            {{ SCREEN_COLS }}×{{ SCREEN_ROWS }} is one screen. Leave rows for a HUD by making rooms shorter
-            (the world draws them lower down) — but a banked tileset only works {{ SCREEN_ROWS }} rows tall.
+            {{ SCREEN_COLS }}×{{ SCREEN_ROWS }} is one screen. Each room is a complete map — its meta-tiles,
+            animations and entities come with it — and rooms need not share a size: the last column and row
+            are as wide and tall as what is left, and any room can be resized later.
           </p>
           <label class="inline">
             <input

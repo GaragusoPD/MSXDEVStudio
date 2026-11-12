@@ -1,9 +1,12 @@
 /**
  * `*.world.json`: a grid of rooms — the flip-screen world of a Zelda-like or a
- * metroidvania, one screen per cell.
+ * metroidvania.
  *
- * Every room is an ordinary `*.map.json`, painted in the map editor like any
- * other. The world owns only what ties them together:
+ * **Every room is an ordinary map that draws itself.** Each `*.map.json` keeps
+ * its own export — its layers, its live meta-tiles (animating through its
+ * tileset's `_Animate()`), its tileset banked or not — and may be any size: a
+ * one-screen room, a shorter one under a HUD, a tall dungeon you scroll. The
+ * world only says how they connect:
  *
  * - **where each room sits** (`cells`, one map path or null per grid cell),
  *   from which the neighbours follow — two rooms side by side are connected,
@@ -14,24 +17,22 @@
  * - **the entity vocabulary** — the type ids every room's entities are
  *   numbered by, so `chest` is the same number in every room.
  *
- * Why a world rather than one big map: a game with 16 KB of RAM cannot unpack
- * an 8×8-screen map (49 KB of name table) to draw a piece of it, and a banked
- * SCREEN 2 tileset only works one screen tall. A room unpacks into 768 bytes,
- * gets all three banks to itself, and packs into ROM on its own.
- *
- * The export embeds the rooms: one header carries every room's name table
- * (RLEp-packed on request), its entities, the neighbour table and the doors,
- * so the room maps themselves need no export of their own. A map used in two
- * cells is stored once.
+ * Its export is navigation, never tile data: the grid, the neighbours, each
+ * room's size and tileset, the doors, each room's entities in the world's ids.
+ * With ready-made C on it also *dispatches* to the rooms' own exports —
+ * `_LoadTileset` calls a tileset's own loader, `_DrawRoom` a room's own
+ * `_DrawLayer`/`_DrawPlacements` — so it never draws anything itself and never
+ * restricts what a room may contain. A room the dispatcher cannot draw for you
+ * (one bigger than a screen, say) is the game's to draw; `_DrawRoom` says so by
+ * returning FALSE, and the editor lists which and why (`worldNotices`).
  *
  * `shared/` cannot open files, so everything here takes the rooms already read
  * (`LoadedRoom`); `main/services/resources.ts` reads them for the build and the
  * world editor reads them for the screen.
  */
 
-import { packRlep } from './compress'
 import { defineName, type HelperC } from './emitC'
-import { isSc3NameTable, mapEntities, SCREEN_COLS, SCREEN_ROWS, withEntities, type MapDoc, type MapLayer } from './map'
+import { mapEntities, mapExport, placementCount, withEntities, type MapDoc, type MapLayer } from './map'
 import {
   ENTITY_BYTES,
   entityBytes,
@@ -42,6 +43,7 @@ import {
   type MapEntity
 } from './map-entity'
 import type { ExportBlock } from './resource'
+import { isBanked, type TilesDoc } from './tile'
 
 /** A connection between two rooms that are not neighbours — or are, through a spot other than the edge. */
 export interface WorldDoor {
@@ -61,13 +63,6 @@ export interface WorldDoc {
   version: 1
   cols: number
   rows: number
-  /** Every room's size, in tiles. One screen is 32×24; a HUD takes rows off the height. */
-  roomWidth: number
-  roomHeight: number
-  /** The name-table row a room is drawn at — the HUD's height, when it sits on top. */
-  top: number
-  /** Which layer of each room is its name table, by name; empty means each room's first layer. */
-  layer: string
   /** `cols * rows` project-relative `*.map.json` paths, row-major; null is no room. */
   cells: (string | null)[]
   /** The entity types, in id order from 1. Append-only in the editor, so ids never shift under a game. */
@@ -76,11 +71,44 @@ export interface WorldDoc {
   export: ExportBlock | null
 }
 
-/** A room as read from its file, plus what only the tileset file could say. */
+/** What the world's ready-made C needs to know about the tileset a room draws with. */
+export interface LoadedTileset {
+  path: string
+  /** Its C symbol prefix, as its own export names it. */
+  name: string
+  /** Its header, project-relative; null when it exports no C header. */
+  header: string | null
+  /** Its own ready-made C is on — what `_Load()`/`_AnimReset()`/`_Animate()` need. */
+  helpers: boolean
+  mode: string
+  count: number
+  banked: boolean
+  /** It has animations (or animated meta-tiles) attached: it has an `_Animate()`. */
+  animated: boolean
+}
+
+/** What a world needs to know about a tileset to call its own loaders. */
+export function loadedTileset(path: string, doc: TilesDoc): LoadedTileset {
+  const block = doc.export
+  return {
+    path,
+    name: exportName(path, block),
+    header: block?.out && block.format === 'c' ? block.out : null,
+    helpers: block?.helpers === true,
+    mode: doc.mode,
+    count: doc.count,
+    banked: isBanked(doc),
+    animated: doc.animations.length > 0
+  }
+}
+
+/** A room as read from its file, plus what only other files could say. */
 export interface LoadedRoom {
   doc: MapDoc
-  /** Its tileset gives the three banks art of their own — which only works at screen row 0, 24 rows tall. */
+  /** Its tileset gives the three banks art of their own. */
   banked?: boolean
+  /** Its tileset, when it is a pattern tileset that could be read. */
+  tileset?: LoadedTileset
 }
 
 /** 0xFF is "no room" in every table, so 255 rooms fit. */
@@ -91,6 +119,9 @@ export const DOOR_BYTES = 6
 /** The neighbour table's order, and the `_NORTH`/… defines. */
 export const DIRECTIONS = ['north', 'east', 'south', 'west'] as const
 export type Direction = (typeof DIRECTIONS)[number]
+/** One name-table screen — what `_DrawRoom` can draw in one write. */
+const SCREEN_W = 32
+const SCREEN_H = 24
 
 const at = (value: unknown, fallback: number, min = 1, max = 255): number => {
   const n = Number(value)
@@ -137,19 +168,7 @@ export function normalizeWorld(raw: unknown): WorldDoc {
       doors.push(door)
     }
   }
-  return {
-    version: 1,
-    cols,
-    rows,
-    roomWidth: at(input.roomWidth, SCREEN_COLS, 1, SCREEN_COLS),
-    roomHeight: at(input.roomHeight, SCREEN_ROWS, 1, SCREEN_ROWS),
-    top: at(input.top, 0, 0, SCREEN_ROWS - 1),
-    layer: typeof input.layer === 'string' ? input.layer : '',
-    cells,
-    entityTypes: types,
-    doors,
-    export: input.export ?? null
-  }
+  return { version: 1, cols, rows, cells, entityTypes: types, doors, export: input.export ?? null }
 }
 
 /** Grid cell index of a column and row. */
@@ -190,11 +209,6 @@ export function neighbours(doc: WorldDoc): number[][] {
   })
 }
 
-/** The layer of a room that is its name table: the world's `layer` by name, or its first. */
-export function roomLayer(doc: WorldDoc, room: MapDoc): MapLayer | undefined {
-  return doc.layer ? room.layers.find((layer) => layer.name === doc.layer) : room.layers[0]
-}
-
 /** The distinct tilesets the rooms draw with, in first-use order — what `_RoomTileset` indexes. */
 export function worldTilesets(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRoom>): string[] {
   const out: string[] = []
@@ -215,9 +229,15 @@ export function undeclaredEntityTypes(doc: WorldDoc, rooms: ReadonlyMap<string, 
   return [...used].filter((type) => !doc.entityTypes.includes(type)).sort()
 }
 
+/** `Room 2,0 (res/cave.map.json)` — how every message names a room. */
+function roomLabel(doc: WorldDoc, cell: number, path: string): string {
+  const { col, row } = colRowOf(doc, cell)
+  return `Room ${col},${row} (${path})`
+}
+
 /**
- * Everything that stops the world from exporting — or would export a world
- * that draws wrong. Each message names the room by its grid position and file.
+ * Everything that stops the world from exporting. Nothing here is about what a
+ * room may *contain* — each room is its own map, validated by its own export.
  */
 export function validateWorld(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRoom>): string[] {
   const problems: string[] = []
@@ -225,60 +245,26 @@ export function validateWorld(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRo
   const count = roomCount(doc)
   if (!count) problems.push('The world has no rooms — put a map in at least one cell')
   if (count > MAX_WORLD_ROOMS) problems.push(`${count} rooms — at most ${MAX_WORLD_ROOMS} fit (room ids are one byte, 0xFF is "none")`)
-  if (doc.top + doc.roomHeight > SCREEN_ROWS) {
-    problems.push(`Rooms drawn from row ${doc.top} and ${doc.roomHeight} tall run past the screen's ${SCREEN_ROWS} rows`)
-  }
   if (doc.entityTypes.length > MAX_ENTITY_TYPES) problems.push(`${doc.entityTypes.length} entity types — at most ${MAX_ENTITY_TYPES} fit`)
 
   const declared = new Set(doc.entityTypes)
   const missingTypes = new Set<string>()
-  const where = (cell: number, path: string): string => {
-    const { col, row } = colRowOf(doc, cell)
-    return `Room ${col},${row} (${path})`
-  }
   const checked = new Set<string>()
   doc.cells.forEach((path, cell) => {
     if (!path || checked.has(path)) return
     checked.add(path)
     const room = rooms.get(path)
-    const name = where(cell, path)
+    const name = roomLabel(doc, cell, path)
     if (!room) {
       problems.push(`${name} could not be read`)
       return
     }
-    const map = room.doc
-    if (map.width !== doc.roomWidth || map.height !== doc.roomHeight) {
-      problems.push(`${name} is ${map.width}×${map.height}, but this world's rooms are ${doc.roomWidth}×${doc.roomHeight}`)
+    // `_RoomSize` is a byte per side.
+    if (room.doc.width > 255 || room.doc.height > 255) {
+      problems.push(`${name} is ${room.doc.width}×${room.doc.height} — a world room is at most 255 tiles a side`)
     }
-    // A room is drawn with one name-table write; a bitmap map has no name table.
-    if (map.cell && !isSc3NameTable(map)) {
-      problems.push(`${name} is a bitmap-mode map — world rooms are name-table maps (SCREEN 1, 2, 4, or SCREEN 3 with 2×2 tiles)`)
-    }
-    const layer = roomLayer(doc, map)
-    if (!layer) {
-      problems.push(`${name} has no layer called "${doc.layer}"`)
-    } else {
-      if (layer.indexed) {
-        problems.push(`${name}: layer "${layer.name}" is indexed — a world room is drawn from a tile layer`)
-      }
-      // A live placement is drawn at runtime by the map's own helper, which the
-      // world does not carry. Baked ones are already in the grid.
-      const live = layer.placements.filter((placement) => !placement.baked).length
-      if (live) {
-        problems.push(
-          `${name} places ${live} live meta-tile${live === 1 ? '' : 's'} on "${layer.name}" — bake ${live === 1 ? 'it' : 'them'} ` +
-            '(select, then Bake) so the room\'s name table holds the art'
-        )
-      }
-    }
-    if (room.banked && (doc.top !== 0 || doc.roomHeight !== SCREEN_ROWS)) {
-      problems.push(
-        `${name} uses a banked tileset, which only draws right ${SCREEN_ROWS} rows tall from row 0 — ` +
-          'set the world\'s rooms to 24 rows and top 0, or use an unbanked tileset'
-      )
-    }
-    problems.push(...entityProblems(mapEntities(map), name))
-    for (const entity of mapEntities(map)) if (!declared.has(entity.type)) missingTypes.add(entity.type)
+    problems.push(...entityProblems(mapEntities(room.doc), name))
+    for (const entity of mapEntities(room.doc)) if (!declared.has(entity.type)) missingTypes.add(entity.type)
   })
   if (missingTypes.size) {
     problems.push(
@@ -287,21 +273,147 @@ export function validateWorld(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRo
     )
   }
 
+  // Each door is checked against its own room's size, and its arrival against
+  // the room it leads to: rooms are not all one size.
+  const sizeOf = (cell: number): { width: number; height: number } | null => {
+    const path = doc.cells[cell]
+    const room = path ? rooms.get(path) : undefined
+    return room ? { width: room.doc.width, height: room.doc.height } : null
+  }
   doc.doors.forEach((door, index) => {
     const label = `Door ${index + 1}`
-    const from = doc.cells[door.room]
-    const to = doc.cells[door.to]
-    if (!from) problems.push(`${label} is in an empty cell`)
-    if (!to) problems.push(`${label} leads to an empty cell`)
-    if (door.x >= doc.roomWidth || door.y >= doc.roomHeight || door.x < 0 || door.y < 0) {
-      problems.push(`${label} at ${door.x},${door.y} is outside its ${doc.roomWidth}×${doc.roomHeight} room`)
+    if (!doc.cells[door.room]) problems.push(`${label} is in an empty cell`)
+    if (!doc.cells[door.to]) problems.push(`${label} leads to an empty cell`)
+    const from = sizeOf(door.room)
+    if (from && (door.x < 0 || door.y < 0 || door.x >= from.width || door.y >= from.height)) {
+      problems.push(`${label} at ${door.x},${door.y} is outside its ${from.width}×${from.height} room`)
     }
-    if (door.toX >= doc.roomWidth || door.toY >= doc.roomHeight || door.toX < 0 || door.toY < 0) {
-      problems.push(`${label} arrives at ${door.toX},${door.toY}, outside the ${doc.roomWidth}×${doc.roomHeight} room`)
+    const to = sizeOf(door.to)
+    if (to && (door.toX < 0 || door.toY < 0 || door.toX >= to.width || door.toY >= to.height)) {
+      problems.push(`${label} arrives at ${door.toX},${door.toY}, outside the ${to.width}×${to.height} room it leads to`)
+    }
+    if ([door.x, door.y, door.toX, door.toY].some((value) => value > 255)) {
+      problems.push(`${label}: coordinates are one byte, so at most 255`)
     }
   })
   if (doc.doors.length > 255) problems.push(`${doc.doors.length} doors — at most 255 fit`)
   return problems
+}
+
+/** A layer's table suffix, as `resource.ts` names it — `background` → `Background`. */
+function layerTable(layer: MapLayer): string {
+  return (
+    layer.name
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('') || 'Layer'
+  )
+}
+
+/** A file's export symbol, as `renderResourceFiles` would name it. */
+function exportName(path: string, block: ExportBlock | null): string {
+  if (block?.name) return block.name
+  const file = (path.split(/[\\/]/).pop() ?? path).replace(/\.[a-z-]+\.json$/i, '')
+  const pascal = file
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join('')
+  return `g_${pascal || 'Resource'}`
+}
+
+/**
+ * How `_DrawRoom` draws a room: by its own `_DrawLayer` (and `_DrawPlacements`
+ * when it has live meta-tiles) — or why it cannot, in which case the game
+ * draws it, and `_DrawRoom` returns FALSE for it.
+ */
+export type RoomDraw =
+  | { kind: 'draw'; name: string; header: string; layer: string; compressed: boolean; placements: boolean; unpacked: number }
+  | { kind: 'manual'; reason: string }
+
+export function roomDraw(path: string, room: MapDoc): RoomDraw {
+  const block = room.export
+  if (!block?.out || block.format !== 'c') return { kind: 'manual', reason: 'it has no C export of its own' }
+  if (!block.helpers) return { kind: 'manual', reason: 'its export has no ready-made C (tick it in the map editor)' }
+  if (room.cell) return { kind: 'manual', reason: 'it is a bitmap-mode map' }
+  if (room.width > SCREEN_W || room.height > SCREEN_H) {
+    return { kind: 'manual', reason: `it is ${room.width}×${room.height}, bigger than one screen — scroll it yourself` }
+  }
+  const layer = room.layers.find((candidate) => !candidate.indexed)
+  if (!layer) return { kind: 'manual', reason: 'it has no tile layer — expand its indexed layer yourself' }
+  if (room.layers.some((candidate) => candidate.indexed)) {
+    return { kind: 'manual', reason: 'it has an indexed layer, which is expanded in RAM rather than drawn' }
+  }
+  const name = exportName(path, block)
+  return {
+    kind: 'draw',
+    name,
+    header: block.out,
+    layer: `${name}_${layerTable(layer)}`,
+    compressed: mapExport(room, block.compress).compressed,
+    placements: placementCount(room) > 0,
+    unpacked: room.width * room.height
+  }
+}
+
+/** How `_LoadTileset` loads a tileset — or why it cannot. */
+export type TilesetLoad =
+  | { kind: 'load'; name: string; header: string; banked: boolean; count: number; animated: boolean }
+  | { kind: 'manual'; reason: string }
+
+export function tilesetLoad(tileset: LoadedTileset | undefined): TilesetLoad {
+  if (!tileset) return { kind: 'manual', reason: 'it could not be read' }
+  if (!tileset.header) return { kind: 'manual', reason: 'it has no C export' }
+  if (tileset.mode !== 'sc2' && tileset.mode !== 'sc4') return { kind: 'manual', reason: `it is ${tileset.mode}, not SCREEN 2/4` }
+  if (tileset.banked && !tileset.helpers) {
+    return { kind: 'manual', reason: 'it is banked and its export has no ready-made C, so it has no _Load()' }
+  }
+  return {
+    kind: 'load',
+    name: tileset.name,
+    header: tileset.header,
+    banked: tileset.banked,
+    count: tileset.count,
+    // `_Animate()` exists only with its ready-made C on.
+    animated: tileset.animated && tileset.helpers
+  }
+}
+
+/**
+ * What the editor shows beside the problems: the rooms `_DrawRoom` leaves to
+ * the game, and the tilesets `_LoadTileset` cannot load, each with why. None
+ * of it stops the export — a world is navigation first.
+ */
+export function worldNotices(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRoom>): string[] {
+  const notices: string[] = []
+  const seen = new Set<string>()
+  doc.cells.forEach((path, cell) => {
+    if (!path || seen.has(path)) return
+    seen.add(path)
+    const room = rooms.get(path)
+    if (!room) return
+    const draw = roomDraw(path, room.doc)
+    if (draw.kind === 'manual') notices.push(`${roomLabel(doc, cell, path)}: _DrawRoom leaves it to you — ${draw.reason}.`)
+  })
+  const tilesets = new Map<string, LoadedTileset | undefined>()
+  for (const path of new Set(doc.cells)) {
+    const room = path ? rooms.get(path) : undefined
+    if (room?.doc.tileset && !tilesets.has(room.doc.tileset)) tilesets.set(room.doc.tileset, room.tileset)
+  }
+  for (const [path, tileset] of tilesets) {
+    const load = tilesetLoad(tileset)
+    if (load.kind === 'manual') notices.push(`${path}: _LoadTileset leaves it to you — ${load.reason}.`)
+  }
+  return notices
+}
+
+/** One table a world exports; `resource.ts` turns these into `EmitTable`s. */
+export interface WorldTable {
+  suffix: string
+  bytes: Uint8Array
+  perLine: number
+  comment: string
 }
 
 /** Little-endian 16-bit offsets, the way the generated C reads them. */
@@ -314,84 +426,24 @@ function offsetBytes(offsets: readonly number[]): Uint8Array {
   return out
 }
 
-/** One table a world exports; `resource.ts` turns these into `EmitTable`s. */
-export interface WorldTable {
-  suffix: string
-  bytes: Uint8Array
-  perLine: number
-  comment: string
-}
-
-export interface WorldExport {
-  /** RLEp actually applied — asked for *and* every room shrank. */
-  compressed: boolean
-  tables: WorldTable[]
-  /** Unpacked bytes of one room: what a buffer for `_DrawRoom` holds. */
-  roomBytes: number
-}
-
 /**
- * The world as tables. The single decision point for compression, the way
- * `mapExport` is for a map: all rooms pack or none do, because one
- * `_DrawRoom()` serves them all and cannot unpack some of them.
- *
- * A map that sits in several cells is stored once — its offsets repeat.
+ * The world as tables: navigation and entities, never tile data. A map that
+ * sits in several cells has its entity list stored once.
  */
-export function worldExport(
-  doc: WorldDoc,
-  rooms: ReadonlyMap<string, LoadedRoom>,
-  compress: ExportBlock['compress']
-): WorldExport {
-  const roomBytes = doc.roomWidth * doc.roomHeight
+export function worldTables(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRoom>): WorldTable[] {
   const cells = roomCells(doc)
   const paths = [...new Set(cells.map((cell) => doc.cells[cell]!))]
-  const raw = new Map<string, Uint8Array>()
-  for (const path of paths) {
-    const map = rooms.get(path)?.doc
-    const layer = map ? roomLayer(doc, map) : undefined
-    const bytes = new Uint8Array(roomBytes)
-    if (map && layer) {
-      for (let y = 0; y < Math.min(doc.roomHeight, map.height); y++) {
-        for (let x = 0; x < Math.min(doc.roomWidth, map.width); x++) {
-          bytes[y * doc.roomWidth + x] = (layer.data[y * map.width + x] ?? 0) & 0xff
-        }
-      }
-    }
-    raw.set(path, bytes)
-  }
-  let stored = raw
-  let compressed = false
-  if (compress === 'rlep' && paths.length) {
-    const packed = new Map(paths.map((path) => [path, packRlep(raw.get(path)!)]))
-    if (paths.every((path) => packed.get(path)!.length < raw.get(path)!.length)) {
-      stored = packed
-      compressed = true
-    }
-  }
-
-  // Room data and entity lists, each map once, in first-use order.
-  const roomOffset = new Map<string, number>()
-  const entityOffset = new Map<string, number>()
-  const roomData: number[] = []
-  const entityData: number[] = []
   const ids = entityIds(doc.entityTypes)
+  const entityOffset = new Map<string, number>()
+  const entityData: number[] = []
   for (const path of paths) {
-    roomOffset.set(path, roomData.length)
-    roomData.push(...stored.get(path)!)
     const entities = mapEntities(rooms.get(path)?.doc ?? ({} as MapDoc))
     entityOffset.set(path, entityData.length)
     entityData.push(entities.length, ...entityBytes(entities, ids))
   }
-
-  // The offset tables are 16-bit, and one Z80 page could not hold more anyway.
-  if (roomData.length > 0xffff) {
-    throw new Error(
-      `The rooms come to ${roomData.length} bytes — more than a 16-bit offset can reach. ` +
-        (compressed ? 'Split the world in two.' : 'Turn on RLEp compression, or split the world in two.')
-    )
-  }
   const tilesets = worldTilesets(doc, rooms)
   const idOf = roomIds(doc)
+  const room = (cell: number): MapDoc | undefined => rooms.get(doc.cells[cell]!)?.doc
   const tables: WorldTable[] = [
     {
       suffix: '_Grid',
@@ -406,25 +458,16 @@ export function worldExport(
       comment: 'Per room: the room to the north, east, south, west — 0xFF where the edge is a wall'
     },
     {
+      suffix: '_RoomSize',
+      bytes: Uint8Array.from(cells.flatMap((cell) => [(room(cell)?.width ?? 0) & 0xff, (room(cell)?.height ?? 0) & 0xff])),
+      perLine: 16,
+      comment: 'Per room: its width and height in tiles — rooms are not all one size'
+    },
+    {
       suffix: '_RoomTileset',
-      bytes: Uint8Array.from(cells.map((cell) => Math.max(0, tilesets.indexOf(rooms.get(doc.cells[cell]!)?.doc.tileset ?? '')))),
+      bytes: Uint8Array.from(cells.map((cell) => Math.max(0, tilesets.indexOf(room(cell)?.tileset ?? '')))),
       perLine: 16,
       comment: 'Per room: which tileset it draws with — the _TILESET_ defines'
-    },
-    {
-      suffix: '_RoomOffsets',
-      bytes: offsetBytes(cells.map((cell) => roomOffset.get(doc.cells[cell]!)!)),
-      perLine: 16,
-      comment: 'Per room: where its name table starts in _Rooms — two bytes, low first'
-    },
-    {
-      suffix: '_Rooms',
-      bytes: Uint8Array.from(roomData),
-      perLine: compressed ? 16 : Math.min(32, doc.roomWidth),
-      comment: compressed
-        ? `Every room's name table, ${doc.roomWidth}×${doc.roomHeight}, RLEp-packed — ${paths.length} × ${roomBytes} → ${roomData.length} bytes. ` +
-          'Unpack with RLEp_UnpackToRAM.'
-        : `Every room's name table, ${doc.roomWidth}×${doc.roomHeight}, ${roomBytes} bytes each`
     },
     {
       suffix: '_EntityOffsets',
@@ -436,7 +479,7 @@ export function worldExport(
       suffix: '_Entities',
       bytes: Uint8Array.from(entityData),
       perLine: 16,
-      comment: 'Per room: a count, then type, x, y, param per entity — ids from the _ENT_ defines'
+      comment: 'Per room: a count, then type, x, y, param per entity — ids from the _ENT_ defines, the same in every room'
     }
   ]
   if (doc.doors.length) {
@@ -449,7 +492,7 @@ export function worldExport(
       comment: 'Doors: room, x, y, then the room it leads to and where the player arrives — six bytes each'
     })
   }
-  return { compressed, tables, roomBytes }
+  return tables
 }
 
 /** What a room's file name says, as a define: `res/forest_r0_c1.map.json` → `FOREST_R0_C1`. */
@@ -463,21 +506,29 @@ function tilesetDefine(path: string): string {
   return defineName(file.replace(/\.(b?tiles)\.json$/i, ''))
 }
 
+/** The biggest buffer any packed room's `_DrawLayer` unpacks into — 0 when no room is packed. */
+export function drawBufferBytes(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRoom>): number {
+  let bytes = 0
+  for (const path of new Set(doc.cells)) {
+    const room = path ? rooms.get(path) : undefined
+    if (!path || !room) continue
+    const draw = roomDraw(path, room.doc)
+    if (draw.kind === 'draw' && draw.compressed) bytes = Math.max(bytes, draw.unpacked)
+  }
+  return bytes
+}
+
 export function worldConstants(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRoom>, name: string): string[] {
   const prefix = defineName(name)
   const ids = roomIds(doc)
   // A map in several cells gets one define, for the first: a name has to mean one room.
-  const named = new Set<string>()
   const roomDefines: string[] = []
-  const usedNames = new Set<string>()
+  const used = new Set<string>()
   doc.cells.forEach((path, cell) => {
-    if (!path || named.has(path)) return
-    named.add(path)
-    // A map called `w` or `bytes` would collide with the geometry defines.
-    const stem = roomDefine(path)
-    const define = `${prefix}_ROOM_${['W', 'H', 'BYTES'].includes(stem) ? `${stem}_MAP` : stem}`
-    if (usedNames.has(define)) return
-    usedNames.add(define)
+    if (!path) return
+    const define = `${prefix}_ROOM_${roomDefine(path)}`
+    if (used.has(define)) return
+    used.add(define)
     roomDefines.push(`#define ${define} ${ids[cell]}`)
   })
   const tilesets = worldTilesets(doc, rooms)
@@ -485,10 +536,6 @@ export function worldConstants(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedR
     `#define ${prefix}_COLS ${doc.cols}`,
     `#define ${prefix}_ROWS ${doc.rows}`,
     `#define ${prefix}_ROOMS ${roomCount(doc)}`,
-    `#define ${prefix}_ROOM_W ${doc.roomWidth}`,
-    `#define ${prefix}_ROOM_H ${doc.roomHeight}`,
-    `#define ${prefix}_ROOM_BYTES ${doc.roomWidth * doc.roomHeight}`,
-    `#define ${prefix}_TOP ${doc.top}`,
     `#define ${prefix}_NONE 0xFF`,
     ...DIRECTIONS.map((direction, index) => `#define ${prefix}_${direction.toUpperCase()} ${index}`),
     `#define ${prefix}_TILESETS ${tilesets.length}`,
@@ -498,6 +545,8 @@ export function worldConstants(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedR
     `#define ${prefix}_ENTITY_BYTES ${ENTITY_BYTES}`,
     `#define ${prefix}_ENTITY_TYPES ${doc.entityTypes.length}`,
     ...doc.entityTypes.map((type, index) => `#define ${prefix}_ENT_${defineName(type)} ${index + 1}`),
+    // What `_DrawRoom`'s buffer has to hold; 0 when no room is packed.
+    `#define ${prefix}_BUFFER_BYTES ${drawBufferBytes(doc, rooms)}`,
     ...roomDefines
   ]
 }
@@ -506,65 +555,141 @@ export function worldNotes(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRoom>
   const unique = new Set(doc.cells.filter(Boolean)).size
   return [
     `Grid: ${doc.cols}×${doc.rows} cells, ${roomCount(doc)} rooms (${unique} distinct maps)`,
-    `Room: ${doc.roomWidth}×${doc.roomHeight} tiles, drawn from row ${doc.top}`,
-    `Layer: ${doc.layer || 'each room\'s first'}`,
     `Tilesets: ${worldTilesets(doc, rooms).join(', ') || 'none'}`,
     `Entity types: ${doc.entityTypes.join(', ') || 'none'}`,
     `Doors: ${doc.doors.length}`
   ]
 }
 
+/** `from` → `to`, as a relative `#include` path between two project-relative files. */
+export function includePath(from: string, to: string): string {
+  const fromDir = from.split('/').slice(0, -1)
+  const target = to.split('/')
+  let common = 0
+  while (common < fromDir.length && common < target.length - 1 && fromDir[common] === target[common]) common++
+  return [...new Array<string>(fromDir.length - common).fill('..'), ...target.slice(common)].join('/')
+}
+
 /**
- * The opt-in ready-made C. Lookups plus one draw call; the game keeps the rules.
- *
- * It does not load tilesets: which tileset a room draws with is in
- * `_RoomTileset`, and loading one is the tileset's own header's business (its
- * patterns and colours, or its banked `_Load()`), so the game switches when the
- * id changes.
+ * The opt-in ready-made C: lookups, plus two dispatchers that call the rooms'
+ * and tilesets' **own** exported helpers — so a room draws exactly as it would
+ * on its own, live meta-tiles included, and a banked tileset loads through its
+ * own `_Load()`. `out` is the world's header path, which the includes are
+ * relative to.
  */
-export function worldHelperC(name: string, compressed: boolean): HelperC {
+export function worldHelperC(doc: WorldDoc, rooms: ReadonlyMap<string, LoadedRoom>, name: string, out: string): HelperC {
   const prefix = defineName(name)
-  const draw = compressed
-    ? `void ${name}_DrawRoom(u8 room, u8* buffer)`
-    : `void ${name}_DrawRoom(u8 room)`
+  const ids = roomIds(doc)
+
+  // Room ids per drawable map, so a map in two cells is one case with two labels.
+  const draws = new Map<string, { draw: RoomDraw & { kind: 'draw' }; ids: number[] }>()
+  doc.cells.forEach((path, cell) => {
+    const room = path ? rooms.get(path) : undefined
+    if (!path || !room) return
+    const draw = roomDraw(path, room.doc)
+    if (draw.kind !== 'draw') return
+    const entry = draws.get(path) ?? { draw, ids: [] }
+    entry.ids.push(ids[cell])
+    draws.set(path, entry)
+  })
+  const tilesetPaths = worldTilesets(doc, rooms)
+  const loads = tilesetPaths.map((path) => {
+    const room = [...rooms.values()].find((candidate) => candidate.doc.tileset === path)
+    return tilesetLoad(room?.tileset)
+  })
+  const headers = [
+    ...new Set([
+      ...[...draws.values()].map(({ draw }) => draw.header),
+      ...loads.flatMap((load) => (load.kind === 'load' ? [load.header] : []))
+    ])
+  ].sort()
+  const packed = [...draws.values()].some(({ draw }) => draw.compressed)
+  const animated = loads.some((load) => load.kind === 'load' && load.animated)
+
+  // One static function per map, called from the switch. Not inlined into the
+  // cases on purpose: SDCC 4.x, knowing `room` (in A) is 0 inside `case 0:`,
+  // folds the constant 0, 0 arguments into an `ld hl, a` that does not exist,
+  // and the build stops at the assembler.
+  const drawFunctions = [...draws.values()].flatMap(({ draw }) => [
+    '',
+    `static void ${name}_Draw_${draw.name}(u8* buffer)`,
+    '{',
+    ...(draw.compressed ? [] : ['\tbuffer;']),
+    draw.compressed ? `\t${draw.name}_DrawLayer(${draw.layer}, buffer, 0, 0);` : `\t${draw.name}_DrawLayer(${draw.layer}, 0, 0);`,
+    ...(draw.placements ? [`\t${draw.name}_DrawPlacements();`] : []),
+    '}'
+  ])
+  const drawCases = [...draws.values()].flatMap(({ draw, ids: labels }) => [
+    ...labels.map((id) => `\tcase ${id}:`),
+    `\t\t${name}_Draw_${draw.name}(buffer);`,
+    '\t\treturn TRUE;'
+  ])
+  const loadCases = loads.flatMap((load, index) => {
+    if (load.kind !== 'load') return []
+    const count = load.count >= 256 ? 0 : load.count
+    return [
+      `\tcase ${index}:`,
+      ...(load.banked
+        ? [`\t\t${load.name}_Load();`]
+        : [`\t\tVDP_LoadPattern_GM2(${load.name}_Patterns, ${count}, 0);`, `\t\tVDP_LoadColor_GM2(${load.name}_Colors, ${count}, 0);`]),
+      ...(load.animated ? [`\t\t${load.name}_AnimReset();`] : []),
+      '\t\treturn TRUE;'
+    ]
+  })
+  const animateCases = loads.flatMap((load, index) =>
+    load.kind === 'load' && load.animated ? [`\tcase ${index}:`, `\t\t${load.name}_Animate();`, '\t\tbreak;'] : []
+  )
+
   return {
     header: [
       '',
-      `// Ready-made C for the world ${name}. Needs MSXgl's VDP module`,
-      '// (#include "msxgl.h" before this header) built with VDP_USE_MODE_G2.',
-      ...(compressed
+      `// Ready-made C for the world ${name}. Every room draws itself through its own`,
+      '// export — this only finds rooms and calls their helpers. Needs MSXgl\'s VDP',
+      '// module (#include "msxgl.h" before this header), and each room\'s and',
+      '// tileset\'s own ready-made C, which _DrawRoom and _LoadTileset call.',
+      ...(packed
         ? [
-            '// The rooms are RLEp-packed, so this also needs the "compress" library module',
-            '// and COMPRESS_USE_RLEP TRUE / COMPRESS_USE_RLEP_DEFAULT TRUE in msxgl_config.h.',
-            `// \`buffer\` holds ${prefix}_ROOM_BYTES bytes, and keeps the room's tiles after`,
-            '// the draw — read it for collision (buffer[y * ROOM_W + x], then the tileset\'s',
-            '// _Flags). Make it a global: a local that size does not fit on the stack.'
+            `// Some rooms are RLEp-packed: _DrawRoom unpacks them into \`buffer\` (${prefix}_BUFFER_BYTES`,
+            '// bytes — make it a global) with MSXgl\'s RLEp_UnpackToRAM: add the "compress"',
+            '// library module. The buffer keeps the room\'s tiles: read it for collision.'
           ]
-        : ['// The rooms are raw, so _RoomData() is the room\'s tiles in ROM — read it for collision.']),
+        : ['// No room is packed, so _DrawRoom\'s `buffer` may be NULL.']),
       '//',
       '// Example:',
-      ...(compressed
-        ? [`//   u8 g_RoomBuffer[${prefix}_ROOM_BYTES];`, `//   ${name}_DrawRoom(room, g_RoomBuffer);`]
-        : [`//   ${name}_DrawRoom(room);`]),
-      `//   u8 next = ${name}_Neighbour(room, ${prefix}_EAST);   // ${prefix}_NONE at a wall`,
-      `//   const u8* e = ${name}_RoomEntities(room);          // e[0] = count, then 4 bytes each`,
+      `//   u8 tileset = ${prefix}_NONE;`,
+      `//   void Enter(u8 room)`,
+      '//   {',
+      `//       if (${name}_TilesetOf(room) != tileset)`,
+      `//           ${name}_LoadTileset(tileset = ${name}_TilesetOf(room));`,
+      `//       if (!${name}_DrawRoom(room, g_Buffer))`,
+      '//           DrawItMyself(room);   // a room bigger than a screen, say',
+      '//   }',
+      `//   ...  u8 next = ${name}_Neighbour(room, ${prefix}_EAST);   // ${prefix}_NONE at a wall`,
       '',
       `// The room id at a grid column and row, or ${prefix}_NONE.`,
       `u8 ${name}_RoomAt(u8 col, u8 row);`,
       `// The room beyond an edge (${prefix}_NORTH/_EAST/_SOUTH/_WEST), or ${prefix}_NONE.`,
       `u8 ${name}_Neighbour(u8 room, u8 dir);`,
+      '// A room\'s size in tiles — rooms are not all one size.',
+      `u8 ${name}_RoomW(u8 room);`,
+      `u8 ${name}_RoomH(u8 room);`,
       '// Which _TILESET_ the room draws with.',
       `u8 ${name}_TilesetOf(u8 room);`,
-      `// The room's bytes in _Rooms${compressed ? ' (packed — unpack before reading)' : ''}.`,
-      `const u8* ${name}_RoomData(u8 room);`,
       '// The room\'s entity list: a count, then type, x, y, param per entity.',
       `const u8* ${name}_RoomEntities(u8 room);`,
       `// The door at (x, y) in a room, as an index into _Doors, or ${prefix}_NONE.`,
       `u8 ${name}_DoorAt(u8 room, u8 x, u8 y);`,
-      `// Draws a room into the name table at column 0, row ${prefix}_TOP.`,
-      `${draw};`
+      '// Loads a tileset through its own export (a banked one through its _Load()),',
+      '// and resets its animations. FALSE for one it cannot load — see the editor.',
+      `bool ${name}_LoadTileset(u8 tileset);`,
+      ...(animated ? ['// Plays the animations of a tileset loaded by _LoadTileset — once per frame.', `void ${name}_Animate(u8 tileset);`] : []),
+      '// Draws a room at the top-left of the name table with its own _DrawLayer, then',
+      '// its live meta-tiles with its own _DrawPlacements. FALSE for a room it',
+      '// leaves to you (bigger than a screen, no ready-made C…) — see the editor.',
+      `bool ${name}_DrawRoom(u8 room, u8* buffer);`
     ],
     source: [
+      ...headers.map((header) => `#include "${includePath(out, header)}"`),
       '',
       `u8 ${name}_RoomAt(u8 col, u8 row)`,
       '{',
@@ -578,15 +703,19 @@ export function worldHelperC(name: string, compressed: boolean): HelperC {
       `\treturn ${name}_Neighbours[(u16)room * 4 + (dir & 3)];`,
       '}',
       '',
+      `u8 ${name}_RoomW(u8 room)`,
+      '{',
+      `\treturn ${name}_RoomSize[(u16)room * 2];`,
+      '}',
+      '',
+      `u8 ${name}_RoomH(u8 room)`,
+      '{',
+      `\treturn ${name}_RoomSize[(u16)room * 2 + 1];`,
+      '}',
+      '',
       `u8 ${name}_TilesetOf(u8 room)`,
       '{',
       `\treturn ${name}_RoomTileset[room];`,
-      '}',
-      '',
-      `const u8* ${name}_RoomData(u8 room)`,
-      '{',
-      `\tconst u8* at = ${name}_RoomOffsets + (u16)room * 2;`,
-      `\treturn ${name}_Rooms + (at[0] | ((u16)at[1] << 8));`,
       '}',
       '',
       `const u8* ${name}_RoomEntities(u8 room)`,
@@ -610,14 +739,21 @@ export function worldHelperC(name: string, compressed: boolean): HelperC {
       `\treturn ${prefix}_NONE;`,
       '}',
       '',
-      draw,
+      `bool ${name}_LoadTileset(u8 tileset)`,
       '{',
-      ...(compressed
-        ? [
-            `\tRLEp_UnpackToRAM(${name}_RoomData(room), buffer);`,
-            `\tVDP_WriteLayout_GM2(buffer, 0, ${prefix}_TOP, ${prefix}_ROOM_W, ${prefix}_ROOM_H);`
-          ]
-        : [`\tVDP_WriteLayout_GM2(${name}_RoomData(room), 0, ${prefix}_TOP, ${prefix}_ROOM_W, ${prefix}_ROOM_H);`]),
+      ...(loadCases.length ? ['\tswitch (tileset)', '\t{', ...loadCases, '\t}'] : ['\ttileset;']),
+      '\treturn FALSE;',
+      '}',
+      ...(animated
+        ? ['', `void ${name}_Animate(u8 tileset)`, '{', '\tswitch (tileset)', '\t{', ...animateCases, '\t}', '}']
+        : []),
+      ...drawFunctions,
+      '',
+      `bool ${name}_DrawRoom(u8 room, u8* buffer)`,
+      '{',
+      ...(drawCases.length ? [] : ['\tbuffer;']),
+      ...(drawCases.length ? ['\tswitch (room)', '\t{', ...drawCases, '\t}'] : ['\troom;']),
+      '\treturn FALSE;',
       '}'
     ]
   }
@@ -708,14 +844,15 @@ export function isEmptyRoom(doc: MapDoc): boolean {
 
 /**
  * Cuts a map into `roomWidth × roomHeight` rooms — design the overworld as one
- * canvas, ship it as rooms. The edge rooms are padded with tile 0 when the map
- * is not a whole number of rooms.
+ * canvas, ship it as rooms. When the map is not a whole number of rooms, the
+ * last column and row are simply smaller: rooms need not share a size.
  *
- * Each room keeps the map's tileset, cell geometry and meta table. A placement
- * goes to the room its top-left corner is in; one that would hang over that
- * room's edge is dropped with a warning rather than cropped, the same choice
- * `validateMap` makes. Entities go to the room they stand in. No room gets an
- * export block: the world carries them.
+ * Each room keeps the map's tileset, cell geometry, layers and meta table, so
+ * it is a complete map that exports and draws itself. A placement goes to the
+ * room its top-left corner is in; one that would hang over that room's edge is
+ * dropped with a warning rather than cropped, the same choice `validateMap`
+ * makes. Entities go to the room they stand in. The export block is the
+ * caller's — it is named after the room's own file (`sliceIntoRooms`).
  */
 export function sliceMap(source: MapDoc, roomWidth: number, roomHeight: number, skipEmpty = false): SliceResult {
   roomWidth = Math.max(1, roomWidth | 0)
@@ -728,21 +865,19 @@ export function sliceMap(source: MapDoc, roomWidth: number, roomHeight: number, 
     for (let col = 0; col < cols; col++) {
       const ox = col * roomWidth
       const oy = row * roomHeight
+      const width = Math.min(roomWidth, source.width - ox)
+      const height = Math.min(roomHeight, source.height - oy)
       const layers: MapLayer[] = source.layers.map((layer) => {
-        const data = new Array<number>(roomWidth * roomHeight).fill(0)
-        for (let y = 0; y < roomHeight; y++) {
-          for (let x = 0; x < roomWidth; x++) {
-            const sx = ox + x
-            const sy = oy + y
-            if (sx < source.width && sy < source.height) data[y * roomWidth + x] = layer.data[sy * source.width + sx] ?? 0
-          }
+        const data = new Array<number>(width * height).fill(0)
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) data[y * width + x] = layer.data[(oy + y) * source.width + ox + x] ?? 0
         }
         const placements = layer.placements.flatMap((placement) => {
-          if (placement.x < ox || placement.y < oy || placement.x >= ox + roomWidth || placement.y >= oy + roomHeight) return []
+          if (placement.x < ox || placement.y < oy || placement.x >= ox + width || placement.y >= oy + height) return []
           const ref = source.metas[placement.slot]
           const x = placement.x - ox
           const y = placement.y - oy
-          if (ref && (x + ref.width > roomWidth || y + ref.height > roomHeight)) {
+          if (ref && (x + ref.width > width || y + ref.height > height)) {
             warnings.push(
               `"${ref.name}" at ${placement.x},${placement.y} on "${layer.name}" crosses into the next room and was left out of room ${col},${row}`
             )
@@ -754,13 +889,13 @@ export function sliceMap(source: MapDoc, roomWidth: number, roomHeight: number, 
         return out
       })
       const entities: MapEntity[] = mapEntities(source)
-        .filter((entity) => entity.x >= ox && entity.y >= oy && entity.x < ox + roomWidth && entity.y < oy + roomHeight)
+        .filter((entity) => entity.x >= ox && entity.y >= oy && entity.x < ox + width && entity.y < oy + height)
         .map((entity) => ({ ...entity, x: entity.x - ox, y: entity.y - oy }))
       const room = withEntities(
         {
           ...source,
-          width: roomWidth,
-          height: roomHeight,
+          width,
+          height,
           layers,
           metas: source.metas.map((ref) => ({ ...ref })),
           export: null
@@ -783,9 +918,7 @@ export function worldFromSlices(
   cols: number,
   rows: number,
   paths: readonly (string | null)[],
-  roomWidth: number,
-  roomHeight: number,
   entityTypes: readonly string[] = []
 ): WorldDoc {
-  return normalizeWorld({ cols, rows, roomWidth, roomHeight, cells: [...paths], entityTypes: [...entityTypes] })
+  return normalizeWorld({ cols, rows, cells: [...paths], entityTypes: [...entityTypes] })
 }

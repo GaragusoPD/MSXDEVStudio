@@ -114,6 +114,8 @@ describe('slicing into rooms', () => {
     const right = parseResource('res/over_r0_c1.map.json', files['res/over_r0_c1.map.json'])
     expect(left.kind === 'map' && left.doc.layers[0].data.every((v) => v === 1)).toBe(true)
     expect(right.kind === 'map' && mapEntities(right.doc)).toEqual([{ type: 'chest', x: 8, y: 10, param: 1 }])
+    // Each room draws itself: its own export, with the helpers the world calls.
+    expect(left.kind === 'map' && left.doc.export).toMatchObject({ out: 'content/over_r0_c0_map.h', helpers: true })
     // The rooms keep the map's place in its tileset's renumbering.
     expect(JSON.parse(files['res/over_r0_c0.map.json']).tilesetReorderSeen).toBe(0)
     const parsed = parseResource(world!, files[world!])

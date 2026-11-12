@@ -1,11 +1,22 @@
 /**
- * A world's emitted C, compiled and linked by the **real** MSXgl — both shapes
- * of `_DrawRoom` (RLEp-packed rooms and raw ones), with and without doors,
- * since `_DoorAt` compiles a different body when there is no `_Doors` table.
+ * A world's emitted C, compiled and linked by the **real** MSXgl, together with
+ * the rooms' and tilesets' own exports it dispatches to.
+ *
+ * - An ordinary tileset with an animated meta-tile attached, a one-screen room
+ *   that places it **live**, and a shorter packed room: `_LoadTileset` loads
+ *   and resets the animation, `_DrawRoom` calls the room's own `_DrawLayer` and
+ *   `_DrawPlacements` (or unpacks into the buffer first), `_Animate` plays it.
+ * - A banked tileset, loaded through its own `_Load()`.
  *
  * Per CLAUDE.md, emitted C is never verified by reading it. Every helper is
  * called from `main`, because a helper nothing calls links fine even when its
  * body names a symbol that does not exist.
+ *
+ * Booted in openMSX by hand when this was written (MSXDEVSTUDIO_KEEP_SCRATCH=1,
+ * then `vpeek` from timed callbacks): the live torch's cells were in the name
+ * table at its placement, its flame's pattern bytes changed between samples,
+ * the packed room drew 22 rows, and each bank of the banked room held its own
+ * colour.
  *
  * Skipped when no MSXgl checkout is present (see `__fixtures__/msxgl.ts`).
  */
@@ -13,141 +24,193 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { normalizeMap, withEntities } from '../../shared/msx/map'
+import { addMetaRef, metaRefFrom, normalizeMap, placeMeta, withEntities, type MapDoc } from '../../shared/msx/map'
+import { normalizeOwnedMeta, resolveMeta, type OwnedMetaDoc } from '../../shared/msx/meta-owned'
 import { defaultExport, type ResourceDoc } from '../../shared/msx/resource'
-import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
-import { normalizeWorld, type WorldDoor } from '../../shared/msx/world'
+import { normalizeTiles, type TileEntry, type TilesDoc } from '../../shared/msx/tile'
+import { normalizeWorld } from '../../shared/msx/world'
 import { BUILD_TIMEOUT, buildFixture, cleanBuildFixtures, runsBuilds } from './__fixtures__/msxgl-build'
 
 afterAll(cleanBuildFixtures)
 
-/** `hud`: rooms two rows short, drawn from row 2 — the `_TOP` path of `_DrawRoom`. */
-function fixture(compress: boolean, doors: WorldDoor[], hud = false): Record<string, ResourceDoc> {
-  const height = hud ? 22 : 24
-  const tiles = normalizeTiles({
+const entry = (mark: number, ink: number, paper: number): TileEntry => ({
+  pattern: new Array(8).fill(mark),
+  color: new Array(8).fill((ink << 4) | paper)
+})
+
+const TORCH = 'res/torch.meta-tiles.json'
+
+/** A torch whose flame (top row) flickers between three poses. */
+function torch(): OwnedMetaDoc {
+  return normalizeOwnedMeta({
+    version: 3,
     mode: 'sc2',
-    count: 2,
-    tiles: [
-      { pattern: new Array(8).fill(0), color: new Array(8).fill(mergeColorByte(15, 4)) },
-      { pattern: new Array(8).fill(0xff), color: new Array(8).fill(mergeColorByte(12, 1)) }
-    ]
+    width: 2,
+    height: 2,
+    loop: 'pingpong',
+    frames: [0x18, 0x3c, 0x7e].map((mark) => ({
+      tiles: [entry(mark, 9, 1), entry(mark, 11, 1), entry(0xff, 6, 1), entry(0xff, 6, 1)],
+      duration: 6
+    })),
+    export: { ...defaultExport(TORCH), name: 'g_Torch', out: 'content/torch.h' }
   })
-  // Ground from row 16 down in one room, from row 8 in the other: packs well.
-  const room = (from: number): ResourceDoc => ({
-    kind: 'map',
-    doc: withEntities(
-      normalizeMap({
-        tileset: 'res/hero.tiles.json',
-        height,
-        layers: [{ name: 'background', data: Array.from({ length: 32 * height }, (_, i) => (i >= from * 32 ? 1 : 0)) }]
-      }),
-      [{ type: 'chest', x: 4, y: 5, param: 1 }]
-    )
-  })
+}
+
+/** Sky over grass, from row `grass` down; tile 0 is reserved blank. */
+function ground(height: number, grass: number): { name: string; data: number[] } {
+  return { name: 'background', data: Array.from({ length: 32 * height }, (_, i) => (Math.floor(i / 32) >= grass ? 2 : 1)) }
+}
+
+function roomExport(name: string, compress = false): MapDoc['export'] {
   return {
-    'hero.tiles': {
-      kind: 'tiles',
-      doc: { ...tiles, export: { ...defaultExport('res/hero.tiles.json'), name: 'g_Hero', out: 'content/hero.h' } }
-    },
-    'a.map': room(16),
-    'b.map': room(8),
+    ...defaultExport(`res/${name}.map.json`),
+    name: `g_${name.toUpperCase()}`,
+    out: `content/${name}.h`,
+    helpers: true,
+    ...(compress ? { compress: 'rlep' as const } : {})
+  }
+}
+
+function animatedFixture(): Record<string, ResourceDoc> {
+  const meta = torch()
+  let tiles: TilesDoc = normalizeTiles({
+    mode: 'sc2',
+    count: 3,
+    reserveTile0: true,
+    tiles: [entry(0, 1, 1), entry(0x00, 1, 5), entry(0xaa, 12, 2)],
+    export: { ...defaultExport('res/tiles.tiles.json'), name: 'g_Tiles', out: 'content/tiles.h', helpers: true }
+  })
+  const attached = resolveMeta(tiles, TORCH, meta, 'g_Torch')
+  if (typeof attached === 'string') throw new Error(attached)
+  tiles = attached.doc
+
+  // Room a: one screen, a torch placed live at 4,10, and a chest.
+  let a = normalizeMap({ tileset: 'res/tiles.tiles.json', layers: [ground(24, 16)], export: roomExport('a') })
+  a = addMetaRef(a, metaRefFrom(TORCH, meta, 'g_Torch', tiles.metas.find((binding) => binding.path === TORCH)))
+  a = placeMeta(a, 0, 0, 4, 10)
+  a = withEntities(a, [{ type: 'chest', x: 6, y: 15, param: 1 }])
+  // Room b: shorter — rows left for a HUD — and RLEp-packed.
+  const b = normalizeMap({ tileset: 'res/tiles.tiles.json', height: 22, layers: [ground(22, 12)], export: roomExport('b', true) })
+
+  return {
+    'tiles.tiles': { kind: 'tiles', doc: tiles },
+    'torch.meta-tiles': { kind: 'metatiles', doc: meta },
+    'a.map': { kind: 'map', doc: a },
+    'b.map': { kind: 'map', doc: b },
     'over.world': {
       kind: 'world',
       doc: normalizeWorld({
         cols: 2,
-        rows: 2,
-        roomHeight: height,
-        top: hud ? 2 : 0,
-        cells: ['res/a.map.json', 'res/b.map.json', null, 'res/a.map.json'],
+        rows: 1,
+        cells: ['res/a.map.json', 'res/b.map.json'],
         entityTypes: ['chest'],
-        doors,
-        export: {
-          name: 'g_Over',
-          format: 'c',
-          out: 'content/over.h',
-          helpers: true,
-          ...(compress ? { compress: 'rlep' as const } : {})
-        }
+        doors: [{ room: 0, x: 6, y: 15, to: 1, toX: 2, toY: 3 }],
+        export: { name: 'g_Over', format: 'c', out: 'content/over.h', helpers: true }
       })
     }
   }
 }
 
-/** Calls every helper, so a broken body fails the link. */
-const MAIN = `#include "msxgl.h"
-#include "content/hero.h"
+/** `start` picks the room drawn, so one ROM per path can be booted. Every helper is reached. */
+const animatedMain = (start: number): string => `#include "msxgl.h"
 #include "content/over.h"
 
-#if defined(G_OVER_COMPRESSED)
-u8 g_RoomBuffer[G_OVER_ROOM_BYTES];
-#endif
+u8 g_Buffer[G_OVER_BUFFER_BYTES + 1];
 
 void main(void)
 {
-\tu8 room = g_Over_RoomAt(0, 0);
-\tconst u8* entities;
-\tconst u8* data;
+\tu8 room = ${start};
+\tu8 tileset = g_Over_TilesetOf(room);
+\tconst u8* e;
 \tVDP_SetMode(VDP_MODE_SCREEN2);
-\tVDP_LoadPattern_GM2(g_Hero_Patterns, 2, 0);
-\tVDP_LoadColor_GM2(g_Hero_Colors, 2, 0);
-#if defined(G_OVER_COMPRESSED)
-\tg_Over_DrawRoom(room, g_RoomBuffer);
-#else
-\tg_Over_DrawRoom(room);
-#endif
-\troom = g_Over_Neighbour(room, G_OVER_EAST);
-\tentities = g_Over_RoomEntities(room);
-\tdata = g_Over_RoomData(room);
-\tif (entities[0] && entities[1] == G_OVER_ENT_CHEST && g_Over_DoorAt(room, entities[2], entities[3]) == G_OVER_NONE)
-\t\troom = g_Over_TilesetOf(room) + data[0];
+\tg_Over_LoadTileset(tileset);
+\tg_Over_DrawRoom(room, g_Buffer);
+\te = g_Over_RoomEntities(g_Over_RoomAt(0, 0));
+\tif (e[0] && e[1] == G_OVER_ENT_CHEST && g_Over_DoorAt(0, e[2], e[3]) == G_OVER_NONE)
+\t\troom = g_Over_Neighbour(room, G_OVER_EAST) + g_Over_RoomW(room) + g_Over_RoomH(room);
+\twhile (1)
+\t{
+\t\tHalt();
+\t\tg_Over_Animate(tileset);
+\t}
+}
+`
+
+function bankedFixture(): Record<string, ResourceDoc> {
+  const solid = (fg: number): TileEntry => ({ pattern: new Array(8).fill(0xff), color: new Array(8).fill((fg << 4) | 1) })
+  const tiles = normalizeTiles({
+    mode: 'sc2',
+    count: 1,
+    tiles: [solid(1)],
+    bankTiles: [[solid(8)], [solid(5)], [solid(11)]],
+    export: { ...defaultExport('res/banked.tiles.json'), name: 'g_Banked', out: 'content/banked.h', helpers: true }
+  })
+  return {
+    'banked.tiles': { kind: 'tiles', doc: tiles },
+    'c.map': { kind: 'map', doc: normalizeMap({ tileset: 'res/banked.tiles.json', export: roomExport('c') }) },
+    'dungeon.world': {
+      kind: 'world',
+      doc: normalizeWorld({
+        cols: 1,
+        rows: 1,
+        cells: ['res/c.map.json'],
+        export: { name: 'g_Dungeon', format: 'c', out: 'content/dungeon.h', helpers: true }
+      })
+    }
+  }
+}
+
+const BANKED_MAIN = `#include "msxgl.h"
+#include "content/dungeon.h"
+
+void main(void)
+{
+\tVDP_SetMode(VDP_MODE_SCREEN2);
+\tg_Dungeon_LoadTileset(g_Dungeon_TilesetOf(0));
+\tg_Dungeon_DrawRoom(0, NULL);
 \twhile (1) { Halt(); }
 }
 `
 
-function expectClean(output: string): void {
+function expectClean(output: string, root: string, name: string): void {
   expect(output).not.toMatch(/\bError:/i)
   expect(output).not.toMatch(/Undefined Global/i)
-  // The generated source compiles without a warning of its own.
-  expect(output).not.toMatch(/content\/over\.c:\d+: warning/)
+  // The generated sources compile without a warning of their own.
+  expect(output).not.toMatch(/content\/\w+\.c:\d+: warning/)
   expect(output).toMatch(/Success/)
+  expect(existsSync(join(root, 'out', `${name}.rom`))).toBe(true)
 }
 
 describe.runIf(runsBuilds)('the emitted world C builds against real MSXgl', () => {
   it(
-    'packed rooms, with doors',
+    'a live, animated meta-tile in one room, a packed room beside it',
     () => {
-      const { output, root } = buildFixture({
-        name: 'worldpack',
-        template: 'template',
-        machine: '1',
-        resources: fixture(true, [{ room: 0, x: 4, y: 5, to: 3, toX: 10, toY: 12 }]),
-        main: MAIN,
-        libModules: ['compress']
-      })
-      expectClean(output)
-      expect(existsSync(join(root, 'out', 'worldpack.rom'))).toBe(true)
+      for (const [name, start] of [['worldanim', 0], ['worldpack', 1]] as const) {
+        const { output, root } = buildFixture({
+          name,
+          template: 'template',
+          machine: '1',
+          resources: animatedFixture(),
+          main: animatedMain(start),
+          libModules: ['compress']
+        })
+        expectClean(output, root, name)
+      }
     },
     BUILD_TIMEOUT
   )
 
-  /*
-   * Booted in openMSX by hand when this was written (MSXDEVSTUDIO_KEEP_SCRATCH=1,
-   * then \`vpeek\` the name table at 0x1800 a row at a time): packed and raw
-   * both drew room 0 — 16 rows of tile 0, then tile 1 — and the HUD build drew
-   * it two rows lower, leaving rows 0-1 alone.
-   */
   it(
-    'raw rooms under a HUD, no doors',
+    'a banked tileset, loaded through its own _Load()',
     () => {
       const { output, root } = buildFixture({
-        name: 'worldraw',
+        name: 'worldbank',
         template: 'template',
         machine: '1',
-        resources: fixture(false, [], true),
-        main: MAIN
+        resources: bankedFixture(),
+        main: BANKED_MAIN
       })
-      expectClean(output)
-      expect(existsSync(join(root, 'out', 'worldraw.rom'))).toBe(true)
+      expectClean(output, root, 'worldbank')
     },
     BUILD_TIMEOUT
   )

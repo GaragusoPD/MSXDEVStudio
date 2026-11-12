@@ -3070,12 +3070,18 @@ export async function sliceIntoRooms(session: MapSession, options: SliceOptions)
       if (!room || !path) continue
       // In the tileset's current numbering, exactly as this map is: the rooms
       // inherit its stamp, so the build and the editor replay what it would.
-      const content: SavedMap = { ...room }
+      // Each room exports its own C — layers, live meta-tiles, entities — with
+      // the ready-made helpers the world's _DrawRoom calls, packed as the
+      // source map was.
+      const content: SavedMap = {
+        ...room,
+        export: { ...defaultExport(path), helpers: true, ...(source.export?.compress ? { compress: source.export.compress } : {}) }
+      }
       if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
       await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'map', doc: content }) })
     }
-    const world = worldFromSlices(cols, rows, paths, options.roomWidth, options.roomHeight, entityTypesOf(mapEntities(source)))
-    world.export = defaultExport(worldPath)
+    const world = worldFromSlices(cols, rows, paths, entityTypesOf(mapEntities(source)))
+    world.export = { ...defaultExport(worldPath), helpers: true }
     await window.api.invoke('fs:write', { path: worldPath, content: serializeResource({ kind: 'world', doc: world }) })
   } catch (error) {
     session.status = `Couldn't write the rooms: ${String(error)}`

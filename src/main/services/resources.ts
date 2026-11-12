@@ -23,7 +23,7 @@ import { movingCells, refreshMetas, type LoadedMeta } from '../../shared/msx/met
 import { isBanked, isMetaPath, MAX_TILES, type TilesDoc } from '../../shared/msx/tile'
 import { animModesCompatible, animRefFrom, withAnimFrame, type TileAnimDoc } from '../../shared/msx/tile-anim'
 import { swSpriteFamily } from '../../shared/msx/swsprite'
-import type { LoadedRoom, WorldDoc } from '../../shared/msx/world'
+import { loadedTileset, type LoadedRoom, type LoadedTileset, type WorldDoc } from '../../shared/msx/world'
 
 /** `<msxgl>/tools/MSXtk/bin/MSXimg(.exe)` — MSXgl ships Linux and Windows builds. */
 export function msximgPath(msxglPath: string): string {
@@ -167,11 +167,20 @@ function replayTilesetLog(root: string, resource: ResourceDoc, text: string): vo
 
 /**
  * Reads every room a world places, the way a map's own export would see it:
- * in its tileset's current numbering, and with whether that tileset is banked.
- * A room that cannot be read is left out, and `validateWorld` names it.
+ * in its tileset's current numbering — and what the world's ready-made C needs
+ * to know about that tileset to load it through its own export. A room that
+ * cannot be read is left out, and `validateWorld` names it.
  */
 export function loadWorldRooms(root: string, doc: WorldDoc): Map<string, LoadedRoom> {
   const rooms = new Map<string, LoadedRoom>()
+  const tilesets = new Map<string, LoadedTileset | undefined>()
+  const tilesetOf = (path: string): LoadedTileset | undefined => {
+    if (!tilesets.has(path)) {
+      const tiles = readTileset(root, path)
+      tilesets.set(path, tiles ? loadedTileset(path, tiles) : undefined)
+    }
+    return tilesets.get(path)
+  }
   for (const path of new Set(doc.cells)) {
     if (!path) continue
     const abs = insideRoot(root, path)
@@ -181,7 +190,8 @@ export function loadWorldRooms(root: string, doc: WorldDoc): Map<string, LoadedR
       const parsed = parseResource(path, text)
       if (parsed.kind !== 'map') continue
       replayTilesetLog(root, parsed, text)
-      rooms.set(path, { doc: parsed.doc, banked: mapValidateOptions(root, parsed.doc).banked === true })
+      const tileset = parsed.doc.tileset ? tilesetOf(parsed.doc.tileset) : undefined
+      rooms.set(path, { doc: parsed.doc, banked: tileset?.banked === true, ...(tileset ? { tileset } : {}) })
     } catch {
       // Unreadable: reported by validation as a room that could not be read.
     }

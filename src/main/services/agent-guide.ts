@@ -508,46 +508,52 @@ its types in name order, so adding a type can renumber the ones after it. A
 ### Worlds — flip-screen rooms on a grid (\`*.world.json\`)
 
 A world places ordinary maps, one per grid cell: an overworld, its dungeons.
-Two rooms side by side connect at their edges; an empty cell is a wall.
-**Doors** connect anything else (a cave mouth, stairs). The world declares the
-**entity types**, so \`_ENT_CHEST\` is the same number in every room. Its export
-**embeds every room** — the room maps need no export of their own, and a map
-used in two cells is stored once.
+**Every room is a complete map that exports and draws itself** — its own
+header, its own \`_DrawLayer\`, its live (and animated) meta-tiles through its
+own \`_DrawPlacements\` and its tileset's \`_Animate()\` — and rooms need not
+share a size. The world is **navigation only**: two rooms side by side connect
+at their edges, an empty cell is a wall, **doors** connect anything else (a cave
+mouth, stairs), and the world declares the **entity types**, so \`_ENT_CHEST\`
+is the same number in every room. A project can have any number of worlds.
 
 \`\`\`c
 #define G_OVER_ROOMS 12        // room ids 0..11, in grid reading order
-#define G_OVER_ROOM_W 32       // every room's size, and the row it is drawn at
-#define G_OVER_ROOM_H 22
-#define G_OVER_TOP 2           //   (rows above it are free for a HUD)
 #define G_OVER_NONE 0xFF       // "no room" — a wall, an empty cell, no door
 #define G_OVER_NORTH 0         // _EAST 1, _SOUTH 2, _WEST 3
 #define G_OVER_ROOM_FOREST 4   // a define per room, named after its map file
 #define G_OVER_TILESET_CAVE 1  // which tileset a room draws with (_TilesetOf)
 #define G_OVER_ENT_CHEST 1     // the world's entity ids, from 1, for every room
-#define G_OVER_COMPRESSED 1    // only when the rooms are RLEp-packed
+#define G_OVER_BUFFER_BYTES 768 // what _DrawRoom's buffer holds; 0 when no room is packed
+// tables: _Grid, _Neighbours, _RoomSize (w, h per room), _RoomTileset,
+//         _EntityOffsets + _Entities, _Doors (room, x, y, to, toX, toY)
 
 // With helpers on:
-u8  g_Over_RoomAt(u8 col, u8 row);           // room id, or G_OVER_NONE
-u8  g_Over_Neighbour(u8 room, u8 dir);       // the room past an edge, or G_OVER_NONE
-u8  g_Over_TilesetOf(u8 room);               // a G_OVER_TILESET_ index
-const u8* g_Over_RoomData(u8 room);          // its name table in _Rooms (packed, if compressed)
+u8   g_Over_RoomAt(u8 col, u8 row);          // room id, or G_OVER_NONE
+u8   g_Over_Neighbour(u8 room, u8 dir);      // the room past an edge, or G_OVER_NONE
+u8   g_Over_RoomW(u8 room);                  // its size in tiles
+u8   g_Over_RoomH(u8 room);
+u8   g_Over_TilesetOf(u8 room);              // a G_OVER_TILESET_ index
 const u8* g_Over_RoomEntities(u8 room);      // [count] then type, x, y, param per entity
-u8  g_Over_DoorAt(u8 room, u8 x, u8 y);      // index into _Doors, or G_OVER_NONE
-void g_Over_DrawRoom(u8 room, u8* buffer);   // packed rooms: unpacks into buffer, then draws
-void g_Over_DrawRoom(u8 room);               // raw rooms: draws straight from ROM
+u8   g_Over_DoorAt(u8 room, u8 x, u8 y);     // index into _Doors, or G_OVER_NONE
+bool g_Over_LoadTileset(u8 tileset);         // calls the tileset's own loader (_Load() if banked)
+void g_Over_Animate(u8 tileset);             // its _Animate() — only when a tileset animates
+bool g_Over_DrawRoom(u8 room, u8* buffer);   // the room's own _DrawLayer + _DrawPlacements
 \`\`\`
 
 \`\`\`c
-u8 g_Room;                               // globals: a room buffer does not fit on the stack
-u8 g_RoomBuffer[G_OVER_ROOM_BYTES];      // packed rooms only — keeps the room's tiles for collision
+u8 g_Room;
+u8 g_Tileset = G_OVER_NONE;
+u8 g_RoomBuffer[G_OVER_BUFFER_BYTES + 1];   // a global; only packed rooms use it
 
 void EnterRoom(u8 room)
 {
 \tu8 i;
 \tconst u8* e;
 \tg_Room = room;
-\t// Load the tileset when g_Over_TilesetOf(room) changes — the world never loads one.
-\tg_Over_DrawRoom(room, g_RoomBuffer);
+\tif (g_Over_TilesetOf(room) != g_Tileset)
+\t\tg_Over_LoadTileset(g_Tileset = g_Over_TilesetOf(room));
+\tif (!g_Over_DrawRoom(room, g_RoomBuffer))
+\t\tDrawBigRoom(room);   // FALSE: a room it leaves to you, e.g. one bigger than a screen
 \te = g_Over_RoomEntities(room);
 \tfor (i = 0; i < e[0]; i++)
 \t\tSpawn(e[1 + i * 4], e[2 + i * 4], e[3 + i * 4], e[4 + i * 4]);   // type, x, y, param
@@ -566,17 +572,20 @@ if (d != G_OVER_NONE)
 }
 \`\`\`
 
-- **Collision reads the room's tiles**, then the tileset's \`_Flags\`: from the
-  buffer for packed rooms (\`g_RoomBuffer[y * G_OVER_ROOM_W + x]\`), or from
-  \`g_Over_RoomData(room)\` for raw ones.
-- **One layer per room** — the world's *layer* setting, or each room's first.
-  Meta-tiles on it must be **baked** (the world carries no placement runtime);
-  an indexed layer cannot be a room. The export refuses either, naming the room.
-- **A banked tileset only works 24 rows tall from row 0**, so a world with a
-  HUD (\`top\` > 0) cannot use one. Unbanked tilesets are fine anywhere.
-- **Packed rooms need \`"compress"\` in LibModules.** All rooms pack or none do;
-  read \`G_OVER_COMPRESSED\` rather than assuming. Raw rooms are 768 bytes
-  each, so a world of more than ~30 raw rooms does not fit a 32 KB ROM.
+- **\`_DrawRoom\` only dispatches.** It calls each room's own \`_DrawLayer\` (its
+  first tile layer, at 0,0) and \`_DrawPlacements\`, so a room needs its own
+  *Export ready-made C* on — rooms the world editor makes or slices have it.
+  It returns FALSE for a room it cannot draw in one call: bigger than a screen
+  (scroll it with MSXgl's \`scroll\` module), a bitmap map, an indexed layer, no
+  ready-made C. The world editor lists those under *Left to your code*.
+- **\`_LoadTileset\` dispatches too** — to a banked tileset's own \`_Load()\`, or
+  \`VDP_LoadPattern_GM2\`/\`VDP_LoadColor_GM2\` for an ordinary one — and resets
+  its animations. Call \`g_Over_Animate(g_Tileset)\` once per frame for animated
+  tiles and meta-tiles.
+- **Collision reads the room's own tables**: its layer (\`g_Forest_Background\`,
+  or the unpacked buffer when the room is packed) and the tileset's \`_Flags\`.
+- A room packed with RLEp (in its own map editor) needs \`"compress"\` in
+  LibModules, and \`_DrawRoom\` unpacks it into the buffer you pass.
 - The map editor's **Slice into rooms…** cuts a big map into rooms plus a world
   — design the overworld on one canvas, ship it as rooms.
 
