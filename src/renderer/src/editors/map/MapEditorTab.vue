@@ -9,7 +9,8 @@ import type { MaterialSymbol } from '@material-symbols/font-400'
  * Registered for the `map.json` compound extension in `editors/bootstrap.ts`,
  * so the explorer opens maps here instead of in Monaco.
  */
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
 import type { MapTool } from '../../../../shared/map-editor'
 import type { TileTool } from '../../../../shared/tile-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
@@ -19,6 +20,7 @@ import MapMetaPicker from './MapMetaPicker.vue'
 import MapPicker from './MapPicker.vue'
 import MapSidePanel from './MapSidePanel.vue'
 import Icon from '../../components/Icon.vue'
+import Modal from '../../components/Modal.vue'
 import { isTypingTarget } from '../../commands'
 import { pixelsFromElsewhere } from '../picture-clipboard'
 import {
@@ -29,6 +31,7 @@ import {
   clearSelection,
   copySelection,
   cutSelection,
+  deleteSelectedEntity,
   deleteSelectedPlacement,
   deleteSelection,
   doc,
@@ -47,6 +50,7 @@ import {
   setPaintTool,
   setTool,
   setZoom,
+  sliceIntoRooms,
   undo,
 } from './session'
 
@@ -75,6 +79,11 @@ const TOOLS: { id: MapTool; icon: MaterialSymbol; title: string }[] = [
     title:
       'Select — drag a rectangle, then drag inside it to move it with the meta-tiles on it (Ctrl+drag copies). ' +
       'Arrows nudge it, Enter places it, Esc takes it back; Ctrl+X/C/V, Delete'
+  },
+  {
+    id: 'entity',
+    icon: 'flag',
+    title: 'Entities — click to drop one (spawn point, chest, door…), drag to move it, Delete removes it. Pick its type in the side panel.'
   }
 ]
 
@@ -165,6 +174,7 @@ function onKeydown(event: KeyboardEvent): void {
     // A selected meta-tile first: it is the more specific of the two things
     // a Delete could mean, and the one the user clicked last.
     if (active.float) deleteSelection(active)
+    else if (cells && active.tool === 'entity') deleteSelectedEntity(active)
     else if (cells && active.selectedPlacement !== null) deleteSelectedPlacement(active)
     else if (cells) deleteSelection(active)
   }
@@ -182,6 +192,33 @@ watch(
 
 // The tileset dropdown reads from the Resources panel's list.
 onMounted(() => void resourcesStore.refresh())
+
+/**
+ * Slice into rooms: one screen per room by default, which is the point — a
+ * world room is a screen. A HUD makes rooms shorter, so the height is asked.
+ */
+const slicing = ref(false)
+const sliceWidth = ref(SCREEN_COLS)
+const sliceHeight = ref(SCREEN_ROWS)
+const sliceSkipEmpty = ref(true)
+const sliceGrid = computed(() => {
+  const current = doc(session.value)
+  return {
+    cols: Math.ceil(current.width / Math.max(1, sliceWidth.value)),
+    rows: Math.ceil(current.height / Math.max(1, sliceHeight.value))
+  }
+})
+const sliceTarget = computed(() => session.value.path.replace(/\.map\.json$/i, ''))
+
+async function slice(): Promise<void> {
+  slicing.value = false
+  await save()
+  await sliceIntoRooms(session.value, {
+    roomWidth: sliceWidth.value,
+    roomHeight: sliceHeight.value,
+    skipEmpty: sliceSkipEmpty.value
+  })
+}
 
 </script>
 
@@ -382,6 +419,14 @@ onMounted(() => void resourcesStore.refresh())
         >
           Export
         </button>
+        <button
+          type="button"
+          title="Cut this map into one-screen rooms and a world that places them — design the overworld as one canvas, ship it as rooms"
+          @click="slicing = true"
+        >
+          <Icon name="grid_view" />
+          Slice into rooms…
+        </button>
       </div>
 
       <div class="panes">
@@ -406,6 +451,73 @@ onMounted(() => void resourcesStore.refresh())
       >
         {{ session.status }}
       </p>
+
+      <Modal
+        v-if="slicing"
+        title="Slice into rooms"
+        @close="slicing = false"
+      >
+        <form
+          class="slice"
+          @submit.prevent="slice"
+        >
+          <p class="hint">
+            Writes each room as its own map, and a world that places them on a grid. This map stays
+            as it is — keep designing on it, or work room by room from now on.
+          </p>
+          <div class="slice-size">
+            <label>
+              <span>Room width</span>
+              <input
+                v-model.number="sliceWidth"
+                type="number"
+                min="1"
+                :max="SCREEN_COLS"
+              >
+            </label>
+            <label>
+              <span>Room height</span>
+              <input
+                v-model.number="sliceHeight"
+                type="number"
+                min="1"
+                :max="SCREEN_ROWS"
+              >
+            </label>
+          </div>
+          <p class="hint">
+            {{ SCREEN_COLS }}×{{ SCREEN_ROWS }} is one screen. Each room is a complete map — its meta-tiles,
+            animations and entities come with it — and rooms need not share a size: the last column and row
+            are as wide and tall as what is left, and any room can be resized later.
+          </p>
+          <label class="inline">
+            <input
+              v-model="sliceSkipEmpty"
+              type="checkbox"
+            >
+            <span>Leave empty rooms out (all tile 0, nothing placed)</span>
+          </label>
+          <p class="hint">
+            {{ sliceGrid.cols }}×{{ sliceGrid.rows }} rooms:
+            <code>{{ sliceTarget }}_r0_c0.map.json</code> … and <code>{{ sliceTarget }}.world.json</code>.
+          </p>
+          <div class="actions">
+            <button
+              type="button"
+              @click="slicing = false"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="primary"
+              :disabled="sliceWidth < 1 || sliceHeight < 1 || sliceWidth > SCREEN_COLS || sliceHeight > SCREEN_ROWS"
+            >
+              Slice
+            </button>
+          </div>
+        </form>
+      </Modal>
     </template>
   </div>
 </template>
@@ -501,6 +613,58 @@ onMounted(() => void resourcesStore.refresh())
 
 .error {
   color: var(--color-error, #f14c4c);
+}
+
+.slice .hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.slice-size {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.slice-size label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.slice-size input {
+  width: 90px;
+  padding: 3px 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+}
+
+.slice .inline {
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.actions button {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+}
+
+.actions button.primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
 }
 
 .zoom {

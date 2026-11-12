@@ -6,11 +6,11 @@
  * size, and the export block Spec 07's converter reads.
  */
 import { computed, ref, watch } from 'vue'
-import { mapExport } from '../../../../shared/msx/map'
+import { mapEntities, mapExport } from '../../../../shared/msx/map'
 import { MODES } from '../../../../shared/msx/modes'
 import { isBanked, MAX_TILES } from '../../../../shared/msx/tile'
 import { defaultExport, type ExportBlock, type ResourceKind } from '../../../../shared/msx/resource'
-import { addLayer, bankSwitchBlocker, commit, doc, fillBankFrom, reloadBank, indexedSummary, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setIndexed, setTileset, setTransparent, switchToBanked, switchToRepeat, toggleLayerVisible, type MapSession } from './session'
+import { addLayer, bankSwitchBlocker, commit, deleteSelectedEntity, doc, entityTypes, selectEntity, setEntityBrush, updateSelectedEntity, fillBankFrom, reloadBank, indexedSummary, painting, reloadTileset, removeLayer, renameLayer, reorderLayer, resize, selectLayer, setBaked, setCell, setIndexed, setTileset, setTransparent, switchToBanked, switchToRepeat, toggleLayerVisible, type MapSession } from './session'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import Icon from '../../components/Icon.vue'
 import MapPaintPanel from './MapPaintPanel.vue'
@@ -68,6 +68,18 @@ const selectedPlacement = computed(() => {
   const ref = placement && mapDoc.value.metas[placement.slot]
   return placement && ref ? { placement, ref } : null
 })
+
+const entities = computed(() => mapEntities(mapDoc.value))
+const selectedEntity = computed(() =>
+  props.session.selectedEntity === null ? null : (entities.value[props.session.selectedEntity] ?? null)
+)
+/** One datalist per tab: an id has to be unique in the page, and every open map has a panel. */
+const typeListId = computed(() => `entity-types-${props.session.path.replace(/[^A-Za-z0-9]/g, '_')}`)
+const entityToolLive = computed(() => props.session.tool === 'entity' && props.session.mode === 'tiles')
+
+function inputValue(event: Event): string {
+  return (event.target as HTMLInputElement).value
+}
 
 const cell = computed(() => mapDoc.value.cell)
 const sc3 = computed(() => cell.value?.sc3 === true)
@@ -295,6 +307,127 @@ const packing = computed(() => {
             ? 'Its tiles are in the grid. It is skipped at runtime, and painting over it drops this record.'
             : 'Drawn at runtime from the placement table, so it can animate.'
         }}
+      </p>
+    </section>
+
+    <section v-if="entityToolLive">
+      <h3>Entities</h3>
+      <p class="hint">
+        Click the map to drop one, drag to move it, <kbd>Delete</kbd> removes it. The type is a name —
+        <code>chest</code>, <code>bat</code> — and becomes an <code>_ENT_</code> define; the param is one
+        byte the game reads its own way.
+      </p>
+      <datalist :id="typeListId">
+        <option
+          v-for="type in entityTypes(session)"
+          :key="type"
+          :value="type"
+        />
+      </datalist>
+      <label>
+        <span>Type to drop</span>
+        <input
+          type="text"
+          spellcheck="false"
+          :list="typeListId"
+          :value="session.entityType"
+          @change="setEntityBrush(session, inputValue($event), session.entityParam)"
+        >
+      </label>
+      <label>
+        <span>Param (0–255)</span>
+        <input
+          type="number"
+          min="0"
+          max="255"
+          :value="session.entityParam"
+          @change="setEntityBrush(session, session.entityType, Number(inputValue($event)))"
+        >
+      </label>
+
+      <template v-if="selectedEntity">
+        <h3 class="sub">
+          Selected
+        </h3>
+        <label>
+          <span>Type</span>
+          <input
+            type="text"
+            spellcheck="false"
+            :list="typeListId"
+            :value="selectedEntity.type"
+            @change="updateSelectedEntity(session, { type: inputValue($event) })"
+          >
+        </label>
+        <div class="size-row">
+          <label>
+            <span>X</span>
+            <input
+              type="number"
+              min="0"
+              :max="mapDoc.width - 1"
+              :value="selectedEntity.x"
+              @change="updateSelectedEntity(session, { x: Number(inputValue($event)) })"
+            >
+          </label>
+          <label>
+            <span>Y</span>
+            <input
+              type="number"
+              min="0"
+              :max="mapDoc.height - 1"
+              :value="selectedEntity.y"
+              @change="updateSelectedEntity(session, { y: Number(inputValue($event)) })"
+            >
+          </label>
+          <label>
+            <span>Param</span>
+            <input
+              type="number"
+              min="0"
+              max="255"
+              :value="selectedEntity.param"
+              @change="updateSelectedEntity(session, { param: Number(inputValue($event)) })"
+            >
+          </label>
+        </div>
+        <button
+          type="button"
+          class="wide"
+          @click="deleteSelectedEntity(session)"
+        >
+          Remove
+        </button>
+      </template>
+
+      <ul
+        v-if="entities.length"
+        class="entity-list"
+      >
+        <li
+          v-for="(entity, index) in entities"
+          :key="index"
+        >
+          <button
+            type="button"
+            :class="{ active: index === session.selectedEntity }"
+            @click="selectEntity(session, index)"
+          >
+            {{ entity.type }} <span class="muted">{{ entity.x }},{{ entity.y }} · {{ entity.param }}</span>
+          </button>
+        </li>
+      </ul>
+      <p
+        v-else
+        class="hint"
+      >
+        No entities yet.
+      </p>
+    </section>
+    <section v-else-if="entities.length">
+      <h3>Entities</h3>
+      <p class="hint">
+        {{ entities.length }} on this map ({{ entityTypes(session).join(', ') }}). The entity tool (the flag) edits them.
       </p>
     </section>
 
@@ -637,6 +770,37 @@ label {
   display: block;
   margin-bottom: 6px;
   font-size: 11px;
+}
+
+h3.sub {
+  margin-top: 10px;
+}
+
+.entity-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.entity-list button {
+  width: 100%;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
+  color: var(--color-text);
+  font-size: 11px;
+  text-align: left;
+}
+
+.entity-list button.active {
+  border-color: var(--color-accent);
+}
+
+.entity-list .muted {
+  color: var(--color-text-muted);
 }
 
 label > span:first-child {

@@ -23,6 +23,7 @@ import { movingCells, refreshMetas, type LoadedMeta } from '../../shared/msx/met
 import { isBanked, isMetaPath, MAX_TILES, type TilesDoc } from '../../shared/msx/tile'
 import { animModesCompatible, animRefFrom, withAnimFrame, type TileAnimDoc } from '../../shared/msx/tile-anim'
 import { swSpriteFamily } from '../../shared/msx/swsprite'
+import { loadedTileset, type LoadedRoom, type LoadedTileset, type WorldDoc } from '../../shared/msx/world'
 
 /** `<msxgl>/tools/MSXtk/bin/MSXimg(.exe)` — MSXgl ships Linux and Windows builds. */
 export function msximgPath(msxglPath: string): string {
@@ -127,6 +128,16 @@ function exportDependencies(root: string, resource: ResourceDoc): string[] {
     const tileset = readTileset(root, resource.doc.tileset)
     if (tileset) paths.push(resource.doc.tileset, ...attached(tileset))
   }
+  // A world embeds its rooms, and each room follows its tileset's renumbering
+  // and says whether that tileset is banked.
+  if (resource.kind === 'world') {
+    for (const path of new Set(resource.doc.cells)) {
+      if (!path) continue
+      paths.push(path)
+      const room = resource.rooms?.get(path)
+      if (room?.doc.tileset) paths.push(room.doc.tileset)
+    }
+  }
   return [...new Set(paths)].map((path) => insideRoot(root, path)).filter((path): path is string => path !== null)
 }
 
@@ -152,6 +163,40 @@ function replayTilesetLog(root: string, resource: ResourceDoc, text: string): vo
     if (resource.kind === 'map') resource.doc = remapTiles(resource.doc, event.mapping, event.bank)
     else resource.doc = remapMetaTiles(resource.doc, event.mapping)
   }
+}
+
+/**
+ * Reads every room a world places, the way a map's own export would see it:
+ * in its tileset's current numbering — and what the world's ready-made C needs
+ * to know about that tileset to load it through its own export. A room that
+ * cannot be read is left out, and `validateWorld` names it.
+ */
+export function loadWorldRooms(root: string, doc: WorldDoc): Map<string, LoadedRoom> {
+  const rooms = new Map<string, LoadedRoom>()
+  const tilesets = new Map<string, LoadedTileset | undefined>()
+  const tilesetOf = (path: string): LoadedTileset | undefined => {
+    if (!tilesets.has(path)) {
+      const tiles = readTileset(root, path)
+      tilesets.set(path, tiles ? loadedTileset(path, tiles) : undefined)
+    }
+    return tilesets.get(path)
+  }
+  for (const path of new Set(doc.cells)) {
+    if (!path) continue
+    const abs = insideRoot(root, path)
+    if (!abs || !existsSync(abs)) continue
+    try {
+      const text = readFileSync(abs, 'utf-8')
+      const parsed = parseResource(path, text)
+      if (parsed.kind !== 'map') continue
+      replayTilesetLog(root, parsed, text)
+      const tileset = parsed.doc.tileset ? tilesetOf(parsed.doc.tileset) : undefined
+      rooms.set(path, { doc: parsed.doc, banked: tileset?.banked === true, ...(tileset ? { tileset } : {}) })
+    } catch {
+      // Unreadable: reported by validation as a room that could not be read.
+    }
+  }
+  return rooms
 }
 
 /** A pattern tileset as its file says, or null when it is not one or cannot be read. */
@@ -448,6 +493,8 @@ export function exportResourceFile(root: string, relative: string, options: Expo
   try {
     const text = readFileSync(sourceAbs, 'utf-8')
     const resource = parseResource(relative, text)
+    // Before the up-to-date check: what a world depends on is its rooms' tilesets.
+    if (resource.kind === 'world') resource.rooms = loadWorldRooms(root, resource.doc)
     const block = resource.doc.export
     if (!block?.out) return { ...base, status: 'skipped', message: 'No export target set.' }
 

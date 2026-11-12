@@ -3,6 +3,8 @@ import { musicHelperC } from '../../shared/msx/music'
 import { normalizeSfx, sfxHelperC } from '../../shared/msx/sfx'
 import { MUSIC_CONFIG } from '../../shared/msxgl-config'
 import { normalizeProject } from '../../shared/msxproj'
+import { normalizeMap } from '../../shared/msx/map'
+import { normalizeWorld, worldHelperC } from '../../shared/msx/world'
 import { agentGuideFiles } from './agent-guide'
 
 const guide = (machine: string): string =>
@@ -37,6 +39,21 @@ describe('agentGuideFiles', () => {
       expect(text).toContain(name)
       expect(text).toContain(value)
     }
+  })
+
+  it('walks a world through the calls its exporter really emits', () => {
+    const text = guide('1')
+    // A world whose one tileset animates, so every helper the guide names is emitted.
+    const world = normalizeWorld({ cols: 1, rows: 1, cells: ['res/a.map.json'] })
+    const tileset = { path: 'res/t.tiles.json', name: 'g_T', header: 'content/t.h', helpers: true, mode: 'sc2', count: 4, banked: false, animated: true }
+    const rooms = new Map([['res/a.map.json', { doc: normalizeMap({ tileset: tileset.path }), tileset }]])
+    const header = worldHelperC(world, rooms, 'g_Over', 'content/over.h').header.join('\n')
+    for (const call of ['g_Over_RoomAt', 'g_Over_Neighbour', 'g_Over_RoomW', 'g_Over_RoomH', 'g_Over_TilesetOf', 'g_Over_RoomEntities', 'g_Over_DoorAt', 'g_Over_LoadTileset', 'g_Over_Animate', 'g_Over_DrawRoom']) {
+      expect(text).toContain(`${call}(`)
+      expect(header).toMatch(new RegExp(`\\b${call}\\(`))
+    }
+    // Every call the guide makes on the world is one of those.
+    for (const [call] of text.matchAll(/\bg_Over_[A-Za-z]+(?=\()/g)) expect(header).toContain(`${call}(`)
   })
 
   it('states the project facts', () => {

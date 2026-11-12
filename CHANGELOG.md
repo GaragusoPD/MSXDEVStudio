@@ -7,6 +7,36 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Entities on maps.** The map editor's new entity tool (the flag) drops typed
+  markers — spawn points, chests, keys, doors, NPCs — each a type name, a cell
+  and a parameter byte. Click to drop, drag to move, Delete to remove; the side
+  panel lists and edits them. A map with entities exports `_Entities` (type, x,
+  y, param) with an `_ENT_` define per type. Maps without entities export
+  exactly what they did, and their files are unchanged.
+- **Worlds (`*.world.json`).** A grid of rooms for flip-screen games, each
+  room an ordinary map of any size that exports and draws itself — live and
+  animated meta-tiles, banked tilesets and all. Rooms side by side connect; an
+  empty cell is a wall; doors connect anything else. The world declares the
+  entity types, so every room numbers its entities alike. It exports
+  navigation only — the grid, neighbours, room sizes, tileset per room, entity
+  lists and doors — and with ready-made C on, `_RoomAt`, `_Neighbour`,
+  `_RoomW`/`_RoomH`, `_TilesetOf`, `_RoomEntities`, `_DoorAt`, and
+  dispatchers that call the rooms' and tilesets' own helpers: `_LoadTileset`
+  (a banked tileset's own `_Load()`), `_Animate`, `_DrawRoom` (a room's own
+  `_DrawLayer` and `_DrawPlacements`). A project can hold any number of
+  worlds. The world editor shows the rooms as thumbnails, has a library of
+  every map in the project with previews to drag onto cells, makes a new empty
+  room and opens it, imports map files from elsewhere, swaps rooms by drag, and
+  lists what the build would refuse and what the ready-made C leaves to the
+  game.
+- **Slice into rooms…** in the map editor cuts a big map into rooms plus a
+  world, so an overworld can be designed on one canvas and shipped as rooms.
+  Each room exports its own C; placements and entities go to the room they are
+  in; the last column and row are as big as what is left; empty rooms can be
+  left out; nothing already there is overwritten.
+
 ## [0.3.6] - 2026-10-25
 
 ### Changed

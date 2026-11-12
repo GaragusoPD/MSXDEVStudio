@@ -34,8 +34,20 @@ import {
   placementCount,
   placementHelperC,
   validateMap,
+  mapEntities,
   type MapDoc
 } from './map'
+import { ENTITY_BYTES, entityBytes, entityIds, entityTypesOf } from './map-entity'
+import {
+  normalizeWorld,
+  validateWorld,
+  worldConstants,
+  worldHelperC,
+  worldNotes,
+  worldTables,
+  type LoadedRoom,
+  type WorldDoc
+} from './world'
 import {
   metaBytes,
   metaCells,
@@ -171,6 +183,7 @@ export type ResourceKind =
   | 'screen'
   | 'sfx'
   | 'music'
+  | 'world'
 
 /**
  * Where new resources are created. Nothing *requires* them to live here — the
@@ -200,7 +213,8 @@ export const RESOURCE_SUFFIXES: Readonly<Record<ResourceKind, string>> = {
   map: '.map.json',
   screen: '.screen.json',
   sfx: '.sfx.json',
-  music: '.music.json'
+  music: '.music.json',
+  world: '.world.json'
 }
 
 /** True for the two meta-tile-set suffixes — the kinds a meta map may reference. */
@@ -222,6 +236,9 @@ export type ResourceDoc =
   | { kind: 'screen'; doc: ScreenDoc }
   | { kind: 'sfx'; doc: SfxDoc }
   | { kind: 'music'; doc: MusicDoc }
+  // The rooms are other files, which `shared/` cannot open: whoever exports a
+  // world reads them first (`main/services/resources.ts`) and hands them in.
+  | { kind: 'world'; doc: WorldDoc; rooms?: ReadonlyMap<string, LoadedRoom> }
 
 /** Which editor owns this path, by suffix. Null for anything else. */
 export function resourceKindOf(path: string): ResourceKind | null {
@@ -293,10 +310,13 @@ export function parseResource(path: string, text: string): ResourceDoc {
       return { kind, doc: normalizeSfx(raw) }
     case 'music':
       return { kind, doc: normalizeMusic(raw) }
+    case 'world':
+      return { kind, doc: normalizeWorld(raw) }
   }
 }
 
 export function serializeResource(resource: ResourceDoc): string {
+  // A world's loaded rooms are never written into it: they are their own files.
   const value = resource.kind === 'sprites' ? serializeSprites(resource.doc) : resource.doc
   return `${JSON.stringify(value, null, 2)}\n`
 }
@@ -336,6 +356,8 @@ export function validateResource(resource: ResourceDoc): string[] {
       return validateSfx(resource.doc)
     case 'music':
       return validateMusic(resource.doc)
+    case 'world':
+      return validateWorld(resource.doc, resource.rooms ?? new Map())
   }
 }
 
@@ -566,8 +588,19 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
           comment: 'Placed meta-tiles: slot | baked<<7, x, y — three bytes each, every layer in order'
         })
       }
+      const entities = mapEntities(resource.doc)
+      if (entities.length) {
+        tables.push({
+          suffix: '_Entities',
+          bytes: entityBytes(entities, entityIds(entityTypesOf(entities))),
+          perLine: ENTITY_BYTES,
+          comment: 'Entities: type, x, y, param — four bytes each, ids from the _ENT_ defines (this map\'s own numbering)'
+        })
+      }
       return tables
     }
+    case 'world':
+      return worldTables(resource.doc, worldRooms(resource))
     case 'screen': {
       const { doc } = resource
       const pixels = screenPixels(doc)
@@ -782,6 +815,11 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
             `atlas ${resource.doc.cell.cols} cells per row (bitmap mode — cells are copied, not indexed)`
         )
       }
+      if (mapEntities(resource.doc).length) {
+        notes.push(
+          `Entities: ${mapEntities(resource.doc).length} (types: ${entityTypesOf(mapEntities(resource.doc)).join(', ')})`
+        )
+      }
       break
     case 'anim': {
       const { doc } = resource
@@ -824,6 +862,9 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
         `Replay rate: ${resource.doc.rate} Hz`
       )
       break
+    case 'world':
+      notes.push(...worldNotes(resource.doc, worldRooms(resource)))
+      break
     case 'music':
       notes.push(
         'Format: lVGM, one table per song (play with MSXgl LibModules "vgm/lvgm_player")',
@@ -844,6 +885,11 @@ export function compressionApplied(resource: ResourceDoc, compress: ExportBlock[
   if (resource.kind === 'map') return mapExport(resource.doc, compress).compressed
   if (resource.kind === 'screen') return screenDataExport(resource.doc, compress).geometry !== undefined
   return false
+}
+
+/** A world's rooms as handed in — none, when the caller could not read files. */
+function worldRooms(resource: ResourceDoc & { kind: 'world' }): ReadonlyMap<string, LoadedRoom> {
+  return resource.rooms ?? new Map()
 }
 
 /**
@@ -925,6 +971,7 @@ function resourceConstants(
     ]
   }
   if (resource.kind === 'swsprites') return swSpriteConstants(resource.doc, name)
+  if (resource.kind === 'world') return worldConstants(resource.doc, worldRooms(resource), name)
   if (resource.kind === 'music') return musicConstants(resource.doc, name)
   if (resource.kind === 'sfx') return sfxConstants(resource.doc, name)
   if (resource.kind === 'map') {
@@ -955,7 +1002,18 @@ function resourceConstants(
         : []),
       // Only when the map names one — there is no index that can be assumed to
       // mean empty, so its absence has to stay visible in the header too.
-      ...(resource.doc.transparent !== null ? [`#define ${prefix}_TRANSPARENT ${resource.doc.transparent}`] : [])
+      ...(resource.doc.transparent !== null ? [`#define ${prefix}_TRANSPARENT ${resource.doc.transparent}`] : []),
+      // The entity table's shape, and an id per type. This map's own numbering:
+      // a world renumbers from its declared list (see `world.ts`).
+      ...(mapEntities(resource.doc).length
+        ? [
+            `#define ${prefix}_ENTITIES ${mapEntities(resource.doc).length}`,
+            `#define ${prefix}_ENTITY_BYTES ${ENTITY_BYTES}`,
+            ...[...entityIds(entityTypesOf(mapEntities(resource.doc)))].map(
+              ([type, id]) => `#define ${prefix}_ENT_${defineName(type)} ${id}`
+            )
+          ]
+        : [])
     ]
   }
   if (resource.kind === 'btiles') {
@@ -1042,7 +1100,8 @@ function resourceCode(
   resource: ResourceDoc,
   name: string,
   compress?: ExportBlock['compress'],
-  doubleBuffer = false
+  doubleBuffer = false,
+  out = ''
 ): HelperC {
   if (resource.kind === 'map') {
     const first = resource.doc.layers[0]
@@ -1086,6 +1145,8 @@ function resourceCode(
     )
   }
   if (resource.kind === 'sfx') return sfxHelperC(resource.doc, name)
+  // Its includes are relative to its own header, so it needs to know where that is.
+  if (resource.kind === 'world') return worldHelperC(resource.doc, worldRooms(resource), name, out)
   // A pattern meta-tile has no tile numbers of its own to draw with: each
   // tileset it is attached to draws it (`_DrawMeta`), and its window is that
   // tileset's `_Animate()`. A bitmap one blits itself out of its atlas.
@@ -1148,7 +1209,7 @@ export function renderResourceFiles(
     notes: resourceNotes(resource, sourceName, block),
     defines: true,
     constants: resourceConstants(resource, name, block.compress, block.doubleBuffer === true),
-    code: block.helpers ? resourceCode(resource, name, block.compress, block.doubleBuffer === true) : undefined
+    code: block.helpers ? resourceCode(resource, name, block.compress, block.doubleBuffer === true, block.out) : undefined
   })
   return { header, source }
 }

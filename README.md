@@ -76,11 +76,25 @@ shipped in 1983.
 
 - **Map editor** with a tile picker, multi-tile stamps, flood fill, layers,
   collision flags, and a screen-size overlay for designing scrolling worlds.
+  An **entity tool** places what a level contains — spawn points, chests, keys,
+  doors — as typed markers with a parameter byte, exported as a table with an
+  id per type.
 
   ![The map editor working in a bitmap mode: a 16x160 canyon laid out from a
   SCREEN 5 atlas, with the 32x24 screen outline showing where one screenful
   ends](docs/images/editor_msx2_bitmap_map_editor.png)
 
+- **World editor** (`*.world.json`) for flip-screen games — a Zelda-style
+  overworld and its dungeons, as many worlds as you like. Each room is an
+  ordinary map of any size that draws itself — live, animated meta-tiles and
+  banked tilesets included — and the world links them: neighbours on the grid,
+  doors for the rest, one list of entity types for every room. A library of
+  every map in the project, with previews, to drag onto the grid; new empty
+  rooms opened straight into the map editor; map files imported from
+  elsewhere. Its ready-made C finds rooms and calls their own helpers:
+  `_LoadTileset()`, `_DrawRoom()`, `_Neighbour()`, `_DoorAt()`.
+  **Slice into rooms…** turns one big map into the rooms and the world, so you
+  can design the overworld on a single canvas and ship it as rooms.
 - **Screen editor** for the MSX2 bitmap modes, converting a PNG into SCREEN 5
   to 8 data with an editable palette, and a full pencil / line / rectangle /
   fill / eyedropper toolset for drawing one from scratch. Drag a rectangle to
