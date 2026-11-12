@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, watch, watchEffect } from 'vue'
 import { runMenuCommand } from './commands'
+import { initMcpBridge } from './mcp-bridge'
 import { useAppStore } from './stores/appStore'
 import { useBuildStore } from './stores/buildStore'
 import { useExamplesStore } from './stores/examplesStore'
@@ -21,6 +22,7 @@ import NewTiledScreenDialog from './components/NewTiledScreenDialog.vue'
 import SheetImportDialog from './components/SheetImportDialog.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import StatusBar from './components/StatusBar.vue'
+import AgentMessages from './components/AgentMessages.vue'
 import Splitter from './components/Splitter.vue'
 
 const appStore = useAppStore()
@@ -42,6 +44,8 @@ let unsubscribeState: (() => void) | undefined
 let unsubscribeProgress: (() => void) | undefined
 
 let unsubscribeMenu: (() => void) | undefined
+
+let unsubscribeMcp: (() => void) | undefined
 
 // theme.css keys the light palette off `:root[data-theme='light']`, so the
 // attribute has to land on <html> — on any element below it the selector never
@@ -65,6 +69,8 @@ function startWorkbench(): void {
   projectStore.init()
   buildStore.init()
   gitStore.init()
+  // After the gate, like the menu: an agent must not act behind it either.
+  unsubscribeMcp = initMcpBridge()
   void toolchainStore.loadStatus()
   // Reopen the last project silently: a moved/deleted folder shouldn't nag on startup.
   if (appStore.lastProject) {
@@ -96,6 +102,7 @@ onUnmounted(() => {
   unsubscribeState?.()
   unsubscribeProgress?.()
   unsubscribeMenu?.()
+  unsubscribeMcp?.()
 })
 </script>
 
@@ -136,6 +143,7 @@ onUnmounted(() => {
         </div>
       </div>
       <StatusBar />
+      <AgentMessages />
       <NewProjectDialog v-if="projectStore.wizardVisible || examplesStore.forkSource" />
       <NewGameDialog v-if="projectStore.gameWizardVisible" />
       <NewTiledScreenDialog v-if="resourcesStore.newScreenVisible" />

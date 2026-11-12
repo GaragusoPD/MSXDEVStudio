@@ -7,13 +7,15 @@ export default defineConfig({
      * shared modules they delegate to. Stores and editor **sessions** are the
      * exception: they hold state and wiring no shared module can reach, and
      * that is exactly where a silent no-op hides (a stroke that reaches a guard
-     * and returns looks identical to a broken canvas).
+     * and returns looks identical to a broken canvas). `mcp-bridge.ts` is the
+     * same kind of thing: wiring between the MCP server and the stores.
      */
     include: [
       'src/shared/**/*.test.ts',
       'src/main/**/*.test.ts',
       'src/renderer/src/stores/**/*.test.ts',
-      'src/renderer/src/editors/**/*.test.ts'
+      'src/renderer/src/editors/**/*.test.ts',
+      'src/renderer/src/mcp-bridge.test.ts'
     ],
     /**
      * One test file at a time. Several suites (`build-service`, `examples`,

@@ -31,7 +31,7 @@ export class ResourceService {
     })
   }
 
-  private list(): ResourceEntry[] {
+  list(): ResourceEntry[] {
     const open = this.projectService.getOpen()
     if (!open) return []
     return findResourceFiles(open.root).map((path) => {
@@ -45,7 +45,7 @@ export class ResourceService {
     })
   }
 
-  private exportOne(path: string, force?: boolean): ConversionResult {
+  exportOne(path: string, force?: boolean): ConversionResult {
     const open = this.projectService.getOpen()
     if (!open) throw new Error('No project is open.')
     return exportResourceFile(open.root, path, { force, configMtimeMs: this.configMtime(open.root, open.projectFile) })

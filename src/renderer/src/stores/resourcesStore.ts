@@ -1,7 +1,15 @@
 import { defineStore } from 'pinia'
 import type { ConversionResult, ResourceEntry } from '../../../shared/ipc'
 import { createMapDoc, SCREEN_COLS, SCREEN_ROWS, stampFresh } from '../../../shared/msx/map'
-import { defaultExport, serializeResource } from '../../../shared/msx/resource'
+import {
+  defaultExport,
+  parseResource,
+  RESOURCE_DIR,
+  RESOURCE_SUFFIXES,
+  serializeResource,
+  type ResourceKind
+} from '../../../shared/msx/resource'
+import { blankConverted } from '../../../shared/msx/screen'
 import { createTilesDoc } from '../../../shared/msx/tile'
 import type { SheetDestination } from '../editors/sheet-import'
 import { useAppStore } from './appStore'
@@ -33,6 +41,38 @@ export const useResourcesStore = defineStore('resources', {
   }),
 
   actions: {
+    /**
+     * Writes a fresh default resource called `name` — or finds the file already
+     * there — and returns its path. The Resources panel's New, and the MCP
+     * server's `create_resource`, are both this. `mode` seeds the kinds that
+     * have one (`normalize*` applies a mode's constraints only on the way in).
+     */
+    async createResource(kind: ResourceKind, name: string, mode?: string): Promise<string> {
+      const base = name.replace(/[^A-Za-z0-9_-]/g, '')
+      if (!base) throw new Error(`"${name}" has no letters or digits to name a file with`)
+      const path = `${RESOURCE_DIR}/${base}${RESOURCE_SUFFIXES[kind]}`
+      if (await window.api.invoke('fs:stat', { path })) return path
+      // A `.meta-tiles.json` is `version: 3`, the one that owns its pixels.
+      const seed =
+        kind === 'metatiles'
+          ? JSON.stringify({ version: 3, ...(mode ? { mode } : {}) })
+          : mode
+            ? JSON.stringify({ mode })
+            : '{}'
+      const resource = parseResource(path, seed)
+      // A screen is born with a canvas. Without one the editor has nothing to draw
+      // on and the only way forward is importing an image, which is exactly the
+      // case this resource is *not* for half the time.
+      if (resource.kind === 'screen') resource.doc.converted = blankConverted(resource.doc.mode)
+      resource.doc.export = defaultExport(path)
+      // `fs:write` doesn't create parent folders, and a project made before this
+      // (or one whose res/ was deleted) hasn't got one. mkdir is idempotent.
+      await window.api.invoke('fs:create', { path: RESOURCE_DIR, kind: 'directory' })
+      await window.api.invoke('fs:write', { path, content: serializeResource(resource) })
+      await this.refresh()
+      return path
+    },
+
     /**
      * Re-lists the project's resources. Called from mounts and watchers with
      * `void`, so a rejection here would be an unhandled one in the console and

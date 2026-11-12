@@ -149,6 +149,42 @@ export interface AppState {
    */
   licenseAccepted: string | null
   preferences: Preferences
+  /** The local MCP server that lets an agent act in the IDE (Spec 17). */
+  mcp: McpSettings
+}
+
+/** Spec 17: the MCP server's settings. Off until the user turns it on. */
+export interface McpSettings {
+  enabled: boolean
+  port: number
+}
+
+/** Spec 17: what the MCP server is doing, for Preferences and the status bar. */
+export interface McpStatus {
+  enabled: boolean
+  port: number
+  /** True once it is listening. */
+  running: boolean
+  /** The URL an MCP client connects to. */
+  url: string
+  /** Why it is not running when it should be — the port is taken, say. */
+  error: string | null
+  /** Requests answered since it started — "is anything connected?" */
+  requests: number
+}
+
+/** Spec 17: a call the MCP server makes into the renderer — see `renderer/src/mcp-bridge.ts`. */
+export interface McpRendererRequest {
+  id: number
+  method: string
+  params: unknown
+}
+
+export interface McpRendererResponse {
+  id: number
+  ok: boolean
+  result?: unknown
+  error?: string
 }
 
 /** The currently open project, as `project:open`/`create`/`save` return it. */
@@ -426,6 +462,14 @@ export interface IpcApi {
   'terminal:resize': { req: { id: string; cols: number; rows: number }; res: void }
   /** Kills the shell and forgets the id — closing a terminal. */
   'terminal:kill': { req: { id: string }; res: void }
+  /** Spec 17: the MCP server's state. */
+  'mcp:status': { req: void; res: McpStatus }
+  /** Spec 17: turns the MCP server on or off, or moves it to another port. */
+  'mcp:configure': { req: Partial<McpSettings>; res: McpStatus }
+  /** Spec 17: the renderer's answer to an `mcp:request`. */
+  'mcp:respond': { req: McpRendererResponse; res: void }
+  /** Spec 17: writes (or updates) the open project's `.mcp.json` so Claude Code finds the server. */
+  'mcp:writeProjectConfig': { req: void; res: { path: string } }
 }
 
 /** Main → renderer push events, subscribed to via `window.api.on`. */
@@ -446,6 +490,10 @@ export interface IpcEvents {
   'terminal:exit': { id: string; code: number }
   /** An application-menu item was clicked — see `MenuCommand`. */
   'menu:command': MenuCommand
+  /** Spec 17: the MCP server needs the renderer — open a tab, list them, show a message. */
+  'mcp:request': McpRendererRequest
+  /** Spec 17: the MCP server started, stopped, failed, or answered a request. */
+  'mcp:statusChanged': McpStatus
 }
 
 /**

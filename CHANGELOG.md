@@ -9,6 +9,21 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **Claude can work in the IDE (MCP).** Preferences ▸ Claude (MCP) starts a
+  local MCP server on `http://127.0.0.1:47811/mcp`; Claude Code connects with
+  one `claude mcp add` command, or through the project's `.mcp.json`, which the
+  same page writes. Twenty-five tools act on the open project, in the user's
+  window:
+  - build and read the problems, export resources, read and write files;
+  - read, write and create resources through the editors' own parser, and
+    preview them;
+  - boot the last build in an openMSX that can be screenshotted, read with
+    `vpeek`/`peek`, driven with keys and typed text, or sent any console command;
+  - list and open tabs, save all, and show the user a message.
+  Writes over unsaved editor changes are refused. Only this computer can
+  connect, and browser requests are refused. It is off until turned on, and a
+  status-bar item shows it is running.
+
 - **Entities on maps.** The map editor's new entity tool (the flag) drops typed
   markers — spawn points, chests, keys, doors, NPCs — each a type name, a cell
   and a parameter byte. Click to drop, drag to move, Delete to remove; the side

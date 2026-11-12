@@ -22,6 +22,7 @@ through the [tutorials](tutorials/README.md) in order.
 | [Building and running](building-and-running.md) | Build, Rebuild and Clean, the Problems panel, incremental builds, and running in openMSX or WebMSX |
 | [Editing and navigating](editing.md) | The workbench, tabs, search, Git, the terminal, and the examples browser |
 | [Keyboard shortcuts](shortcuts.md) | Every binding, in one table |
+| [Working with Claude (MCP)](claude.md) | Let Claude build, edit resources, open files and play the game in openMSX — in the IDE you have open |
 | [Troubleshooting](troubleshooting.md) | Silent emulator audio, blurry pixels, download warnings, build failures |
 
 ## Making the art and the sound

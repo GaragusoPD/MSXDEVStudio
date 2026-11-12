@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import { useAppStore } from '../stores/appStore'
 import { useBuildStore } from '../stores/buildStore'
 import { useGitStore } from '../stores/gitStore'
+import { useMcpStore } from '../stores/mcpStore'
 import { useProblemsStore } from '../stores/problemsStore'
 import { useProjectStore } from '../stores/projectStore'
 import { useTabsStore } from '../stores/tabsStore'
@@ -15,6 +16,17 @@ const gitStore = useGitStore()
 const problemsStore = useProblemsStore()
 const projectStore = useProjectStore()
 const tabsStore = useTabsStore()
+const mcpStore = useMcpStore()
+
+/** Spec 17: shown only once the user has turned the MCP server on, so nobody who never asked for it sees it. */
+const mcpLabel = computed(() => {
+  const status = mcpStore.status
+  if (!status?.enabled) return null
+  if (status.error) return { text: 'Claude: off', title: status.error }
+  return status.running
+    ? { text: 'Claude', title: `MCP server on ${status.url} — ${status.requests} request(s). Click for settings.` }
+    : { text: 'Claude: starting', title: 'The MCP server is starting' }
+})
 
 const projectLabel = computed(() =>
   projectStore.currentProjectPath ? projectStore.currentProjectPath : 'No Project Opened'
@@ -99,6 +111,18 @@ function toggleTheme(): void {
         @click="openProjectSettings"
       >
         {{ targetLabel }}
+      </button>
+      <button
+        v-if="mcpLabel"
+        type="button"
+        class="item button"
+        :title="mcpLabel.title"
+        @click="appStore.preferencesVisible = true"
+      >
+        <Icon
+          name="smart_toy"
+          :size="13"
+        />{{ mcpLabel.text }}
       </button>
       <span
         v-if="buildStore.running"

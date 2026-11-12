@@ -78,6 +78,25 @@ Notable exit codes: **20/30/35/40/50** a tool path is wrong, **110** an unknown
 entry in \`LibModules\`, **500** openMSX has no turbo R C-BIOS machine, **540**
 meisei was asked to run a non-ROM target. On Linux/macOS they arrive mod 256.
 
+### When MSXDEVStudio's MCP tools are connected
+
+If you have tools named \`mcp__msxdevstudio__*\` (the user turned on Preferences ▸
+Claude (MCP) in MSXDEVStudio), you are working **in the IDE the user has
+open**. Prefer them to the shell for these jobs:
+
+- \`build\` instead of \`./build.sh\`: the same build, but the user watches it in
+  the Output panel, and you get the problems back with file and line.
+- \`read_resource\` / \`write_resource\` for anything in \`res/\`: they go through
+  the editors' own parser, fill in missing fields, and report what the export
+  would refuse. They refuse to overwrite a file open with unsaved changes, so
+  ask the user to save it, or call \`save_all\`.
+- \`emulator_start\` after a build, wait ~10 s for C-BIOS, then
+  \`emulator_screenshot\` and \`emulator_peek\` (VRAM: SCREEN 2 name table at
+  0x1800) to *see* the result instead of assuming it. \`emulator_keys\` presses
+  SPACE, the arrows, RETURN…
+- \`open_file\` to show the user what you changed, and \`show_message\` to tell
+  them what you did or what you need.
+
 ## What you may edit, and what is generated
 
 **Yours:**

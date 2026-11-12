@@ -15,6 +15,7 @@ import { extractProjectPath } from './services/launch-args'
 import { menuTemplate } from './menu'
 import { EXTERNAL_DOCS } from './external-docs'
 import { indexMsxglSymbols } from './services/msxgl-symbols'
+import { McpService } from './services/mcp-service'
 import { ProjectService } from './services/project-service'
 import { ResourceService } from './services/resource-service'
 import { StateService } from './services/state-service'
@@ -121,11 +122,29 @@ const buildService = new BuildService({
   msxglPath: () => toolchainService.resolveMsxglPath(),
   nodeOverride: () => toolchainService.nodeOverride(),
   openmsxPath: () => toolchainService.resolveOpenmsxPath(),
-  emit: (channel, payload) => mainWindow?.webContents.send(channel, payload),
+  emit: (channel, payload) => {
+    mainWindow?.webContents.send(channel, payload)
+    // The MCP tools read the same output and problems the user sees.
+    mcpService.observeBuild(channel, payload)
+  },
   openExternal: (url) => shell.openExternal(url)
 })
 ipcMain.handle('build:start', (_e, req: { command: BuildCommand }) => buildService.start(req.command))
 ipcMain.handle('build:kill', () => buildService.kill())
+
+// Spec 17: lets an agent act in the IDE over MCP. Off until the user turns it
+// on in Preferences; `init` starts it once the window is there to answer it.
+const mcpService = new McpService({
+  state: stateService,
+  project: projectService,
+  resources: resourceService,
+  build: buildService,
+  fs: fsService,
+  toolchain: toolchainService,
+  window: () => mainWindow,
+  version: app.getVersion()
+})
+mcpService.registerIpc(ipcMain)
 projectService.onClosed = () => buildService.dispose()
 
 ipcMain.handle('shell:open', (_e, req: { target: string }) =>
@@ -300,6 +319,7 @@ if (gotSingleInstanceLock) {
 
     Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(onMenuCommand)))
     createWindow()
+    void mcpService.init()
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -313,6 +333,7 @@ app.on('window-all-closed', () => {
   void fsService.dispose()
   gitService.dispose()
   terminalService.dispose()
+  void mcpService.dispose()
   if (process.platform !== 'darwin') app.quit()
 })
 
