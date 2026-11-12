@@ -12,7 +12,8 @@ const DEFAULT_STATE: AppState = {
   licenseAccepted: null,
   // null family = the theme's own, so a fresh install looks the way it always
   // did and only a deliberate choice changes it.
-  preferences: { editor: { family: null, size: 13 }, terminal: { family: null, size: 13 } }
+  preferences: { editor: { family: null, size: 13 }, terminal: { family: null, size: 13 } },
+  mcp: { enabled: false, port: 47811 }
 }
 
 /**

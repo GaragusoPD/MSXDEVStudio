@@ -14,7 +14,10 @@ const DEFAULT_STATE: AppState = {
   licenseAccepted: null,
   // null family = the theme's own, so an install with no preferences saved
   // looks exactly as it did before preferences existed.
-  preferences: { editor: { family: null, size: 13 }, terminal: { family: null, size: 13 } }
+  preferences: { editor: { family: null, size: 13 }, terminal: { family: null, size: 13 } },
+  // Off until the user turns it on: a local server that can build and write files
+  // is not something to start unasked.
+  mcp: { enabled: false, port: 47811 }
 }
 
 const SAVE_DEBOUNCE_MS = 300

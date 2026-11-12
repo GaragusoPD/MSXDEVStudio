@@ -84,6 +84,12 @@ shipped in 1983.
   SCREEN 5 atlas, with the 32x24 screen outline showing where one screenful
   ends](docs/images/editor_msx2_bitmap_map_editor.png)
 
+- **Claude can work in the IDE with you** over MCP (off until you turn it on in
+  Preferences). It builds and reads the problems, reads and writes resources
+  through the editors' own logic, opens files in their editors, and runs the
+  game in an openMSX it can screenshot, read VRAM from and press keys in. It
+  works on the project you have open, in your window. See
+  [Working with Claude](docs/claude.md).
 - **World editor** (`*.world.json`) for flip-screen games — a Zelda-style
   overworld and its dungeons, as many worlds as you like. Each room is an
   ordinary map of any size that draws itself — live, animated meta-tiles and

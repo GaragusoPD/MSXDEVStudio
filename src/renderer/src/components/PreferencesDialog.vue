@@ -15,6 +15,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { FontSetting, Preferences } from '../../../shared/ipc'
 import { useAppStore } from '../stores/appStore'
+import { useMcpStore } from '../stores/mcpStore'
+import { useProjectStore } from '../stores/projectStore'
 import Modal from './Modal.vue'
 
 const emit = defineEmits<{ close: [] }>()
@@ -25,7 +27,10 @@ interface Section {
   label: string
 }
 
-const SECTIONS: Section[] = [{ id: 'appearance', label: 'Appearance' }]
+const SECTIONS: Section[] = [
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'claude', label: 'Claude (MCP)' }
+]
 const active = ref(SECTIONS[0].id)
 
 /**
@@ -78,6 +83,44 @@ async function cancel(): Promise<void> {
 }
 
 const changed = computed(() => JSON.stringify(appStore.preferences) !== JSON.stringify(original))
+
+// ── Claude (MCP), Spec 17 ──────────────────────────────────────────────────
+// Applied as toggled, like the fonts — but Cancel does not undo it: starting or
+// stopping a server is an action, not a preview.
+const mcpStore = useMcpStore()
+const projectStore = useProjectStore()
+const mcpStatus = computed(() => mcpStore.status)
+const mcpNote = ref('')
+const claudeCommand = computed(() => `claude mcp add --transport http msxdevstudio ${mcpStatus.value?.url ?? ''}`)
+
+async function setMcpEnabled(enabled: boolean): Promise<void> {
+  mcpNote.value = ''
+  await mcpStore.configure({ enabled })
+}
+
+async function setMcpPort(value: string): Promise<void> {
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    mcpNote.value = 'A port is a whole number from 1024 to 65535.'
+    return
+  }
+  mcpNote.value = ''
+  await mcpStore.configure({ port })
+}
+
+async function copyCommand(): Promise<void> {
+  await navigator.clipboard.writeText(claudeCommand.value)
+  mcpNote.value = 'Copied — paste it into a terminal.'
+}
+
+async function writeProjectConfig(): Promise<void> {
+  try {
+    const { path } = await window.api.invoke('mcp:writeProjectConfig', undefined)
+    mcpNote.value = `Wrote ${path}. Claude Code started in this project will offer to connect.`
+  } catch (error) {
+    mcpNote.value = String(error)
+  }
+}
 
 /** The two surfaces that carry a font today. */
 const FONT_GROUPS: { group: keyof Preferences; label: string; hint: string }[] = [
@@ -189,6 +232,86 @@ function reset(group: keyof Preferences): void {
               :value="family"
             />
           </datalist>
+        </template>
+
+        <template v-else-if="active === 'claude' && mcpStatus">
+          <p class="hint intro">
+            Lets Claude — Claude Code, Claude Desktop, any MCP client on this computer — work in the
+            IDE with you: build and read the problems, read and change resources through the editors'
+            own logic, open files, run the game in an openMSX it can screenshot and read VRAM from,
+            and show you messages. Only this computer can reach it.
+          </p>
+          <section class="group">
+            <h3>Server</h3>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                :checked="mcpStatus.enabled"
+                @change="setMcpEnabled(($event.target as HTMLInputElement).checked)"
+              >
+              <span>Let Claude connect to MSXDEVStudio</span>
+            </label>
+            <div class="row">
+              <label>
+                <span>Port</span>
+                <input
+                  type="number"
+                  min="1024"
+                  max="65535"
+                  :value="mcpStatus.port"
+                  @change="setMcpPort(($event.target as HTMLInputElement).value)"
+                >
+              </label>
+              <p class="mcp-state">
+                <template v-if="mcpStatus.error">
+                  {{ mcpStatus.error }}
+                </template>
+                <template v-else-if="mcpStatus.running">
+                  Listening on <code>{{ mcpStatus.url }}</code> · {{ mcpStatus.requests }} request(s)
+                </template>
+                <template v-else>
+                  Off
+                </template>
+              </p>
+            </div>
+          </section>
+          <section
+            v-if="mcpStatus.enabled"
+            class="group"
+          >
+            <h3>Connect Claude Code</h3>
+            <p class="hint">
+              Once, for every project — run this in a terminal:
+            </p>
+            <div class="row centered">
+              <code class="command">{{ claudeCommand }}</code>
+              <button
+                type="button"
+                class="mcp-button"
+                @click="copyCommand"
+              >
+                Copy
+              </button>
+            </div>
+            <p class="hint">
+              Or only for the open project: write its <code>.mcp.json</code> (the URL only — safe to
+              commit), and Claude Code started there offers to connect.
+            </p>
+            <button
+              type="button"
+              class="mcp-button"
+              :disabled="!projectStore.open"
+              @click="writeProjectConfig"
+            >
+              Add to this project's .mcp.json
+            </button>
+          </section>
+          <p
+            v-if="mcpNote"
+            class="hint"
+          >
+            {{ mcpNote }}
+          </p>
         </template>
       </div>
     </div>
@@ -340,5 +463,55 @@ input[type='number'] {
   border-color: var(--color-accent);
   color: #000;
   font-weight: 600;
+}
+label.toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 8px;
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.mcp-button {
+  padding: 3px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  font-size: 12px;
+}
+
+.mcp-button:disabled {
+  opacity: 0.5;
+}
+
+.group .hint + .row,
+.group .hint + .mcp-button {
+  margin-top: 6px;
+}
+
+.row.centered {
+  align-items: center;
+}
+
+.intro {
+  margin-bottom: 14px;
+}
+
+.mcp-state {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.command {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 </style>

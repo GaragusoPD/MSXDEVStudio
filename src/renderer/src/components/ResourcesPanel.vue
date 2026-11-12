@@ -9,14 +9,10 @@ import type { MaterialSymbol } from '@material-symbols/font-400'
 import {
   RESOURCE_DIR,
   RESOURCE_SUFFIXES,
-  defaultExport,
-  parseResource,
   resourceKindOf,
-  serializeResource,
   type ResourceKind
 } from '../../../shared/msx/resource'
 import { BITMAP_MODES, MODES, TILE_MODES, type ScreenMode } from '../../../shared/msx/modes'
-import { blankConverted } from '../../../shared/msx/screen'
 import { SW_MODES } from '../../../shared/msx/swsprite'
 import { useProjectStore } from '../stores/projectStore'
 import { useResourcesStore } from '../stores/resourcesStore'
@@ -107,32 +103,8 @@ function openResource(path: string): void {
 
 /** Writes a fresh default doc (or just opens an existing file of that name) and its editor tab. */
 async function createResource(): Promise<void> {
-  const base = newName.value.replace(/[^A-Za-z0-9_-]/g, '')
-  if (!base) return
-  const path = `${RESOURCE_DIR}/${base}${RESOURCE_SUFFIXES[newKind.value]}`
-  if (!(await window.api.invoke('fs:stat', { path }))) {
-    // Seeded with the chosen mode rather than patched afterwards: `normalize*`
-    // is what applies a mode's constraints (SCREEN 3 forces an even tile width
-    // and drops the palette), and it only runs on the way in.
-    // A `.meta-tiles.json` is `version: 3`, the one that owns its pixels.
-    const seed =
-      newKind.value === 'metatiles'
-        ? JSON.stringify({ version: 3, mode: newMode.value })
-        : modeOptions.value.length
-          ? JSON.stringify({ mode: newMode.value })
-          : '{}'
-    const resource = parseResource(path, seed)
-    // A screen is born with a canvas. Without one the editor has nothing to draw
-    // on and the only way forward is importing an image, which is exactly the
-    // case this resource is *not* for half the time.
-    if (resource.kind === 'screen') resource.doc.converted = blankConverted(resource.doc.mode)
-    resource.doc.export = defaultExport(path)
-    // `fs:write` doesn't create parent folders, and a project made before this
-    // (or one whose res/ was deleted) hasn't got one. mkdir is idempotent.
-    await window.api.invoke('fs:create', { path: RESOURCE_DIR, kind: 'directory' })
-    await window.api.invoke('fs:write', { path, content: serializeResource(resource) })
-    await resourcesStore.refresh()
-  }
+  if (!newName.value.replace(/[^A-Za-z0-9_-]/g, '')) return
+  const path = await resourcesStore.createResource(newKind.value, newName.value, modeOptions.value.length ? newMode.value : undefined)
   newName.value = ''
   creating.value = false
   openResource(path)
