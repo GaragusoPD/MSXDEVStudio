@@ -52,7 +52,8 @@ const KIND_LABELS: Record<ResourceKind, string> = {
   map: 'map',
   screen: 'screen / playfield',
   sfx: 'sound effects',
-  music: 'music'
+  music: 'music',
+  world: 'world — a grid of rooms'
 }
 
 const label = (kind: string): string => KIND_LABELS[kind as ResourceKind] ?? kind
@@ -71,7 +72,9 @@ const KIND_HELP: Record<ResourceKind, string> = {
   map: 'A grid of tile indices — one screen, or a world to scroll around.',
   screen: 'A picture: import one and convert it, or draw it here. SCREEN 3 and the MSX2 bitmap modes.',
   sfx: 'An ayFX sound-effect bank.',
-  music: 'Background music for the PSG: songs drawn on a piano roll, with ready-made instruments and beats. Plays alongside the sound effects.'
+  music: 'Background music for the PSG: songs drawn on a piano roll, with ready-made instruments and beats. Plays alongside the sound effects.',
+  world:
+    'Flip-screen rooms on a grid — an overworld, its dungeons. Each room is a map; the world adds neighbours, doors and entity types, and exports every room in one header.'
 }
 
 /**
@@ -161,7 +164,8 @@ const KIND_ICONS: Record<ResourceKind, MaterialSymbol> = {
   map: 'map',
   screen: 'image',
   sfx: 'graphic_eq',
-  music: 'music_note'
+  music: 'music_note',
+  world: 'public'
 }
 const kindIcon = (kind: string): MaterialSymbol => KIND_ICONS[kind as ResourceKind] ?? 'draft'
 

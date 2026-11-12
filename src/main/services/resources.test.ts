@@ -11,6 +11,7 @@ import { defaultExport, serializeResource } from '../../shared/msx/resource'
 import { normalizeTileAnim } from '../../shared/msx/tile-anim'
 import { normalizeOwnedMeta } from '../../shared/msx/meta-owned'
 import { normalizeMap } from '../../shared/msx/map'
+import { normalizeWorld } from '../../shared/msx/world'
 import { normalizeSwSprites, type SwMode } from '../../shared/msx/swsprite'
 import { BuildService, type BuildDeps } from './build-service'
 import { createProject, resolveNodeBinary, saveProject, writeGeneratedConfig } from './project'
@@ -342,6 +343,69 @@ describe('meta-tiles that own their pixels, exported from the files alone', () =
     const result = exportResourceFile(root, LEVEL)
     expect(result.status).toBe('failed')
     expect(result.message).toMatch(/is not attached to res\/main\.tiles\.json/)
+  })
+})
+
+describe('worlds, exported from the files alone', () => {
+  /** A one-screen room over `res/hero.tiles.json`, tile `fill` from row 8 down. */
+  function writeRoom(root: string, relative: string, fill: number, extra: object = {}): void {
+    const data = new Array<number>(32 * 24).fill(0).map((_, i) => (i >= 32 * 8 ? fill : 0))
+    const doc = { ...normalizeMap({ tileset: 'res/hero.tiles.json', layers: [{ name: 'background', data }] }), ...extra }
+    writeFileSync(join(root, relative), serializeResource({ kind: 'map', doc }), 'utf-8')
+  }
+
+  function writeWorld(root: string, extra: object = {}): void {
+    const doc = normalizeWorld({
+      cols: 2,
+      rows: 1,
+      cells: ['res/a.map.json', 'res/b.map.json'],
+      entityTypes: ['chest'],
+      export: { name: 'g_Over', format: 'c', out: 'content/over.h', helpers: true, compress: 'rlep' },
+      ...extra
+    })
+    writeFileSync(join(root, 'res/over.world.json'), serializeResource({ kind: 'world', doc }), 'utf-8')
+  }
+
+  it('embeds every room, packed, with the entities numbered by the world', () => {
+    const root = scratch('world')
+    writeTileset(root, 'res/hero.tiles.json')
+    writeRoom(root, 'res/a.map.json', 1)
+    writeRoom(root, 'res/b.map.json', 0, { entities: [{ type: 'chest', x: 3, y: 4, param: 5 }] })
+    writeWorld(root)
+    const result = exportResourceFile(root, 'res/over.world.json')
+    expect(result.status, result.message).toBe('converted')
+    const header = readFileSync(join(root, 'content/over.h'), 'utf-8')
+    const source = readFileSync(join(root, 'content/over.c'), 'utf-8')
+    expect(header).toContain('#define G_OVER_ROOMS 2')
+    expect(header).toContain('#define G_OVER_COMPRESSED 1')
+    expect(header).toContain('#define G_OVER_TILESET_HERO 0')
+    expect(source).toContain('const unsigned char g_Over_Rooms[]')
+    // Room b: one chest — count 1, then type 1 at 3,4 with param 5.
+    expect(source).toMatch(/g_Over_Entities\[\] =\n\{\n\t0x00, 0x01, 0x01, 0x03, 0x04, 0x05,/)
+  })
+
+  it('re-exports when only a room changed', () => {
+    const root = scratch('world-dep')
+    writeTileset(root, 'res/hero.tiles.json')
+    writeRoom(root, 'res/a.map.json', 1)
+    writeRoom(root, 'res/b.map.json', 1)
+    writeWorld(root)
+    expect(exportResourceFile(root, 'res/over.world.json').status).toBe('converted')
+    for (const file of ['res/hero.tiles.json', 'res/a.map.json', 'res/b.map.json', 'res/over.world.json']) backdate(join(root, file), 60)
+    expect(exportResourceFile(root, 'res/over.world.json').status).toBe('skipped')
+    writeRoom(root, 'res/b.map.json', 2)
+    expect(exportResourceFile(root, 'res/over.world.json').status).toBe('converted')
+  })
+
+  it('fails, naming the room, when a room is missing or an entity type is undeclared', () => {
+    const root = scratch('world-bad')
+    writeTileset(root, 'res/hero.tiles.json')
+    writeRoom(root, 'res/a.map.json', 1, { entities: [{ type: 'bat', x: 0, y: 0, param: 0 }] })
+    writeWorld(root)
+    const result = exportResourceFile(root, 'res/over.world.json')
+    expect(result.status).toBe('failed')
+    expect(result.message).toContain('Room 1,0 (res/b.map.json) could not be read')
+    expect(result.message).toContain('"bat" used in rooms but not declared')
   })
 })
 

@@ -3,6 +3,7 @@ import { musicHelperC } from '../../shared/msx/music'
 import { normalizeSfx, sfxHelperC } from '../../shared/msx/sfx'
 import { MUSIC_CONFIG } from '../../shared/msxgl-config'
 import { normalizeProject } from '../../shared/msxproj'
+import { worldHelperC } from '../../shared/msx/world'
 import { agentGuideFiles } from './agent-guide'
 
 const guide = (machine: string): string =>
@@ -37,6 +38,17 @@ describe('agentGuideFiles', () => {
       expect(text).toContain(name)
       expect(text).toContain(value)
     }
+  })
+
+  it('walks a world through the calls its exporter really emits', () => {
+    const text = guide('1')
+    const header = [...worldHelperC('g_Over', true).header, ...worldHelperC('g_Over', false).header].join('\n')
+    for (const call of ['g_Over_RoomAt', 'g_Over_Neighbour', 'g_Over_TilesetOf', 'g_Over_RoomData', 'g_Over_RoomEntities', 'g_Over_DoorAt', 'g_Over_DrawRoom']) {
+      expect(text).toContain(`${call}(`)
+      expect(header).toMatch(new RegExp(`\\b${call}\\(`))
+    }
+    // Every call the guide makes on the world is one of those.
+    for (const [call] of text.matchAll(/\bg_Over_[A-Za-z]+(?=\()/g)) expect(header).toContain(`${call}(`)
   })
 
   it('states the project facts', () => {

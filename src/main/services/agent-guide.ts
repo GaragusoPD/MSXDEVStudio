@@ -109,7 +109,7 @@ So a setting missing from \`project_config.js\` is not unset — it is inherited
 Graphics and sound are authored in the IDE's editors as JSON under \`res/\`
 (\`.tiles.json\`, \`.btiles.json\`, \`.meta-tiles.json\`, \`.meta-btiles.json\`,
 \`.anim-tiles.json\`, \`.sprites.json\`, \`.map.json\`, \`.screen.json\`, \`.sfx.json\`,
-\`.music.json\`) and exported to C in
+\`.music.json\`, \`.world.json\`) and exported to C in
 \`content/\` automatically before every build — a \`.h\` of declarations and a
 \`.c\` of tables, both generated. Edit the \`res/\` file (or the editor), never
 either half of the output.
@@ -477,6 +477,108 @@ VDP_WriteLayout_GM2(g_Map, 0, 0, G_LEVEL_W, G_LEVEL_H);
   (slot + 1, x, y), drawn after it in placing order — x and y two bytes each,
   low first, on a map wider or taller than 256. Where one of two overlapping
   metas is see-through, their order does not matter and nothing extra is spent.
+
+### Entities — what a level contains
+
+A map can carry **entities**: typed markers on cells — spawn points, chests,
+keys, doors, NPCs — placed with the map editor's entity tool (the flag). They
+are not art: the VDP never sees them, and the game decides what each becomes.
+In the \`.map.json\` they are \`"entities": [{ "type": "chest", "x": 4, "y": 9,
+"param": 3 }]\` — a C-identifier type name, a cell, and one byte the game reads
+its own way (which key, which enemy variant). A map with entities exports:
+
+\`\`\`c
+extern const u8 g_Level_Entities[];   // type, x, y, param — 4 bytes each
+#define G_LEVEL_ENTITIES 2            // how many
+#define G_LEVEL_ENTITY_BYTES 4
+#define G_LEVEL_ENT_CHEST 1           // this map's own ids: its types sorted, from 1
+#define G_LEVEL_ENT_KEY 2
+
+for (u8 i = 0; i < G_LEVEL_ENTITIES; i++)
+{
+\tconst u8* e = g_Level_Entities + i * G_LEVEL_ENTITY_BYTES;
+\tif (e[0] == G_LEVEL_ENT_CHEST) SpawnChest(e[1], e[2], e[3]);
+}
+\`\`\`
+
+Always compare against the \`_ENT_\` defines, never a literal: a map's ids are
+its types in name order, so adding a type can renumber the ones after it. A
+**world** numbers them once for every room (below).
+
+### Worlds — flip-screen rooms on a grid (\`*.world.json\`)
+
+A world places ordinary maps, one per grid cell: an overworld, its dungeons.
+Two rooms side by side connect at their edges; an empty cell is a wall.
+**Doors** connect anything else (a cave mouth, stairs). The world declares the
+**entity types**, so \`_ENT_CHEST\` is the same number in every room. Its export
+**embeds every room** — the room maps need no export of their own, and a map
+used in two cells is stored once.
+
+\`\`\`c
+#define G_OVER_ROOMS 12        // room ids 0..11, in grid reading order
+#define G_OVER_ROOM_W 32       // every room's size, and the row it is drawn at
+#define G_OVER_ROOM_H 22
+#define G_OVER_TOP 2           //   (rows above it are free for a HUD)
+#define G_OVER_NONE 0xFF       // "no room" — a wall, an empty cell, no door
+#define G_OVER_NORTH 0         // _EAST 1, _SOUTH 2, _WEST 3
+#define G_OVER_ROOM_FOREST 4   // a define per room, named after its map file
+#define G_OVER_TILESET_CAVE 1  // which tileset a room draws with (_TilesetOf)
+#define G_OVER_ENT_CHEST 1     // the world's entity ids, from 1, for every room
+#define G_OVER_COMPRESSED 1    // only when the rooms are RLEp-packed
+
+// With helpers on:
+u8  g_Over_RoomAt(u8 col, u8 row);           // room id, or G_OVER_NONE
+u8  g_Over_Neighbour(u8 room, u8 dir);       // the room past an edge, or G_OVER_NONE
+u8  g_Over_TilesetOf(u8 room);               // a G_OVER_TILESET_ index
+const u8* g_Over_RoomData(u8 room);          // its name table in _Rooms (packed, if compressed)
+const u8* g_Over_RoomEntities(u8 room);      // [count] then type, x, y, param per entity
+u8  g_Over_DoorAt(u8 room, u8 x, u8 y);      // index into _Doors, or G_OVER_NONE
+void g_Over_DrawRoom(u8 room, u8* buffer);   // packed rooms: unpacks into buffer, then draws
+void g_Over_DrawRoom(u8 room);               // raw rooms: draws straight from ROM
+\`\`\`
+
+\`\`\`c
+u8 g_Room;                               // globals: a room buffer does not fit on the stack
+u8 g_RoomBuffer[G_OVER_ROOM_BYTES];      // packed rooms only — keeps the room's tiles for collision
+
+void EnterRoom(u8 room)
+{
+\tu8 i;
+\tconst u8* e;
+\tg_Room = room;
+\t// Load the tileset when g_Over_TilesetOf(room) changes — the world never loads one.
+\tg_Over_DrawRoom(room, g_RoomBuffer);
+\te = g_Over_RoomEntities(room);
+\tfor (i = 0; i < e[0]; i++)
+\t\tSpawn(e[1 + i * 4], e[2 + i * 4], e[3 + i * 4], e[4 + i * 4]);   // type, x, y, param
+}
+
+// Walking off the east edge:
+u8 next = g_Over_Neighbour(g_Room, G_OVER_EAST);
+if (next != G_OVER_NONE) { EnterRoom(next); playerX = 0; }
+
+// Stepping on a door:
+u8 d = g_Over_DoorAt(g_Room, tileX, tileY);
+if (d != G_OVER_NONE)
+{
+\tconst u8* door = g_Over_Doors + d * G_OVER_DOOR_BYTES;   // room, x, y, to, toX, toY
+\tEnterRoom(door[3]); tileX = door[4]; tileY = door[5];
+}
+\`\`\`
+
+- **Collision reads the room's tiles**, then the tileset's \`_Flags\`: from the
+  buffer for packed rooms (\`g_RoomBuffer[y * G_OVER_ROOM_W + x]\`), or from
+  \`g_Over_RoomData(room)\` for raw ones.
+- **One layer per room** — the world's *layer* setting, or each room's first.
+  Meta-tiles on it must be **baked** (the world carries no placement runtime);
+  an indexed layer cannot be a room. The export refuses either, naming the room.
+- **A banked tileset only works 24 rows tall from row 0**, so a world with a
+  HUD (\`top\` > 0) cannot use one. Unbanked tilesets are fine anywhere.
+- **Packed rooms need \`"compress"\` in LibModules.** All rooms pack or none do;
+  read \`G_OVER_COMPRESSED\` rather than assuming. Raw rooms are 768 bytes
+  each, so a world of more than ~30 raw rooms does not fit a 32 KB ROM.
+- The map editor's **Slice into rooms…** cuts a big map into rooms plus a world
+  — design the overworld on one canvas, ship it as rooms.
 
 ### Animated tiles
 

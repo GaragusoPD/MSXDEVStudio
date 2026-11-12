@@ -937,7 +937,9 @@ describe('sfx resource', () => {
         // only thing it can be missing is the tileset its indices mean anything
         // in. A pattern one owns its pixels and names none.
         metabtiles: ['No tileset referenced'],
-        screen: ['No source image, and nothing drawn yet']
+        screen: ['No source image, and nothing drawn yet'],
+        // A blank world is a grid of empty cells until rooms go in.
+        world: ['The world has no rooms — put a map in at least one cell']
       }
       expect(validateResource(resource)).toEqual(blankStateWarnings[kind] ?? [])
       expect(parseResource(path, serializeResource(resource))).toEqual(resource)

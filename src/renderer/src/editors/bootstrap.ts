@@ -12,6 +12,7 @@ import * as sfx from './sfx/session'
 import * as sprite from './sprite/session'
 import * as swsprite from './swsprites/session'
 import * as tile from './tile/session'
+import * as world from './world/session'
 import AnimTileEditorTab from './anim/AnimTileEditorTab.vue'
 import BitmapTileEditorTab from './btiles/BitmapTileEditorTab.vue'
 import DocsTab from './docs/DocsTab.vue'
@@ -28,6 +29,7 @@ import SpriteEditorTab from './sprite/SpriteEditorTab.vue'
 import SwSpriteEditorTab from './swsprites/SwSpriteEditorTab.vue'
 import TerminalTab from './terminal/TerminalTab.vue'
 import TileEditorTab from './tile/TileEditorTab.vue'
+import WorldEditorTab from './world/WorldEditorTab.vue'
 import { dispose as disposeTerminal } from './terminal/session'
 
 setupMonacoEnvironment()
@@ -186,4 +188,14 @@ registerEditor({
   save: (path) => screen.saveSession(screen.screenSession(path)),
   undo: (path) => screen.undo(screen.screenSession(path)),
   redo: (path) => screen.redo(screen.screenSession(path))
+})
+
+// A grid of rooms, each a `*.map.json`: neighbours, doors and entity types,
+// exported as one header that carries every room (`shared/msx/world.ts`).
+registerEditor({
+  extensions: ['world.json'],
+  component: WorldEditorTab,
+  save: (path) => world.saveSession(world.worldSession(path)),
+  undo: (path) => world.undo(world.worldSession(path)),
+  redo: (path) => world.redo(world.worldSession(path))
 })

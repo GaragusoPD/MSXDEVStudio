@@ -49,6 +49,8 @@ export interface FixtureSpec {
   /** `res/<key>.json` → the resource written there. */
   resources: Record<string, ResourceDoc>
   main: string
+  /** MSXgl library modules beyond the template's — `compress` for RLEp, say. */
+  libModules?: string[]
 }
 
 /**
@@ -87,7 +89,15 @@ export function buildFixture(spec: FixtureSpec): { output: string; root: string 
   writeGeneratedConfig(
     root,
     `${spec.name}.msxproj`,
-    normalizeProject({ name: spec.name, machine: spec.machine, target: 'ROM_32K' }, spec.name),
+    normalizeProject(
+      {
+        name: spec.name,
+        machine: spec.machine,
+        target: 'ROM_32K',
+        ...(spec.libModules ? { libModules: ['system', 'bios', 'vdp', 'print', 'input', 'memory', ...spec.libModules] } : {})
+      },
+      spec.name
+    ),
     generatedSourceModules(root)
   )
 

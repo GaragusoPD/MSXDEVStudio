@@ -20,7 +20,7 @@
  * The keyboard shortcuts live in `MapEditorTab.vue`, on the window, once.
  */
 import { computed, ref, watch, watchEffect } from 'vue'
-import { SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
+import { mapEntities, SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
 import { TILE_SIZE } from '../../../../shared/msx/tile'
 import { MODES } from '../../../../shared/msx/modes'
 import { type Point } from '../../../../shared/map-editor'
@@ -45,8 +45,11 @@ import {
   movePlacementTo,
   painting,
   paintDrag,
+  placeEntityAt,
   placeMetaAt,
+  selectEntityAt,
   selectPlacementAt,
+  updateSelectedEntity,
   setSelection,
   setViewOrigin,
   sheet,
@@ -59,6 +62,8 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 /** Set while a placed meta-tile is being dragged, with the grab offset inside it. */
 let draggingPlacement = false
 let grab: Point | null = null
+/** Set while an entity is being dragged — the entity tool's only drag. */
+let draggingEntity = false
 const rectPreview = ref<Point[]>([])
 
 let origin: Point | null = null
@@ -142,6 +147,13 @@ function onDown(event: PointerEvent): void {
     setSelection(props.session, cell, cell)
     return
   }
+  // The entity tool: a click on an entity picks it up, anywhere else drops a
+  // new one — and either way the drag that follows moves it.
+  if (props.session.tool === 'entity') {
+    if (selectEntityAt(props.session, cell.x, cell.y) === null) placeEntityAt(props.session, cell.x, cell.y)
+    draggingEntity = props.session.selectedEntity !== null
+    return
+  }
   // A meta brush places; otherwise a click on a placed meta selects it and
   // starts a drag, and only a click on bare grid falls through to the tools.
   if (props.session.brushMeta) {
@@ -190,6 +202,10 @@ function onMove(event: PointerEvent): void {
     movePlacementTo(props.session, cell.x - grab.x, cell.y - grab.y)
     return
   }
+  if (draggingEntity) {
+    updateSelectedEntity(props.session, { x: cell.x, y: cell.y })
+    return
+  }
   if (!origin || !last) return
   if (props.session.tool === 'rect') {
     rectPreview.value = rectPoints(origin, cell, props.session.filledRect)
@@ -208,6 +224,10 @@ function onUp(event: PointerEvent): void {
   if (draggingPlacement) {
     draggingPlacement = false
     grab = null
+    return
+  }
+  if (draggingEntity) {
+    draggingEntity = false
     return
   }
   if (selecting) {
@@ -243,6 +263,7 @@ watch(
     rectPreview.value = []
     draggingPlacement = false
     grab = null
+    draggingEntity = false
     selecting = false
     selectAnchor = null
     floatGrab = null
@@ -290,6 +311,49 @@ function pictureCanvas(picture: Picture, rgb: readonly { r: number; g: number; b
   ctx.putImageData(image, 0, 0)
   pictureCache = { picture, canvas: element }
   return element
+}
+
+/** A colour per type, the same every time a type is drawn — a hash, not a table to keep. */
+function entityColor(type: string): string {
+  let hash = 0
+  for (const char of type) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  return `hsl(${hash % 360}, 75%, 55%)`
+}
+
+/**
+ * Entities as markers over everything the map draws: a square with the type's
+ * first letters. Dimmed unless the entity tool is live, so they stay visible
+ * as landmarks while painting without looking clickable.
+ */
+function drawEntities(ctx: CanvasRenderingContext2D, current: ReturnType<typeof displayDoc>, zoom: number): void {
+  const entities = mapEntities(current)
+  if (!entities.length) return
+  const live = props.session.tool === 'entity' && props.session.mode === 'tiles'
+  ctx.save()
+  ctx.globalAlpha = live ? 1 : 0.55
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `bold ${Math.max(7, Math.floor(zoom * 0.45))}px sans-serif`
+  entities.forEach((entity, index) => {
+    const x = entity.x * zoom
+    const y = entity.y * zoom
+    const inset = Math.max(1, Math.floor(zoom * 0.12))
+    ctx.fillStyle = entityColor(entity.type)
+    ctx.fillRect(x + inset, y + inset, zoom - inset * 2, zoom - inset * 2)
+    ctx.strokeStyle = '#000000'
+    ctx.lineWidth = 1
+    ctx.strokeRect(x + inset + 0.5, y + inset + 0.5, zoom - inset * 2 - 1, zoom - inset * 2 - 1)
+    if (zoom >= 12) {
+      ctx.fillStyle = '#000000'
+      ctx.fillText(entity.type.slice(0, 2).toUpperCase(), x + zoom / 2, y + zoom / 2 + 0.5)
+    }
+    if (live && index === props.session.selectedEntity) {
+      ctx.strokeStyle = '#ffd24e'
+      ctx.lineWidth = 2
+      ctx.strokeRect(x + 1, y + 1, zoom - 2, zoom - 2)
+    }
+  })
+  ctx.restore()
 }
 
 const stage = computed(() => {
@@ -364,6 +428,8 @@ watchEffect(() => {
       }
     })
   }
+
+  drawEntities(ctx, current, zoom)
 
   const floating = props.session.float
   if (floating?.kind === 'picture') {

@@ -16,6 +16,7 @@ in your project that an editor owns, and each one exports a C header your game
 | screen | `name.screen.json` | Screen editor | Full-screen MSX2 bitmaps (SCREEN 5–8) |
 | sfx | `name.sfx.json` | SFX editor | ayFX sound effects |
 | music | `name.music.json` | Music editor | Background music for the PSG, drawn on a piano roll |
+| world | `name.world.json` | World editor | Flip-screen rooms on a grid — an overworld, its dungeons — with doors and entity types |
 
 ## Creating and opening
 
@@ -246,6 +247,63 @@ order would draw underneath, costs three bytes more. The side panel says what th
 layer costs. The game expands it
 into a tile map in RAM (`_Expand()`, below) and draws that; animated metas keep
 animating there, including the ones a scrolling view only reaches later.
+
+**Entities** — what a level *contains*, as against what it is drawn with: an
+enemy's spawn point, a chest, a key, a door, an NPC. Pick the map editor's
+**entity tool** (the flag), type a **type** name in the side panel — `chest`,
+`bat` — and a **param**, one byte the game reads its own way (which key, which
+enemy variant), then click the map to drop one. Click an entity to select it,
+drag to move it, **Delete** removes it; the side panel lists them all and edits
+the selected one. They are drawn over the map as coloured markers with the
+type's first letters — dimmed while another tool is live, so they stay visible
+as landmarks. Nothing about them reaches the VDP: the game reads the table and
+decides what each one becomes. A map with entities exports `_Entities` and an
+`_ENT_` define per type (see *Entities* under *Using resources in code*).
+
+**Slice into rooms…** (map editor toolbar) cuts a big map into rooms — one
+screen each by default, or shorter to leave rows for a HUD — and writes them
+beside it as `res/<map>_r<row>_c<col>.map.json`, plus a `res/<map>.world.json`
+that places them. Design the overworld on one canvas, ship it as rooms. The map
+itself is left as it is. Placements go to the room their corner is in (one that
+would hang over a room's edge is left out, and the status line says which);
+entities go to the room they stand in; rooms with nothing in them can be left
+out. It refuses to overwrite rooms or a world already there.
+
+**Worlds** — a `.world.json` is a grid of rooms, each an ordinary map: the
+flip-screen world of a Zelda-like or a metroidvania. Why not one big map? A
+16 KB machine cannot unpack an 8×8-screen map (49 KB of name table) to draw a
+piece of it, and a banked SCREEN 2 tileset only works one screen tall. A room
+unpacks into 768 bytes, gets all three banks to itself, and packs into ROM on
+its own.
+
+In the world editor, click a cell to select it, double-click to open its room —
+or, in an empty cell, to make a new one at the world's room size, over the
+tileset its neighbours use. Drag a room onto another cell to swap them;
+**Delete** empties the selected cell. Rooms side by side connect at their edges
+(the bars between cells show it) and an empty cell is a wall, so an overworld
+and its dungeons can share one grid with a gap between them. The side panel
+holds:
+
+- **Doors** for the selected room — connections adjacency cannot express: a
+  cave mouth to a dungeon's first room, stairs, a warp. Each has a cell in this
+  room, the room it leads to, and where the player arrives.
+- **Grid** — columns and rows, the size every room must be, and the **top**
+  row it is drawn at (rows above it are free for a HUD). **Layer** names the
+  layer of each room that is its name table; empty means each room's first.
+- **Entity types** — the world's list, numbered from 1. Every room's entities
+  are numbered by it, so `_ENT_CHEST` is the same in every room. **Add the
+  types the rooms use** declares whatever the rooms have that the list lacks.
+  Removing a type renumbers the ones after it, so it asks first.
+- **Problems** — what the build would refuse, from the same check the build
+  runs: a room of the wrong size, a missing room, live meta-tiles (bake them —
+  the world carries no placement runtime), an indexed layer, a banked tileset
+  under a HUD, an undeclared entity type, a door into an empty cell.
+- **Export** — the world embeds every room, so the room maps need no export of
+  their own, and a map used in two cells is stored once. *Compress rooms*
+  packs each with RLEp (all or none, like a map's layers).
+
+The editor keeps up with the rooms: save one in its own tab and the grid
+redraws.
 
 **Bitmap meta-tiles** — a `.meta-btiles.json` is the bitmap-mode kind, and
 works differently: it is drawn over one bitmap tileset (`.btiles.json`), holds
@@ -562,6 +620,72 @@ extern const unsigned char g_Level_MetaCellsAt[];   // where each slot starts, 2
 `_Expand()`, below, turns it into a tile map in RAM. The stream stays raw even
 when the map's tile layers are compressed.
 
+### Entities
+
+A map with entities exports one table, four bytes an entity, and an id per type:
+
+```c
+#include "content/level.h"
+
+#define G_LEVEL_ENTITIES 2           // how many
+#define G_LEVEL_ENTITY_BYTES 4
+#define G_LEVEL_ENT_CHEST 1          // this map's own ids: its types, sorted, from 1
+#define G_LEVEL_ENT_KEY 2
+extern const unsigned char g_Level_Entities[];   // type, x, y, param
+
+for (u8 i = 0; i < G_LEVEL_ENTITIES; i++)
+{
+    const u8* e = g_Level_Entities + i * G_LEVEL_ENTITY_BYTES;
+    if (e[0] == G_LEVEL_ENT_CHEST) SpawnChest(e[1], e[2], e[3]);
+}
+```
+
+Compare with the defines, never a literal: a map numbers its types in name
+order, so a new type can renumber the ones after it. In a world, the world's
+list numbers them instead — the same in every room.
+
+### World
+
+The header carries every room and everything that ties them together:
+
+| Table | What it is |
+|---|---|
+| `_Grid` | room id per grid cell, row-major; `0xFF` is no room |
+| `_Neighbours` | per room: the room north, east, south, west — `0xFF` at a wall |
+| `_RoomTileset` | per room: which tileset it draws with (`_TILESET_` defines) |
+| `_RoomOffsets`, `_Rooms` | each room's name table, RLEp-packed when asked |
+| `_EntityOffsets`, `_Entities` | each room's entities: a count, then type, x, y, param |
+| `_Doors` | room, x, y, then the room it leads to and where the player arrives |
+
+Room ids count the grid's rooms in reading order. Each room also gets a define
+named after its map file (`res/forest.map.json` → `G_OVER_ROOM_FOREST`), each
+tileset one (`G_OVER_TILESET_CAVE`), each entity type one (`G_OVER_ENT_CHEST`),
+plus `_ROOM_W`, `_ROOM_H`, `_ROOM_BYTES`, `_TOP`, `_NONE` (0xFF) and
+`_NORTH`/`_EAST`/`_SOUTH`/`_WEST`. `_COMPRESSED` is defined only when the rooms
+really are packed. With **Export ready-made C**:
+
+```c
+#include "msxgl.h"
+#include "content/over.h"
+
+u8 g_RoomBuffer[G_OVER_ROOM_BYTES];      // a global; packed rooms only
+
+g_Over_DrawRoom(room, g_RoomBuffer);     // unpack and draw at row G_OVER_TOP
+// g_Over_DrawRoom(room);                // raw rooms draw straight from ROM
+
+u8 next = g_Over_Neighbour(room, G_OVER_EAST);       // G_OVER_NONE at a wall
+const u8* e = g_Over_RoomEntities(room);             // e[0] = count
+u8 door = g_Over_DoorAt(room, tileX, tileY);         // index into _Doors, or G_OVER_NONE
+u8 tiles = g_Over_TilesetOf(room);                   // load it when it changes
+```
+
+The world never loads a tileset — that is the tileset's own header's job, so
+the game loads one when `g_Over_TilesetOf()` changes. Collision reads the
+room's tiles and the tileset's `_Flags`: from the buffer for packed rooms, from
+`g_Over_RoomData(room)` for raw ones. Packed rooms need the **compress** library
+module. Raw rooms are 768 bytes each, so a large world wants compression to fit
+a 32 KB ROM.
+
 ### Animated tiles
 
 An animation owns its poses — they are tile bytes inside the file, not tiles in
@@ -793,6 +917,11 @@ g_Sfx_Play(G_SFX_JUMP);
 g_Music_PlayJingle(g_Music_Win);
 g_Music_Update();                    // once per frame
 ```
+
+**Worlds** — the room lookups and one draw call: `_RoomAt`, `_Neighbour`,
+`_TilesetOf`, `_RoomData`, `_RoomEntities`, `_DoorAt` and `_DrawRoom` (see
+*World* above). The game keeps the rules — when to change rooms, what an
+entity becomes.
 
 **Sprite groups** — a metasprite, a stack of superposed planes, or both. The
 header defines where each character starts, and one call places the whole group:

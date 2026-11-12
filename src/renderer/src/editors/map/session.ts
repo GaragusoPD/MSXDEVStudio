@@ -42,9 +42,22 @@ import {
   SCREEN_ROWS,
   type MetaRef,
   setPlacementBaked,
+  mapEntities,
+  withEntities,
   type MapCell,
   type MapDoc
 } from '../../../../shared/msx/map'
+import {
+  addEntity,
+  cleanEntityTypeName,
+  entityIndexAt,
+  entityTypesOf,
+  MAX_MAP_ENTITIES,
+  removeEntity,
+  updateEntity,
+  type MapEntity
+} from '../../../../shared/msx/map-entity'
+import { slicedRoomPath, sliceMap, worldFromSlices } from '../../../../shared/msx/world'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
 import {
   BANK_COUNT,
@@ -203,6 +216,11 @@ export interface MapSession {
   brushMeta: string | null
   /** Index into the active layer's `placements` of the selected one, or null. */
   selectedPlacement: number | null
+  /** What the entity tool drops: a type name and its parameter byte. */
+  entityType: string
+  entityParam: number
+  /** Index into the map's `entities` of the selected one, or null. */
+  selectedEntity: number | null
   /** Cells touched by the drag in progress, for the baked-record check on release. */
   paintedPoints: Point[]
   clipboard: Stamp | null
@@ -303,6 +321,9 @@ export function mapSession(path: string): MapSession {
     brushBlock: null,
     brushMeta: null,
     selectedPlacement: null,
+    entityType: 'enemy',
+    entityParam: 0,
+    selectedEntity: null,
     paintedPoints: [],
     clipboard: null,
     pickerActive: 0,
@@ -1010,6 +1031,14 @@ export function metaRowOffsets(session: MapSession, baseRow: number | null, heig
 /** Leaving the select tool puts down whatever floats, so a moved block never outlives the tool that moves it. */
 export function setTool(session: MapSession, tool: MapTool): void {
   if (tool !== 'select') void dropFloat(session)
+  // The entity tool is its own world: a meta brush or a selected placement
+  // would make a click on the grid mean two things.
+  if (tool === 'entity') {
+    session.brushMeta = null
+    session.selectedPlacement = null
+  } else {
+    session.selectedEntity = null
+  }
   session.tool = tool
 }
 
@@ -1021,7 +1050,7 @@ export function pickTile(session: MapSession, index: number, indices: number[], 
   session.brushMeta = null
   // Picking something to paint with is asking to paint: the select tool would
   // turn the next click into a selection instead.
-  if (session.tool === 'select') setTool(session, 'stamp')
+  if (session.tool === 'select' || session.tool === 'entity') setTool(session, 'stamp')
 }
 
 /** The blocks of whichever tileset is loaded. Both kinds carry the same type. */
@@ -2794,7 +2823,7 @@ export function pickMeta(session: MapSession, path: string): void {
   commit(session, next)
   session.brushMeta = path
   session.selectedPlacement = null
-  if (session.tool === 'select') setTool(session, 'stamp')
+  if (session.tool === 'select' || session.tool === 'entity') setTool(session, 'stamp')
 }
 
 /**
@@ -2942,4 +2971,121 @@ function withoutBakedAt(
   // Highest first, so the lower indices stay valid as they are removed.
   for (const index of [...hit].sort((a, b) => b - a)) next = removePlacement(next, layerIndex, index)
   return { doc: next, dropped: hit.size }
+}
+
+// ── entities ───────────────────────────────────────────────────────────────
+
+/** The types already on this map, for the type picker's suggestions. */
+export function entityTypes(session: MapSession): string[] {
+  return entityTypesOf(mapEntities(doc(session)))
+}
+
+/** What the next click drops. The name is cleaned the way it will be stored. */
+export function setEntityBrush(session: MapSession, type: string, param: number): void {
+  session.entityType = cleanEntityTypeName(type)
+  session.entityParam = (Number(param) || 0) & 0xff
+}
+
+export function placeEntityAt(session: MapSession, x: number, y: number): void {
+  const current = doc(session)
+  const list = mapEntities(current)
+  if (list.length >= MAX_MAP_ENTITIES) {
+    session.status = `A map holds at most ${MAX_MAP_ENTITIES} entities.`
+    return
+  }
+  const entity: MapEntity = { type: session.entityType, x, y, param: session.entityParam }
+  commit(session, withEntities(current, addEntity(list, entity)))
+  session.selectedEntity = list.length
+}
+
+/** Selects the topmost entity on a cell, or clears the selection. */
+export function selectEntityAt(session: MapSession, x: number, y: number): number | null {
+  session.selectedEntity = entityIndexAt(mapEntities(doc(session)), x, y)
+  return session.selectedEntity
+}
+
+export function selectEntity(session: MapSession, index: number | null): void {
+  session.selectedEntity = index !== null && index >= 0 && index < mapEntities(doc(session)).length ? index : null
+}
+
+/** Moves or edits the selected entity. Moving it onto a cell outside the map is ignored. */
+export function updateSelectedEntity(session: MapSession, patch: Partial<MapEntity>): void {
+  const index = session.selectedEntity
+  const current = doc(session)
+  const entity = index === null ? undefined : mapEntities(current)[index]
+  if (index === null || !entity) return
+  const x = patch.x ?? entity.x
+  const y = patch.y ?? entity.y
+  if (x < 0 || y < 0 || x >= current.width || y >= current.height) return
+  const next = updateEntity(mapEntities(current), index, patch)
+  if (JSON.stringify(next[index]) === JSON.stringify(entity)) return
+  commit(session, withEntities(current, next))
+}
+
+export function deleteSelectedEntity(session: MapSession): void {
+  const index = session.selectedEntity
+  if (index === null) return
+  commit(session, withEntities(doc(session), removeEntity(mapEntities(doc(session)), index)))
+  session.selectedEntity = null
+}
+
+// ── slicing into rooms ──────────────────────────────────────────────────────
+
+export interface SliceOptions {
+  roomWidth: number
+  roomHeight: number
+  /** Leave rooms with nothing in them out of the world, rather than writing blank files. */
+  skipEmpty: boolean
+}
+
+/**
+ * Cuts this map into one-screen rooms and writes them, plus a world that
+ * places them, beside it: `res/over.map.json` → `res/over_r0_c0.map.json`, … and
+ * `res/over.world.json`. The map itself is left as it is, so it stays the
+ * canvas to design on; slicing again needs the old rooms out of the way first.
+ *
+ * Refuses rather than overwrites when any target exists — a room may have been
+ * painted since the last slice, and silently replacing it would lose that.
+ * Returns the world's path, or null when nothing was written.
+ */
+export async function sliceIntoRooms(session: MapSession, options: SliceOptions): Promise<string | null> {
+  await dropFloat(session)
+  const source = doc(session)
+  const { cols, rows, rooms, warnings } = sliceMap(source, options.roomWidth, options.roomHeight, options.skipEmpty)
+  const paths = rooms.map((room, index) => (room ? slicedRoomPath(session.path, index % cols, Math.floor(index / cols)) : null))
+  const worldPath = session.path.replace(/\.map\.json$/i, '.world.json')
+  for (const path of [...paths, worldPath]) {
+    if (path && (await window.api.invoke('fs:stat', { path }))) {
+      session.status = `${fileOf(path)} already exists — delete or rename the earlier rooms and world first.`
+      return null
+    }
+  }
+  if (!paths.some(Boolean)) {
+    session.status = 'Every room would be empty — there is nothing to slice.'
+    return null
+  }
+  try {
+    for (const [index, room] of rooms.entries()) {
+      const path = paths[index]
+      if (!room || !path) continue
+      // In the tileset's current numbering, exactly as this map is: the rooms
+      // inherit its stamp, so the build and the editor replay what it would.
+      const content: SavedMap = { ...room }
+      if (session.tilesetReorderSeen !== null) content.tilesetReorderSeen = session.tilesetReorderSeen
+      await window.api.invoke('fs:write', { path, content: serializeResource({ kind: 'map', doc: content }) })
+    }
+    const world = worldFromSlices(cols, rows, paths, options.roomWidth, options.roomHeight, entityTypesOf(mapEntities(source)))
+    world.export = defaultExport(worldPath)
+    await window.api.invoke('fs:write', { path: worldPath, content: serializeResource({ kind: 'world', doc: world }) })
+  } catch (error) {
+    session.status = `Couldn't write the rooms: ${String(error)}`
+    return null
+  }
+  await useResourcesStore().refresh()
+  const written = paths.filter(Boolean).length
+  session.status =
+    `Sliced into ${written} room${written === 1 ? '' : 's'} on a ${cols}×${rows} grid — ${fileOf(worldPath)}.` +
+    (warnings.length ? ` ${warnings.length} meta-tile${warnings.length === 1 ? '' : 's'} crossed a room edge and ${warnings.length === 1 ? 'was' : 'were'} left out: ${warnings.join('; ')}` : '')
+  useTabsStore().openFile(worldPath, fileOf(worldPath))
+  return worldPath
 }

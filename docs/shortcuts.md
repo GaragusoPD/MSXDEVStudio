@@ -34,7 +34,8 @@ trigger them.
 | `Ctrl+Z` | Undo |
 | `Ctrl+Y` or `Ctrl+Shift+Z` | Redo |
 | `Ctrl+C` / `Ctrl+V` | Copy and paste the selection — tile and map editors |
-| `Delete` / `Backspace` | Clear the selected cells — map editor |
+| `Delete` / `Backspace` | Clear the selected cells — map editor (with the entity tool: remove the selected entity) |
+| `Delete` / `Backspace` | Empty the selected cell — world editor |
 | `Escape` | Drop the selection — map editor |
 | `Space` | Play or stop the current effect — SFX editor |
 | `P` | Play the effect from the start — SFX editor |
@@ -58,6 +59,9 @@ Each editor keeps its own undo history, and it survives switching tabs.
 | `Shift`+click | Extend the tile selection |
 | `Alt`+drag a tile onto another | Reorder the bank; maps and blocks follow |
 | Click, or `Shift`+click / drag | Pick one tile, or a multi-tile stamp — map editor |
+| Click / drag with the entity tool | Drop an entity, or pick one up and move it — map editor |
+| Click / double-click a cell | Select it / open its room, or make one in an empty cell — world editor |
+| Drag a room onto another cell | Swap the two — world editor |
 | Drag with the cut tool | Name a fragment — screen editor |
 
 ## In the code editor

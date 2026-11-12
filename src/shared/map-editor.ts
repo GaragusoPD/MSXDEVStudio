@@ -122,8 +122,12 @@ export function eraseCells(doc: MapDoc, layerIndex: number, points: readonly Poi
 
 // ── tools → the cells they touch ────────────────────────────────────────────
 
-/** `select` drags a rectangle and moves it — see `shared/floating.ts`; the others paint. */
-export type MapTool = 'stamp' | 'fill' | 'rect' | 'erase' | 'select'
+/**
+ * `select` drags a rectangle and moves it — see `shared/floating.ts`; `entity`
+ * places and moves entities (`map-entity.ts`) and never touches a cell; the
+ * others paint.
+ */
+export type MapTool = 'stamp' | 'fill' | 'rect' | 'erase' | 'select' | 'entity'
 
 /**
  * `from` is the drag origin (or previous drag sample), `to` the current cell.

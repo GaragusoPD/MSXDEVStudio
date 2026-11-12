@@ -17,6 +17,7 @@ import type { MetaTileDoc } from './meta-tile'
 import type { OwnedMetaDoc } from './meta-owned'
 import type { MetaBinding } from './tile'
 import type { ExportBlock } from './resource'
+import { entitiesWithin, entityProblems, normalizeEntities, type MapEntity } from './map-entity'
 
 
 export interface MapLayer {
@@ -175,6 +176,12 @@ export interface MapDoc {
    */
   transparent: number | null
   layers: MapLayer[]
+  /**
+   * Typed markers — spawn points, chests, doors — for the game to read
+   * (`map-entity.ts`). Not art: nothing here is drawn by the VDP. Absent when
+   * empty, so every map written before entities existed round-trips unchanged.
+   */
+  entities?: MapEntity[]
   export: ExportBlock | null
 }
 
@@ -225,6 +232,7 @@ export function normalizeMap(raw: unknown): MapDoc {
 
 
   const cell = normalizeCell(input.cell)
+  const entities = normalizeEntities(input.entities, width, height)
   return {
     version: 1,
     tileset: String(input.tileset ?? ''),
@@ -232,10 +240,27 @@ export function normalizeMap(raw: unknown): MapDoc {
     height,
     cell,
     transparent: normalizeTransparent(input.transparent, cell),
-      metas,
+    metas,
     layers,
+    // Written only when there are some, ahead of `export` as every key is.
+    ...(entities.length ? { entities } : {}),
     export: input.export ?? null
   }
+}
+
+/** The map's entities — an empty list for a map that has none. */
+export function mapEntities(doc: MapDoc): MapEntity[] {
+  return doc.entities ?? []
+}
+
+/**
+ * Replaces the map's entities. An empty list removes the key, so a map whose
+ * last entity is deleted saves exactly as one that never had any.
+ */
+export function withEntities(doc: MapDoc, entities: readonly MapEntity[]): MapDoc {
+  const { entities: _old, ...rest } = doc
+  void _old
+  return entities.length ? { ...rest, entities: [...entities] } : rest
 }
 
 /**
@@ -353,7 +378,8 @@ export function resizeMap(doc: MapDoc, width: number, height: number): MapDoc {
     // agree with that now than to save a file that changes when reopened.
     return { ...layer, data, placements: layer.placements.filter((p) => p.x < width && p.y < height) }
   })
-  return { ...doc, width, height, layers }
+  // Entities follow the rule placements do, for the same reason.
+  return withEntities({ ...doc, width, height, layers }, entitiesWithin(mapEntities(doc), width, height))
 }
 
 /**
@@ -434,6 +460,7 @@ export function validateMap(doc: MapDoc, options: { banked?: boolean } = {}): st
   }
 
   problems.push(...indexedLayerProblems(doc))
+  problems.push(...entityProblems(mapEntities(doc)))
 
   // A placement's *origin* is inside the grid — `placeMeta` and
   // `normalizePlacements` both enforce that — but its far edge need not be, and
