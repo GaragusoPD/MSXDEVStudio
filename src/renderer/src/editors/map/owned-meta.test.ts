@@ -35,6 +35,7 @@ import {
 } from '../tile/session'
 import { animSession, findAttachments, pruneAnimSessions, removeFromTileset } from '../anim/session'
 import {
+  deselectMetas,
   doc,
   indexedSummary,
   mapSession,
@@ -250,6 +251,17 @@ describe('placing one on a map', () => {
     const data = doc(session).layers[0].data
     expect(data[3 * 8 + 2]).toBe(4)
     expect(data[3 * 8 + 3]).toBe(0)
+  })
+
+  it('lets go of the brush and the placed meta on Esc, so the next click paints tiles', async () => {
+    const session = await open(() => mapSession(MAP))
+    pickMeta(session, ROCK)
+    placeMetaAt(session, 2, 3)
+    expect(session.selectedPlacement).toBe(0)
+    deselectMetas(session)
+    expect(session.brushMeta).toBeNull()
+    expect(session.selectedPlacement).toBeNull()
+    expect(doc(session).layers[0].placements).toHaveLength(1)
   })
 
   it('follows the meta when it is saved, through the tileset', async () => {

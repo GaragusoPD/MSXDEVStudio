@@ -2885,6 +2885,13 @@ export function selectPlacementAt(session: MapSession, x: number, y: number): nu
   return session.selectedPlacement
 }
 
+/** Esc: lets go of the meta brush, a selected placement and a selected entity. The cell marquee is `clearSelection`'s. */
+export function deselectMetas(session: MapSession): void {
+  session.brushMeta = null
+  session.selectedPlacement = null
+  session.selectedEntity = null
+}
+
 export function movePlacementTo(session: MapSession, x: number, y: number): void {
   if (session.selectedPlacement === null) return
   commit(session, movePlacement(doc(session), session.activeLayer, session.selectedPlacement, x, y))
