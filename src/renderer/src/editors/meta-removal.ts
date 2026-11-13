@@ -22,7 +22,7 @@
  */
 
 import { normalizeMap, removeMetaRef, type MapDoc } from '../../../shared/msx/map'
-import type { RemovedMeta } from '../../../shared/msx/meta-owned'
+import { removeMeta, type RemovedMeta } from '../../../shared/msx/meta-owned'
 import { replayReorders, samePath } from '../../../shared/map-editor'
 import { serializeResource } from '../../../shared/msx/resource'
 import { emitTilesReordered, type TilesReorderEvent } from '../../../shared/tile-editor'
@@ -162,7 +162,7 @@ export async function removeMetaFromTileset(
   const names = uses.map((use) => fileName(use.path)).join(', ')
   const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
   if (
-    uses.length &&
+    placements &&
     !confirmed &&
     !window.confirm(
       `Remove ${fileName(meta)} from ${fileName(tileset)}? ${names} ${uses.length === 1 ? 'uses' : 'use'} it, and ` +
@@ -212,7 +212,7 @@ export async function removeMetaFromTileset(
   }
 
   const removed = uses.length
-    ? ` and ${placements ? `${plural(placements, 'placement')} from` : 'it from'} ${names}`
+    ? ` and ${placements ? `${plural(placements, 'placement')} from` : 'from'} ${names}`
     : ''
   const tiles = result.removed
     ? ` ${plural(result.removed, 'tile')} went with it; the other tiles renumbered to match.`
@@ -221,4 +221,45 @@ export async function removeMetaFromTileset(
       : ' Its tiles stay — something else still shows them.'
   const problem = failed.length ? ` Couldn't write ${failed.join(', ')} — fix it there by hand.` : ''
   return `Removed ${fileName(meta)} from ${fileName(tileset)}${removed}.${tiles}${problem}`
+}
+
+/**
+ * The removal for an editor that is not the tileset's own tab — the meta's
+ * pose editor, a map's meta picker: holds the tileset through the store for
+ * the duration, and saves it with the removal unless it already had unsaved
+ * edits. The store hears it from `meta`, so every other holder — an open map
+ * included — adopts the new tileset. Returns the status line, or null when
+ * the user declined.
+ */
+export async function removeMetaThroughStore(tileset: string, meta: string): Promise<string | null> {
+  const store = useTilesetStore()
+  try {
+    await store.load(tileset)
+  } catch (error) {
+    store.release(tileset)
+    return `Couldn't open ${tileset}: ${String(error)}`
+  }
+  try {
+    const wasDirty = store.isDirty(tileset)
+    const status = await removeMetaFromTileset(
+      tileset,
+      meta,
+      (used) => {
+        const current = store.patternDoc(tileset)
+        const result = current && removeMeta(current, meta, used)
+        if (!current || !result || result.doc === current) return null
+        store.set(tileset, result.doc, meta)
+        return result
+      },
+      { persist: !wasDirty }
+    )
+    if (status === null) return null
+    if (wasDirty) return `${status} ${fileName(tileset)} has other unsaved edits — save it to keep this.`
+    if (store.isDirty(tileset)) await store.save(tileset)
+    return status
+  } catch (error) {
+    return `Couldn't save ${tileset}: ${String(error)}`
+  } finally {
+    store.release(tileset)
+  }
 }

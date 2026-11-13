@@ -24,7 +24,7 @@
 
 import { shallowReactive } from 'vue'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
-import { isOwnedMeta, removeMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
+import { isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import {
   animDocCells,
   colorsVary,
@@ -49,9 +49,8 @@ import { parseResource, resourceKindOf, serializeResource } from '../../../../sh
 import { samePath } from '../../../../shared/map-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
-import { useTilesetStore } from '../../stores/tilesetStore'
 import { watchResourceFile } from '../external-changes'
-import { removeMetaFromTileset } from '../meta-removal'
+import { removeMetaThroughStore } from '../meta-removal'
 import { emitAnimSaved } from './events'
 
 /** Either file this editor opens. */
@@ -226,40 +225,9 @@ export async function findAttachments(session: AnimSession): Promise<void> {
  */
 export async function removeFromTileset(session: AnimSession, tileset: string): Promise<void> {
   if (session.kind !== 'metatiles') return
-  const store = useTilesetStore()
-  try {
-    await store.load(tileset)
-  } catch (error) {
-    store.release(tileset)
-    session.status = `Couldn't open ${tileset}: ${String(error)}`
-    return
-  }
-  try {
-    const wasDirty = store.isDirty(tileset)
-    const status = await removeMetaFromTileset(
-      tileset,
-      session.path,
-      (used) => {
-        const current = store.patternDoc(tileset)
-        const result = current && removeMeta(current, session.path, used)
-        if (!current || !result || result.doc === current) return null
-        store.set(tileset, result.doc, session.path)
-        return result
-      },
-      { persist: !wasDirty }
-    )
-    if (status === null) return
-    if (wasDirty) {
-      session.status = `${status} ${tileset.split('/').pop()} has other unsaved edits — save it to keep this.`
-    } else {
-      if (store.isDirty(tileset)) await store.save(tileset)
-      session.status = status
-    }
-  } catch (error) {
-    session.status = `Couldn't save ${tileset}: ${String(error)}`
-  } finally {
-    store.release(tileset)
-  }
+  const status = await removeMetaThroughStore(tileset, session.path)
+  if (status === null) return
+  session.status = status
   await findAttachments(session)
 }
 
