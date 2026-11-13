@@ -83,7 +83,7 @@ import { MAX_META_SIZE, normalizeMetaTile, type MetaTileDoc } from '../../../../
 import { isOwnedMeta, normalizeOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import { animModesCompatible } from '../../../../shared/msx/tile-anim'
 import { onAnimSaved } from '../anim/events'
-import { onMetaRemoved, provideOpenMaps } from '../meta-removal'
+import { onMetaRemoved, provideOpenMaps, removeMetaThroughStore } from '../meta-removal'
 import {
   paintGrid,
   sameEntry,
@@ -2868,6 +2868,19 @@ function attachOwnedMeta(session: MapSession, path: string): boolean {
   return true
 }
 
+/**
+ * Takes an attached meta off this map's tileset — the picker's right-click
+ * Remove, the undo for an attach. The same removal as the tile and pose
+ * editors': every map drawn with the tileset drops it (this one through
+ * `onMetaRemoved`), and the map adopts the new tileset from the store.
+ */
+export async function removeMetaFile(session: MapSession, path: string): Promise<void> {
+  const tileset = doc(session).tileset
+  if (!tileset || !session.tileset?.metas.some((binding) => samePath(binding.path, path))) return
+  const status = await removeMetaThroughStore(tileset, path)
+  if (status !== null) session.status = status
+}
+
 export function placeMetaAt(session: MapSession, x: number, y: number): void {
   const path = session.brushMeta
   if (!path) return
@@ -2883,6 +2896,13 @@ export function placeMetaAt(session: MapSession, x: number, y: number): void {
 export function selectPlacementAt(session: MapSession, x: number, y: number): number | null {
   session.selectedPlacement = placementAt(doc(session), session.activeLayer, x, y)
   return session.selectedPlacement
+}
+
+/** Esc: lets go of the meta brush, a selected placement and a selected entity. The cell marquee is `clearSelection`'s. */
+export function deselectMetas(session: MapSession): void {
+  session.brushMeta = null
+  session.selectedPlacement = null
+  session.selectedEntity = null
 }
 
 export function movePlacementTo(session: MapSession, x: number, y: number): void {

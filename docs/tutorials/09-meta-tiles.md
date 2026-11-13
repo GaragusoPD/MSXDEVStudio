@@ -103,28 +103,28 @@ Two ways, and they do the same thing:
 
 - In the **tile editor**, the side panel's *Meta-tiles* section: pick the meta,
   press **Attach**. The status line says which tiles move, if any.
-- On a **map**, just place it (below): a meta that is not attached to the map's
-  tileset yet is attached when you pick it.
+- On a **map**, double-click it in the meta-tile picker (below), or right-click
+  it ▸ **Attach**.
 
 ### Removing it
 
-The unlink button beside it in the tile editor's list — or beside the tileset in
-the meta's own *Attached to* list — removes it from that tileset. A map cannot
-place a meta its tileset does not have, so every map drawn with the tileset loses
-it too: the editor asks first, naming them, then takes it off each one — an open
-map as one undoable edit, a closed one rewritten on disk.
+The unlink button beside it in the tile editor's list, beside the tileset in the
+meta's own *Attached to* list, or right-click ▸ **Remove from** in a map's
+meta-tile picker removes it from that tileset. A map cannot place a meta its
+tileset does not have, so every map drawn with the tileset loses it too: when a
+map places it, the editor asks first, naming them, then takes it off each one —
+an open map as one undoable edit, a closed one rewritten on disk.
 
-Its tiles stay in the tileset as ordinary art, so nothing else drawn with them
-changes, and a baked copy leaves its cells in the grid. A map's **Remove unused
-tiles** reclaims the ones nothing uses any more.
+Its tiles go with it, except those something else still shows — a map's grid,
+a block, another meta — and a baked copy leaves its cells in the grid.
 
 ## Placing one on a map
 
 Open a map. The left sidebar is two pickers: **tiles above, meta-tiles below**.
 Every meta-tile in the tileset's mode is offered; a dashed one is not attached
-yet, and picking it attaches it.
+yet — double-click it to attach it.
 
-Pick one and click. Click a placed meta to select it, drag to move it, Delete to
+Pick one and click. Esc lets go of it. Click a placed meta to select it, drag to move it, Delete to
 remove it.
 
 ### Live or baked

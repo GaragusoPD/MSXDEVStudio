@@ -34,6 +34,7 @@ import {
   deleteSelectedEntity,
   deleteSelectedPlacement,
   deleteSelection,
+  deselectMetas,
   doc,
   dropFloat,
   mapSession,
@@ -168,8 +169,12 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     void dropFloat(active)
   } else if (event.key === 'Escape') {
+    // A float first, as Delete does; otherwise everything selected goes at once.
     if (active.float) cancelFloat(active)
-    else if (cells) clearSelection(active)
+    else {
+      deselectMetas(active)
+      if (cells) clearSelection(active)
+    }
   } else if (event.key === 'Delete' || event.key === 'Backspace') {
     // A selected meta-tile first: it is the more specific of the two things
     // a Delete could mean, and the one the user clicked last.

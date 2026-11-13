@@ -35,6 +35,7 @@ import {
 } from '../tile/session'
 import { animSession, findAttachments, pruneAnimSessions, removeFromTileset } from '../anim/session'
 import {
+  deselectMetas,
   doc,
   indexedSummary,
   mapSession,
@@ -43,6 +44,7 @@ import {
   pickMeta,
   placeMetaAt,
   pruneMapSessions,
+  removeMetaFile as removeMapMeta,
   selectPlacementAt,
   setBaked,
   saveSession as saveMap,
@@ -252,6 +254,17 @@ describe('placing one on a map', () => {
     expect(data[3 * 8 + 3]).toBe(0)
   })
 
+  it('lets go of the brush and the placed meta on Esc, so the next click paints tiles', async () => {
+    const session = await open(() => mapSession(MAP))
+    pickMeta(session, ROCK)
+    placeMetaAt(session, 2, 3)
+    expect(session.selectedPlacement).toBe(0)
+    deselectMetas(session)
+    expect(session.brushMeta).toBeNull()
+    expect(session.selectedPlacement).toBeNull()
+    expect(doc(session).layers[0].placements).toHaveLength(1)
+  })
+
   it('follows the meta when it is saved, through the tileset', async () => {
     const session = await open(() => mapSession(MAP))
     pickMeta(session, ROCK)
@@ -397,6 +410,48 @@ describe('removing one from a tileset', () => {
     expect(tiles.doc.metas).toHaveLength(1)
     expect(doc(map).layers[0].placements).toHaveLength(2)
     expect(files[OTHER]).toBe(before)
+  })
+
+  it('from the map’s meta picker: undoes an accidental attach without asking, and offers it to attach again', async () => {
+    const map = await open(() => mapSession(MAP))
+    pickMeta(map, ROCK)
+    expect(useTilesetStore().patternDoc(TILES)!.count).toBe(5)
+    await removeMapMeta(map, ROCK)
+    // Nothing was placed, so nothing is lost: no question.
+    expect(window.confirm).not.toHaveBeenCalled()
+    const tileset = useTilesetStore().patternDoc(TILES)!
+    expect(tileset.metas).toEqual([])
+    expect(tileset.count).toBe(4)
+    expect(map.tileset).toBe(tileset)
+    expect(map.metaDocs.has(ROCK)).toBe(false)
+    expect(unattachedMetas(map)).toEqual([ROCK])
+    expect(doc(map).metas).toEqual([])
+    expect(map.brushMeta).toBeNull()
+  })
+
+  it('from the map’s meta picker: on a saved tileset, takes it off every map and saves the pair', async () => {
+    const { map } = await setUp()
+    await saveMap(map)
+    pruneTileSessions(new Set())
+    await removeMapMeta(map, ROCK)
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/its 3 placements go with it/))
+    expect(JSON.parse(files[TILES]).metas ?? []).toEqual([])
+    expect(doc(map).layers[0].placements).toEqual([])
+    expect(normalizeMap(JSON.parse(files[OTHER])).metas).toEqual([])
+    await settled()
+    expect(map.dirty).toBe(false)
+    expect(normalizeMap(JSON.parse(files[MAP])).metas).toEqual([])
+    expect(map.status).toMatch(/^Removed rock\.meta-tiles\.json from main\.tiles\.json and 3 placements from level\.map\.json, other\.map\.json\./)
+    expect(unattachedMetas(map)).toEqual([ROCK])
+  })
+
+  it('from the map’s meta picker: asks when a map places it, and changes nothing when declined', async () => {
+    const { map } = await setUp()
+    ;(window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false)
+    await removeMapMeta(map, ROCK)
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/its 3 placements go with it/))
+    expect(useTilesetStore().patternDoc(TILES)!.metas).toHaveLength(1)
+    expect(doc(map).layers[0].placements).toHaveLength(2)
   })
 
   it('from the meta-tile’s own editor: saves the tileset and the clean open map, and lists it no more', async () => {

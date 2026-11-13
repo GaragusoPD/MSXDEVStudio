@@ -3,20 +3,45 @@
  * The map sidebar's lower half: the meta-tiles this map can place.
  *
  * On a pattern map, every meta-tile in a mode the map's tileset can show is
- * offered — attached there already, or attached by picking it. On a bitmap map,
- * only the bitmap metas made of *its* tileset's tiles: their cells are tile
- * indices, which would name other art anywhere else.
+ * offered — attached there already, or attached by a double-click. On a bitmap
+ * map, only the bitmap metas made of *its* tileset's tiles: their cells are
+ * tile indices, which would name other art anywhere else.
  *
- * Picking one arms the brush; the next click on the canvas places it.
+ * Picking an attached one arms the brush; the next click on the canvas places
+ * it. Attaching changes the tileset, so it takes a double-click (or the
+ * right-click menu), and the right-click menu's Remove takes it back.
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import ContextMenu, { type ContextMenuItem } from '../../components/ContextMenu.vue'
+import { toDataUrl } from '../../components/resource-thumbnails'
+import { paletteToRgb } from '../../../../shared/msx/palette'
+import { thumbnailOf } from '../../../../shared/msx/thumbnail'
+import { useTabsStore } from '../../stores/tabsStore'
 import { metaThumbnail } from './sheet'
-import { doc, metaRowOffsets, pickMeta, sheet, unattachedMetas, type MapSession } from './session'
+import { doc, metaRowOffsets, pickMeta, removeMetaFile, sheet, unattachedMetas, type MapSession } from './session'
 
 const props = defineProps<{ session: MapSession }>()
+const tabsStore = useTabsStore()
 
 const metas = computed(() => [...props.session.metaDocs.entries()])
 const attachable = computed(() => unattachedMetas(props.session))
+
+/**
+ * An unattached meta has no tiles in the tileset yet, so it is drawn from its
+ * own poses, in the tileset's palette — seeing it is how the user decides
+ * whether to attach it.
+ */
+const ownThumbnails = computed(() => {
+  const tileset = props.session.tileset
+  const urls = new Map<string, string>()
+  for (const path of attachable.value) {
+    const meta = props.session.ownedMetas.get(path)
+    const thumb = meta && tileset && thumbnailOf({ kind: 'metatiles', doc: meta })
+    const url = thumb && toDataUrl({ ...thumb, rgb: paletteToRgb(tileset.palette) })
+    if (url) urls.set(path, url)
+  }
+  return urls
+})
 
 /**
  * Frame 0 as a data URL, composed from the tileset's own sheet. No placement
@@ -34,6 +59,26 @@ function thumbnail(path: string): string {
 function label(path: string): string {
   return (path.split(/[\\/]/).pop() ?? path).replace(/\.meta-b?tiles\.json$/i, '')
 }
+
+const fileName = (path: string): string => path.split('/').pop() ?? path
+
+const menu = ref<{ x: number; y: number; path: string } | null>(null)
+
+const menuItems = computed<ContextMenuItem[]>(() => {
+  const path = menu.value?.path
+  if (!path) return []
+  const tileset = fileName(doc(props.session).tileset)
+  const attached = props.session.metaDocs.has(path)
+  const items: ContextMenuItem[] = []
+  if (!attached) items.push({ label: `Attach to ${tileset}`, action: () => pickMeta(props.session, path) })
+  items.push({ label: 'Open', action: () => tabsStore.openFile(path, fileName(path)) })
+  // A bitmap meta is in `metaDocs` too, but it names its tileset rather than
+  // being attached to it: there is nothing to remove.
+  if (attached && props.session.ownedMetas.has(path)) {
+    items.push({ label: `Remove from ${tileset}`, danger: true, action: () => void removeMetaFile(props.session, path) })
+  }
+  return items
+})
 </script>
 
 <template>
@@ -75,6 +120,7 @@ function label(path: string): string {
         :class="{ active: session.brushMeta === path }"
         :title="`${path} — ${meta.width}×${meta.height} tiles, ${meta.frames.length} frame${meta.frames.length === 1 ? '' : 's'}`"
         @click="pickMeta(session, path)"
+        @contextmenu.prevent="menu = { x: $event.clientX, y: $event.clientY, path }"
       >
         <img
           v-if="thumbnail(path)"
@@ -92,9 +138,15 @@ function label(path: string): string {
         :key="path"
         type="button"
         class="entry unattached"
-        :title="`${path} — not attached to ${doc(session).tileset} yet: picking it attaches it`"
-        @click="pickMeta(session, path)"
+        :title="`${path} — not attached to ${doc(session).tileset} yet: double-click to attach it`"
+        @dblclick="pickMeta(session, path)"
+        @contextmenu.prevent="menu = { x: $event.clientX, y: $event.clientY, path }"
       >
+        <img
+          v-if="ownThumbnails.get(path)"
+          :src="ownThumbnails.get(path)"
+          alt=""
+        >
         <span class="name">{{ label(path) }}</span>
         <span class="frames">+</span>
       </button>
@@ -105,8 +157,24 @@ function label(path: string): string {
       class="hint"
     >
       Click the map to place it. Click a placed meta-tile to select it, drag to move, Delete to
-      remove.
+      remove. Esc lets go.
     </p>
+    <!-- Always there while a dashed one is: a hint that appeared on the first
+         click would move the grid under the second, and the double-click with it. -->
+    <p
+      v-else-if="attachable.length"
+      class="hint"
+    >
+      Dashed ones are not attached to the tileset yet: double-click to attach. Right-click for more.
+    </p>
+
+    <ContextMenu
+      v-if="menu"
+      :x="menu.x"
+      :y="menu.y"
+      :items="menuItems"
+      @close="menu = null"
+    />
   </section>
 </template>
 

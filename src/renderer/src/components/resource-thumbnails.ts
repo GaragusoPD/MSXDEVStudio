@@ -35,7 +35,7 @@ export async function thumbnailUrl(path: string): Promise<string | null> {
 }
 
 /** Index 0 is see-through, as the hardware draws it; the card's own background shows there. */
-function toDataUrl(thumb: Thumbnail): string | null {
+export function toDataUrl(thumb: Thumbnail): string | null {
   const canvas = document.createElement('canvas')
   canvas.width = thumb.width
   canvas.height = thumb.height

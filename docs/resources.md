@@ -218,17 +218,20 @@ for the same reason; **merge** keeps them. The map editor's edit mode forks
 such a tile instead of rewriting it, as it does an animation's.
 
 **Removing** one from a tileset — the **Remove** button beside it in the tile
-editor's **Meta-tiles** list, or beside the tileset in the meta-tile's own
-*Attached to* list — takes it off every map drawn with that tileset too, after a
-confirm naming them: a map cannot place a meta its tileset does not have. An
-open map drops it as one undoable edit; a closed one is rewritten. Its tiles
-stay in the tileset as art (a map's **Remove unused tiles** reclaims them), and
+editor's **Meta-tiles** list, beside the tileset in the meta-tile's own
+*Attached to* list, or **Remove from** in the map's meta-tile picker
+(right-click) — takes it off every map drawn with that tileset too, after a
+confirm naming the maps that place it: a map cannot place a meta its tileset
+does not have. An open map drops it as one undoable edit; a closed one is
+rewritten. Its tiles go with it, except those something else still shows, and
 a baked placement leaves its cells in the grid.
 
 To use one, open a map and pick it from the **lower half** of the left sidebar —
 tiles above, meta-tiles below. Every meta-tile in the tileset's mode is offered;
-a dashed one is not attached yet, and picking it attaches it. Click to place,
-click a placed one to select it, drag to move, Delete to remove.
+a dashed one is not attached yet: double-click it (or right-click ▸ **Attach**)
+to attach it. Click an attached one, then click the map to place it; click a
+placed one to select it, drag to move, Delete to remove, Esc to let go.
+Right-click any of them to open it in its own editor.
 
 A placement is a **live reference** by default: the grid under it holds tile 0,
 the game draws it from the placement table each time. Tick **Bake into the
