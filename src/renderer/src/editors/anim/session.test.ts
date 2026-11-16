@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { parseResource, serializeResource } from '../../../../shared/msx/resource'
+import { defaultExport, parseResource, serializeResource } from '../../../../shared/msx/resource'
 import { normalizeTiles } from '../../../../shared/msx/tile'
 import { normalizeTileAnim, type TileAnimDoc } from '../../../../shared/msx/tile-anim'
 import {
@@ -17,15 +17,18 @@ import {
   endStroke,
   moveFrame,
   paint,
+  patchExport,
   poseAtTick,
   posePixels,
   pruneAnimSessions,
+  redo,
   removeFrame,
   resize,
   saveSession,
   setColor,
   setDuration,
   setLoop,
+  setupExport,
   stepBytes,
   undo
 } from './session'
@@ -263,5 +266,137 @@ describe('the pixel clipboard', () => {
     copyPose(session)
     expect(pictureClipboard.value?.from).toBe(PATH)
     expect(pictureClipboard.value?.picture.width).toBe(8)
+  })
+})
+
+describe('the export target', () => {
+  const META = 'res/compass.meta-tiles.json'
+
+  async function openMeta(): Promise<ReturnType<typeof animSession>> {
+    files[META] = serializeResource({ kind: 'metatiles', doc: createOwnedMeta('sc2', 2, 1) })
+    const session = animSession(META)
+    for (let i = 0; i < 4; i++) await settled()
+    return session
+  }
+
+  it('a meta-tile without one gets the default, named after the file, as one undo step', async () => {
+    const session = await openMeta()
+    expect(doc(session).export).toBeNull()
+    expect(session.dirty).toBe(false)
+
+    setupExport(session)
+    expect(doc(session).export).toEqual({ name: 'g_CompassMetatiles', format: 'c', out: 'content/compass_metatiles.h' })
+    expect(doc(session).export).toEqual(defaultExport(META))
+    expect(session.dirty).toBe(true)
+    expect(session.history.past).toHaveLength(1)
+
+    undo(session)
+    expect(doc(session).export).toBeNull()
+    redo(session)
+    expect(doc(session).export).toEqual(defaultExport(META))
+  })
+
+  it('an animation without one gets the default too', async () => {
+    const session = await open()
+    expect(doc(session).export).toBeNull()
+    setupExport(session)
+    expect(doc(session).export).toEqual({ name: 'g_CoinAnim', format: 'c', out: 'content/coin_anim.h' })
+    expect(session.dirty).toBe(true)
+    undo(session)
+    expect(doc(session).export).toBeNull()
+  })
+
+  it('setting it up again keeps the one already there', async () => {
+    const session = await openMeta()
+    setupExport(session)
+    patchExport(session, { name: 'g_Compass' })
+    setupExport(session)
+    expect(doc(session).export?.name).toBe('g_Compass')
+    expect(session.history.past).toHaveLength(2)
+  })
+
+  it('patches the name, the output and the format, each keeping the rest and each one undo step', async () => {
+    const session = await openMeta()
+    setupExport(session)
+    patchExport(session, { name: 'g_Compass' })
+    expect(doc(session).export).toEqual({ name: 'g_Compass', format: 'c', out: 'content/compass_metatiles.h' })
+    patchExport(session, { out: 'content/items/compass.h' })
+    expect(doc(session).export).toEqual({ name: 'g_Compass', format: 'c', out: 'content/items/compass.h' })
+    patchExport(session, { format: 'bin' })
+    expect(doc(session).export).toEqual({ name: 'g_Compass', format: 'bin', out: 'content/items/compass.h' })
+    expect(session.history.past).toHaveLength(4)
+
+    undo(session)
+    expect(doc(session).export?.format).toBe('c')
+    undo(session)
+    expect(doc(session).export?.out).toBe('content/compass_metatiles.h')
+  })
+
+  it('a patch that changes nothing is not an edit', async () => {
+    const session = await openMeta()
+    setupExport(session)
+    patchExport(session, { name: 'g_CompassMetatiles', format: 'c' })
+    expect(session.history.past).toHaveLength(1)
+  })
+
+  it('there is nothing to patch before it is set up', async () => {
+    const session = await openMeta()
+    patchExport(session, { name: 'g_Compass' })
+    expect(doc(session).export).toBeNull()
+    expect(canUndo(session.history)).toBe(false)
+    expect(session.dirty).toBe(false)
+  })
+
+  it('a change that lands mid-stroke survives the stroke, and stays its own undo step', async () => {
+    // The fields commit on `change`, which fires when they lose focus — and a
+    // press on the canvas takes focus *after* its pointerdown opened the stroke.
+    const session = await openMeta()
+    const blank = doc(session).frames[0].tiles[0].pattern[0]
+    setupExport(session)
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    patchExport(session, { name: 'g_Compass' })
+    endStroke(session)
+    expect(doc(session).export?.name).toBe('g_Compass')
+    expect(doc(session).frames[0].tiles[0].pattern[0]).toBe(0x80)
+
+    undo(session) // the stroke
+    expect(doc(session).frames[0].tiles[0].pattern[0]).toBe(blank)
+    expect(doc(session).export?.name).toBe('g_Compass')
+    undo(session) // the name
+    expect(doc(session).export?.name).toBe('g_CompassMetatiles')
+  })
+
+  it('so does setting it up mid-stroke', async () => {
+    const session = await openMeta()
+    const blank = doc(session).frames[0].tiles[0].pattern[0]
+    setColor(session, 9)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    setupExport(session)
+    endStroke(session)
+    expect(doc(session).export).toEqual(defaultExport(META))
+    expect(doc(session).frames[0].tiles[0].pattern[0]).toBe(0x80)
+
+    undo(session)
+    expect(doc(session).frames[0].tiles[0].pattern[0]).toBe(blank)
+    expect(doc(session).export).toEqual(defaultExport(META))
+  })
+
+  it('saving writes the block into the file, for either kind', async () => {
+    const meta = await openMeta()
+    setupExport(meta)
+    patchExport(meta, { name: 'g_Compass' })
+    await saveSession(meta)
+    const savedMeta = parseResource(META, files[META])
+    expect(savedMeta.kind === 'metatiles' && savedMeta.doc.export).toEqual({ name: 'g_Compass', format: 'c', out: 'content/compass_metatiles.h' })
+    expect(meta.dirty).toBe(false)
+
+    const anim = await open()
+    setupExport(anim)
+    await saveSession(anim)
+    const savedAnim = parseResource(PATH, files[PATH])
+    expect(savedAnim.kind === 'anim' && savedAnim.doc.export).toEqual(defaultExport(PATH))
   })
 })

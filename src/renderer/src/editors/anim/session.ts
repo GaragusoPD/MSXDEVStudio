@@ -45,7 +45,7 @@ import { pictureTiles } from '../../../../shared/msx/sheet-convert'
 import { pictureClipboard } from '../picture-clipboard'
 import { applyRoleStroke, splitBlockPoints, type Point, type TileTool } from '../../../../shared/tile-editor'
 import { canRedo, canUndo, createHistory, pushHistory, redo as redoHistory, undo as undoHistory, type History } from '../../../../shared/history'
-import { parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { defaultExport, parseResource, resourceKindOf, serializeResource, type ExportBlock } from '../../../../shared/msx/resource'
 import { samePath } from '../../../../shared/map-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -270,6 +270,40 @@ export function redo(session: AnimSession): void {
 }
 
 export { canRedo, canUndo }
+
+// ── export ──────────────────────────────────────────────────────────────────
+
+/**
+ * Gives the file an export target, named after it like every other kind
+ * (`defaultExport`). It is where the poses are written: the `_Animate()` of
+ * every tileset the file is attached to copies from that header, and the build
+ * refuses an animated meta-tile that has none. One that is already set is kept.
+ */
+export function setupExport(session: AnimSession): void {
+  if (session.history.present.export) return
+  commitExport(session, defaultExport(session.path))
+}
+
+/** Changes the export's name, output or format; a no-op before `setupExport`, or when nothing differs. */
+export function patchExport(session: AnimSession, patch: Partial<ExportBlock>): void {
+  const current = session.history.present.export
+  if (!current) return
+  const next = { ...current, ...patch }
+  if ((Object.keys(next) as (keyof ExportBlock)[]).every((key) => next[key] === current[key])) return
+  commitExport(session, next)
+}
+
+/**
+ * One undo step on the saved document, never on a stroke's preview — and the
+ * block carried into a stroke still open, or its end would commit the old one
+ * back. That is not hypothetical: the side panel's fields commit on `change`,
+ * which fires when they lose focus, and a press on the canvas takes the focus
+ * only after its pointerdown has begun the stroke.
+ */
+function commitExport(session: AnimSession, block: ExportBlock): void {
+  commit(session, { ...session.history.present, export: block })
+  if (session.preview) session.preview = { ...session.preview, export: block }
+}
 
 // ── painting ─────────────────────────────────────────────────────────────────
 

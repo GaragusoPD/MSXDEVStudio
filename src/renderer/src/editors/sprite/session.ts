@@ -36,7 +36,6 @@ export interface SpriteSession {
   dirty: boolean
   selection: SpriteTarget
   tool: SpriteTool
-  fps: number
   playing: boolean
   background: PlaybackBackground
   onionSkin: boolean
@@ -63,7 +62,6 @@ export function spriteSession(path: string): SpriteSession {
     dirty: false,
     selection: { sprite: 0, frame: 0, layer: 0 },
     tool: 'pencil',
-    fps: 6,
     playing: false,
     background: 'checkered',
     onionSkin: false,

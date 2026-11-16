@@ -85,11 +85,28 @@ Claude (MCP) in MSXDEVStudio), you are working **in the IDE the user has
 open**. Prefer them to the shell for these jobs:
 
 - \`build\` instead of \`./build.sh\`: the same build, but the user watches it in
-  the Output panel, and you get the problems back with file and line.
+  the Output panel, it exports \`res/\` first (\`./build.sh\` does not), and you
+  get the problems back with file and line. A resource whose export failed
+  does not stop the build: MSXgl compiles whatever header an earlier export
+  left in \`content/\`, a success that is not running your art. So the result
+  then starts \`"Build succeeded, but 1 resource export failed"\`, lists each
+  failure as an error against its \`res/\` file, and comes back as an error
+  although MSXgl itself succeeded. Fix those before trusting the ROM.
 - \`read_resource\` / \`write_resource\` for anything in \`res/\`: they go through
   the editors' own parser, fill in missing fields, and report what the export
-  would refuse. They refuse to overwrite a file open with unsaved changes, so
-  ask the user to save it, or call \`save_all\`.
+  would refuse in the document, checked against the other files it uses (a map
+  against its tileset and meta-tiles, a world against its rooms, any other
+  resource writing its \`out\`) by the same code \`export_resources\` runs. What a
+  file copies from other files is refreshed from them on the way through — a
+  map's \`metas\` entries are rebuilt from each meta-tile and its attachment, so
+  an entry you write with only \`path\` and \`name\` comes back and is saved
+  complete. A map's \`tilesetReorderSeen\` and a tileset's \`reorderLog\` come back
+  as the file has them; \`write_resource\` keeps the file's own when your doc
+  leaves them out, so pass them back unchanged rather than inventing them. A
+  **new** file written without an \`"export"\` key gets the default export block
+  \`create_resource\` gives one (\`"export": null\` means none). They refuse to
+  overwrite a file open with unsaved changes, so ask the user to save it, or
+  call \`save_all\`.
 - \`emulator_start\` after a build, wait ~10 s for C-BIOS, then
   \`emulator_screenshot\` and \`emulator_peek\` (VRAM: SCREEN 2 name table at
   0x1800) to *see* the result instead of assuming it. \`emulator_keys\` presses
@@ -129,9 +146,25 @@ Graphics and sound are authored in the IDE's editors as JSON under \`res/\`
 (\`.tiles.json\`, \`.btiles.json\`, \`.meta-tiles.json\`, \`.meta-btiles.json\`,
 \`.anim-tiles.json\`, \`.sprites.json\`, \`.map.json\`, \`.screen.json\`, \`.sfx.json\`,
 \`.music.json\`, \`.world.json\`) and exported to C in
-\`content/\` automatically before every build — a \`.h\` of declarations and a
-\`.c\` of tables, both generated. Edit the \`res/\` file (or the editor), never
-either half of the output.
+\`content/\` automatically before every build the IDE runs (its Build button, or
+the MCP \`build\` tool) — a \`.h\` of declarations and a \`.c\` of tables, both
+generated. \`./build.sh\` exports nothing: it compiles \`content/\` as it is. Edit
+the \`res/\` file (or the editor), never either half of the output.
+
+Three rules about which files are resources, and where they go:
+
+- **Anything whose name starts with a dot is not a resource** — a file or a
+  folder, at any depth: \`.scratch/old.tiles.json\` is not listed, a build or
+  *Export all* does not export it, and no \`.c\` of its is compiled. Keep
+  before/after copies there.
+- **No two resources may write the same file** — the same \`out\`, or the \`.c\`
+  beside it. Every resource in such a clash fails and none of them is written,
+  until each has its own \`out\`. A copy of a resource elsewhere in the tree
+  (not in a dot folder) is exactly this clash.
+- **A failed export is an error in the Problems panel** (and in the MCP
+  \`build\` result), against the resource's own file. The build still runs, so
+  it compiles the header the last good export left behind (or stops at a
+  missing one) — a green build does not mean that resource got through.
 
 A header carries the data tables plus a \`_SIZE\` define per table, and
 \`#define\`s locating each named group inside them. If the resource's *Export
@@ -360,10 +393,20 @@ A meta that animates is played like any attached animation —
 \`g_MyTiles_AnimReset()\` once, \`g_MyTiles_Animate()\` every frame — and its
 index for \`_AnimSetActive\`/\`_AnimRestart\`/\`_AnimGetFrame\` is
 \`G_MYTILES_ANIM_TORCH\`. Its own header holds its size and flags
-(\`G_TORCH_W\`/\`_H\`/\`_FLAGS\`, and \`G_TORCH_MOVING\`, the tiles that move) and,
-when it animates, the poses of those moving tiles (\`g_Torch_Patterns\`,
-\`_Colors\`, \`_Durations\`), which the tileset's \`_Animate()\` copies from — so
+(\`G_TORCH_W\`/\`_H\`/\`_FLAGS\`, \`G_TORCH_FRAMES\`, and \`G_TORCH_MOVING\`, how many
+of its tiles move) and, when it animates, the poses of those moving tiles
+(\`g_Torch_Patterns\`, \`_Colors\`, \`_Durations\`) and which cells they are
+(\`g_Torch_MovingCells\`), which the tileset's \`_Animate()\` copies from — so
 that header has to be exported and compiled, which the IDE does.
+
+**An animated meta-tile needs an export target of its own** (\`"export"\` in its
+file — the meta-tile editor's side panel sets one up). Its poses go only to its
+own header, never into the tileset's, so without one the tileset's export
+**fails**: there would be nothing for \`_Animate()\` to link against, or for your
+own code to read. With the tileset's ready-made C on, the meta's export must
+also be C (\`"format": "c"\`), because \`_Animate()\` names its tables; a raw
+binary is fine only when your own code plays the poses. A still meta (one
+pose) needs no export.
 
 **Change a meta's art in its own file, never in the tileset.** The tileset's
 numbers are re-resolved from it at every export (and when the tile editor
@@ -375,10 +418,12 @@ from every map drawn with the tileset too, because a map that places a meta its
 tileset does not have will not export. Its tiles leave the tileset with it
 (unless a map's grid, a block or another meta still shows them), so the tiles
 above them renumber: re-read the tileset header's constants rather than keep
-tile numbers in C. A map file you write by hand for a tileset whose
+tile numbers in C. A **new** map file you write for a tileset whose
 \`.tiles.json\` has a \`reorderLog\` should carry \`"tilesetReorderSeen"\` set to
 the last entry's \`at\` — the build replays every newer entry over the map, and
-leaves a map without one exactly as written.
+leaves a map without one exactly as written. Rewriting an existing map through
+\`write_resource\` keeps the stamp the file already has, so leave it alone
+there; a shell edit of the JSON must keep the key itself.
 
 ### Placing meta-tiles on a map
 
@@ -623,9 +668,11 @@ animation's own ROM table rather than costing tileset slots. A tileset with
 something attached, and *Export ready-made C* on, exports:
 
 \`\`\`c
-#define G_MYTILES_ANIMS          1
-#define G_MYTILES_ANIM_COIN      0    // index for _AnimSetActive
-#define G_MYTILES_ANIM_COIN_SLOT 6    // first tile of its window
+#define G_MYTILES_ANIMS            1
+#define G_MYTILES_ANIM_COIN        0    // index for _AnimSetActive
+#define G_MYTILES_ANIM_COIN_SLOT   6    // first tile of its window
+#define G_MYTILES_ANIM_COIN_FRAMES 4    // its poses
+#define G_MYTILES_ANIM_COIN_TILES  1    // tiles in its window: what one pose rewrites
 
 g_MyTiles_AnimReset();               // once the tiles are in VRAM — RAM is not
                                      // cleared at boot, and it shows pose 0
@@ -663,6 +710,74 @@ attached to, and play through the same \`_Animate()\` — every copy in step,
 Without *Export ready-made C* there is no \`_Animate()\`; the defines above and
 the animation's own \`g_Coin_Patterns\`/\`_Colors\`/\`_Durations\` tables are still
 there, and the manual version below is what the generated one does.
+
+**The poses live only in the animation's own export**, never in the tileset's,
+so an attached animation needs an export target of its own (\`"export"\` in the
+\`.anim-tiles.json\`; the animated-tile editor's side panel sets one up) — and C,
+not a raw binary, while the tileset's ready-made C is on, since \`_Animate()\`
+names its tables. Without one the tileset's export fails rather than ship a
+window nothing can play. Same rule for an animated meta-tile.
+
+#### Your own loader: poses at tiles you placed
+
+\`_Animate()\` writes each window at the tileset's own tile numbers, from tables
+it reads in place. A game that puts tiles elsewhere — loading each third of the
+screen with only the tiles it uses, or reading the poses from a MegaROM segment
+it pages in — plays the poses itself, from data that is all in the headers:
+
+- the tileset: \`_ANIM_<NAME>_SLOT\` (the window's first tile),
+  \`_ANIM_<NAME>_TILES\` (its length) and \`_ANIM_<NAME>_FRAMES\`;
+- the animation or meta-tile's own header: \`_Patterns\` (every pose end to
+  end, \`_TILES\` tiles of 8 bytes each — the animation's own \`_CELLS\`, the
+  meta's \`_MOVING\`), \`_Colors\` (the same layout; none in SCREEN 1),
+  \`_Durations\` (VBlanks per pose) and \`_LOOP\` (its loop mode: 0 loop,
+  1 ping-pong, 2 play-once, the numbers the generated \`_Animate()\` uses) — so
+  pose \`p\`, tile \`k\` is \`_Patterns + (p * TILES + k) * 8\`, shown at tileset
+  tile \`_SLOT + k\`;
+- for a meta-tile, \`_MovingCells\`: tile \`k\` of a pose is the meta's cell
+  \`_MovingCells[k]\` (cell = row × \`_W\` + column). A game that draws a meta's
+  cells at slots of its own picking rewrites exactly those cells, without
+  diffing the poses.
+
+\`\`\`c
+// SCREEN 2. The torch's cells were drawn at VRAM slots TORCH_SLOT + cell, in
+// bank 2 only (a loader that fills each third with the tiles it uses).
+#define TORCH_SLOT 200
+#define TORCH_BANK 2
+u8 g_TorchPose;     // globals: zero all three in your init — RAM is not cleared at boot
+u8 g_TorchHeld;
+bool g_TorchBack;   // ping-pong only: running backwards
+
+void Torch_Animate(void)   // once per frame
+{
+    if(++g_TorchHeld < g_Torch_Durations[g_TorchPose])
+        return;
+    g_TorchHeld = 0;
+    if(G_TORCH_LOOP == 1 && G_TORCH_FRAMES > 1)   // ping-pong: turns at either end
+    {
+        if(g_TorchPose == 0) g_TorchBack = FALSE;
+        else if(g_TorchPose == G_TORCH_FRAMES - 1) g_TorchBack = TRUE;
+        if(g_TorchBack) --g_TorchPose; else ++g_TorchPose;
+    }
+    else if(g_TorchPose < G_TORCH_FRAMES - 1) ++g_TorchPose;
+    else if(G_TORCH_LOOP == 2) return;            // play-once: holds its last pose
+    else g_TorchPose = 0;                         // loop: back to the first
+    const u8* pattern = g_Torch_Patterns + (u16)g_TorchPose * G_TORCH_MOVING * 8;
+    const u8* color = g_Torch_Colors + (u16)g_TorchPose * G_TORCH_MOVING * 8;
+    for(u8 k = 0; k < G_TORCH_MOVING; ++k)
+    {
+        u8 slot = TORCH_SLOT + g_Torch_MovingCells[k];
+        VDP_LoadBankPattern_GM2(pattern + k * 8, 1, TORCH_BANK, slot);   // one bank, not all three
+        VDP_LoadBankColor_GM2(color + k * 8, 1, TORCH_BANK, slot);
+    }
+}
+\`\`\`
+
+\`G_TORCH_MOVING\` is the same number as the tileset's \`_ANIM_TORCH_TILES\`.
+Kept in a MegaROM segment, the tables are read the same way once the segment
+is paged in. \`_LOOP\` follows the file's \`"loop"\` (set in the meta-tile
+editor), so changing the mode there reaches this code with the next export. An
+animation's own header has its \`_LOOP\` too.
 
 #### By hand, from a block of poses
 
@@ -791,6 +906,113 @@ MSX version at run time and fall back to \`VDP_SetSpriteSM1\`, or drop MSX1 from
       }`
 }
 
+#### Where each character is — never count frames
+
+A \`.sprites.json\` is a sheet of *characters* (a hero, a coin, a cursor…), each
+with its own frames, and the export lays every plane of every frame of every
+character end to end in \`_Patterns\`/\`_Colors\`, character after character. So
+where a character starts depends on how many frames everything before it has:
+the day a character earlier in the sheet gains a frame, every offset counted by
+hand after it shows the wrong art, with no warning and no build error. The
+header states each one instead — for **every** character, one plane or many:
+
+\`\`\`c
+#define G_CURSORS_CHARS          5   // characters in the sheet
+#define G_CURSORS_PLANE_PATTERNS 4   // VDP patterns per plane: 4 at 16x16, 1 at 8x8
+#define G_CURSORS_ARROW_BASE     0   // its first plane, counting every plane before it
+#define G_CURSORS_ARROW_PLANES   1   // hardware sprites per frame
+#define G_CURSORS_ARROW_FRAMES   4
+#define G_CURSORS_ARROW_ID       0   // its position in the sheet: the chr the helpers take
+#define G_CURSORS_ARROW_PATTERN  0   // VDP pattern number of its first plane, sheet loaded at 0
+#define G_CURSORS_ARROW_FRAME0   0   // its first byte in g_Cursors_Durations
+#define G_CURSORS_DOWN_BASE      4
+#define G_CURSORS_DOWN_PLANES    1
+#define G_CURSORS_DOWN_FRAMES    1
+#define G_CURSORS_DOWN_ID        1
+#define G_CURSORS_DOWN_PATTERN   16
+#define G_CURSORS_DOWN_FRAME0    4
+\`\`\`
+
+Plane \`n\` of frame \`f\` is plane \`_BASE + f * _PLANES + n\`; its VDP pattern
+number is that times \`_PLANE_PATTERNS\`, and its colour is
+${
+  msx1
+    ? `\`g_Cursors_Colors[plane]\` (one byte per plane in sprite mode 1 — for a
+one-plane character, one byte per frame):`
+    : `the 16 line bytes at \`g_Cursors_Colors + plane * 16\` (sprite mode 2; a
+mode-1 sheet has one byte per plane instead):`
+}
+
+\`\`\`c
+// Not "#define SHAPE_DOWN 16" — that is "the arrow has 4 frames", written down by hand.
+u8 plane = G_CURSORS_DOWN_BASE + f * G_CURSORS_DOWN_PLANES;
+${
+  msx1
+    ? `VDP_SetSpriteSM1(1, x, y, plane * G_CURSORS_PLANE_PATTERNS, g_Cursors_Colors[plane]);`
+    : `VDP_SetSpriteExMultiColor(1, x, y, plane * G_CURSORS_PLANE_PATTERNS, g_Cursors_Colors + plane * 16);`
+}
+\`\`\`
+
+\`_FRAME0\` and \`_Durations\` exist once some character has more than one
+frame. Two characters whose names make the same C identifier (\`Hero\` and
+\`hero\`, two \`sprite_1\`) would define the same names twice, so only the first
+gets its defines and the header's notes name the other — rename one. A sheet
+with more planes than the sprite pattern table holds (64 at 16×16, 256 at 8×8)
+gets a note too: \`_PATTERN\` and the helpers assume the whole sheet at pattern 0.
+
+#### Frame timing
+
+Every frame has a \`"duration"\` in VBlanks, 1–255 (default 8), set under each
+frame in the sprite editor's filmstrip: \`"frames": [{ "duration": 6, "layers":
+[…] }, …]\`. It is the unit meta-tile and animated-tile poses use, so one number
+means the same speed everywhere. They are exported as \`g_Cursors_Durations\`,
+one byte per frame, characters in sheet order — a character's frames start at
+its \`_FRAME0\`. 8 VBlanks is 6.25 frames a second at 50 Hz and 7.5 at 60 Hz;
+the editor's preview plays at 50 Hz. Change the speed in the sheet, not in C.
+
+#### Ready-made animation
+
+With *Export ready-made C* on, a sheet with any animated character also gets:
+
+\`\`\`c
+// void g_Cursors_SetFrame(u8 index, u8 chr, u8 frame); // a frame's patterns + colours, every plane
+// bool g_Cursors_AnimStep(u8 chr, u8* state);          // one VBlank on; TRUE when the frame changed
+u8 g_ArrowAnim[2];   // [0] the frame shown, [1] VBlanks spent on it
+
+g_ArrowAnim[0] = 0;  // in your init: RAM is not cleared at boot on a ROM target
+g_ArrowAnim[1] = 0;
+${
+  msx1
+    ? `VDP_SetSpriteSM1(0, x, y, G_CURSORS_ARROW_PATTERN, g_Cursors_Colors[G_CURSORS_ARROW_BASE]);`
+    : `VDP_SetSpriteExMultiColor(0, x, y, G_CURSORS_ARROW_PATTERN, g_Cursors_Colors + G_CURSORS_ARROW_BASE * 16);`
+}
+while(1)
+{
+    Halt();
+    if(g_Cursors_AnimStep(G_CURSORS_ARROW_ID, g_ArrowAnim))
+        g_Cursors_SetFrame(0, G_CURSORS_ARROW_ID, g_ArrowAnim[0]);
+    VDP_SetSpritePosition(0, x, y);
+}
+\`\`\`
+
+- \`_SetFrame(index, chr, frame)\` writes the pattern and colour of each of the
+  character's \`_PLANES\` planes onto hardware sprites \`index\` onward, and
+  leaves their positions alone: place them yourself. A frame past the last
+  shows frame 0; a \`chr\` past the last character does nothing.
+- \`_AnimStep(chr, state)\` advances one VBlank — call it once a frame — and
+  holds each frame for its \`_Durations\` byte, looping. \`state\` is two bytes
+  you own per animated sprite; zero them first (a garbage frame number starts
+  over at 0).
+- A group (below) is placed and shown in one call by \`_SetMeta\`, so step it
+  with \`_AnimStep\` and pass \`_BASE + state[0] * _PLANES\` as \`_SetMeta\`'s
+  \`base\`.${
+  msx1
+    ? ''
+    : `
+- A sprite mode 2 sheet's helpers call \`VDP_SetSpriteMultiColor\`, which MSXgl
+  compiles only for MSX2 and later.`
+}
+
 ### Layered sprites (the important one)
 
 A character bigger or more colourful than one hardware sprite is drawn by
@@ -809,9 +1031,9 @@ several *planes*. Two things stack:
   writes those bits into \`_Colors\` for you.`
   }
 
-For any character that spans cells or stacks layers, the export adds three
-defines per character and a \`_Layout\` table (2 bytes per plane: \`dx, dy\` in
-dots from the character's top-left):
+Once any character spans cells or stacks layers, the export adds a \`_Layout\`
+table (2 bytes per plane: \`dx, dy\` in dots from the character's top-left) to
+the per-character defines above:
 
 \`\`\`c
 #define G_MYHERO_WALK_BASE    0   // first plane of the character
@@ -820,7 +1042,8 @@ dots from the character's top-left):
 \`\`\`
 
 Placing frame \`f\` means writing \`_PLANES\` attribute entries from one
-coordinate. With *Export ready-made C* on, that loop is already written:
+coordinate. With *Export ready-made C* on, that loop is already written
+(\`_SetMeta\` exists only in a sheet that has a group):
 
 \`\`\`c
 // void g_MyHero_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes);
@@ -1262,10 +1485,12 @@ calls** — it is the fastest way to get a signature right.
    This bites hardest exactly where rule 3 sends you: an array that is safe as
    \`u8 frames[N] = { 0 };\` inside a function becomes unsafe the moment you hoist
    it to a global for speed. Every emitted helper that takes a buffer you own is
-   one of these — \`_DrawPlacements\`'s \`frames\`, a software sprite's
-   \`_SwSprite\` state.
+   one of these — \`_DrawPlacements\`'s \`frames\`, a sprite sheet's
+   \`_AnimStep\` \`state\`, a software sprite's \`_SwSprite\` state.
 5. When a resource looks wrong, fix it in the editor / \`res/\` file, then
-   rebuild — not in \`content/\`.
+   rebuild — not in \`content/\`. Rebuild from the IDE (or MCP \`build\` /
+   \`export_resources\`): \`./build.sh\` does not export, so after a \`res/\`
+   edit it compiles the old header.
 ${kit ? kitChapter(kit) : ''}`
 }
 

@@ -246,7 +246,7 @@ watch(
         <button
           type="button"
           :disabled="!anim.export"
-          title="Save, then write the C header"
+          :title="anim.export ? 'Save, then write the C header' : 'No export target yet — set one up under Export in the side panel'"
           @click="exportNow"
         >
           Export

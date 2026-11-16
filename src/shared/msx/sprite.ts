@@ -13,8 +13,9 @@
  *   `EC<<7 | CC<<6 | IC<<5 | color`.
  */
 
-import type { HelperC } from './emitC'
+import { defineName, type HelperC } from './emitC'
 import type { ExportBlock } from './resource'
+import { DEFAULT_ANIM_DURATION, MAX_ANIM_DURATION } from './tile-anim'
 
 export type SpriteMode = 1 | 2
 export type SpriteSize = 8 | 16
@@ -54,6 +55,21 @@ export interface SpriteFrame {
    * overlap, so their relative order doesn't matter.
    */
   layers: SpriteLayer[]
+  /**
+   * How many frames (VBlanks) this frame is held, 1..255 — the unit a
+   * meta-tile's poses use, so one number means the same in both. Exported as
+   * `_Durations`.
+   */
+  duration: number
+}
+
+/**
+ * A frame duration as a file or an input field hands it in: rounded and kept
+ * to 1..255, `fallback` for anything that is not a number.
+ */
+export function clampSpriteDuration(value: unknown, fallback = DEFAULT_ANIM_DURATION): number {
+  const n = typeof value === 'number' || typeof value === 'string' ? Math.round(Number(value)) : Number.NaN
+  return Number.isFinite(n) ? Math.min(MAX_ANIM_DURATION, Math.max(1, n)) : fallback
 }
 
 export interface SpriteCharacter {
@@ -158,6 +174,7 @@ export function normalizeSprites(raw: unknown): SpritesDoc {
     const frameSources = rawFrames ?? [{ layers: sprite.layers }]
     const frames: SpriteFrame[] = frameSources.map((frame) => {
       const layers = (frame as { layers?: unknown })?.layers
+      const duration = clampSpriteDuration((frame as { duration?: unknown })?.duration)
       const list = Array.isArray(layers) && layers.length ? layers : [null]
       // MAX_LAYERS is the OR-color stack per cell, so the cap is counted per cell, not per frame.
       const perCell = new Map<string, number>()
@@ -171,7 +188,7 @@ export function normalizeSprites(raw: unknown): SpritesDoc {
         kept.push(layer)
       }
       // Also on load, so a sheet that already carries the mistake heals itself.
-      return lockLeadingCc({ layers: kept.length ? kept : [createLayer(size)] }, mode)
+      return lockLeadingCc({ layers: kept.length ? kept : [createLayer(size)], duration }, mode)
     })
     return { name: String(sprite.name ?? `sprite_${index}`), cols, rows, frames }
   })
@@ -186,7 +203,9 @@ export function normalizeSprites(raw: unknown): SpritesDoc {
     mode,
     size,
     palette: mode === 2 ? palette : null,
-    sprites: sprites.length ? sprites : [{ name: 'sprite_0', cols: 1, rows: 1, frames: [{ layers: [createLayer(size)] }] }],
+    sprites: sprites.length
+      ? sprites
+      : [{ name: 'sprite_0', cols: 1, rows: 1, frames: [{ layers: [createLayer(size)], duration: DEFAULT_ANIM_DURATION }] }],
     export: (input.export as ExportBlock | undefined) ?? null
   }
 }
@@ -203,7 +222,8 @@ export function serializeSprites(doc: SpritesDoc): unknown {
       cols: sprite.cols,
       rows: sprite.rows,
       layers: sprite.frames[0]?.layers ?? [],
-      frames: sprite.frames
+      // Duration first: it is the one field a person reads, above a wall of bytes.
+      frames: sprite.frames.map((frame) => ({ duration: frame.duration, layers: frame.layers }))
     })),
     export: doc.export
   }
@@ -264,7 +284,7 @@ export function lockLeadingCc(frame: SpriteFrame, mode: SpriteMode): SpriteFrame
   const first = frame.layers[0]
   if (mode !== 2 || !first || !first.lineColors.some((value) => (value & SPRITE_CC) !== 0)) return frame
   const lineColors = first.lineColors.map((value) => value & ~SPRITE_CC & 0xff)
-  return { layers: [{ ...first, lineColors, cc: false }, ...frame.layers.slice(1)] }
+  return { ...frame, layers: [{ ...first, lineColors, cc: false }, ...frame.layers.slice(1)] }
 }
 
 /** Sets (or clears) CC on all 16 lines — the layer-level `cc` toggle in the editor. */
@@ -357,6 +377,7 @@ export function convertSpriteMode(doc: SpritesDoc, mode: SpriteMode): SpritesDoc
   const sprites = doc.sprites.map((sprite) => ({
     ...sprite,
     frames: sprite.frames.map((frame) => ({
+      ...frame,
       layers: frame.layers.map((layer) => {
         if (mode === 2) {
           const value = (layer.ec ? SPRITE_EC : 0) | (layer.color & SPRITE_COLOR_MASK)
@@ -405,16 +426,122 @@ export interface SpritePlacement {
   /** Planes per frame (identical across a character's frames — `validateSprites` checks it). */
   planes: number
   frames: number
+  /** Index of the character's first frame in `_Durations`: frames of the characters before it. */
+  frame0: number
 }
 
 export function spritePlacements(doc: SpritesDoc): SpritePlacement[] {
   let base = 0
+  let frame0 = 0
   return doc.sprites.map((sprite) => {
     const planes = sprite.frames[0]?.layers.length ?? 0
-    const placement = { name: sprite.name, base, planes, frames: sprite.frames.length }
+    const placement = { name: sprite.name, base, planes, frames: sprite.frames.length, frame0 }
     base += sprite.frames.reduce((sum, frame) => sum + frame.layers.length, 0)
+    frame0 += sprite.frames.length
     return placement
   })
+}
+
+/** VDP pattern numbers per plane: a 16×16 sprite is four 8×8 patterns. */
+export function spritePatternStep(size: SpriteSize): number {
+  return size === 16 ? 4 : 1
+}
+
+/** Planes the VDP's sprite pattern table holds: 256 patterns of 8×8, so 64 of 16×16. */
+export function spritePatternCapacity(size: SpriteSize): number {
+  return 256 / spritePatternStep(size)
+}
+
+/** Every plane of every frame of every character — what the pattern table has to hold. */
+export function spritePlaneCount(doc: SpritesDoc): number {
+  return doc.sprites.reduce((sum, sprite) => sum + sprite.frames.reduce((n, frame) => n + frame.layers.length, 0), 0)
+}
+
+/**
+ * True once some character has a second frame — when there is something to
+ * time, so `_Durations`, `_FRAME0` and the animation helpers are emitted.
+ */
+export function hasSpriteAnimation(doc: SpritesDoc): boolean {
+  return doc.sprites.some((sprite) => sprite.frames.length > 1)
+}
+
+/** One byte per frame, characters in sheet order: how many VBlanks it is held. */
+export function spriteDurationBytes(doc: SpritesDoc): Uint8Array {
+  return Uint8Array.from(doc.sprites.flatMap((sprite) => sprite.frames.map((frame) => frame.duration & 0xff)))
+}
+
+/**
+ * Characters whose names make the same C identifier as an earlier one's
+ * (`sprite_1` twice — `addSprite` names by count, so a delete and an add
+ * repeat one — or `Hero` and `hero`). Two sets of the same `#define`s would
+ * be a redefinition, so only the first gets them; the header says which.
+ */
+export function spriteNameClashes(doc: SpritesDoc): { index: number; name: string; first: number }[] {
+  const seen = new Map<string, number>()
+  const clashes: { index: number; name: string; first: number }[] = []
+  doc.sprites.forEach((sprite, index) => {
+    const id = defineName(sprite.name)
+    const first = seen.get(id)
+    if (first === undefined) seen.set(id, index)
+    else clashes.push({ index, name: sprite.name, first })
+  })
+  return clashes
+}
+
+/**
+ * Where each character is, as `#define`s: game code addresses one character
+ * out of a sheet by these rather than by counting frames, which is what broke
+ * the first time a character before it grew a frame.
+ *
+ * - `_CHARS`, `_PLANE_PATTERNS`: the sheet's character count, and VDP
+ *   patterns per plane (4 at 16×16, 1 at 8×8).
+ * - per character: `_BASE` (first plane), `_PLANES` (per frame), `_FRAMES`,
+ *   `_ID` (its position — what the helpers take as `chr`), `_PATTERN` (the
+ *   VDP pattern number of its first plane with the sheet loaded at pattern 0),
+ *   and `_FRAME0` (its first frame in `_Durations`) once a `_Durations` exists.
+ *
+ * The suffixes hold no underscore, so two different names can never produce
+ * the same `#define` — except names that are the same identifier already
+ * (`spriteNameClashes`), which get none.
+ */
+export function spriteConstants(doc: SpritesDoc, name: string): string[] {
+  const prefix = defineName(name)
+  const step = spritePatternStep(doc.size)
+  const animated = hasSpriteAnimation(doc)
+  const skipped = new Set(spriteNameClashes(doc).map((clash) => clash.index))
+  return [
+    `#define ${prefix}_CHARS ${doc.sprites.length}`,
+    `#define ${prefix}_PLANE_PATTERNS ${step}`,
+    ...spritePlacements(doc).flatMap((placement, index) => {
+      if (skipped.has(index)) return []
+      const id = `${prefix}_${defineName(placement.name)}`
+      return [
+        `#define ${id}_BASE ${placement.base}`,
+        `#define ${id}_PLANES ${placement.planes}`,
+        `#define ${id}_FRAMES ${placement.frames}`,
+        `#define ${id}_ID ${index}`,
+        `#define ${id}_PATTERN ${placement.base * step}`,
+        ...(animated ? [`#define ${id}_FRAME0 ${placement.frame0}`] : [])
+      ]
+    })
+  ]
+}
+
+/** Header notes for a sheet's defines: the characters left without any, and a sheet too big for the VDP. */
+export function spriteNotes(doc: SpritesDoc): string[] {
+  const notes = spriteNameClashes(doc).map(
+    ({ index, name, first }) =>
+      `No defines for character ${index} (${name}): its C name is the same as character ${first}’s (${doc.sprites[first].name}) — rename one`
+  )
+  const planes = spritePlaneCount(doc)
+  const capacity = spritePatternCapacity(doc.size)
+  if (planes > capacity) {
+    notes.push(
+      `${planes} planes, more than the ${capacity} ${doc.size}×${doc.size} sprite patterns the VDP holds: load the sheet in parts — ` +
+        '_PATTERN and the helpers assume it whole at pattern 0'
+    )
+  }
+  return notes
 }
 
 /** True once a character spans more than one cell of the grid. */
@@ -490,6 +617,108 @@ export function spriteHelperC(doc: SpritesDoc, name: string): HelperC {
     `\t\t${setSprite}`,
     '\t}',
     '}'
+    ]
+  }
+}
+
+/**
+ * The animation helpers, emitted beside `_SetMeta` once some character has a
+ * second frame: show one frame of a character, and step a character by its
+ * `_Durations`. What they need per character sits in one `static const u8`
+ * table in the `.c` — four bytes each, indexed rather than switched on (SDCC
+ * 4.x miscompiles constant arguments inlined into `case 0:`). A byte is
+ * enough: the pattern table holds at most 256 planes, the limit `_SetMeta`'s
+ * `plane * step` already lives with (`spriteNotes` says when a sheet passes it).
+ *
+ * Every call is MSXgl's own: `VDP_SetSpritePattern`, and `VDP_SetSpriteColorSM1`
+ * (mode 1) or `VDP_SetSpriteMultiColor` (mode 2, MSX2 only — as is the mode).
+ */
+export function spriteAnimHelperC(doc: SpritesDoc, name: string): HelperC {
+  const prefix = defineName(name)
+  const step = spritePatternStep(doc.size)
+  const placements = spritePlacements(doc)
+  const info = placements.flatMap((placement) => [placement.base, placement.planes, placement.frames, placement.frame0])
+  const clashes = new Set(spriteNameClashes(doc).map((clash) => clash.index))
+  const shown = placements.findIndex((placement, index) => placement.frames > 1 && !clashes.has(index))
+  const chr = shown >= 0 ? `${prefix}_${defineName(placements[shown].name)}_ID` : '0'
+  const setColor =
+    doc.mode === 1
+      ? `VDP_SetSpriteColorSM1(index + i, ${name}_Colors[plane]);`
+      : `VDP_SetSpriteMultiColor(index + i, ${name}_Colors + ((u16)plane * 16));`
+  const setFrame = `void ${name}_SetFrame(u8 index, u8 chr, u8 frame)`
+  const animStep = `bool ${name}_AnimStep(u8 chr, u8* state)`
+  return {
+    header: [
+      '',
+      `// ── ${name}: sprite animation ─────────────────────────────────────────`,
+      '//',
+      `// chr below is a character's ${prefix}_<CHARACTER>_ID. Needs MSXgl's VDP`,
+      '// module (#include "msxgl.h" before this header), and the patterns loaded',
+      '// at VRAM pattern 0:',
+      `//   VDP_LoadSpritePattern(${name}_Patterns, 0, ${prefix}_PATTERNS_SIZE / 8);`,
+      '//',
+      '// Shows frame `frame` of character chr on hardware sprites index onward, one',
+      `// per plane (${prefix}_<CHARACTER>_PLANES of them): patterns and colours only,`,
+      '// the positions are left as they are — place the sprites first (VDP_SetSprite...,',
+      '// or _SetMeta for a group). A frame past the last shows frame 0; a chr past',
+      '// the last character does nothing.',
+      `${setFrame};`,
+      '',
+      "// Steps character chr's animation on by one VBlank. Call it once a frame with",
+      '// two bytes kept per animation — state[0] the frame shown, state[1] the VBlanks',
+      `// spent on it — and show state[0] when it returns TRUE. Each frame is held for`,
+      `// its ${name}_Durations entry, in VBlanks, and the animation loops.`,
+      '// RAM is not cleared at boot on a ROM target: zero state before the first',
+      '// step (a frame past the last starts over at 0, and returns TRUE).',
+      '//',
+      '// Example:',
+      '//   u8 anim[2] = { 0, 0 };',
+      `//   ${name}_SetFrame(0, ${chr}, 0);`,
+      '//   while(1)',
+      '//   {',
+      '//       Halt();',
+      `//       if(${name}_AnimStep(${chr}, anim))`,
+      `//           ${name}_SetFrame(0, ${chr}, anim[0]);`,
+      '//   }',
+      `${animStep};`
+    ],
+    source: [
+      '',
+      `// Per character: first plane, planes per frame, frames, first frame in ${name}_Durations.`,
+      `static const u8 ${name}_CharInfo[${prefix}_CHARS * 4] = { ${info.join(', ')} };`,
+      '',
+      setFrame,
+      '{',
+      `\tif(chr >= ${prefix}_CHARS) return;`,
+      `\tconst u8* info = ${name}_CharInfo + ((u16)chr * 4);`,
+      '\tif(frame >= info[2]) frame = 0;',
+      '\tu8 plane = info[0] + frame * info[1];',
+      '\tfor(u8 i = 0; i < info[1]; ++i, ++plane)',
+      '\t{',
+      `\t\tVDP_SetSpritePattern(index + i, plane * ${step});`,
+      `\t\t${setColor}`,
+      '\t}',
+      '}',
+      '',
+      animStep,
+      '{',
+      `\tif(chr >= ${prefix}_CHARS) return FALSE;`,
+      `\tconst u8* info = ${name}_CharInfo + ((u16)chr * 4);`,
+      '\tu8 f = state[0];',
+      '\t// Clamped: a frame past the last means nobody zeroed state.',
+      '\tif(f >= info[2])',
+      '\t{',
+      '\t\tstate[0] = 0;',
+      '\t\tstate[1] = 0;',
+      '\t\treturn TRUE;',
+      '\t}',
+      `\tif(++state[1] < ${name}_Durations[info[3] + f]) return FALSE;`,
+      '\tstate[1] = 0;',
+      '\tif(++f >= info[2]) f = 0;',
+      '\tif(f == state[0]) return FALSE;',
+      '\tstate[0] = f;',
+      '\treturn TRUE;',
+      '}'
     ]
   }
 }

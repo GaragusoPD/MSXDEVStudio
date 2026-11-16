@@ -423,7 +423,7 @@ export function cellsToSprite(cells: readonly SheetCell[], options: SheetSpriteO
       }
     }
     // A frame with nothing at all still needs a plane to be a frame.
-    return { layers: layers.length ? layers : [createLayer(size, 15)] }
+    return { layers: layers.length ? layers : [createLayer(size, 15)], duration: DEFAULT_ANIM_DURATION }
   })
   let spritesPerLine = 0
   for (let cy = 0; cy < rows; cy++) {

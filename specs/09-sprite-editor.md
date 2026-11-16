@@ -36,11 +36,16 @@ animation frames and live preview.
           "lineColors": [16 bytes],        // mode 2: color per line (with EC/CC/IC bits)
           "cc": false }                    // mode 2: OR-blend with layer below
       ],
-      "frames": [ { "layers": [ …same shape… ] } ]   // animation frames; frame 0 = the above
+      "frames": [ { "duration": 8,         // VBlanks this frame is held, 1..255 (default 8)
+                    "layers": [ …same shape… ] } ]   // animation frames; frame 0 = the above
     }
   ]
 }
 ```
+
+`duration` is the unit meta-tile and animated-tile poses use. A file written
+before it existed reads every frame as 8; `serializeSprites` writes it first in
+each frame.
 
 ## Editor UI
 
@@ -53,9 +58,10 @@ animation frames and live preview.
 - **Right panel:** per-layer color controls (single color picker for mode 1; 16-entry
   line-color strip for mode 2 with EC/CC bits), size toggle, mode toggle (warns on
   data loss when going 2→1).
-- **Animation bar** (bottom): frames as filmstrip, add/clone/reorder, play at
-  configurable frame rate against a checkered or solid background; onion-skin
-  previous frame.
+- **Animation bar** (bottom): frames as filmstrip, add/clone/reorder, each frame's
+  duration (VBlanks) editable under it; plays by those durations at 20 ms a
+  VBlank (`VBLANK_MS`, a European MSX — the pose editor's clock) against a
+  checkered or solid background; onion-skin previous frame.
 - **Scanline budget hint:** static warning strip when >4 (mode 1) / >8 (mode 2)
   layers would share a scanline if placed at the same Y — informational only.
 
@@ -64,6 +70,11 @@ animation frames and live preview.
 - Import PNG strip → frames (via Spec 07 quantizer, mapping colors to layers is
   manual: user assigns which palette entries land on which layer).
 - Export via Spec 07: pattern tables + color data in MSXgl's expected layout.
+  Every character gets `_BASE`, `_PLANES`, `_FRAMES`, `_ID` and `_PATTERN`
+  (plus `_FRAME0` once some character has more than one frame, beside a
+  `_Durations` table), and the sheet `_CHARS` and `_PLANE_PATTERNS`
+  (`spriteConstants`). With ready-made C on, groups get `_SetMeta` and an
+  animated sheet `_SetFrame`/`_AnimStep` (`spriteAnimHelperC`).
 
 ## Acceptance
 

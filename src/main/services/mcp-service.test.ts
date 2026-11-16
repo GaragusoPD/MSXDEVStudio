@@ -3,7 +3,7 @@
  * Claude Code does — plus the guards a browser would hit.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -14,7 +14,11 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { AppState, McpRendererRequest, McpRendererResponse } from '../../shared/ipc'
 import { defaultProject } from '../../shared/msxproj'
+import { normalizeOwnedMeta } from '../../shared/msx/meta-owned'
+import { defaultExport, serializeResource } from '../../shared/msx/resource'
+import { normalizeTiles } from '../../shared/msx/tile'
 import { bootControlled, McpService, projectMcpConfig, requestAllowed, type McpServiceDeps } from './mcp-service'
+import { exportResourceFile } from './resources'
 
 const services: McpService[] = []
 let root: string | null = null
@@ -60,7 +64,13 @@ function service(): { mcp: McpService; sent: McpRendererRequest[] } {
     project: { getOpen: () => project },
     resources: { list: () => [], exportOne: () => ({}), exportAll: async () => [] },
     build: { start: async () => ({}), running: false },
-    fs: { readDir: async () => [], read: async () => '', write: async () => undefined, stat: async () => null },
+    // Files on disk under the project root, as the real FsService keeps them.
+    fs: {
+      readDir: async () => [],
+      read: async (path: string) => readFileSync(join(project.root, path), 'utf-8'),
+      write: async (path: string, content: string) => writeFileSync(join(project.root, path), content),
+      stat: async (path: string) => (existsSync(join(project.root, path)) ? {} : null)
+    },
     toolchain: { resolveOpenmsxPath: () => null },
     window: () => window,
     version: '0.0.0-test'
@@ -143,6 +153,123 @@ describe('the MCP server over HTTP', () => {
     expect(JSON.parse(projectMcpConfig('not json', 'http://127.0.0.1:1/mcp'))).toEqual({
       mcpServers: { msxdevstudio: { type: 'http', url: 'http://127.0.0.1:1/mcp' } }
     })
+  })
+})
+
+/**
+ * Bug report items 7 and 9: a map's `metas` entry written by hand (path and
+ * name only) over its tileset's 1×1 stub binding. A forced export attached and
+ * drew the meta; `read_resource` called it "not attached", and `write_resource`
+ * saved the stub that made the editors draw nothing. Through the real service,
+ * the real resource code and real files, since the answer depends on what the
+ * *other* files say.
+ */
+describe('resources over MCP, as their export sees them', () => {
+  const TILESET = 'res/main.tiles.json'
+  const ROCK = 'res/rock.meta-tiles.json'
+  const LEVEL = 'res/level.map.json'
+  const entry = (mark: number): { pattern: number[]; color: number[] } => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf1) })
+  const bareMap = {
+    version: 1,
+    tileset: TILESET,
+    width: 4,
+    height: 4,
+    metas: [{ path: ROCK, name: 'g_Rock' }],
+    layers: [{ name: 'bg', placements: [{ slot: 0, x: 1, y: 1 }] }],
+    export: { ...defaultExport(LEVEL), helpers: true }
+  }
+
+  function writeProject(dir: string): void {
+    mkdirSync(join(dir, 'res'), { recursive: true })
+    const rock = normalizeOwnedMeta({
+      version: 3,
+      mode: 'sc2',
+      width: 2,
+      height: 1,
+      holes: [false, true],
+      frames: [{ tiles: [entry(0x81), entry(0)] }],
+      flags: 1,
+      export: defaultExport(ROCK)
+    })
+    writeFileSync(join(dir, ROCK), serializeResource({ kind: 'metatiles', doc: rock }))
+    const tiles = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: [entry(0), entry(1), entry(2), entry(3)],
+      metas: [{ path: ROCK, name: '', width: 1, height: 1, flags: 0, frames: 1, cells: [0] }],
+      export: defaultExport(TILESET)
+    })
+    writeFileSync(join(dir, TILESET), serializeResource({ kind: 'tiles', doc: tiles }))
+    writeFileSync(join(dir, LEVEL), JSON.stringify(bareMap))
+  }
+
+  async function client(): Promise<{ call: (name: string, args: Record<string, unknown>) => Promise<CallToolResult>; close: () => Promise<void> }> {
+    const { mcp } = service()
+    writeProject(root!)
+    const status = await mcp.configure({ enabled: true, port: await freePort() })
+    const connected = new Client({ name: 'test', version: '1' })
+    await connected.connect(new StreamableHTTPClientTransport(new URL(status.url)))
+    return {
+      call: async (name, args) => (await connected.callTool({ name, arguments: args })) as CallToolResult,
+      close: () => connected.close()
+    }
+  }
+  const json = (result: CallToolResult): { problems: string[]; doc: { metas: unknown[] } } => JSON.parse((result.content[0] as { text: string }).text)
+  const resolved = { path: ROCK, name: defaultExport(ROCK).name, width: 2, height: 1, frames: 1, flags: 1, cells: [4, 0] }
+
+  it('read_resource reports what the export reports — attached — and hands back the mirror resolved', async () => {
+    const mcp = await client()
+    const read = json(await mcp.call('read_resource', { path: LEVEL }))
+    await mcp.close()
+    expect(read.problems).toEqual([])
+    expect(read.doc.metas).toEqual([resolved])
+    expect(exportResourceFile(root!, LEVEL)).toMatchObject({ status: 'converted' })
+    // Reading changed nothing on disk.
+    expect(JSON.parse(readFileSync(join(root!, LEVEL), 'utf-8'))).toEqual(bareMap)
+  })
+
+  it('write_resource saves the mirror resolved, so the editors and the preview have tiles to draw', async () => {
+    const mcp = await client()
+    const wrote = json(await mcp.call('write_resource', { path: LEVEL, doc: bareMap }))
+    await mcp.close()
+    expect(wrote.problems).toEqual([])
+    expect(JSON.parse(readFileSync(join(root!, LEVEL), 'utf-8')).metas).toEqual([resolved])
+  })
+
+  it('read_resource on a tileset reports what only its attached files can say: an animated meta with no export', async () => {
+    const mcp = await client()
+    const rock = JSON.parse(readFileSync(join(root!, ROCK), 'utf-8'))
+    writeFileSync(join(root!, ROCK), JSON.stringify({ ...rock, frames: [rock.frames[0], { ...rock.frames[0], tiles: [entry(0x42), entry(0)] }], export: null }))
+    const read = json(await mcp.call('read_resource', { path: TILESET }))
+    await mcp.close()
+    expect(read.problems.join('; ')).toContain('res/rock.meta-tiles.json has 2 poses but no export target')
+    expect(exportResourceFile(root!, TILESET).message).toBe(read.problems.join('; '))
+  })
+
+  it('read_resource and write_resource report two resources writing one header, as export_resources would', async () => {
+    const mcp = await client()
+    // The before-and-after copy an agent makes, beside the original rather than in a dot folder.
+    const COPY = 'res/main_old.tiles.json'
+    writeFileSync(join(root!, COPY), readFileSync(join(root!, TILESET), 'utf-8'))
+    const read = json(await mcp.call('read_resource', { path: TILESET }))
+    const before = exportResourceFile(root!, TILESET)
+    // A new tileset aimed at the same header: the problem comes back with the write.
+    const wrote = json(await mcp.call('write_resource', { path: 'res/new.tiles.json', doc: { mode: 'sc2', export: defaultExport(TILESET) } }))
+    const after = exportResourceFile(root!, 'res/new.tiles.json')
+    await mcp.close()
+    expect(before.status).toBe('failed')
+    expect(read.problems).toEqual([before.message])
+    expect(after.status).toBe('failed')
+    expect(wrote.problems).toEqual([after.message])
+    expect(wrote.problems[0]).toContain(`res/main.tiles.json, ${COPY}, res/new.tiles.json all export to`)
+  })
+
+  it('read_resource on a world reads its rooms rather than sending the agent to export it', async () => {
+    const mcp = await client()
+    writeFileSync(join(root!, 'res/over.world.json'), JSON.stringify({ cols: 1, rows: 1, cells: ['res/gone.map.json'] }))
+    const read = json(await mcp.call('read_resource', { path: 'res/over.world.json' }))
+    await mcp.close()
+    expect(read.problems.join('; ')).toContain('(res/gone.map.json) could not be read')
   })
 })
 

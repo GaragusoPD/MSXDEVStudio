@@ -7,7 +7,7 @@ import type { IpcEvents, OpenProject } from '../../shared/ipc'
 import type { ImgRule, MsxProject } from '../../shared/msxproj'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS } from '../../shared/msx/sfx'
 import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
-import { defaultExport, serializeResource } from '../../shared/msx/resource'
+import { defaultExport, parseResource, serializeResource, validateResource, type ExportBlock } from '../../shared/msx/resource'
 import { normalizeTileAnim } from '../../shared/msx/tile-anim'
 import { normalizeOwnedMeta } from '../../shared/msx/meta-owned'
 import { normalizeMap } from '../../shared/msx/map'
@@ -16,6 +16,7 @@ import { normalizeSwSprites, type SwMode } from '../../shared/msx/swsprite'
 import { BuildService, type BuildDeps } from './build-service'
 import { createProject, resolveNodeBinary, saveProject, writeGeneratedConfig } from './project'
 import {
+  conversionProblems,
   exportAll,
   exportResourceFile,
   findResourceFiles,
@@ -24,6 +25,9 @@ import {
   runImgRule,
   summarize,
   generatedSourceModules,
+  inspectResource,
+  outputKey,
+  prepareResource,
   swSpriteOverlapProblems
 } from './resources'
 
@@ -110,28 +114,224 @@ describe('findResourceFiles', () => {
   })
 })
 
+/**
+ * Bug report item 8: copies of `res/` files kept in a hidden `.scratch/` folder
+ * were exported at every build, and since they named the same `out` as the
+ * real files, a copy saved after the real header was written silently replaced
+ * it. Reproduced before the fix: the copy was listed, converted, and the real
+ * one was skipped as up to date.
+ */
+describe('dot folders and resources that write the same file', () => {
+  const read = (root: string, relative: string): string => readFileSync(join(root, relative), 'utf-8')
+
+  /** `res/a.tiles.json`, exported once, and a copy of it with other art — saved later — at `copy`. */
+  async function realAndCopy(root: string, copy: string, out = 'content/a.h'): Promise<string> {
+    writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+    await exportAll(root, fakeProject())
+    const doc = JSON.parse(read(root, 'res/a.tiles.json'))
+    doc.tiles[0].pattern = new Array(8).fill(0x66)
+    doc.export.out = out
+    mkdirSync(join(root, copy, '..'), { recursive: true })
+    writeFileSync(join(root, copy), JSON.stringify(doc))
+    for (const file of ['res/a.tiles.json', 'content/a.h', 'content/a.c']) backdate(join(root, file), 60)
+    return read(root, 'content/a.c')
+  }
+
+  it('skips every dot folder and dot file below the root', () => {
+    const root = scratch('dots')
+    for (const path of ['res/a.tiles.json', '.scratch/head/a.tiles.json', 'res/.old/b.map.json', 'res/.c.tiles.json']) {
+      mkdirSync(join(root, path, '..'), { recursive: true })
+      writeFileSync(join(root, path), '{}', 'utf-8')
+    }
+    expect(findResourceFiles(root)).toEqual(['res/a.tiles.json'])
+  })
+
+  it('still walks a project that itself lives inside a dot folder', () => {
+    const root = join(scratch('dot-root'), '.projects', 'game')
+    mkdirSync(join(root, 'res'), { recursive: true })
+    writeFileSync(join(root, 'res/a.tiles.json'), '{}', 'utf-8')
+    expect(findResourceFiles(root)).toEqual(['res/a.tiles.json'])
+  })
+
+  it('a copy in .scratch/ no longer exports over the real header', async () => {
+    const root = scratch('item8')
+    const real = await realAndCopy(root, '.scratch/head/a.tiles.json')
+    const results = await exportAll(root, fakeProject())
+    expect(results.map((result) => [result.input, result.status])).toEqual([['res/a.tiles.json', 'skipped']])
+    expect(read(root, 'content/a.c')).toBe(real)
+  })
+
+  it('two resources naming one out both fail, naming each other, and neither writes anything', async () => {
+    const root = scratch('dup-out')
+    writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+    writeTileset(root, 'res/b.tiles.json', 'content/a.h')
+    const results = await exportAll(root, fakeProject())
+    expect(results.map((result) => [result.input, result.status])).toEqual([
+      ['res/a.tiles.json', 'failed'],
+      ['res/b.tiles.json', 'failed']
+    ])
+    for (const result of results) {
+      expect(result.message).toContain('content/a.h')
+      expect(result.message).toContain('res/a.tiles.json')
+      expect(result.message).toContain('res/b.tiles.json')
+    }
+    expect(existsSync(join(root, 'content/a.h'))).toBe(false)
+    expect(existsSync(join(root, 'content/a.c'))).toBe(false)
+  })
+
+  it('a C export claims the .c beside its header too', async () => {
+    const root = scratch('dup-source')
+    writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+    // Another header, but the same content/a.c.
+    writeTileset(root, 'res/b.tiles.json', 'content/a.inc')
+    const results = await exportAll(root, fakeProject())
+    expect(results.map((result) => result.status)).toEqual(['failed', 'failed'])
+    expect(results[0].message).toContain('content/a.c')
+    expect(existsSync(join(root, 'content/a.h'))).toBe(false)
+    expect(existsSync(join(root, 'content/a.inc'))).toBe(false)
+  })
+
+  it('a binary export landing on another resource’s .c collides as well', async () => {
+    const root = scratch('dup-bin')
+    writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+    writeTileset(root, 'res/b.tiles.json', 'content/a.c')
+    const doc = JSON.parse(read(root, 'res/b.tiles.json'))
+    doc.export.format = 'bin'
+    writeFileSync(join(root, 'res/b.tiles.json'), JSON.stringify(doc))
+    expect((await exportAll(root, fakeProject())).map((result) => result.status)).toEqual(['failed', 'failed'])
+  })
+
+  it('compares out paths as paths, not as strings', async () => {
+    const root = scratch('dup-spelling')
+    writeTileset(root, 'res/a.tiles.json', './content/a.h')
+    writeTileset(root, 'res/b.tiles.json', 'content//a.h')
+    expect((await exportAll(root, fakeProject())).map((result) => result.status)).toEqual(['failed', 'failed'])
+  })
+
+  it('is reported even when both headers are newer than both resources — the one on disk may be the wrong one', async () => {
+    const root = scratch('dup-uptodate')
+    writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+    await exportAll(root, fakeProject())
+    writeTileset(root, 'res/b.tiles.json', 'content/a.h')
+    for (const file of ['res/a.tiles.json', 'res/b.tiles.json']) backdate(join(root, file), 60)
+    const before = read(root, 'content/a.c')
+    expect((await exportAll(root, fakeProject())).map((result) => result.status)).toEqual(['failed', 'failed'])
+    expect(read(root, 'content/a.c')).toBe(before)
+  })
+
+  it("a single resource's export refuses too — the editor's Export button, and a copy exported by name", async () => {
+    const root = scratch('dup-one')
+    const real = await realAndCopy(root, '.scratch/head/a.tiles.json')
+    // The copy is not among the resources, but it still writes the real one's files.
+    const copy = exportResourceFile(root, '.scratch/head/a.tiles.json')
+    expect(copy.status).toBe('failed')
+    expect(copy.message).toContain('res/a.tiles.json')
+    expect(read(root, 'content/a.c')).toBe(real)
+    // Two listed resources: each refuses alone as it does in a build.
+    writeTileset(root, 'res/b.tiles.json', 'content/a.h')
+    expect(exportResourceFile(root, 'res/a.tiles.json', { force: true }).status).toBe('failed')
+    expect(exportResourceFile(root, './res/b.tiles.json', { force: true }).status).toBe('failed')
+    expect(read(root, 'content/a.c')).toBe(real)
+  })
+
+  it('a resource is never its own rival, however its path is spelt', () => {
+    const root = scratch('dup-self')
+    writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+    expect(exportResourceFile(root, './res//a.tiles.json').status).toBe('converted')
+  })
+
+  it('a resource that will not parse claims nothing', async () => {
+    const root = scratch('dup-broken')
+    writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+    writeFileSync(join(root, 'res/b.tiles.json'), '{ "export": { "out": "content/a.h"', 'utf-8')
+    const results = await exportAll(root, fakeProject())
+    expect(results.map((result) => [result.input, result.status])).toEqual([
+      ['res/a.tiles.json', 'converted'],
+      ['res/b.tiles.json', 'failed']
+    ])
+  })
+
+  describe('inspecting a resource (MCP read_resource / write_resource) reports the clash its export would', () => {
+    const inspect = (root: string, relative: string, text = read(root, relative)): string[] =>
+      inspectResource(root, relative, text).problems
+
+    it('word for word what exportResourceFile says, and writes nothing', () => {
+      const root = scratch('inspect-dup')
+      writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+      writeTileset(root, 'res/b.tiles.json', 'content/a.h')
+      const problems = inspect(root, 'res/b.tiles.json')
+      const exported = exportResourceFile(root, 'res/b.tiles.json')
+      expect(exported.status).toBe('failed')
+      expect(problems).toEqual([exported.message])
+      expect(existsSync(join(root, 'content/a.h'))).toBe(false)
+    })
+
+    it('a resource alone is never its own rival', () => {
+      const root = scratch('inspect-self')
+      writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+      expect(inspect(root, 'res/a.tiles.json')).toEqual([])
+    })
+
+    it('a copy in a dot folder, inspected by name, still clashes with the resource it was copied from', async () => {
+      const root = scratch('inspect-copy')
+      await realAndCopy(root, '.scratch/head/a.tiles.json')
+      const problems = inspect(root, '.scratch/head/a.tiles.json')
+      expect(problems).toHaveLength(1)
+      expect(problems[0]).toContain('res/a.tiles.json')
+      expect(problems[0]).toContain('content/a.h')
+      // The resource it was copied from does not see the copy: dot folders are not resources.
+      expect(inspect(root, 'res/a.tiles.json')).toEqual([])
+    })
+
+    it('judges the text it is given, not the file on disk: what write_resource is about to save', () => {
+      const root = scratch('inspect-text')
+      writeTileset(root, 'res/a.tiles.json', 'content/a.h')
+      writeTileset(root, 'res/b.tiles.json', 'content/b.h')
+      const retarget = (relative: string, out: string): string => {
+        const doc = JSON.parse(read(root, relative))
+        doc.export.out = out
+        return JSON.stringify(doc)
+      }
+      // b, about to be saved onto a's header: a clash, though the file on disk has none.
+      expect(inspect(root, 'res/b.tiles.json', retarget('res/b.tiles.json', 'content/a.h'))[0]).toContain('res/a.tiles.json, res/b.tiles.json all export to content/a.h')
+      // A new file not yet on disk clashes the same way.
+      expect(inspect(root, 'res/c.tiles.json', retarget('res/b.tiles.json', 'content/b.h'))[0]).toContain('res/b.tiles.json, res/c.tiles.json')
+      // And no export target, nothing to clash.
+      const none = JSON.parse(read(root, 'res/b.tiles.json'))
+      none.export = null
+      expect(inspect(root, 'res/c.tiles.json', JSON.stringify(none))).toEqual([])
+    })
+  })
+
+  it('compares without case on Windows, where Content/A.h and content/a.h are one file', () => {
+    expect(outputKey('Content/A.h', 'win32')).toBe(outputKey('content/a.h', 'win32'))
+    expect(outputKey('Content/A.h', 'linux')).not.toBe(outputKey('content/a.h', 'linux'))
+    expect(outputKey('./content//a.h', 'linux')).toBe('content/a.h')
+  })
+})
+
 describe('exports that read other files', () => {
   const ANIM = 'res/coin.anim-tiles.json'
   const TILESET = 'res/main.tiles.json'
 
-  /** A 1×1, four-pose animation whose first pose's rows are all `first`. */
-  function writeAnim(root: string, first = 0x18): void {
+  /** A 1×1, four-pose animation (or `poses` of them) whose first pose's rows are all `first`. */
+  function writeAnim(root: string, first = 0x18, exportBlock: ExportBlock | null = defaultExport(ANIM), poses = 4): void {
     const doc = normalizeTileAnim({
       mode: 'sc2',
-      frames: [first, 0x3c, 0x7e, 0x3c].map((mark) => ({ tiles: [{ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xb5) }], duration: 10 })),
-      export: defaultExport(ANIM)
+      frames: [first, 0x3c, 0x7e, 0x3c].slice(0, poses).map((mark) => ({ tiles: [{ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xb5) }], duration: 10 })),
+      export: exportBlock
     })
     mkdirSync(join(root, 'res'), { recursive: true })
     writeFileSync(join(root, ANIM), serializeResource({ kind: 'anim', doc }), 'utf-8')
   }
 
   /** A tileset with the animation attached at slot 2 — and, on disk, stale art in the window. */
-  function writeAnimatedTileset(root: string): void {
+  function writeAnimatedTileset(root: string, helpers = true): void {
     const doc = normalizeTiles({
       mode: 'sc2',
       count: 4,
       animations: [{ path: ANIM, slot: 2, bank: null, name: 'g_CoinAnim', width: 1, height: 1, frames: 4, colorsVary: false, loop: 'loop' }],
-      export: { ...defaultExport(TILESET), helpers: true }
+      export: { ...defaultExport(TILESET), helpers }
     })
     mkdirSync(join(root, 'res'), { recursive: true })
     writeFileSync(join(root, TILESET), serializeResource({ kind: 'tiles', doc }), 'utf-8')
@@ -164,6 +364,47 @@ describe('exports that read other files', () => {
     setTime(root, ANIM, 2_000_000)
     expect(exportResourceFile(root, TILESET).status).toBe('converted')
     expect(readFileSync(join(root, 'content/main_tiles.c'), 'utf-8')).toContain('0xFF, /* ######## */')
+  })
+
+  it('fails when an attached animation has nowhere to write its poses, _Animate() or not', () => {
+    const root = scratch('anim-noexport')
+    writeAnim(root, 0x18, null)
+    writeAnimatedTileset(root)
+    expect(exportResourceFile(root, TILESET)).toMatchObject({
+      status: 'failed',
+      message:
+        'res/coin.anim-tiles.json has 4 poses but no export target, so its poses are not exported and ' +
+        "res/main.tiles.json's _Animate() cannot link — give it an export target " +
+        '(Export in the animated-tile editor\'s side panel, or "export": {…} in the file)'
+    })
+    // No ready-made C: nothing to link, but the poses still reach no header.
+    writeAnimatedTileset(root, false)
+    const result = exportResourceFile(root, TILESET)
+    expect(result.status).toBe('failed')
+    expect(result.message).toContain('has 4 poses but no export target, so its poses are not exported and the game has nothing to play them from')
+    expect(existsSync(join(root, 'content/main_tiles.h'))).toBe(false)
+  })
+
+  it('lets a one-pose animation go without an export, unless _Animate() names it', () => {
+    const root = scratch('anim-still-noexport')
+    writeAnim(root, 0x18, null, 1)
+    writeAnimatedTileset(root, false)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+    writeAnimatedTileset(root, true)
+    expect(exportResourceFile(root, TILESET, { force: true }).message).toContain(
+      "has 1 pose but no export target, so its poses are not exported and res/main.tiles.json's _Animate() cannot link"
+    )
+  })
+
+  it('refuses a binary animation under a tileset whose _Animate() reads C, and allows it under one without', () => {
+    const root = scratch('anim-bin')
+    writeAnim(root, 0x18, { ...defaultExport(ANIM), format: 'bin', out: 'content/coin.bin' })
+    writeAnimatedTileset(root, true)
+    const result = exportResourceFile(root, TILESET)
+    expect(result.status).toBe('failed')
+    expect(result.message).toContain("res/coin.anim-tiles.json exports its poses as raw binary, but res/main.tiles.json's _Animate() reads them from a C header")
+    writeAnimatedTileset(root, false)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
   })
 
   it('fails, naming the file, when an attached animation is missing', () => {
@@ -219,7 +460,7 @@ describe('meta-tiles that own their pixels, exported from the files alone', () =
   const entry = (mark: number): { pattern: number[]; color: number[] } => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf1) })
 
   /** A 2×1 rock, its right half see-through; or, with `poses`, a left half that changes. */
-  function writeRock(root: string, mark = 0x81, poses = 1, out: string | null = 'content/rock_meta.h'): void {
+  function writeRock(root: string, mark = 0x81, poses = 1, out: string | null = 'content/rock_meta.h', format: 'c' | 'bin' = 'c'): void {
     const doc = normalizeOwnedMeta({
       version: 3,
       mode: 'sc2',
@@ -228,20 +469,20 @@ describe('meta-tiles that own their pixels, exported from the files alone', () =
       holes: [false, true],
       frames: Array.from({ length: poses }, (_, pose) => ({ tiles: [entry(mark + pose), entry(0)] })),
       flags: 1,
-      export: out ? { ...defaultExport(ROCK), out } : null
+      export: out ? { ...defaultExport(ROCK), out, format } : null
     })
     mkdirSync(join(root, 'res'), { recursive: true })
     writeFileSync(join(root, ROCK), serializeResource({ kind: 'metatiles', doc }), 'utf-8')
   }
 
   /** A tileset with the rock attached — and, on disk, whatever cells it was given. */
-  function writeTilesetWithRock(root: string, cells: number[] = [3, 0]): void {
+  function writeTilesetWithRock(root: string, cells: number[] = [3, 0], helpers = true): void {
     const doc = normalizeTiles({
       mode: 'sc2',
       count: 4,
       tiles: [entry(0), entry(1), entry(2), entry(0x81)],
       metas: [{ path: ROCK, name: 'g_RockMeta', width: 2, height: 1, flags: 1, frames: 1, cells }],
-      export: { ...defaultExport(TILESET), helpers: true }
+      export: { ...defaultExport(TILESET), helpers }
     })
     writeFileSync(join(root, TILESET), serializeResource({ kind: 'tiles', doc }), 'utf-8')
   }
@@ -323,7 +564,31 @@ describe('meta-tiles that own their pixels, exported from the files alone', () =
     writeTilesetWithRock(root)
     const result = exportResourceFile(root, TILESET)
     expect(result.status).toBe('failed')
-    expect(result.message).toMatch(/animates, and its poses are written to its own header/)
+    expect(result.message).toBe(
+      'res/rock.meta-tiles.json has 3 poses but no export target, so its poses are not exported and ' +
+        "res/main.tiles.json's _Animate() cannot link — give it an export target " +
+        '(Export in the meta-tile editor\'s side panel, or "export": {…} in the file)'
+    )
+    // Ancient Horrors' case: no ready-made C, so no _Animate() to fail — the poses are just gone.
+    writeTilesetWithRock(root, [3, 0], false)
+    expect(exportResourceFile(root, TILESET).message).toContain(
+      'has 3 poses but no export target, so its poses are not exported and the game has nothing to play them from'
+    )
+  })
+
+  it("refuses a binary animated meta under a tileset whose _Animate() reads C — not a still one, nor one without _Animate()", () => {
+    const root = scratch('owned-anim-bin')
+    writeRock(root, 0x81, 3, 'content/rock_meta.bin', 'bin')
+    writeTilesetWithRock(root)
+    const result = exportResourceFile(root, TILESET)
+    expect(result.status).toBe('failed')
+    expect(result.message).toContain("res/rock.meta-tiles.json exports its poses as raw binary, but res/main.tiles.json's _Animate() reads them from a C header")
+    writeTilesetWithRock(root, [3, 0], false)
+    expect(exportResourceFile(root, TILESET).status).toBe('converted')
+    // A still meta has no window, so _Animate() never names it.
+    writeRock(root, 0x81, 1, 'content/rock_meta.bin', 'bin')
+    writeTilesetWithRock(root)
+    expect(exportResourceFile(root, TILESET, { force: true }).status).toBe('converted')
   })
 
   it('fails, naming the file, when an attached meta is missing', () => {
@@ -343,6 +608,57 @@ describe('meta-tiles that own their pixels, exported from the files alone', () =
     const result = exportResourceFile(root, LEVEL)
     expect(result.status).toBe('failed')
     expect(result.message).toMatch(/is not attached to res\/main\.tiles\.json/)
+  })
+
+  /**
+   * Bug report items 7 and 9: a map's `metas` entry written by hand — path and
+   * name only — over the tileset's 1×1 stub binding. The export resolves both
+   * and draws the meta; the check an agent got back from `read_resource`
+   * validated the file as written and called it "not attached".
+   */
+  function writeHandWritten(root: string): string {
+    writeRock(root)
+    const tiles = normalizeTiles({
+      mode: 'sc2',
+      count: 4,
+      tiles: [entry(0), entry(1), entry(2), entry(3)],
+      metas: [{ path: ROCK, name: '', width: 1, height: 1, flags: 0, frames: 1, cells: [0] }],
+      export: { ...defaultExport(TILESET), helpers: true }
+    })
+    writeFileSync(join(root, TILESET), serializeResource({ kind: 'tiles', doc: tiles }), 'utf-8')
+    const text = JSON.stringify({
+      version: 1,
+      tileset: TILESET,
+      width: 4,
+      height: 4,
+      metas: [{ path: ROCK, name: 'g_Rock' }],
+      layers: [{ name: 'bg', placements: [{ slot: 0, x: 1, y: 1 }] }],
+      export: { ...defaultExport(LEVEL), helpers: true }
+    })
+    writeFileSync(join(root, LEVEL), text, 'utf-8')
+    return text
+  }
+
+  it('inspecting a hand-written map entry agrees with the export: attached, and its mirror resolved', () => {
+    const root = scratch('inspect-hand')
+    const text = writeHandWritten(root)
+    // What the file says on its own — the "not attached" an agent was told.
+    expect(validateResource(parseResource(LEVEL, text)).join('; ')).toContain('metas[0].cells has 0 tile numbers')
+    const inspected = inspectResource(root, LEVEL, text)
+    expect(inspected.problems).toEqual([])
+    expect(inspected.resource.kind === 'map' && inspected.resource.doc.metas).toEqual([
+      { path: ROCK, name: defaultExport(ROCK).name, width: 2, height: 1, frames: 1, flags: 1, cells: [4, 0] }
+    ])
+    expect(exportResourceFile(root, LEVEL).status).toBe('converted')
+  })
+
+  it('inspecting a tileset reports what its export would refuse', () => {
+    const root = scratch('inspect-tiles')
+    writeRock(root, 0x81, 3, null)
+    writeTilesetWithRock(root)
+    const inspected = inspectResource(root, TILESET, readFileSync(join(root, TILESET), 'utf-8'))
+    expect(inspected.problems.join('; ')).toContain('has 3 poses but no export target')
+    expect(exportResourceFile(root, TILESET).message).toBe(inspected.problems.join('; '))
   })
 })
 
@@ -416,6 +732,16 @@ describe('worlds, exported from the files alone', () => {
     expect(result.message).toContain('Room 1,0 (res/b.map.json) could not be read')
     expect(result.message).toContain('"bat" used in rooms but not declared')
   })
+
+  it('inspecting one reads its rooms, so it says what the export would', () => {
+    const root = scratch('world-inspect')
+    writeTileset(root, 'res/hero.tiles.json')
+    writeRoom(root, 'res/a.map.json', 1)
+    writeWorld(root)
+    const { problems } = inspectResource(root, 'res/over.world.json', readFileSync(join(root, 'res/over.world.json'), 'utf-8'))
+    expect(problems.join('; ')).toContain('Room 1,0 (res/b.map.json) could not be read')
+    expect(exportResourceFile(root, 'res/over.world.json').message).toBe(problems.join('; '))
+  })
 })
 
 describe('exportResourceFile', () => {
@@ -445,6 +771,21 @@ describe('exportResourceFile', () => {
     const replayed = exported(10)
     expect(replayed).not.toBe(asWritten)
     expect(replayed.replace(/0x01, 0x00/, '0x00, 0x01')).toBe(asWritten)
+  })
+
+  it('prepares a stamped map in the current numbering, but an inspection hands back the grid the file has', () => {
+    const root = scratch('reorder-inspect')
+    writeTileset(root, 'res/hero.tiles.json')
+    const path = join(root, 'res/hero.tiles.json')
+    const swap = Array.from({ length: 256 }, (_, i) => (i === 0 ? 1 : i === 1 ? 0 : i))
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf-8')), reorderLog: [{ path: 'res/hero.tiles.json', mapping: swap, at: 20 }] }))
+    const map = normalizeMap({ tileset: 'res/hero.tiles.json', width: 2, height: 1, layers: [{ name: 'bg', data: [0, 1] }] })
+    const text = JSON.stringify({ ...JSON.parse(serializeResource({ kind: 'map', doc: map })), tilesetReorderSeen: 10 })
+    const prepared = prepareResource(root, 'res/level.map.json', parseResource('res/level.map.json', text), text).resource
+    expect(prepared.kind === 'map' && prepared.doc.layers[0].data).toEqual([1, 0])
+    // Replaying it without moving the stamp would have the next replay apply the swap twice.
+    const inspected = inspectResource(root, 'res/level.map.json', text).resource
+    expect(inspected.kind === 'map' && inspected.doc.layers[0].data).toEqual([0, 1])
   })
 
   it('writes a deterministic C header to the export target', () => {
@@ -563,6 +904,27 @@ describe('exportResourceFile', () => {
     expect(result.status).toBe('failed')
     expect(result.message).toContain('GRB333')
     expect(existsSync(join(root, 'content/hero.h'))).toBe(false)
+  })
+})
+
+describe('conversionProblems', () => {
+  it('makes every failed conversion an error naming its input, and nothing else one', () => {
+    expect(
+      conversionProblems([
+        { kind: 'resource', input: 'res/a.tiles.json', out: 'content/a.h + content/a.c', status: 'converted', message: '1 + 2 bytes' },
+        { kind: 'resource', input: 'res/b.tiles.json', out: 'content/b.h', status: 'failed', message: 'Palette entry 0 is outside GRB333' },
+        { kind: 'resource', input: 'res/c.map.json', out: '', status: 'skipped', message: 'No export target set.' },
+        { kind: 'imgRule', input: 'img/x.png', out: 'content/x.h', status: 'failed', message: 'Input not found: img/x.png' },
+        // Nothing to open: the input is outside the project.
+        { kind: 'imgRule', input: '../x.png', out: 'content/y.h', status: 'failed', message: 'Rule path escapes the project folder.' },
+        { kind: 'resource', input: 'res/d.tiles.json', out: '', status: 'failed' }
+      ])
+    ).toEqual([
+      { id: 'r0', severity: 'error', file: 'res/b.tiles.json', message: 'Palette entry 0 is outside GRB333' },
+      { id: 'r1', severity: 'error', file: 'img/x.png', message: 'Input not found: img/x.png' },
+      { id: 'r2', severity: 'error', message: 'Rule path escapes the project folder.' },
+      { id: 'r3', severity: 'error', file: 'res/d.tiles.json', message: 'Export failed.' }
+    ])
   })
 })
 

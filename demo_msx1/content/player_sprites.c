@@ -586,7 +586,7 @@ const unsigned char g_PlayerSprites_Patterns[] =
 };
 // g_PlayerSprites_Patterns size: 576 Bytes
 
-// Sprite Colors Table
+// Sprite Colors Table — one byte per plane (EC|colour), in pattern order: for a one-plane character that is one byte per frame
 const unsigned char g_PlayerSprites_Colors[] =
 {
 	0x01, 0x07, 0x0F, 0x01, 0x07, 0x0F, 0x01, 0x07, 0x0F, 0x01, 0x07, 0x0F, 0x01, 0x07, 0x0F, 0x01,
@@ -618,7 +618,14 @@ const unsigned char g_PlayerSprites_Layout[] =
 };
 // g_PlayerSprites_Layout size: 36 Bytes
 
-// Total size: 630 Bytes
+// Frame durations in VBlanks — one byte per frame, characters in order (a character starts at its _FRAME0)
+const unsigned char g_PlayerSprites_Durations[] =
+{
+	0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+};
+// g_PlayerSprites_Durations size: 6 Bytes
+
+// Total size: 636 Bytes
 
 void g_PlayerSprites_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)
 {
@@ -631,4 +638,40 @@ void g_PlayerSprites_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)
 		rec += 2;
 		VDP_SetSpriteSM1(index + i, px, py, plane * 4, g_PlayerSprites_Colors[plane]);
 	}
+}
+
+// Per character: first plane, planes per frame, frames, first frame in g_PlayerSprites_Durations.
+static const u8 g_PlayerSprites_CharInfo[G_PLAYERSPRITES_CHARS * 4] = { 0, 3, 6, 0 };
+
+void g_PlayerSprites_SetFrame(u8 index, u8 chr, u8 frame)
+{
+	if(chr >= G_PLAYERSPRITES_CHARS) return;
+	const u8* info = g_PlayerSprites_CharInfo + ((u16)chr * 4);
+	if(frame >= info[2]) frame = 0;
+	u8 plane = info[0] + frame * info[1];
+	for(u8 i = 0; i < info[1]; ++i, ++plane)
+	{
+		VDP_SetSpritePattern(index + i, plane * 4);
+		VDP_SetSpriteColorSM1(index + i, g_PlayerSprites_Colors[plane]);
+	}
+}
+
+bool g_PlayerSprites_AnimStep(u8 chr, u8* state)
+{
+	if(chr >= G_PLAYERSPRITES_CHARS) return FALSE;
+	const u8* info = g_PlayerSprites_CharInfo + ((u16)chr * 4);
+	u8 f = state[0];
+	// Clamped: a frame past the last means nobody zeroed state.
+	if(f >= info[2])
+	{
+		state[0] = 0;
+		state[1] = 0;
+		return TRUE;
+	}
+	if(++state[1] < g_PlayerSprites_Durations[info[3] + f]) return FALSE;
+	state[1] = 0;
+	if(++f >= info[2]) f = 0;
+	if(f == state[0]) return FALSE;
+	state[0] = f;
+	return TRUE;
 }

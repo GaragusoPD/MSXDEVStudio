@@ -19,7 +19,9 @@ import { normalizeOwnedMeta, resolveMeta } from '../../shared/msx/meta-owned'
 import { createMetaTileDoc } from '../../shared/msx/meta-tile'
 import { paintBitmapMeta } from '../../shared/msx/meta-paint'
 import { defaultExport, renderResourceFiles, type ResourceDoc } from '../../shared/msx/resource'
+import { createLayer, normalizeSprites } from '../../shared/msx/sprite'
 import { normalizeTiles } from '../../shared/msx/tile'
+import { LOOP_CODE } from '../../shared/msx/tile-anim'
 import { agentGuideFiles } from './agent-guide'
 
 const guide = (machine: string): string =>
@@ -181,12 +183,43 @@ describe('the guide teaches meta-tiles that own their pixels as the exporter emi
 
   it("the meta's own header", () => {
     const text = render({ kind: 'metatiles', doc: torch }, 'res/torch.meta-tiles.json', 'g_Torch')
-    for (const symbol of ['G_TORCH_W', 'G_TORCH_H', 'G_TORCH_FLAGS', 'G_TORCH_MOVING']) {
+    for (const symbol of ['G_TORCH_W', 'G_TORCH_H', 'G_TORCH_FLAGS', 'G_TORCH_MOVING', 'G_TORCH_FRAMES']) {
       expect(text, `${symbol} is emitted`).toContain(`#define ${symbol}`)
       expect(guide('1'), `${symbol} is taught`).toContain(symbol.replace(/_(H|FLAGS)$/, ''))
     }
-    expect(text).toContain('extern const unsigned char g_Torch_Patterns[];')
-    expect(guide('1')).toContain('g_Torch_Patterns')
+    for (const table of ['g_Torch_Patterns', 'g_Torch_Colors', 'g_Torch_Durations', 'g_Torch_MovingCells']) {
+      expect(text, `${table} is emitted`).toContain(`extern const unsigned char ${table}[];`)
+      expect(guide('1'), `${table} is taught`).toContain(table)
+    }
+  })
+
+  it('a loader of its own: every symbol the relocating example names, and the bank-only VRAM calls', () => {
+    const meta = render({ kind: 'metatiles', doc: torch }, 'res/torch.meta-tiles.json', 'g_Torch')
+    const set = render({ kind: 'tiles', doc: tileset }, 'res/mytiles.tiles.json', 'g_MyTiles')
+    // The window's length, beside where it starts — and the same number as the meta's _MOVING.
+    expect(set).toContain('#define G_MYTILES_ANIM_TORCH_SLOT ')
+    expect(set).toContain('#define G_MYTILES_ANIM_TORCH_TILES 2')
+    expect(meta).toContain('#define G_TORCH_MOVING 2')
+    // The top row moves: cells 0 and 1, in reading order.
+    expect(meta).toMatch(/g_Torch_MovingCells\[\] =\s*\{\s*0x00, 0x01,/)
+    for (const machine of ['1', '2']) {
+      const text = guide(machine)
+      expect(text).toContain('G_MYTILES_ANIM_COIN_TILES')
+      expect(text).toContain('_ANIM_TORCH_TILES')
+      const example = text.slice(text.indexOf('#### Your own loader'), text.indexOf('#### By hand, from a block'))
+      for (const [symbol] of example.matchAll(/\b[gG]_T[Oo][Rr][Cc][Hh]_\w+/g)) {
+        expect(meta, `${symbol} (guide, MSX${machine}) is in the meta's header`).toMatch(new RegExp(`\\b${symbol}\\b`))
+      }
+      // One bank, not the mirroring _GM2 loaders: the whole point of a loader of one's own.
+      expect(example).toContain('VDP_LoadBankPattern_GM2(pattern + k * 8, 1, TORCH_BANK, slot);')
+      expect(example).toContain('VDP_LoadBankColor_GM2(color + k * 8, 1, TORCH_BANK, slot);')
+      // The loop mode is read from the header, by the numbers _Animate() uses —
+      // not hard-coded, not left to the reader.
+      expect(example).toContain(`G_TORCH_LOOP == ${LOOP_CODE.pingpong}`)
+      expect(example).toContain(`G_TORCH_LOOP == ${LOOP_CODE.once}`)
+      expect(example).not.toMatch(/yours to code|written only in the\s+header's comment/)
+    }
+    expect(meta).toContain(`#define G_TORCH_LOOP ${LOOP_CODE[torch.loop]}\n`)
   })
 
   it('an indexed layer, its tables and _Expand', () => {
@@ -200,6 +233,61 @@ describe('the guide teaches meta-tiles that own their pixels as the exporter emi
     }
     expect(text).toContain('void g_Level_Expand(const u8* layer, u8* tiles, u8* objects);')
     expect(guide('1')).toContain('g_Level_Expand(g_Level_Terrain, g_Map, NULL)')
+  })
+})
+
+describe('the guide teaches animated sprite sheets as the exporter emits them', () => {
+  /** The bug report's cursors sheet: an arrow of 4 frames, then four one-frame characters. */
+  const cursors = (mode: 1 | 2, animated = true) =>
+    normalizeSprites({
+      mode,
+      size: 16,
+      sprites: [
+        { name: 'arrow', frames: (animated ? [1, 2, 3, 4] : [1]).map((f) => ({ layers: [createLayer(16, 4 + f)], duration: 4 + f })) },
+        ...['down', 'marker', 'flash', 'here'].map((name) => ({ name, frames: [{ layers: [createLayer(16, 15)], duration: 8 }] }))
+      ]
+    })
+  const header = (mode: 1 | 2, animated = true): string =>
+    render({ kind: 'sprites', doc: { ...cursors(mode, animated), export: block('g_Cursors') } }, 'res/cursors.sprites.json', 'g_Cursors')
+
+  it('every #define in its example, with the value the export gives it', () => {
+    const text = header(1)
+    for (const machine of ['1', '2']) {
+      const taught = [...guide(machine).matchAll(/^#define (G_CURSORS_\w+)\s+(\d+)/gm)]
+      // The two characters of the bug report, and the sheet-level pair.
+      expect(taught.map(([, symbol]) => symbol)).toEqual(
+        expect.arrayContaining(['G_CURSORS_CHARS', 'G_CURSORS_PLANE_PATTERNS', 'G_CURSORS_ARROW_ID', 'G_CURSORS_DOWN_PATTERN', 'G_CURSORS_DOWN_FRAME0'])
+      )
+      for (const [, symbol, value] of taught) expect(text, `${symbol} ${value}`).toContain(`#define ${symbol} ${value}\n`)
+    }
+    expect(text).toContain('extern const unsigned char g_Cursors_Durations[];')
+    expect(guide('1')).toContain('g_Cursors_Durations')
+  })
+
+  it('the two helpers, by their real signatures, and every call the guide makes on the sheet', () => {
+    for (const [machine, mode] of [['1', 1], ['2', 2]] as const) {
+      const text = header(mode)
+      const taught = guide(machine)
+      expect(text).toContain('void g_Cursors_SetFrame(u8 index, u8 chr, u8 frame);')
+      expect(text).toContain('bool g_Cursors_AnimStep(u8 chr, u8* state);')
+      expect(taught).toContain('void g_Cursors_SetFrame(u8 index, u8 chr, u8 frame);')
+      expect(taught).toContain('bool g_Cursors_AnimStep(u8 chr, u8* state);')
+      for (const [call] of taught.matchAll(/\bg_Cursors_[A-Za-z]+(?=\()/g)) expect(text).toContain(`${call}(`)
+    }
+    // Mode 2's colour call is MSX2-only in MSXgl, and only the MSX2 guide says so.
+    expect(header(2)).toContain('VDP_SetSpriteMultiColor(')
+    expect(guide('2')).toContain('VDP_SetSpriteMultiColor')
+    expect(guide('1')).not.toContain('VDP_SetSpriteMultiColor')
+  })
+
+  it('no animation, no _FRAME0, _Durations or helpers — as the guide says', () => {
+    const text = header(1, false)
+    expect(text).toContain('#define G_CURSORS_DOWN_PATTERN 4')
+    expect(text).not.toContain('_FRAME0')
+    expect(text).not.toContain('g_Cursors_Durations')
+    expect(text).not.toContain('g_Cursors_SetFrame')
+    expect(guide('1')).toContain('`_FRAME0` and `_Durations` exist once some character has more than one')
+    expect(guide('1')).toContain('With *Export ready-made C* on, a sheet with any animated character also gets')
   })
 })
 

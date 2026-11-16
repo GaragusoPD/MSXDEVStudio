@@ -451,13 +451,20 @@ export function validateMap(doc: MapDoc, options: { banked?: boolean } = {}): st
   // A meta that owns its pixels is drawn from the tiles its attachment to this
   // map's tileset gives it. Without one there is nothing to draw with, and the
   // only other outcome is a table of zeros that draws nothing at runtime.
-  for (const ref of doc.metas) {
+  doc.metas.forEach((ref, index) => {
     // On a pattern map every meta owns its pixels and is drawn with its
     // attachment's tiles; a bitmap map's metas carry their own tables instead.
     if (!doc.cell && (!ref.cells || ref.cells.length !== ref.width * ref.height)) {
-      problems.push(`"${ref.name}" (${ref.path}) is not attached to ${doc.tileset || 'this map\'s tileset'} — attach it in the tile editor, or place it again from the map editor`)
+      // Names the field and both counts: a hand-written entry is the usual
+      // cause, and "not attached" alone does not say which line to look at.
+      const have = ref.cells?.length ?? 0
+      problems.push(
+        `"${ref.name}" (${ref.path}): metas[${index}].cells has ${have} tile number${have === 1 ? '' : 's'}, ` +
+          `expected ${ref.width * ref.height} (${ref.width}×${ref.height}) — it is not attached to ` +
+          `${doc.tileset || "this map's tileset"}; attach it in the tile editor, or place it again from the map editor`
+      )
     }
-  }
+  })
 
   problems.push(...indexedLayerProblems(doc))
   problems.push(...entityProblems(mapEntities(doc)))

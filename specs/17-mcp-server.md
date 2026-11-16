@@ -60,10 +60,39 @@ panel, what it opens appears as a tab, what it writes reloads in the editor.
 
 - `build` calls `BuildService.start` — the toolbar's path — so the renderer
   updates from the same events. It returns `buildReport`: the verdict, the
-  problems, the output's tail.
+  problems, the output's tail. The problems start with every resource whose
+  export failed (`conversionProblems`, ids `r<n>`, severity `error`, `file` the
+  resource), which `BuildService` hands to `run()` so the Problems panel gets
+  them too. `BuildFinished.ok` stays MSXgl's verdict, but the report does not
+  read as one: with any `r<n>` problem its first line says so — "Build
+  succeeded, but 2 resource exports failed — the ROM may not match res/ (see
+  the problems below)." (no claim about the ROM after a `clean`), or "Build
+  failed: …; 2 resource exports failed before it." — and the tool result is `isError`
+  whenever `ok` is false **or** an export failed. The `r<n>` id is the only
+  mark a `BuildFinished` problem carries of where it came from, so it is what
+  `buildReport` counts (`exportFailures`). It also marks a failed imgRule and
+  a tileset that software sprites would overwrite (`swSpriteOverlapProblems`),
+  which is why the line names no cause.
+- `read_resource` and `write_resource` judge a resource through
+  `McpDeps.inspectResource` → `inspectResource` in `resources.ts`, which runs
+  `prepareResource` — the same world-room load, tileset-log replay, mirror
+  refresh (`refreshMapMetas`, `refreshTileset`) and validation
+  `exportResourceFile` runs — and, before them, the same duplicate-output
+  check (`claimConflict` over `exportClaims`), judged on the text's export
+  block against what the files on disk claim — so their problems are the
+  export's own, worlds and clashes included. The document they return or save
+  has its mirrors refreshed (`refreshMapMetas`) but is **not** replayed: its
+  `tilesetReorderSeen` is not moved, and a replayed grid would be replayed
+  again by the next export.
 - `write_resource` parses through `parseResource` and saves
-  `serializeResource`, so what lands on disk is what an editor would save. It
-  returns `validateResource`'s problems (a world's need its rooms: export it).
+  `serializeResource`, so what lands on disk is what an editor would save, plus
+  the sibling keys the editors keep beside a document and the normalizers drop
+  (`SIBLING_KEYS`: `tilesetReorderSeen` on maps and `.meta-btiles.json`,
+  `reorderLog` on `.tiles.json`/`.btiles.json`) — the incoming doc's when it has
+  them, else the file's. `read_resource` returns them as the file has them. A
+  file that does not exist yet, written with no `export` key, gets
+  `defaultExport(path)` as `create_resource` does; an explicit `"export": null`
+  is kept. It returns the problems of the file as saved.
 - `write_file`/`write_resource` are refused when the renderer reports the
   file's tab dirty. Paths go through `projectPath` (relative, no `..`, no
   drive) and then `FsService`'s own root guard.

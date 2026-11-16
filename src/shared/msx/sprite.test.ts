@@ -16,8 +16,12 @@ import {
   SPRITE_CC,
   SPRITE_EC,
   SPRITE_IC,
+  hasSpriteAnimation,
+  lockLeadingCc,
   spriteColorBytes,
+  spriteDurationBytes,
   spritePatternBytes,
+  spritePlacements,
   validateSprites,
   type SpriteFrame,
   type SpriteLayer
@@ -204,7 +208,8 @@ describe('metasprites', () => {
       layers: [
         { ...layer8(left, 2), cx: 0, cy: 0 },
         { ...layer8(right, 5), cx: 1, cy: 0 }
-      ]
+      ],
+      duration: 8
     }
   }
 
@@ -314,5 +319,95 @@ describe('export bytes', () => {
     const reloaded = normalizeSprites(JSON.parse(JSON.stringify(serializeSprites(doc))))
     expect(spritePatternBytes(reloaded)).toEqual(spritePatternBytes(doc))
     expect(spriteColorBytes(reloaded)).toEqual(spriteColorBytes(doc))
+  })
+})
+
+describe('frame durations', () => {
+  /** A one-character sheet whose frames carry `durations`, as a file would hold them. */
+  function timed(durations: unknown[]): unknown {
+    return {
+      mode: 1,
+      size: 16,
+      sprites: [{ name: 'arrow', frames: durations.map((duration) => ({ layers: [createLayer(16, 6)], duration })) }]
+    }
+  }
+
+  it('reads a duration per frame, in VBlanks, and clamps it to 1..255', () => {
+    const doc = normalizeSprites(timed([3, 0, 300, 'abc', undefined, 17.4]))
+    expect(doc.sprites[0].frames.map((frame) => frame.duration)).toEqual([3, 1, 255, 8, 8, 17])
+  })
+
+  it('gives a file from before durations 8 a frame — bare layers and frames alike', () => {
+    const bare = normalizeSprites({ mode: 2, size: 16, sprites: [{ name: 'hero', layers: [createLayer(16, 5)] }] })
+    expect(bare.sprites[0].frames[0].duration).toBe(8)
+    const framed = normalizeSprites({ mode: 2, size: 16, sprites: [{ name: 'hero', frames: [{ layers: [createLayer(16)] }, { layers: [createLayer(16)] }] }] })
+    expect(framed.sprites[0].frames.map((frame) => frame.duration)).toEqual([8, 8])
+  })
+
+  it('writes each frame’s duration and reads it back', () => {
+    const doc = normalizeSprites(timed([3, 17]))
+    const written = serializeSprites(doc) as { sprites: { frames: { duration: number }[] }[] }
+    expect(written.sprites[0].frames.map((frame) => frame.duration)).toEqual([3, 17])
+    expect(normalizeSprites(JSON.parse(JSON.stringify(written)))).toEqual(doc)
+  })
+
+  it('survives a mode conversion and the leading-CC lock', () => {
+    const doc = normalizeSprites(timed([3, 17]))
+    expect(convertSpriteMode(doc, 2).sprites[0].frames.map((frame) => frame.duration)).toEqual([3, 17])
+    expect(convertSpriteMode(convertSpriteMode(doc, 2), 1).sprites[0].frames.map((frame) => frame.duration)).toEqual([3, 17])
+    const cc = { ...createLayer(16, 6), lineColors: new Array<number>(16).fill(SPRITE_CC | 6), cc: true }
+    const locked = lockLeadingCc({ layers: [cc], duration: 23 }, 2)
+    expect(locked.layers[0].cc).toBe(false)
+    expect(locked.duration).toBe(23)
+  })
+})
+
+describe('where each character sits', () => {
+  /** The bug report's cursors sheet: an arrow of 4 frames, then four still characters. */
+  function cursors(): ReturnType<typeof normalizeSprites> {
+    const still = (name: string): unknown => ({ name, frames: [{ layers: [createLayer(16, 15)], duration: 8 }] })
+    return normalizeSprites({
+      mode: 1,
+      size: 16,
+      sprites: [
+        { name: 'arrow', frames: [6, 6, 10, 6].map((duration) => ({ layers: [createLayer(16, 11)], duration })) },
+        still('down'),
+        still('marker'),
+        still('flash'),
+        still('here')
+      ]
+    })
+  }
+
+  it('places every character in the flat plane order, with its first frame in the durations', () => {
+    expect(spritePlacements(cursors())).toEqual([
+      { name: 'arrow', base: 0, planes: 1, frames: 4, frame0: 0 },
+      { name: 'down', base: 4, planes: 1, frames: 1, frame0: 4 },
+      { name: 'marker', base: 5, planes: 1, frames: 1, frame0: 5 },
+      { name: 'flash', base: 6, planes: 1, frames: 1, frame0: 6 },
+      { name: 'here', base: 7, planes: 1, frames: 1, frame0: 7 }
+    ])
+  })
+
+  it('counts a frame of several planes once in the durations and once per plane in the patterns', () => {
+    const doc = normalizeSprites({
+      mode: 2,
+      size: 16,
+      sprites: [
+        { name: 'duo', frames: [{ layers: [createLayer(16), createLayer(16)], duration: 4 }, { layers: [createLayer(16), createLayer(16)], duration: 9 }] },
+        { name: 'solo', frames: [{ layers: [createLayer(16)], duration: 2 }] }
+      ]
+    })
+    expect(spritePlacements(doc)[1]).toEqual({ name: 'solo', base: 4, planes: 1, frames: 1, frame0: 2 })
+    expect([...spriteDurationBytes(doc)]).toEqual([4, 9, 2])
+  })
+
+  it('emits one duration byte per frame, characters in order', () => {
+    expect([...spriteDurationBytes(cursors())]).toEqual([6, 6, 10, 6, 8, 8, 8, 8])
+  })
+
+  it('calls a sheet animated once any character has a second frame', () => {
+    expect(hasSpriteAnimation(cursors())).toBe(true)
+    expect(hasSpriteAnimation(createSpritesDoc(1, 16))).toBe(false)
   })
 })

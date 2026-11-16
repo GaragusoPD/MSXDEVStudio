@@ -298,6 +298,63 @@ describe('placing one on a map', () => {
     const session = await open(() => mapSession(MAP))
     expect(unattachedMetas(session)).toEqual([])
   })
+
+  /**
+   * Bug report item 7: an agent wrote the map's entry by hand (path and name)
+   * over the tileset's 1×1 stub binding, and the editor drew nothing — the
+   * metas it reads came only from the Resources list, which had not caught up
+   * with the write. The map and the tileset name the file; that is enough.
+   */
+  function handWritten(): void {
+    files[TILES] = serializeResource({
+      kind: 'tiles',
+      doc: normalizeTiles({
+        mode: 'sc2',
+        count: 4,
+        reserveTile0: true,
+        tiles: [tile(0), tile(1), tile(2), tile(3)],
+        metas: [{ path: ROCK, name: '', width: 1, height: 1, flags: 0, frames: 1, cells: [0] }]
+      })
+    })
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 8, height: 8, metas: [{ path: ROCK, name: 'g_Rock' }], layers: [{ name: 'bg', placements: [{ slot: 0, x: 2, y: 3 }] }] })
+    useResourcesStore().entries = []
+  }
+
+  it('resolves a meta the map and its tileset name, though the Resources list does not have it yet', async () => {
+    handWritten()
+    const session = await open(() => mapSession(MAP))
+    expect(useResourcesStore().entries).toEqual([])
+    expect(doc(session).metas).toEqual([{ path: ROCK, name: defaultExport(ROCK).name, width: 2, height: 1, frames: 1, flags: 1, cells: [4, 0] }])
+    expect(session.metaDocs.get(ROCK)!.frames[0].tiles).toEqual([4, 0])
+  })
+
+  it('reads one the tileset has attached though the map places nothing, and brings its binding up to date', async () => {
+    handWritten()
+    files[MAP] = JSON.stringify({ version: 1, tileset: TILES, width: 8, height: 8 })
+    await open(() => mapSession(MAP))
+    expect(useTilesetStore().patternDoc(TILES)!.metas.map((binding) => [binding.width, binding.height, binding.cells])).toEqual([[2, 1, [4, 0]]])
+  })
+
+  it('reads one the map names though its tileset has not got it, and offers to attach it', async () => {
+    handWritten()
+    files[TILES] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 4, reserveTile0: true, tiles: [tile(0), tile(1), tile(2), tile(3)] }) })
+    const session = await open(() => mapSession(MAP))
+    expect(unattachedMetas(session)).toEqual([ROCK])
+  })
+
+  it('still skips one it cannot read, or one in a mode the tileset cannot show', async () => {
+    handWritten()
+    files[ROCK] = serializeResource({ kind: 'metatiles', doc: normalizeOwnedMeta({ ...rock(), mode: 'sc1' }) })
+    const session = await open(() => mapSession(MAP))
+    expect(session.ownedMetas.size).toBe(0)
+    pruneMapSessions(new Set())
+    delete files[ROCK]
+    const missing = await open(() => mapSession(MAP))
+    expect(missing).not.toBe(session)
+    expect(missing.error).toBeNull()
+    expect(missing.ownedMetas.size).toBe(0)
+    expect(doc(missing).metas).toEqual([{ path: ROCK, name: 'g_Rock', width: 1, height: 1, frames: 1, flags: 0 }])
+  })
 })
 
 describe('an indexed layer', () => {

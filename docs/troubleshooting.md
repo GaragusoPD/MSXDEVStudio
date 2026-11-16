@@ -121,8 +121,11 @@ there with nothing in the cartridge slot.
 ## Resources
 
 **An edit in an editor did not reach the game.** Exports run before every build,
-skipping anything already up to date. If you think that check is wrong, use
-**Force** in the Resources panel, which rewrites every header.
+skipping anything already up to date. First look in **Problems**: a resource
+whose export failed is listed there, and the build went on with its old header.
+Two resources exporting to the same file both fail — give each its own **out**.
+If you think the up-to-date check is wrong, use **Force** in the Resources
+panel, which rewrites every header.
 
 **A map broke after I reordered tiles.** It should not: deleting or dragging a
 tile renumbers every map drawn with that tileset, along with the tile flags and

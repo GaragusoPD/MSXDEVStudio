@@ -51,9 +51,9 @@ function resources(tiles: TilesDoc, anims: Record<string, TileAnimDoc>): Record<
   return out
 }
 
-const main = (load: string): string => `#include "msxgl.h"
+const main = (load: string, prelude = ''): string => `#include "msxgl.h"
 #include "content/tiles.h"
-
+${prelude}
 void main(void)
 {
 ${load}
@@ -68,6 +68,20 @@ ${load}
 \twhile(1) { Halt(); }
 }
 `
+
+/**
+ * Each animation's own header states its loop mode as the number the
+ * tileset's `_AnimLoop` plays it by — what a loader of the game's own reads.
+ * A preprocessor check, so a wrong or missing `_LOOP` fails the compile.
+ */
+const LOOP_CHECK = (...checks: [file: string, define: string, code: number][]): string =>
+  [
+    ...checks.map(([file]) => `#include "content/${file}_anim.h"`),
+    `#if ${checks.map(([, define, code]) => `!defined(${define}) || ${define} != ${code}`).join(' || ')}`,
+    '#error an animation header does not state its loop mode as _AnimLoop numbers it',
+    '#endif',
+    ''
+  ].join('\n')
 
 const LOAD_GM2 = `\tVDP_SetMode(VDP_MODE_GRAPHIC2);
 \tVDP_LoadPattern_GM2(g_Tiles_Patterns, G_TILES_PATTERNS_SIZE / 8, 0);
@@ -96,7 +110,7 @@ describe.runIf(runsBuilds)('the emitted tile-animation C builds against real MSX
         template: 'template',
         machine: '1',
         resources: resources(tiles, { coin, flag }),
-        main: main(LOAD_GM2)
+        main: main(LOAD_GM2, LOOP_CHECK(['coin', 'G_COIN_LOOP', 0], ['flag', 'G_FLAG_LOOP', 1]))
       })
       expectRom(output, root, 'animgm2')
     },
@@ -115,7 +129,7 @@ describe.runIf(runsBuilds)('the emitted tile-animation C builds against real MSX
         template: 'template',
         machine: '1',
         resources: resources(tiles, { water }),
-        main: main('\tVDP_SetMode(VDP_MODE_GRAPHIC2);\n\tg_Tiles_Load();')
+        main: main('\tVDP_SetMode(VDP_MODE_GRAPHIC2);\n\tg_Tiles_Load();', LOOP_CHECK(['water', 'G_WATER_LOOP', 2]))
       })
       expectRom(output, root, 'animbank')
     },

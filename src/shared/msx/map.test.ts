@@ -167,6 +167,23 @@ describe('validateMap', () => {
   it('reports a placement whose far edge hangs off the grid', () => {
     expect(validateMap(placeMeta(withTree(), 0, 0, 7, 7)).join(' ')).toContain('extends past the map')
   })
+
+  it('names the field, its entry and both counts when a meta’s cells do not fill it', () => {
+    // The tree (2×3) second, so neither the entry's index nor the size can be
+    // read off as 0 or a square. Spread straight in: nothing may fill `cells`.
+    const unattached = { ...tree, cells: undefined }
+    const doc = { ...blank(), tileset: 'res/pics/alley.tiles.json', metas: [coin, unattached] }
+    expect(validateMap(doc)).toContain(
+      '"tree" (res/tree.meta-tiles.json): metas[1].cells has 0 tile numbers, expected 6 (2×3) — it is not attached to ' +
+        'res/pics/alley.tiles.json; attach it in the tile editor, or place it again from the map editor'
+    )
+    const short = { ...doc, metas: [coin, { ...tree, cells: [1, 2, 3] }] }
+    expect(validateMap(short).join('\n')).toContain('metas[1].cells has 3 tile numbers, expected 6 (2×3)')
+    const one = { ...doc, metas: [coin, { ...tree, cells: [7] }] }
+    expect(validateMap(one).join('\n')).toContain('metas[1].cells has 1 tile number, expected 6 (2×3)')
+    // One that fills them says nothing.
+    expect(validateMap({ ...doc, metas: [coin, tree] })).toEqual([])
+  })
 })
 
 describe('placements in a bitmap mode', () => {

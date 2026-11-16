@@ -9,9 +9,14 @@
 
 #pragma once
 
+#define G_PLAYERSPRITES_CHARS 1
+#define G_PLAYERSPRITES_PLANE_PATTERNS 4
 #define G_PLAYERSPRITES_PLAYER_BASE 0
 #define G_PLAYERSPRITES_PLAYER_PLANES 3
 #define G_PLAYERSPRITES_PLAYER_FRAMES 6
+#define G_PLAYERSPRITES_PLAYER_ID 0
+#define G_PLAYERSPRITES_PLAYER_PATTERN 0
+#define G_PLAYERSPRITES_PLAYER_FRAME0 0
 
 #define G_PLAYERSPRITES_PATTERNS_SIZE 576
 extern const unsigned char g_PlayerSprites_Patterns[];
@@ -21,6 +26,9 @@ extern const unsigned char g_PlayerSprites_Colors[];
 
 #define G_PLAYERSPRITES_LAYOUT_SIZE 36
 extern const unsigned char g_PlayerSprites_Layout[];
+
+#define G_PLAYERSPRITES_DURATIONS_SIZE 6
+extern const unsigned char g_PlayerSprites_Durations[];
 
 
 // Places one character of g_PlayerSprites as a group of hardware sprites, from a single
@@ -34,3 +42,35 @@ extern const unsigned char g_PlayerSprites_Layout[];
 //   base   - first plane of the frame to show: G_PLAYERSPRITES_<CHARACTER>_BASE + frame * ..._PLANES
 //   planes - ..._PLANES for that character
 void g_PlayerSprites_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes);
+
+// ── g_PlayerSprites: sprite animation ─────────────────────────────────────────
+//
+// chr below is a character's G_PLAYERSPRITES_<CHARACTER>_ID. Needs MSXgl's VDP
+// module (#include "msxgl.h" before this header), and the patterns loaded
+// at VRAM pattern 0:
+//   VDP_LoadSpritePattern(g_PlayerSprites_Patterns, 0, G_PLAYERSPRITES_PATTERNS_SIZE / 8);
+//
+// Shows frame `frame` of character chr on hardware sprites index onward, one
+// per plane (G_PLAYERSPRITES_<CHARACTER>_PLANES of them): patterns and colours only,
+// the positions are left as they are — place the sprites first (VDP_SetSprite...,
+// or _SetMeta for a group). A frame past the last shows frame 0; a chr past
+// the last character does nothing.
+void g_PlayerSprites_SetFrame(u8 index, u8 chr, u8 frame);
+
+// Steps character chr's animation on by one VBlank. Call it once a frame with
+// two bytes kept per animation — state[0] the frame shown, state[1] the VBlanks
+// spent on it — and show state[0] when it returns TRUE. Each frame is held for
+// its g_PlayerSprites_Durations entry, in VBlanks, and the animation loops.
+// RAM is not cleared at boot on a ROM target: zero state before the first
+// step (a frame past the last starts over at 0, and returns TRUE).
+//
+// Example:
+//   u8 anim[2] = { 0, 0 };
+//   g_PlayerSprites_SetFrame(0, G_PLAYERSPRITES_PLAYER_ID, 0);
+//   while(1)
+//   {
+//       Halt();
+//       if(g_PlayerSprites_AnimStep(G_PLAYERSPRITES_PLAYER_ID, anim))
+//           g_PlayerSprites_SetFrame(0, G_PLAYERSPRITES_PLAYER_ID, anim[0]);
+//   }
+bool g_PlayerSprites_AnimStep(u8 chr, u8* state);

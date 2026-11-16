@@ -412,7 +412,8 @@ export function tileAnimConstants(doc: TileAnimDoc, name: string): string[] {
     `#define ${prefix}_W ${doc.width}`,
     `#define ${prefix}_H ${doc.height}`,
     `#define ${prefix}_CELLS ${animDocCells(doc)}`,
-    `#define ${prefix}_FRAMES ${doc.frames.length}`
+    `#define ${prefix}_FRAMES ${doc.frames.length}`,
+    `#define ${prefix}_LOOP ${LOOP_CODE[doc.loop]}`
   ]
 }
 
@@ -425,13 +426,26 @@ export function tilesetAnimConstants(doc: TilesDoc, name: string): string[] {
     ...doc.animations.flatMap((binding, index) => {
       const id = `${prefix}_ANIM_${defineName(animBaseName(binding.path))}`
       // _FRAMES too, so "is it on its last pose?" against _AnimGetFrame() needs
-      // no second header.
-      return [`#define ${id} ${index}`, `#define ${id}_SLOT ${binding.slot}`, `#define ${id}_FRAMES ${binding.frames}`]
+      // no second header. _TILES is the window's length — what one pose
+      // rewrites — for a game that loads the window somewhere other than _SLOT
+      // and plays it with its own code.
+      return [
+        `#define ${id} ${index}`,
+        `#define ${id}_SLOT ${binding.slot}`,
+        `#define ${id}_FRAMES ${binding.frames}`,
+        `#define ${id}_TILES ${animCells(binding)}`
+      ]
     })
   ]
 }
 
-const LOOP_CODE: Record<AnimLoop, number> = { loop: 0, pingpong: 1, once: 2 }
+/**
+ * A loop mode as C reads it: 0 loop, 1 ping-pong, 2 once (holds the last
+ * pose). The one numbering for the tileset's `_AnimLoop` and for the `_LOOP`
+ * an animation's or a meta-tile's own header states — a game playing the poses
+ * with its own loader compares against the same numbers `_Animate()` does.
+ */
+export const LOOP_CODE: Readonly<Record<AnimLoop, number>> = { loop: 0, pingpong: 1, once: 2 }
 
 /** The VRAM writes that show pose `frame` of one binding, as C statements. */
 function showStatements(doc: TilesDoc, binding: TileAnimBinding): string[] {

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
  * The pose editor's sidebar: colour, size, timing and loop, a playing preview,
- * what a step costs, and where the file is attached — plus, for a meta-tile,
- * its eight gameplay flags.
+ * what a step costs, where the file is attached, and its export target — plus,
+ * for a meta-tile, its eight gameplay flags.
  * Readouts of session state and calls into it — every decision is in
  * `./session`, which is tested; this file is not.
  */
@@ -18,6 +18,7 @@ import {
   doc,
   findAttachments,
   ownedMeta,
+  patchExport,
   removeFromTileset,
   poseAtTick,
   posePixels,
@@ -27,6 +28,7 @@ import {
   setLoop,
   setFlag,
   setPair,
+  setupExport,
   stepBytes,
   togglePlaying,
   type AnimSession
@@ -303,6 +305,77 @@ function openTileset(path: string): void {
         Refresh
       </button>
     </section>
+
+    <section>
+      <h3>Export</h3>
+      <template v-if="anim.export">
+        <label class="field">
+          <span>Table name</span>
+          <input
+            type="text"
+            spellcheck="false"
+            :value="anim.export.name"
+            @change="patchExport(session, { name: ($event.target as HTMLInputElement).value })"
+          >
+        </label>
+        <label class="field">
+          <span>Output</span>
+          <input
+            type="text"
+            spellcheck="false"
+            :value="anim.export.out"
+            @change="patchExport(session, { out: ($event.target as HTMLInputElement).value })"
+          >
+        </label>
+        <label class="field">
+          <span>Format</span>
+          <select
+            :value="anim.export.format"
+            @change="patchExport(session, { format: ($event.target as HTMLSelectElement).value as 'c' | 'bin' })"
+          >
+            <option value="c">C header</option>
+            <option value="bin">Raw binary</option>
+          </select>
+        </label>
+        <p
+          v-if="anim.export.format === 'bin' && (!meta || moving)"
+          class="hint"
+        >
+          A raw binary has no C names, so a tileset's ready-made <code>_Animate()</code> cannot link
+          against it. Keep the C header unless your own code loads the poses.
+        </p>
+      </template>
+      <template v-else>
+        <p
+          v-if="meta && !moving"
+          class="hint"
+        >
+          Not exported. A still meta-tile can do without: each tileset draws it from its own tiles.
+          Its header would hold its size and flags.
+        </p>
+        <p
+          v-else-if="meta"
+          class="hint"
+        >
+          Not exported. The poses of its moving tiles go into its own header, which every tileset it is
+          attached to animates it from — those tilesets will not export until it has one.
+        </p>
+        <p
+          v-else
+          class="hint"
+        >
+          Not exported. Its poses go into its own header, which the <code>_Animate()</code> of every
+          tileset it is attached to copies from.
+        </p>
+        <button
+          type="button"
+          class="wide"
+          @click="setupExport(session)"
+        >
+          Set up export
+        </button>
+      </template>
+    </section>
   </aside>
 </template>
 
@@ -407,5 +480,28 @@ section {
   background: none;
   color: var(--color-accent);
   cursor: pointer;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.field > span {
+  color: var(--color-text-muted);
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.wide {
+  width: 100%;
+  margin-top: 4px;
 }
 </style>

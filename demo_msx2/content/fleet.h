@@ -9,18 +9,32 @@
 
 #pragma once
 
+#define G_FLEET_CHARS 4
+#define G_FLEET_PLANE_PATTERNS 4
 #define G_FLEET_SHIP_COPY_BASE 0
 #define G_FLEET_SHIP_COPY_PLANES 2
 #define G_FLEET_SHIP_COPY_FRAMES 2
+#define G_FLEET_SHIP_COPY_ID 0
+#define G_FLEET_SHIP_COPY_PATTERN 0
+#define G_FLEET_SHIP_COPY_FRAME0 0
 #define G_FLEET_SHOT_BASE 4
 #define G_FLEET_SHOT_PLANES 1
 #define G_FLEET_SHOT_FRAMES 1
+#define G_FLEET_SHOT_ID 1
+#define G_FLEET_SHOT_PATTERN 16
+#define G_FLEET_SHOT_FRAME0 2
 #define G_FLEET_DRONE_BASE 5
 #define G_FLEET_DRONE_PLANES 1
 #define G_FLEET_DRONE_FRAMES 2
+#define G_FLEET_DRONE_ID 2
+#define G_FLEET_DRONE_PATTERN 20
+#define G_FLEET_DRONE_FRAME0 3
 #define G_FLEET_BOOM_BASE 7
 #define G_FLEET_BOOM_PLANES 1
 #define G_FLEET_BOOM_FRAMES 4
+#define G_FLEET_BOOM_ID 3
+#define G_FLEET_BOOM_PATTERN 28
+#define G_FLEET_BOOM_FRAME0 5
 
 #define G_FLEET_PATTERNS_SIZE 352
 extern const unsigned char g_Fleet_Patterns[];
@@ -34,6 +48,9 @@ extern const unsigned char g_Fleet_Palette[];
 #define G_FLEET_LAYOUT_SIZE 22
 extern const unsigned char g_Fleet_Layout[];
 
+#define G_FLEET_DURATIONS_SIZE 9
+extern const unsigned char g_Fleet_Durations[];
+
 
 // Places one character of g_Fleet as a group of hardware sprites, from a single
 // coordinate. Needs MSXgl's VDP module (#include "msxgl.h" before this header),
@@ -46,3 +63,35 @@ extern const unsigned char g_Fleet_Layout[];
 //   base   - first plane of the frame to show: G_FLEET_<CHARACTER>_BASE + frame * ..._PLANES
 //   planes - ..._PLANES for that character
 void g_Fleet_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes);
+
+// ── g_Fleet: sprite animation ─────────────────────────────────────────
+//
+// chr below is a character's G_FLEET_<CHARACTER>_ID. Needs MSXgl's VDP
+// module (#include "msxgl.h" before this header), and the patterns loaded
+// at VRAM pattern 0:
+//   VDP_LoadSpritePattern(g_Fleet_Patterns, 0, G_FLEET_PATTERNS_SIZE / 8);
+//
+// Shows frame `frame` of character chr on hardware sprites index onward, one
+// per plane (G_FLEET_<CHARACTER>_PLANES of them): patterns and colours only,
+// the positions are left as they are — place the sprites first (VDP_SetSprite...,
+// or _SetMeta for a group). A frame past the last shows frame 0; a chr past
+// the last character does nothing.
+void g_Fleet_SetFrame(u8 index, u8 chr, u8 frame);
+
+// Steps character chr's animation on by one VBlank. Call it once a frame with
+// two bytes kept per animation — state[0] the frame shown, state[1] the VBlanks
+// spent on it — and show state[0] when it returns TRUE. Each frame is held for
+// its g_Fleet_Durations entry, in VBlanks, and the animation loops.
+// RAM is not cleared at boot on a ROM target: zero state before the first
+// step (a frame past the last starts over at 0, and returns TRUE).
+//
+// Example:
+//   u8 anim[2] = { 0, 0 };
+//   g_Fleet_SetFrame(0, G_FLEET_SHIP_COPY_ID, 0);
+//   while(1)
+//   {
+//       Halt();
+//       if(g_Fleet_AnimStep(G_FLEET_SHIP_COPY_ID, anim))
+//           g_Fleet_SetFrame(0, G_FLEET_SHIP_COPY_ID, anim[0]);
+//   }
+bool g_Fleet_AnimStep(u8 chr, u8* state);

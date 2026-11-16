@@ -34,7 +34,7 @@ import { normalizeBitmapTiles } from './bitmap-tile'
 import { sc3Offset } from './sc3'
 import { decodeAyfxBank, normalizeSfx, SFX_PRESETS, type SfxDoc } from './sfx'
 import { createMusicDoc, maskRegisters, renderSong, simulateLvgm } from './music'
-import { createSpritesDoc } from './sprite'
+import { createLayer, createSpritesDoc, normalizeSprites, type SpritesDoc } from './sprite'
 import { addLayer, setCharacterGrid } from '../sprite-editor'
 import { createBlock } from '../tile-editor'
 import { createTilesDoc, mergeColorByte, normalizeTiles, type TileEntry, type TilesDoc } from './tile'
@@ -300,6 +300,255 @@ describe('sprites resource', () => {
       { kind: 'sprites', doc }, 'hero.sprites.json', { ...defaultExport('hero.sprites.json'), helpers: true })
     
     expect(text).toContain('VDP_SetSpriteSM1(index + i, px, py, plane * 1, g_HeroSprites_Colors[plane]);')
+  })
+})
+
+/**
+ * The bug report's `res/cursors.sprites.json`: one 16×16 plane per character in
+ * mode 1 — an arrow of four frames, then four still characters. Each frame has
+ * its own colour so a table read at the wrong offset shows.
+ */
+function cursorsResource(arrow: number[] = [6, 6, 10, 6]): ResourceDoc {
+  const still = (name: string, color: number): unknown => ({ name, frames: [{ layers: [createLayer(16, color)] }] })
+  return {
+    kind: 'sprites',
+    doc: normalizeSprites({
+      mode: 1,
+      size: 16,
+      sprites: [
+        { name: 'arrow', frames: arrow.map((duration, f) => ({ layers: [createLayer(16, 2 + f)], duration })) },
+        still('down', 7),
+        still('marker', 8),
+        still('flash', 9),
+        still('here', 10)
+      ]
+    })
+  }
+}
+
+const CURSORS = { ...defaultExport('res/cursors.sprites.json'), name: 'g_X', out: 'content/x.h' }
+
+/** The header's `#define`s in order, minus the per-table `_SIZE`s. */
+function placementDefines(resource: ResourceDoc, block = CURSORS): string[] {
+  const { header } = renderResourceFiles(resource, 'res/cursors.sprites.json', block)
+  return (header ?? '').split('\n').filter((line) => line.startsWith('#define') && !/_SIZE /.test(line))
+}
+
+describe('sprite characters in the header', () => {
+  it('locates every character, one-plane one-cell ones too — the cursors sheet from the bug', () => {
+    expect(placementDefines(cursorsResource())).toEqual([
+      '#define G_X_CHARS 5',
+      '#define G_X_PLANE_PATTERNS 4',
+      '#define G_X_ARROW_BASE 0',
+      '#define G_X_ARROW_PLANES 1',
+      '#define G_X_ARROW_FRAMES 4',
+      '#define G_X_ARROW_ID 0',
+      '#define G_X_ARROW_PATTERN 0',
+      '#define G_X_ARROW_FRAME0 0',
+      '#define G_X_DOWN_BASE 4',
+      '#define G_X_DOWN_PLANES 1',
+      '#define G_X_DOWN_FRAMES 1',
+      '#define G_X_DOWN_ID 1',
+      '#define G_X_DOWN_PATTERN 16',
+      '#define G_X_DOWN_FRAME0 4',
+      '#define G_X_MARKER_BASE 5',
+      '#define G_X_MARKER_PLANES 1',
+      '#define G_X_MARKER_FRAMES 1',
+      '#define G_X_MARKER_ID 2',
+      '#define G_X_MARKER_PATTERN 20',
+      '#define G_X_MARKER_FRAME0 5',
+      '#define G_X_FLASH_BASE 6',
+      '#define G_X_FLASH_PLANES 1',
+      '#define G_X_FLASH_FRAMES 1',
+      '#define G_X_FLASH_ID 3',
+      '#define G_X_FLASH_PATTERN 24',
+      '#define G_X_FLASH_FRAME0 6',
+      '#define G_X_HERE_BASE 7',
+      '#define G_X_HERE_PLANES 1',
+      '#define G_X_HERE_FRAMES 1',
+      '#define G_X_HERE_ID 4',
+      '#define G_X_HERE_PATTERN 28',
+      '#define G_X_HERE_FRAME0 7'
+    ])
+  })
+
+  it('emits one duration byte per frame, last, so a bin export keeps every earlier offset', () => {
+    const tables = resourceTables(cursorsResource())
+    expect(tables.map((table) => table.suffix)).toEqual(['_Patterns', '_Colors', '_Durations'])
+    expect([...tables[1].bytes]).toEqual([2, 3, 4, 5, 7, 8, 9, 10])
+    expect([...tables[2].bytes]).toEqual([6, 6, 10, 6, 8, 8, 8, 8])
+    const bin = renderResourceBin(cursorsResource(), { ...CURSORS, format: 'bin', out: 'content/x.bin' })
+    expect(bin).toHaveLength(8 * 32 + 8 + 8)
+    expect([...bin.subarray(8 * 32 + 8)]).toEqual([6, 6, 10, 6, 8, 8, 8, 8])
+    expect(rendered(cursorsResource(), 'res/cursors.sprites.json', CURSORS)).toContain('#define G_X_DURATIONS_SIZE 8')
+  })
+
+  it('says how _Colors is laid out, per mode', () => {
+    const one = resourceTables(cursorsResource())[1].comment
+    expect(one).toContain('one byte per plane (EC|colour), in pattern order')
+    expect(one).toContain('one byte per frame')
+    const two = resourceTables({ kind: 'sprites', doc: createSpritesDoc(2, 16) })[1].comment
+    expect(two).toContain('16 line bytes per plane')
+    expect(two).toContain('in pattern order')
+  })
+
+  it('emits no durations and no _FRAME0 while no character has a second frame', () => {
+    const still = cursorsResource([6])
+    expect(resourceTables(still).map((table) => table.suffix)).toEqual(['_Patterns', '_Colors'])
+    const defines = placementDefines(still)
+    expect(defines).toContain('#define G_X_DOWN_PATTERN 4')
+    expect(defines.filter((line) => line.includes('FRAME0'))).toEqual([])
+    expect(rendered(still, 'res/cursors.sprites.json', CURSORS)).not.toContain('Durations')
+  })
+
+  it('keeps a group sheet’s three defines in their order, the new ones after', () => {
+    const defines = placementDefines(metaResource(), defaultExport('hero.sprites.json'))
+    expect(defines).toEqual([
+      '#define G_HEROSPRITES_CHARS 1',
+      '#define G_HEROSPRITES_PLANE_PATTERNS 4',
+      '#define G_HEROSPRITES_SPRITE_0_BASE 0',
+      '#define G_HEROSPRITES_SPRITE_0_PLANES 4',
+      '#define G_HEROSPRITES_SPRITE_0_FRAMES 1',
+      '#define G_HEROSPRITES_SPRITE_0_ID 0',
+      '#define G_HEROSPRITES_SPRITE_0_PATTERN 0'
+    ])
+  })
+
+  it('steps the pattern number by one plane at 8×8', () => {
+    const doc = normalizeSprites({
+      mode: 1,
+      size: 8,
+      sprites: [
+        { name: 'pair', cols: 2, frames: [{ layers: [createLayer(8), { ...createLayer(8), cx: 1 }] }] },
+        { name: 'dot', frames: [{ layers: [createLayer(8)] }] }
+      ]
+    })
+    const defines = placementDefines({ kind: 'sprites', doc })
+    expect(defines).toContain('#define G_X_PLANE_PATTERNS 1')
+    expect(defines).toContain('#define G_X_DOT_BASE 2')
+    expect(defines).toContain('#define G_X_DOT_PATTERN 2')
+  })
+
+  it('gives a character whose name clashes no defines, names it in the header, and still exports', () => {
+    // `addSprite` names by count, so deleting one and adding another repeats a name.
+    const doc = normalizeSprites({
+      mode: 1,
+      size: 16,
+      sprites: ['sprite_0', 'sprite_1', 'sprite_1', 'Hero', 'hero'].map((name) => ({ name, frames: [{ layers: [createLayer(16)] }] }))
+    })
+    const { header } = renderResourceFiles({ kind: 'sprites', doc }, 'res/cursors.sprites.json', CURSORS)
+    const defines = placementDefines({ kind: 'sprites', doc })
+    const names = defines.map((line) => line.split(' ')[1])
+    expect(new Set(names).size).toBe(names.length)
+    expect(defines).toContain('#define G_X_CHARS 5')
+    expect(defines).toContain('#define G_X_SPRITE_1_BASE 1')
+    expect(defines).toContain('#define G_X_SPRITE_1_ID 1')
+    expect(defines).toContain('#define G_X_HERO_ID 3')
+    expect(header).toContain('//  - No defines for character 2 (sprite_1): its C name is the same as character 1’s (sprite_1) — rename one')
+    expect(header).toContain('//  - No defines for character 4 (hero): its C name is the same as character 3’s (Hero) — rename one')
+  })
+
+  it('says so when a sheet holds more planes than the VDP’s sprite patterns', () => {
+    const big = normalizeSprites({
+      mode: 1,
+      size: 16,
+      sprites: Array.from({ length: 65 }, (_, i) => ({ name: `s${i}`, frames: [{ layers: [createLayer(16)] }] }))
+    })
+    expect(rendered({ kind: 'sprites', doc: big }, 'res/cursors.sprites.json', CURSORS)).toContain(
+      '65 planes, more than the 64 16×16 sprite patterns the VDP holds'
+    )
+    expect(rendered(cursorsResource(), 'res/cursors.sprites.json', CURSORS)).not.toContain('the VDP holds')
+  })
+})
+
+describe('sprite animation helpers', () => {
+  const HELPERS = { ...CURSORS, helpers: true }
+
+  it('emits _SetFrame and _AnimStep over a per-character table once a character animates', () => {
+    const { header, source } = renderResourceFiles(cursorsResource(), 'res/cursors.sprites.json', HELPERS)
+    expect(header).toContain('void g_X_SetFrame(u8 index, u8 chr, u8 frame);')
+    expect(header).toContain('bool g_X_AnimStep(u8 chr, u8* state);')
+    // Base plane, planes, frames, first frame in _Durations — per character.
+    expect(source).toContain('static const u8 g_X_CharInfo[G_X_CHARS * 4] = { 0, 1, 4, 0, 4, 1, 1, 4, 5, 1, 1, 5, 6, 1, 1, 6, 7, 1, 1, 7 };')
+    expect(source).toContain('\t\tVDP_SetSpritePattern(index + i, plane * 4);')
+    expect(source).toContain('\t\tVDP_SetSpriteColorSM1(index + i, g_X_Colors[plane]);')
+    expect(source).toContain('g_X_Durations[info[3] + f]')
+    // A data-only header must not need MSXgl.
+    expect(renderResourceFiles(cursorsResource(), 'res/cursors.sprites.json', CURSORS).source).not.toContain('msxgl.h')
+  })
+
+  it('steps by the durations, loops, clamps a garbage state, and says TRUE only when the frame changed', () => {
+    // The whole body, because one changed comparison is a different animation;
+    // sprite-build.test.ts compiles it and the openMSX log in the report shows it run.
+    const { source } = renderResourceFiles(cursorsResource(), 'res/cursors.sprites.json', HELPERS)
+    expect(source).toContain(
+      [
+        'void g_X_SetFrame(u8 index, u8 chr, u8 frame)',
+        '{',
+        '\tif(chr >= G_X_CHARS) return;',
+        '\tconst u8* info = g_X_CharInfo + ((u16)chr * 4);',
+        '\tif(frame >= info[2]) frame = 0;',
+        '\tu8 plane = info[0] + frame * info[1];',
+        '\tfor(u8 i = 0; i < info[1]; ++i, ++plane)',
+        '\t{',
+        '\t\tVDP_SetSpritePattern(index + i, plane * 4);',
+        '\t\tVDP_SetSpriteColorSM1(index + i, g_X_Colors[plane]);',
+        '\t}',
+        '}',
+        '',
+        'bool g_X_AnimStep(u8 chr, u8* state)',
+        '{',
+        '\tif(chr >= G_X_CHARS) return FALSE;',
+        '\tconst u8* info = g_X_CharInfo + ((u16)chr * 4);',
+        '\tu8 f = state[0];',
+        '\t// Clamped: a frame past the last means nobody zeroed state.',
+        '\tif(f >= info[2])',
+        '\t{',
+        '\t\tstate[0] = 0;',
+        '\t\tstate[1] = 0;',
+        '\t\treturn TRUE;',
+        '\t}',
+        '\tif(++state[1] < g_X_Durations[info[3] + f]) return FALSE;',
+        '\tstate[1] = 0;',
+        '\tif(++f >= info[2]) f = 0;',
+        '\tif(f == state[0]) return FALSE;',
+        '\tstate[0] = f;',
+        '\treturn TRUE;',
+        '}'
+      ].join('\n')
+    )
+  })
+
+  it('writes the 16 line colours of each plane in mode 2, and steps 8×8 patterns by one', () => {
+    const two = normalizeSprites({
+      mode: 2,
+      size: 8,
+      sprites: [{ name: 'blink', frames: [{ layers: [createLayer(8)] }, { layers: [createLayer(8)] }] }]
+    })
+    const { source } = renderResourceFiles({ kind: 'sprites', doc: two }, 'res/cursors.sprites.json', HELPERS)
+    expect(source).toContain('\t\tVDP_SetSpritePattern(index + i, plane * 1);')
+    expect(source).toContain('\t\tVDP_SetSpriteMultiColor(index + i, g_X_Colors + ((u16)plane * 16));')
+    expect(source).not.toContain('VDP_SetSpriteColorSM1')
+  })
+
+  it('joins _SetMeta and the animation helpers on an animated group sheet', () => {
+    const group = metaResource() as { kind: 'sprites'; doc: SpritesDoc }
+    const animated: ResourceDoc = { kind: 'sprites', doc: { ...group.doc, sprites: [{ ...group.doc.sprites[0], frames: [group.doc.sprites[0].frames[0], group.doc.sprites[0].frames[0]] }] } }
+    const text = rendered(animated, 'res/cursors.sprites.json', HELPERS)
+    expect(text).toContain('void g_X_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)')
+    expect(text).toContain('void g_X_SetFrame(u8 index, u8 chr, u8 frame)')
+    expect(text).toContain('bool g_X_AnimStep(u8 chr, u8* state)')
+  })
+
+  it('leaves a sheet with nothing animated exactly the helper C it had', () => {
+    const still = cursorsResource([6])
+    expect(renderResourceFiles(still, 'res/cursors.sprites.json', HELPERS)).toEqual(
+      renderResourceFiles(still, 'res/cursors.sprites.json', CURSORS)
+    )
+    const text = rendered(metaResource(), 'hero.sprites.json', { ...defaultExport('hero.sprites.json'), helpers: true })
+    expect(text).toContain('g_HeroSprites_SetMeta')
+    expect(text).not.toContain('SetFrame')
+    expect(text).not.toContain('AnimStep')
   })
 })
 

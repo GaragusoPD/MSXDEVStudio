@@ -244,7 +244,6 @@ watch(
       </div>
 
       <SpriteAnimationBar
-        v-model:fps="session.fps"
         v-model:playing="session.playing"
         v-model:background="session.background"
         v-model:onion-skin="session.onionSkin"

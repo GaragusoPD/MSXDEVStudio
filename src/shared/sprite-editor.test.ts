@@ -10,7 +10,8 @@ import {
   MAX_GRID,
   setLayerCc,
   setLineColorByte,
-  SPRITE_CC
+  SPRITE_CC,
+  type SpritesDoc
 } from './msx/sprite'
 import {
   addFrame,
@@ -38,12 +39,14 @@ import {
   reorderLayer,
   scanlineBudget,
   setCharacterGrid,
+  setFrameDuration,
   shiftLayer,
   sizeConversionLossy,
   stripToFrames,
   tickPlayback,
   undo,
   updateLayer,
+  VBLANK_MS,
   type SpriteTarget
 } from './sprite-editor'
 
@@ -160,7 +163,7 @@ describe('frame/sprite/layer list ops', () => {
     doc = addFrame(doc, 0)
     const tagged = {
       ...doc,
-      sprites: [{ ...doc.sprites[0], frames: doc.sprites[0].frames.map((f, i) => ({ layers: [{ ...f.layers[0], color: i }] })) }]
+      sprites: [{ ...doc.sprites[0], frames: doc.sprites[0].frames.map((f, i) => ({ ...f, layers: [{ ...f.layers[0], color: i }] })) }]
     }
     const reordered = reorderFrame(tagged, 0, 0, 2)
     expect(reordered.sprites[0].frames.map((f) => f.layers[0].color)).toEqual([1, 2, 0])
@@ -171,7 +174,7 @@ describe('frame/sprite/layer list ops', () => {
     doc = addLayer(doc, 0)
     doc = addLayer(doc, 0)
     // Tag each plane by colour, then give the sprite a second frame with the same shape.
-    doc = { ...doc, sprites: [{ ...doc.sprites[0], frames: [{ layers: doc.sprites[0].frames[0].layers.map((l, i) => ({ ...l, color: i })) }] }] }
+    doc = { ...doc, sprites: [{ ...doc.sprites[0], frames: [{ layers: doc.sprites[0].frames[0].layers.map((l, i) => ({ ...l, color: i })), duration: 8 }] }] }
     doc = addFrame(doc, 0)
     const moved = reorderLayer(doc, 0, 2, 0)
     expect(moved.sprites[0].frames.map((f) => f.layers.map((l) => l.color))).toEqual([
@@ -253,7 +256,7 @@ describe('the leading plane can never carry CC', () => {
       sprites: [
         {
           ...doc.sprites[0],
-          frames: [{ layers: [{ ...first, lineColors: first.lineColors.map((v) => v | SPRITE_CC), cc: true }] }]
+          frames: [{ layers: [{ ...first, lineColors: first.lineColors.map((v) => v | SPRITE_CC), cc: true }], duration: 8 }]
         }
       ]
     }
@@ -268,7 +271,7 @@ describe('the leading plane can never carry CC', () => {
       sprites: [
         {
           ...doc.sprites[0],
-          frames: [{ layers: [{ ...first, lineColors: first.lineColors.map((v) => v | SPRITE_CC) }] }]
+          frames: [{ layers: [{ ...first, lineColors: first.lineColors.map((v) => v | SPRITE_CC) }], duration: 8 }]
         }
       ]
     }
@@ -463,17 +466,100 @@ describe('PNG-strip import', () => {
   })
 })
 
+describe('frame durations', () => {
+  /** One character held 3, 5 and 17 VBlanks — none the default, so a dropped duration shows. */
+  function timed(): SpritesDoc {
+    let doc = addFrame(addFrame(createSpritesDoc(2, 16), 0), 0)
+    doc = setFrameDuration(doc, 0, 0, 3)
+    doc = setFrameDuration(doc, 0, 1, 5)
+    return setFrameDuration(doc, 0, 2, 17)
+  }
+  const durations = (doc: SpritesDoc, sprite = 0): number[] => doc.sprites[sprite].frames.map((frame) => frame.duration)
+
+  it('sets one frame’s duration in VBlanks, clamped to 1..255', () => {
+    expect(durations(timed())).toEqual([3, 5, 17])
+    expect(durations(setFrameDuration(timed(), 0, 1, 0))).toEqual([3, 1, 17])
+    expect(durations(setFrameDuration(timed(), 0, 1, 999))).toEqual([3, 255, 17])
+    expect(durations(setFrameDuration(timed(), 0, 1, 6.6))).toEqual([3, 7, 17])
+  })
+
+  it('changes nothing for the same value, a value that is not a number, or a frame that is not there', () => {
+    const doc = timed()
+    expect(setFrameDuration(doc, 0, 1, 5)).toBe(doc)
+    expect(setFrameDuration(doc, 0, 1, Number.NaN)).toBe(doc)
+    expect(setFrameDuration(doc, 0, 9, 4)).toBe(doc)
+    expect(setFrameDuration(doc, 3, 0, 4)).toBe(doc)
+  })
+
+  it('holds a blank frame added at the end as long as the last one', () => {
+    expect(durations(addFrame(timed(), 0))).toEqual([3, 5, 17, 17])
+  })
+
+  it('carries each frame’s duration through clone, reorder, delete and duplicate', () => {
+    expect(durations(cloneFrame(timed(), 0, 1))).toEqual([3, 5, 5, 17])
+    expect(durations(reorderFrame(timed(), 0, 0, 2))).toEqual([5, 17, 3])
+    expect(durations(removeFrame(timed(), 0, 1))).toEqual([3, 17])
+    expect(durations(duplicateSprite(timed(), 0), 1)).toEqual([3, 5, 17])
+  })
+
+  it('keeps every frame’s duration through plane, grid, size, mode and stroke edits', () => {
+    const doc = timed()
+    const stacked = addLayer(doc, 0)
+    const edits: [string, SpritesDoc][] = [
+      ['addLayer', stacked],
+      ['removeLayer', removeLayer(stacked, 0, 1)],
+      ['reorderLayer', reorderLayer(stacked, 0, 1, 0)],
+      ['setCharacterGrid', setCharacterGrid(doc, 0, 2, 1)],
+      ['convertSpriteSize', convertSpriteSize(doc, 8)],
+      ['convertSpriteMode', convertSpriteMode(doc, 1)],
+      ['stroke', updateLayer(doc, { sprite: 0, frame: 1, layer: 0 }, (l) => paintPixel(l, 0, 0, 16, true))],
+      // CC on the first plane is cleared again by the leading-CC lock, which rebuilds the frame.
+      ['locked colour', updateLayer(doc, { sprite: 0, frame: 1, layer: 0 }, (l) => setLineColorByte(l, 0, SPRITE_CC | 5))]
+    ]
+    for (const [label, next] of edits) {
+      expect(next, label).not.toBe(doc)
+      expect(durations(next), label).toEqual([3, 5, 17])
+    }
+  })
+
+  it('holds a new character and every imported strip frame the default 8 VBlanks', () => {
+    expect(durations(addSprite(timed()), 1)).toEqual([8])
+    const frames = stripToFrames(new Uint8Array(16 * 8).fill(1), 16, 8, 8, () => 0)
+    expect(frames.map((frame) => frame.duration)).toEqual([8, 8])
+  })
+})
+
 describe('animation playback tick', () => {
-  it('advances one frame per period and wraps', () => {
+  it('is a PAL VBlank, the clock a game steps its animation on', () => {
+    expect(VBLANK_MS).toBe(20)
+  })
+
+  it('holds each frame for its own duration in VBlanks, and wraps', () => {
+    const durations = [2, 5, 1] // 40, 100 and 20 ms
     let state = { frameIndex: 0, elapsedMs: 0 }
-    state = tickPlayback(state, 100, 10, 3) // 10fps = 100ms/frame
+    state = tickPlayback(state, 39, durations)
+    expect(state).toEqual({ frameIndex: 0, elapsedMs: 39 })
+    state = tickPlayback(state, 1, durations)
     expect(state).toEqual({ frameIndex: 1, elapsedMs: 0 })
-    state = tickPlayback(state, 250, 10, 3) // 2 more frames plus 50ms leftover
-    expect(state).toEqual({ frameIndex: 0, elapsedMs: 50 })
+    state = tickPlayback(state, 100, durations)
+    expect(state).toEqual({ frameIndex: 2, elapsedMs: 0 })
+    // 20 ms ends frame 2, 40 ms frame 0, and 30 ms are spent on frame 1.
+    state = tickPlayback(state, 90, durations)
+    expect(state).toEqual({ frameIndex: 1, elapsedMs: 30 })
   })
 
   it('never advances with one frame or fewer', () => {
-    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 500, 10, 1)).toEqual({ frameIndex: 0, elapsedMs: 0 })
+    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 500, [8])).toEqual({ frameIndex: 0, elapsedMs: 0 })
+    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 500, [])).toEqual({ frameIndex: 0, elapsedMs: 0 })
+  })
+
+  it('holds a duration below one VBlank for one, so a long pause never spins', () => {
+    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 20, [0, 3])).toEqual({ frameIndex: 1, elapsedMs: 0 })
+    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 20, [Number.NaN, 3])).toEqual({ frameIndex: 1, elapsedMs: 0 })
+  })
+
+  it('picks up from a frame index past the end — the character lost a frame mid-play', () => {
+    expect(tickPlayback({ frameIndex: 4, elapsedMs: 0 }, 0, [2, 2, 2])).toEqual({ frameIndex: 1, elapsedMs: 0 })
   })
 })
 
@@ -488,6 +574,7 @@ describe('export → re-import round trip on an editor-built document', () => {
     doc = addFrame(doc, 0)
     doc = cloneFrame(doc, 0, 0)
     doc = addSprite(doc)
+    doc = setFrameDuration(doc, 0, 1, 13)
 
     const roundTripped = normalizeSprites(JSON.parse(JSON.stringify(serializeSprites(doc))))
     expect(roundTripped).toEqual(doc)

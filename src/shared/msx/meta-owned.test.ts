@@ -20,7 +20,7 @@ import {
 import { blankTileEntry, normalizeTiles, removeTile, validateTiles, type TileEntry, type TilesDoc } from './tile'
 import { parseResource, renderResourceFiles, serializeResource } from './resource'
 import { metaRefFrom, normalizeMap, addMetaRef, placeMeta, placementHelperC, validateMap } from './map'
-import { tileAnimHelperC } from './tile-anim'
+import { tileAnimHelperC, tilesetAnimConstants } from './tile-anim'
 
 /** A tile whose every row is `mark`, ink 15 on paper `paper`. */
 const tile = (mark: number, paper = 1): TileEntry => ({ pattern: new Array(8).fill(mark), color: new Array(8).fill(0xf0 | paper) })
@@ -196,7 +196,15 @@ describe('attaching an animated meta', () => {
     expect(c).toContain('extern const u8 g_Torch_Patterns[];')
     expect(c).toContain('VDP_LoadPattern_GM2(g_Torch_Patterns + (u16)frame * 16, 2, 8);')
     const own = ownedMetaTables(torch()).map((table) => table.suffix)
-    expect(own).toEqual(['_Info', '_Patterns', '_Colors', '_Durations'])
+    expect(own).toEqual(['_Info', '_Patterns', '_Colors', '_Durations', '_MovingCells'])
+  })
+
+  it('the tileset states its window’s length, the meta’s moving cells', () => {
+    const doc = attach(tileset(8), TORCH, torch(), 'g_Torch')
+    const defines = tilesetAnimConstants(doc, 'g_Tiles')
+    expect(defines).toContain('#define G_TILES_ANIM_TORCH_SLOT 8')
+    expect(defines).toContain('#define G_TILES_ANIM_TORCH_FRAMES 3')
+    expect(defines).toContain('#define G_TILES_ANIM_TORCH_TILES 2')
   })
 
   it('keeps its window across refreshes, and moves it when more cells start to move', () => {
@@ -321,8 +329,73 @@ describe('export', () => {
   it('a meta’s own header is its size, flags and — when it moves — its window’s poses', () => {
     expect(ownedMetaTables(tree()).map((table) => table.suffix)).toEqual(['_Info'])
     expect(ownedMetaConstants(torch(), 'g_Torch')).toContain('#define G_TORCH_MOVING 2')
+    expect(ownedMetaConstants(torch(), 'g_Torch')).toContain('#define G_TORCH_LOOP 1')
+    // A still meta states its mode too: a loader written for any meta reads it.
+    expect(ownedMetaConstants(tree(), 'g_Tree')).toContain('#define G_TREE_LOOP 0')
     const files = renderResourceFiles({ kind: 'metatiles', doc: tree() }, TREE, tree().export!)
     expect(files.header).not.toContain('_Draw')
+    expect(files.header).not.toContain('MovingCells')
+  })
+
+  /**
+   * A 3×2 sign: cell 1 (top middle) and cell 4 (bottom middle) change between
+   * its two poses, cell 3 is see-through, the rest are still. Its moving cells
+   * are neither a prefix nor contiguous, so an index stands in for none of them.
+   */
+  function sign(): OwnedMetaDoc {
+    const pose = (mark: number): TileEntry[] => [tile(0x81), tile(mark), tile(0x42), tile(0), tile(mark >> 1), tile(0x24)]
+    return normalizeOwnedMeta({
+      version: 3,
+      mode: 'sc2',
+      width: 3,
+      height: 2,
+      holes: [false, false, false, true, false, false],
+      frames: [{ tiles: pose(0x18), duration: 4 }, { tiles: pose(0x7e), duration: 4 }],
+      export: { name: 'g_Sign', format: 'c', out: 'content/sign.h' }
+    })
+  }
+
+  it('an animated meta says which cells move: _MovingCells, in reading order, one per _Patterns tile', () => {
+    expect(movingCells(sign())).toEqual([1, 4])
+    const tables = ownedMetaTables(sign())
+    const moving = tables.find((table) => table.suffix === '_MovingCells')!
+    expect([...moving.bytes]).toEqual([1, 4])
+    // _Patterns' tile k of every pose is cell _MovingCells[k] of that pose:
+    // what a loader that puts the window somewhere else reads it by.
+    const patterns = tables.find((table) => table.suffix === '_Patterns')!.bytes
+    const stride = moving.bytes.length * 8
+    sign().frames.forEach((frame, p) => {
+      moving.bytes.forEach((cell, k) => {
+        expect([...patterns.slice(p * stride + k * 8, p * stride + k * 8 + 8)]).toEqual(frame.tiles[cell].pattern)
+      })
+    })
+    // ...and window slot _SLOT + k shows cell _MovingCells[k] where it is attached.
+    const doc = attach(tileset(8), 'res/sign.meta-tiles.json', sign(), 'g_Sign')
+    const window = doc.animations.find((binding) => binding.path === 'res/sign.meta-tiles.json')!
+    moving.bytes.forEach((cell, k) => expect(doc.metas[0].cells[cell]).toBe(window.slot + k))
+  })
+
+  it("states its loop mode in its own header, in the code its window's _Animate() plays it by", () => {
+    for (const [loop, number] of [['loop', 0], ['pingpong', 1], ['once', 2]] as const) {
+      const meta = normalizeOwnedMeta({ ...torch(), loop })
+      const header = renderResourceFiles({ kind: 'metatiles', doc: meta }, TORCH, meta.export!).header
+      expect(header).toContain(`#define G_TORCH_LOOP ${number}\n`)
+      const source = tileAnimHelperC(attach(tileset(8), TORCH, meta, 'g_Torch'), 'g_Tiles').source.join('\n')
+      expect(source).toContain(`static const u8 g_Tiles_AnimLoop[G_TILES_ANIMS] = { ${number} };`)
+    }
+  })
+
+  it('a meta’s header gets _MovingCells with its size, beside _MOVING and not clashing with it', () => {
+    const files = renderResourceFiles({ kind: 'metatiles', doc: torch() }, TORCH, torch().export!)
+    expect(files.header).toContain('#define G_TORCH_MOVING 2')
+    expect(files.header).toContain('#define G_TORCH_MOVINGCELLS_SIZE 2')
+    expect(files.header).toContain('extern const unsigned char g_Torch_MovingCells[];')
+    expect(files.source).toMatch(/\/\/ [^\n]*_Patterns[^\n]*\nconst unsigned char g_Torch_MovingCells\[\] =\n\{\n\t0x00, 0x01,\n\}/)
+    // The torch is 2×3: a cell index is row * its width.
+    expect(files.source).toContain('cell = row * 2 + column')
+    const defined = [...(files.header ?? '').matchAll(/^#define (\w+)/gm)].map((match) => match[1])
+    expect(defined).toContain('G_TORCH_MOVINGCELLS_SIZE')
+    expect(new Set(defined).size).toBe(defined.length)
   })
 })
 

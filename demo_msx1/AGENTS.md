@@ -45,7 +45,7 @@ include `content/tiles.h` while only `content/tiles.c` defines the arrays.
 |---|---|---|
 | `res/tiles.tiles.json` | `g_Tiles_Patterns/_Colors/_Flags/_Blocks` + `g_Tiles_DrawBlock()`, `g_Tiles_AnimReset()`/`_Animate()` | Terrain, coins, scenery, HUD digits, solidity flags, a 1×2 open doorway, a 1×1 `trans` block naming the transparent tile — and the coin spin attached at tile 6 |
 | `res/coin.anim-tiles.json` | `g_CoinAnim_Patterns/_Colors/_Durations` | The coin spin: four 1×1 poses held 10 frames each, looping. Played by `g_Tiles_Animate()`; the game never reads these tables itself |
-| `res/player.sprites.json` | `g_PlayerSprites_Patterns/_Colors/_Layout` + `g_PlayerSprites_SetMeta()` | 16×16 character, mode 1, six poses, **three superposed planes** each |
+| `res/player.sprites.json` | `g_PlayerSprites_Patterns/_Colors/_Layout/_Durations`, `G_PLAYERSPRITES_PLAYER_BASE/_PLANES/_FRAMES` + `g_PlayerSprites_SetMeta()` (and `_SetFrame()`/`_AnimStep()`, which nothing calls) | 16×16 character, mode 1, six poses, **three superposed planes** each |
 | `res/level.map.json` | `g_LevelMap_Background` | 64×12 level, RLEp-compressed (768 cells → 86 bytes) |
 | `res/background.map.json` | `g_BackgroundMap_Sky` | 32×24 backdrop pinned to the screen |
 | `res/sfx.sfx.json` | `g_Sfx`, ids `G_SFX_COIN`/`_JUMP`/`_WIN` | ayFX bank: coin (0), jump (1), win (2) |
@@ -106,7 +106,12 @@ the ones in play.
 
 **Sprite planes: line art first.** Mode 1 gives one colour per sprite, so a
 three-colour character is three superposed hardware sprites placed by
-`g_PlayerSprites_SetMeta()`. Plane 0 is the black line art and the colour planes
+`g_PlayerSprites_SetMeta()`, whose `base` is always
+`G_PLAYERSPRITES_PLAYER_BASE + pose * G_PLAYERSPRITES_PLAYER_PLANES` — the header
+says where the poses are, never a hand count. The game picks the pose from its
+own state (standing, walking, airborne), so the sheet's frame durations and the
+`_SetFrame()`/`_AnimStep()` the ready-made C adds for an animated sheet go
+unused; they cost about 225 bytes of ROM. Plane 0 is the black line art and the colour planes
 sit behind it, because the lower plane number wins on overlap; each colour plane
 carries the whole silhouette so nothing shows through if they land a pixel
 apart. Facing left is `SpriteFX_FlipHorizontal16()` writing back into the *same*

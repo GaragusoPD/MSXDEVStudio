@@ -484,8 +484,13 @@ function clearTileset(session: MapSession): void {
  * one attaches it); on a bitmap map, each `.meta-btiles.json` drawn over *this
  * map's* tileset, since its indices name tiles that exist nowhere else.
  *
- * A file that is malformed or half-written is skipped rather than allowed to
- * break the picker.
+ * The Resources list, and every meta the map or its tileset names besides: the
+ * list is refreshed on its own schedule, and a file an agent has just written
+ * may not be on it yet — a meta the map places but the editor never read stays
+ * the stub its entry was written as, and draws nothing.
+ *
+ * A file that is malformed, half-written or missing is skipped rather than
+ * allowed to break the picker.
  */
 async function loadMetaDocs(session: MapSession): Promise<void> {
   const tilesetPath = doc(session).tileset
@@ -494,20 +499,27 @@ async function loadMetaDocs(session: MapSession): Promise<void> {
   // A pattern map takes pattern metas, a bitmap map takes bitmap ones. The
   // suffix already says which, so no file has to be opened to find out.
   const wanted = doc(session).cell ? 'metabtiles' : 'metatiles'
+  const paths: string[] = []
+  for (const path of [
+    ...useResourcesStore().entries.filter((entry) => entry.kind === wanted).map((entry) => entry.path),
+    ...doc(session).metas.map((ref) => ref.path),
+    ...(session.tileset?.metas.map((binding) => binding.path) ?? [])
+  ]) {
+    if (resourceKindOf(path) === wanted && !paths.some((known) => samePath(known, path))) paths.push(path)
+  }
   if (tilesetPath) {
-    for (const entry of useResourcesStore().entries) {
-      if (entry.kind !== wanted) continue
+    for (const path of paths) {
       try {
-        const raw: unknown = JSON.parse(await window.api.invoke('fs:read', { path: entry.path }))
+        const raw: unknown = JSON.parse(await window.api.invoke('fs:read', { path }))
         if (wanted === 'metatiles') {
           // Owns its pixels and names no tileset: any pattern tileset that can
           // show its mode can have it attached.
           const meta = normalizeOwnedMeta(raw)
-          if (session.tileset && animModesCompatible(meta.mode, session.tileset.mode)) owned.set(entry.path, meta)
+          if (session.tileset && animModesCompatible(meta.mode, session.tileset.mode)) owned.set(path, meta)
           continue
         }
         const parsed = normalizeMetaTile(raw)
-        if (samePath(parsed.tileset, tilesetPath)) found.set(entry.path, parsed)
+        if (samePath(parsed.tileset, tilesetPath)) found.set(path, parsed)
       } catch {
         // Not a reason to break the picker.
       }

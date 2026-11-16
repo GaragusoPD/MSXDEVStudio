@@ -1,21 +1,28 @@
 <script setup lang="ts">
 /**
- * Bottom bar: the active sprite's frames as a filmstrip (add/clone/reorder),
- * and playback of the whole animation at a configurable fps against a
- * checkered or solid background — independent of which frame is selected
- * for editing.
+ * Bottom bar: the active sprite's frames as a filmstrip (add/clone/reorder,
+ * and how many VBlanks each is held), and playback of the whole animation by
+ * those durations against a checkered or solid background — independent of
+ * which frame is selected for editing.
  */
 import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { compositeFrame, type SpritesDoc } from '../../../../shared/msx/sprite'
-import { addFrame, cloneFrame, removeFrame, reorderFrame, tickPlayback, type SpriteTarget } from '../../../../shared/sprite-editor'
+import {
+  addFrame,
+  cloneFrame,
+  removeFrame,
+  reorderFrame,
+  setFrameDuration,
+  tickPlayback,
+  type SpriteTarget
+} from '../../../../shared/sprite-editor'
 import { drawIndices } from './draw'
 import Icon from '../../components/Icon.vue'
 
 const props = defineProps<{ doc: SpritesDoc; target: SpriteTarget }>()
 const emit = defineEmits<{ selectFrame: [index: number]; mutate: [doc: SpritesDoc] }>()
 
-const fps = defineModel<number>('fps', { required: true })
 const playing = defineModel<boolean>('playing', { required: true })
 const background = defineModel<'checkered' | 'solid'>('background', { required: true })
 const onionSkin = defineModel<boolean>('onionSkin', { required: true })
@@ -42,7 +49,10 @@ function step(time: number): void {
   if (!lastTime) lastTime = time
   const delta = time - lastTime
   lastTime = time
-  const state = tickPlayback({ frameIndex: previewIndex.value, elapsedMs }, delta, fps.value, frames.value.length)
+  // Real time, 20 ms a VBlank (`VBLANK_MS`): a duration plays as long as it
+  // will on a European MSX, and as long as the pose editor plays it.
+  const durations = frames.value.map((frame) => frame.duration)
+  const state = tickPlayback({ frameIndex: previewIndex.value, elapsedMs }, delta, durations)
   previewIndex.value = state.frameIndex
   elapsedMs = state.elapsedMs
   if (playing.value) raf = requestAnimationFrame(step)
@@ -64,6 +74,18 @@ watch(
   { immediate: true }
 )
 onBeforeUnmount(() => cancelAnimationFrame(raf))
+
+/**
+ * One undo step per edit, on change rather than per keystroke. An emptied
+ * field is NaN here (`valueAsNumber`), which `setFrameDuration` refuses — so
+ * the field is set back to what the document holds either way.
+ */
+function onDuration(index: number, event: Event): void {
+  const input = event.target as HTMLInputElement
+  const next = setFrameDuration(props.doc, props.target.sprite, index, input.valueAsNumber)
+  if (next !== props.doc) emit('mutate', next)
+  input.value = String(next.sprites[props.target.sprite]?.frames[index]?.duration ?? input.value)
+}
 
 function drawPreview(): void {
   const canvas = previewCanvas.value
@@ -121,6 +143,16 @@ watchEffect(redrawThumbs, { flush: 'post' })
           :height="THUMB"
         />
         <span>{{ index }}</span>
+        <input
+          class="duration"
+          type="number"
+          min="1"
+          max="255"
+          :value="f.duration"
+          title="VBlanks this frame is held — 50 a second on a European MSX, 60 on a Japanese one"
+          @click.stop
+          @change="onDuration(index, $event)"
+        >
       </div>
     </div>
 
@@ -174,15 +206,6 @@ watchEffect(redrawThumbs, { flush: 'post' })
       >
         <Icon :name="playing ? 'pause' : 'play_arrow'" />
       </button>
-      <label class="inline">
-        <span>fps</span>
-        <input
-          v-model.number="fps"
-          type="number"
-          min="1"
-          max="60"
-        >
-      </label>
       <label class="inline">
         <input
           v-model="onionSkin"
@@ -287,6 +310,16 @@ watchEffect(redrawThumbs, { flush: 'post' })
   color: var(--color-text-muted);
 }
 
+.frame .duration {
+  width: 38px;
+  padding: 1px 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-tab-inactive);
+  color: var(--color-text);
+  font-size: 10px;
+}
+
 .controls {
   display: flex;
   align-items: center;
@@ -325,16 +358,6 @@ watchEffect(redrawThumbs, { flush: 'post' })
   gap: 3px;
   font-size: 11px;
   color: var(--color-text-muted);
-}
-
-.inline input[type='number'] {
-  width: 42px;
-  padding: 2px 4px;
-  border: 1px solid var(--color-border);
-  border-radius: 3px;
-  background: var(--color-bg-tab-inactive);
-  color: var(--color-text);
-  font-size: 11px;
 }
 
 .inline select {

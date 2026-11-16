@@ -108,14 +108,18 @@ import { encodeAyfxBank, normalizeSfx, sfxConstants, sfxHelperC, validateSfx, ty
 import { musicConstants, musicExports, musicHelperC, normalizeMusic, validateMusic, type MusicDoc } from './music'
 import {
   hasMetasprite,
+  hasSpriteAnimation,
   hasSpriteGroups,
   normalizeSprites,
   serializeSprites,
+  spriteAnimHelperC,
   spriteColorBytes,
+  spriteConstants,
+  spriteDurationBytes,
   spriteHelperC,
   spriteLayoutBytes,
+  spriteNotes,
   spritePatternBytes,
-  spritePlacements,
   validateSprites,
   type SpritesDoc
 } from './sprite'
@@ -506,7 +510,14 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       const { doc } = resource
       const tables: EmitTable[] = [
         { suffix: '_Patterns', bytes: spritePatternBytes(doc), art: true, comment: 'Sprite Patterns Table' },
-        { suffix: '_Colors', bytes: spriteColorBytes(doc), comment: 'Sprite Colors Table' }
+        {
+          suffix: '_Colors',
+          bytes: spriteColorBytes(doc),
+          comment:
+            doc.mode === 1
+              ? 'Sprite Colors Table — one byte per plane (EC|colour), in pattern order: for a one-plane character that is one byte per frame'
+              : 'Sprite Colors Table — 16 line bytes per plane (EC|CC|IC|colour), in pattern order'
+        }
       ]
       if (doc.palette) {
         tables.push({ suffix: '_Palette', bytes: palettePairBytes(doc.palette), perLine: 2, comment: 'Palette (V9938 GRB333)' })
@@ -518,6 +529,14 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
           bytes: spriteLayoutBytes(doc),
           perLine: 2,
           comment: 'Sprite group layout — dx, dy per plane, in pattern order (0, 0 for stacked planes)'
+        })
+      }
+      // Last, so a `bin` export keeps every offset it had before durations existed.
+      if (hasSpriteAnimation(doc)) {
+        tables.push({
+          suffix: '_Durations',
+          bytes: spriteDurationBytes(doc),
+          comment: 'Frame durations in VBlanks — one byte per frame, characters in order (a character starts at its _FRAME0)'
         })
       }
       return tables
@@ -788,6 +807,7 @@ function resourceNotes(resource: ResourceDoc, sourceName: string, block: ExportB
             .join(', ')}`
         )
       }
+      notes.push(...spriteNotes(resource.doc))
       break
     case 'map':
       notes.push(
@@ -1077,15 +1097,9 @@ function resourceConstants(
       })
     ]
   }
-  if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return []
-  return spritePlacements(resource.doc).flatMap((placement) => {
-    const id = `${prefix}_${defineName(placement.name)}`
-    return [
-      `#define ${id}_BASE ${placement.base}`,
-      `#define ${id}_PLANES ${placement.planes}`,
-      `#define ${id}_FRAMES ${placement.frames}`
-    ]
-  })
+  // Every character, not only groups: a one-plane character moves too, the
+  // moment one before it gains a frame.
+  return resource.kind === 'sprites' ? spriteConstants(resource.doc, name) : []
 }
 
 const NO_CODE: HelperC = { header: [], source: [] }
@@ -1166,8 +1180,12 @@ function resourceCode(
   // upload and the single-tile blit are the whole reason a bitmap tileset can
   // be drawn without the game knowing how the sheet is laid out.
   if (resource.kind === 'btiles') return bitmapTileHelperC(resource.doc, name)
-  if (resource.kind !== 'sprites' || !hasSpriteGroups(resource.doc)) return NO_CODE
-  return spriteHelperC(resource.doc, name)
+  if (resource.kind !== 'sprites') return NO_CODE
+  // Additive both ways: a sheet with no group and nothing animated emits no C.
+  return joinHelpers(
+    hasSpriteGroups(resource.doc) ? spriteHelperC(resource.doc, name) : NO_CODE,
+    hasSpriteAnimation(resource.doc) ? spriteAnimHelperC(resource.doc, name) : NO_CODE
+  )
 }
 
 /** `content/tiles.h` → `content/tiles.c`; the data half of a C export. */
