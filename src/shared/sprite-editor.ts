@@ -11,6 +11,7 @@
  * here.
  */
 
+import { VBLANK_MS } from './animation-playback'
 import type { History } from './history'
 import { DEFAULT_ANIM_DURATION } from './msx/tile-anim'
 import {
@@ -520,12 +521,7 @@ export interface PlaybackState {
   elapsedMs: number
 }
 
-/**
- * One VBlank on a European MSX — the clock a game steps its animation on, and
- * the one the pose editor previews on (`AnimSidePanel.vue`), so a duration
- * plays the same length in both editors.
- */
-export const VBLANK_MS = 20
+export { VBLANK_MS }
 
 /**
  * Advances playback by `deltaMs`, holding each frame `durations[frame]`

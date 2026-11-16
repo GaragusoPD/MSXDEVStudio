@@ -23,6 +23,7 @@
  */
 
 import { shallowReactive } from 'vue'
+import { frameAtTick } from '../../../../shared/animation-playback'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
 import { isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import {
@@ -646,20 +647,5 @@ export function stepBytes(file: PoseFile): number {
  * about timing, ping-pong and play-once.
  */
 export function poseAtTick(anim: Pick<PoseDoc, 'frames' | 'loop'>, ticks: number): number {
-  const order: number[] = []
-  const count = anim.frames.length
-  if (anim.loop === 'pingpong' && count > 1) {
-    for (let f = 0; f < count; f++) order.push(f)
-    for (let f = count - 2; f > 0; f--) order.push(f)
-  } else {
-    for (let f = 0; f < count; f++) order.push(f)
-  }
-  const total = order.reduce((sum, f) => sum + anim.frames[f].duration, 0)
-  if (anim.loop === 'once' && ticks >= total - anim.frames[count - 1].duration) return count - 1
-  let t = total > 0 ? ticks % total : 0
-  for (const f of order) {
-    if (t < anim.frames[f].duration) return f
-    t -= anim.frames[f].duration
-  }
-  return order[order.length - 1]
+  return frameAtTick(anim.frames.map((f) => f.duration), anim.loop, ticks)
 }
