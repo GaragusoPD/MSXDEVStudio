@@ -75,6 +75,7 @@ import {
   tileAnimHelperC,
   tileAnimTables,
   tilesetAnimConstants,
+  tilesetAnimTables,
   validateTileAnim,
   type TileAnimDoc
 } from './tile-anim'
@@ -440,7 +441,9 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
         })
       }
       // Data, with or without helper C: a game can draw an attached meta, or
-      // read its flags, from these alone.
+      // read its flags, from these alone — and find a meta's animation by its
+      // index (`_MetaAnim` → `_AnimInfo`).
+      tables.push(...tilesetAnimTables(doc))
       tables.push(...tilesetMetaTables(doc))
       return tables
     }

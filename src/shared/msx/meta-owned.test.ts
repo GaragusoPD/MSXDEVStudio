@@ -314,7 +314,27 @@ describe('export', () => {
     expect([...info.bytes]).toEqual([2, 2, 1, 0, 0, 2, 3, 0, 4, 0])
     expect(cells.bytes.length).toBe(4 + 6)
     expect(cells.bytes[1]).toBe(0)
-    expect(tilesetMetaConstants(doc, 'g_Tiles')).toEqual(['#define G_TILES_METAS 2', '#define G_TILES_META_TREE 0', '#define G_TILES_META_TORCH 1'])
+    expect(tilesetMetaConstants(doc, 'g_Tiles')).toEqual([
+      '#define G_TILES_METAS 2',
+      '#define G_TILES_META_TREE 0',
+      '#define G_TILES_META_TORCH 1',
+      '#define G_TILES_META_STILL 0xFF'
+    ])
+  })
+
+  it('finds a meta’s animation by its index: _MetaAnim, 0xFF for one that holds still', () => {
+    let doc = attach(tileset(8), TREE, tree(), 'g_Tree')
+    // A tileset of still metas exports exactly what it did.
+    expect(tilesetMetaTables(doc).map((table) => table.suffix)).toEqual(['_MetaInfo', '_MetaCells'])
+    expect(tilesetMetaConstants(doc, 'g_Tiles')).not.toContain('#define G_TILES_META_STILL 0xFF')
+    doc = attach(doc, TORCH, torch(), 'g_Torch')
+    const table = tilesetMetaTables(doc).find((each) => each.suffix === '_MetaAnim')!
+    const torchAnim = doc.animations.findIndex((animation) => animation.path === TORCH)
+    expect(torchAnim).toBeGreaterThanOrEqual(0)
+    expect([...table.bytes]).toEqual([0xff, torchAnim])
+    const files = renderResourceFiles({ kind: 'tiles', doc }, 'res/main.tiles.json', { name: 'g_Tiles', format: 'c', out: 'content/tiles.h', helpers: false })
+    expect(files.source).toContain('g_Tiles_MetaAnim[]')
+    expect(files.source).toContain('g_Tiles_AnimInfo[]')
   })
 
   it('the tileset’s header carries the tables with or without helpers, and _DrawMeta with them', () => {

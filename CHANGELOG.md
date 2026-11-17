@@ -20,6 +20,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   colour, right-click one for the background, and ⇄ swaps them. One colour
   used to serve both buttons, so drawing red on black meant re-picking the
   colour at every switch between ink and paper.
+- **A tileset finds an attached meta's animation by the meta's index.** Once
+  an attached meta-tile animates, the tileset exports `_MetaAnim` (each meta's
+  animation index, or `_META_STILL`, 0xFF) and every tileset with animations
+  exports `_AnimInfo` (per animation: first slot, tiles, poses, loop, bank;
+  `_ANIM_INFO_BYTES` each). A game drawing metas by index with its own loader
+  no longer keeps that mapping by hand. Data, with or without ready-made C.
 
 ### Fixed
 
