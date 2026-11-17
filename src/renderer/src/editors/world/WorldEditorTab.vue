@@ -12,6 +12,7 @@
  * All the logic is in `./session.ts` and `shared/msx/world.ts`.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useWheelZoom } from '../../composables/useWheelZoom'
 import { colRowOf, neighbours, roomIds, NO_ROOM } from '../../../../shared/msx/world'
 import { mapEntities, SCREEN_COLS, SCREEN_ROWS } from '../../../../shared/msx/map'
 import { useResourcesStore } from '../../stores/resourcesStore'
@@ -59,6 +60,8 @@ const world = computed(() => doc(session.value))
 
 /** Pixels per grid cell: one screen's aspect, at a size that shows its art. A room of another size is fitted into it. */
 const zoom = ref(4)
+const pane = ref<HTMLElement | null>(null)
+useWheelZoom(pane, { get: () => zoom.value, set: (value) => (zoom.value = Math.max(2, Math.min(12, value))), min: 2, max: 12, quantum: 1 })
 const cellSize = computed(() => ({
   width: SCREEN_COLS * zoom.value,
   height: SCREEN_ROWS * zoom.value
@@ -318,7 +321,10 @@ watch(
       </div>
 
       <div class="panes">
-        <div class="grid-pane">
+        <div
+          ref="pane"
+          class="grid-pane"
+        >
           <div
             class="grid"
             :style="{ gridTemplateColumns: `repeat(${world.cols}, ${cellSize.width}px)` }"

@@ -423,6 +423,7 @@ export function tilesetAnimConstants(doc: TilesDoc, name: string): string[] {
   const prefix = defineName(name)
   return [
     `#define ${prefix}_ANIMS ${doc.animations.length}`,
+    `#define ${prefix}_ANIM_INFO_BYTES ${ANIM_INFO_BYTES}`,
     ...doc.animations.flatMap((binding, index) => {
       const id = `${prefix}_ANIM_${defineName(animBaseName(binding.path))}`
       // _FRAMES too, so "is it on its last pose?" against _AnimGetFrame() needs
@@ -436,6 +437,30 @@ export function tilesetAnimConstants(doc: TilesDoc, name: string): string[] {
         `#define ${id}_TILES ${animCells(binding)}`
       ]
     })
+  ]
+}
+
+/** Bytes per animation in a tileset's `_AnimInfo`. */
+export const ANIM_INFO_BYTES = 5
+
+/**
+ * `_AnimInfo`: per attached animation, in `_ANIM_*` order, what a loader of its
+ * own needs to play it without naming it — first slot, tiles in the window,
+ * poses, loop mode (`LOOP_CODE`), and bank (0-2, or 0xFF for every bank). The
+ * `_ANIM_<NAME>_*` defines say the same per name; this says it per index, which
+ * is how `_MetaAnim` points at it. Data: emitted with or without helper C.
+ */
+export function tilesetAnimTables(doc: TilesDoc): EmitTable[] {
+  if (!doc.animations.length) return []
+  return [
+    {
+      suffix: '_AnimInfo',
+      bytes: Uint8Array.from(
+        doc.animations.flatMap((binding) => [binding.slot, animCells(binding), binding.frames, LOOP_CODE[binding.loop], binding.bank ?? 0xff])
+      ),
+      perLine: ANIM_INFO_BYTES,
+      comment: `Attached animations: ${doc.animations.map((binding) => binding.name || binding.path).join(', ')} — slot, tiles, poses, loop, bank (0xFF: every bank)`
+    }
   ]
 }
 

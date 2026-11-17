@@ -587,6 +587,38 @@ export function tilesetMetaTables(doc: TilesDoc): EmitTable[] {
       bytes: Uint8Array.from(cells),
       perLine: Math.min(16, Math.max(...doc.metas.map((binding) => binding.width))),
       comment: 'Each meta’s tiles, row-major, end to end; 0 is a see-through cell'
+    },
+    ...metaAnimTable(doc)
+  ]
+}
+
+/**
+ * Per attached meta, its animation index (`_ANIM_*`, a row of `_AnimInfo`) or
+ * `META_STILL` when it holds still. The tileset names a window by the meta's
+ * *name* only, so a game that draws metas by index (`_MetaInfo`) and plays
+ * their poses with its own loader had no way from one to the other but a table
+ * kept by hand. Emitted only once an attached meta animates, so a tileset of
+ * still metas exports exactly what it did.
+ */
+export const META_STILL = 0xff
+
+/** Each attached meta's animation index, or `META_STILL`: the meta's window is filed under its path. */
+export function metaAnimIndices(doc: TilesDoc): number[] {
+  return doc.metas.map((binding) => {
+    const index = doc.animations.findIndex((animation) => animation.path === binding.path)
+    return index < 0 ? META_STILL : index
+  })
+}
+
+function metaAnimTable(doc: TilesDoc): EmitTable[] {
+  const indices = metaAnimIndices(doc)
+  if (indices.every((index) => index === META_STILL)) return []
+  return [
+    {
+      suffix: '_MetaAnim',
+      bytes: Uint8Array.from(indices),
+      perLine: 16,
+      comment: 'Per attached meta: its animation (a row of _AnimInfo), or 0xFF when it holds still'
     }
   ]
 }
@@ -601,7 +633,8 @@ export function tilesetMetaConstants(doc: TilesDoc, name: string): string[] {
   const prefix = defineName(name)
   return [
     `#define ${prefix}_METAS ${doc.metas.length}`,
-    ...doc.metas.map((binding, index) => `#define ${prefix}_META_${defineName(metaBaseName(binding.path))} ${index}`)
+    ...doc.metas.map((binding, index) => `#define ${prefix}_META_${defineName(metaBaseName(binding.path))} ${index}`),
+    ...(metaAnimIndices(doc).some((index) => index !== META_STILL) ? [`#define ${prefix}_META_STILL 0x${META_STILL.toString(16).toUpperCase()}`] : [])
   ]
 }
 

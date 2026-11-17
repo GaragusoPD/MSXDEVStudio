@@ -30,7 +30,9 @@ import {
   resolveConflict,
   select,
   setBank,
+  setBgColor,
   setColor,
+  swapColors,
   tileSession,
   canUndo,
   undo
@@ -135,6 +137,38 @@ describe('importImage with banks', () => {
     await importImage(session, screen(), 'merge', false, 'banked')
     expect(session.doc.count).toBe(8)
     expect(session.status).toMatch(/choose Replace/)
+  })
+
+  /** 256 dots wide and 10 cells tall: the first `distinct` cells all different, the rest repeating cell 0. */
+  function cells(distinct: number): ImportResult {
+    const width = 256
+    const height = 80
+    const indices = new Uint8Array(width * height).fill(1)
+    for (let cell = 0; cell < distinct; cell++) {
+      const cx = cell % 32
+      const cy = Math.floor(cell / 32)
+      for (let x = 0; x < 8; x++) if (cell & (0x80 >> x)) indices[cy * 8 * width + cx * 8 + x] = 15
+      if (cell & 0x100) indices[(cy * 8 + 1) * width + cx * 8] = 15
+    }
+    return { width, height, indices, palette: null, rgb: [], report: { colorsUsed: 0, colorsMerged: 0, rowsAltered: 0, pixelsChanged: 0 } }
+  }
+
+  it('a picture of exactly 256 tiles is placed whole: every cell, the repeats after the 256th included', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, cells(256), 'replace', true, 'repeat')
+    expect(session.doc.count).toBe(256)
+    expect(session.status).not.toMatch(/could not be placed|could not be added/)
+    const map = parseResource('res/main.map.json', files['res/main.map.json']).doc as MapDoc
+    expect(map.layers[0].data.slice(256, 320).every((tile) => tile === map.layers[0].data[0])).toBe(true)
+  })
+
+  it('a picture of 257 tiles still says how many cells it could not place', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, cells(257), 'replace', true, 'repeat')
+    expect(session.doc.count).toBe(256)
+    expect(session.status).toMatch(/64 cells could not be placed/)
   })
 
   it('a picture that cannot be banked is refused before anything changes', async () => {
@@ -338,16 +372,42 @@ describe('drawing', () => {
     expect(splitColorByte(colorByteAt(session.doc, session.active, 0)).fg).not.toBe(9)
   })
 
-  it('a right-button stroke sets the row background', async () => {
+  it('a right-button stroke sets the row background, in the background colour', async () => {
     const session = tileSession(PATH)
     await settled()
-    setColor(session, 6)
+    setColor(session, 9)
+    setBgColor(session, 6)
 
     beginStroke(session)
     paint(session, [{ x: 0, y: 0 }], 'bg')
     endStroke(session, 'paint')
 
     expect(splitColorByte(colorByteAt(session.doc, session.active, 0)).bg).toBe(6)
+  })
+
+  it('front and background are two colours: red on black with no trip to the palette in between', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    setColor(session, 8)
+    setBgColor(session, 1)
+
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+    beginStroke(session)
+    paint(session, [{ x: 1, y: 1 }], 'bg')
+    endStroke(session, 'paint')
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 1 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(splitColorByte(colorByteAt(session.doc, session.active, 0))).toEqual({ fg: 8, bg: expect.any(Number) })
+    expect(splitColorByte(colorByteAt(session.doc, session.active, 1))).toEqual({ fg: 8, bg: 1 })
+    expect(session.color).toBe(8)
+    expect(session.bgColor).toBe(1)
+
+    swapColors(session)
+    expect([session.color, session.bgColor]).toEqual([1, 8])
   })
 
   it('changing colour mid-drawing keeps working, as in the meta editor', async () => {

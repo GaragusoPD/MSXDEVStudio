@@ -79,7 +79,10 @@ export interface AnimSession {
   /** The pose being edited. */
   frame: number
   tool: TileTool
+  /** The left button's colour: a row's ink. */
   color: number
+  /** The right button's colour: a row's paper. */
+  bgColor: number
   /** Canvas pixels per dot. */
   zoom: number
   filledRect: boolean
@@ -119,6 +122,7 @@ export function animSession(path: string): AnimSession {
     frame: 0,
     tool: 'pencil',
     color: 15,
+    bgColor: 1,
     zoom: 24,
     filledRect: false,
     playing: false,
@@ -334,7 +338,7 @@ export function paint(session: AnimSession, points: Point[], role: 'fg' | 'bg'):
   const current = doc(session)
   let scratch = frameTiles(current, session.frame)
   for (const [tile, tilePoints] of splitBlockPoints(poseBlock(current), points)) {
-    scratch = applyRoleStroke(scratch, tile, tilePoints, session.color, role)
+    scratch = applyRoleStroke(scratch, tile, tilePoints, role === 'bg' ? session.bgColor : session.color, role)
   }
   session.preview = withFrameTiles(current, session.frame, scratch)
 }
@@ -624,6 +628,16 @@ export function setTool(session: AnimSession, tool: TileTool): void {
 
 export function setColor(session: AnimSession, color: number): void {
   session.color = color
+}
+
+/** The right button's colour: a row's paper. */
+export function setBgColor(session: AnimSession, color: number): void {
+  session.bgColor = color
+}
+
+/** Front and background change places. */
+export function swapColors(session: AnimSession): void {
+  ;[session.color, session.bgColor] = [session.bgColor, session.color]
 }
 
 export function setZoom(session: AnimSession, zoom: number): void {

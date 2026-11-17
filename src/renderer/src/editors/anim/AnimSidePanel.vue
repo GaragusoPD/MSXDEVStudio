@@ -7,13 +7,14 @@
  * `./session`, which is tested; this file is not.
  */
 import { computed, nextTick } from 'vue'
-import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
+import { paletteToRgb } from '../../../../shared/msx/palette'
 import { ANIM_LOOPS, type AnimLoop } from '../../../../shared/msx/tile'
 import { MAX_ANIM_CELLS } from '../../../../shared/msx/tile-anim'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
 import { movingCells } from '../../../../shared/msx/meta-owned'
 import { useTabsStore } from '../../stores/tabsStore'
 import Icon from '../../components/Icon.vue'
+import InkPaperSwatches from '../../components/InkPaperSwatches.vue'
 import {
   doc,
   findAttachments,
@@ -21,6 +22,7 @@ import {
   patchExport,
   removeFromTileset,
   resize,
+  setBgColor,
   setColor,
   setDuration,
   setLoop,
@@ -28,6 +30,7 @@ import {
   setPair,
   setupExport,
   stepBytes,
+  swapColors,
   type AnimSession
 } from './session'
 
@@ -68,20 +71,17 @@ function openTileset(path: string): void {
   <aside class="side">
     <section>
       <h3>Colour</h3>
-      <div class="swatches">
-        <button
-          v-for="(color, index) in rgb"
-          :key="index"
-          type="button"
-          class="swatch"
-          :class="{ current: session.color === index }"
-          :style="{ background: toHex(color) }"
-          :title="`Colour ${index}`"
-          @click="setColor(session, index)"
-        />
-      </div>
+      <InkPaperSwatches
+        :rgb="rgb"
+        :ink="session.color"
+        :paper="session.bgColor"
+        @ink="setColor(session, $event)"
+        @paper="setBgColor(session, $event)"
+        @swap="swapColors(session)"
+      />
       <p class="hint">
-        <strong>Left</strong> button paints a row's ink, <strong>right</strong> its paper.
+        <strong>Left</strong> button paints a row's ink in the front colour, <strong>right</strong> its
+        paper in the background colour.
         <template v-if="anim.mode === 'sc4'">
           Shown in the MSX1 palette; the tileset's own palette applies once attached.
         </template>

@@ -29,14 +29,19 @@ import {
   pickAt,
   setSelection,
   setViewOrigin,
+  setZoom,
   toolDrag,
   type ScreenSession
 } from './session'
+import { useWheelZoom } from '../../composables/useWheelZoom'
 
 const props = defineProps<{ session: ScreenSession }>()
 
 const originalCanvas = ref<HTMLCanvasElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
+/** The converted picture's scroller, the one you draw in. */
+const pane = ref<HTMLElement | null>(null)
+useWheelZoom(pane, { get: () => props.session.zoom, set: (zoom) => setZoom(props.session, zoom), min: 1, max: 8, quantum: 1 })
 let last: Point | null = null
 /** Drag rectangle of the cut tool, in image pixels. */
 const cutFrom = ref<Point | null>(null)
@@ -224,6 +229,8 @@ function selectUp(): void {
 }
 
 function onDown(event: PointerEvent): void {
+  // The middle button pans the pane (`useWheelZoom`); it never draws.
+  if (event.button === 1) return
   if (!convertedPixels.value) return
   const cell = pixelAt(event)
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
@@ -420,6 +427,7 @@ watchEffect(() => {
     <figure>
       <figcaption>{{ modeInfo.label }} — {{ convertedDims }} {{ modeInfo.colorModel === 'block' ? 'blocks (draw here)' : '(retouch here)' }}</figcaption>
       <div
+        ref="pane"
         class="scroller"
         @scroll="onScroll"
       >

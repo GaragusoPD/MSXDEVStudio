@@ -8,10 +8,11 @@
  * tested; this file is not, so it holds none.
  */
 import { computed, ref } from 'vue'
-import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
-import { isBanked, TILE_SIZE, type BankChoice } from '../../../../shared/msx/tile'
+import { paletteToRgb } from '../../../../shared/msx/palette'
+import { isBanked, MAX_TILES, TILE_SIZE, type BankChoice } from '../../../../shared/msx/tile'
 import type { ScreenMode } from '../../../../shared/msx/modes'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
+import InkPaperSwatches from '../../components/InkPaperSwatches.vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import {
@@ -23,8 +24,10 @@ import {
   promoteToBanked,
   rebuildBanks,
   removeUnusedTiles,
+  setPaintBgColor,
   setPaintColor,
   setPaintWrite,
+  swapPaintColors,
   type MapSession
 } from './session'
 
@@ -32,6 +35,8 @@ const props = defineProps<{ session: MapSession }>()
 const resourcesStore = useResourcesStore()
 
 const banked = computed(() => (props.session.tileset ? isBanked(props.session.tileset) : false))
+/** Free tiles for a picture dropped on the map: a warning only, since cells the tileset already draws are reused. A banked tileset is checked bank by bank on the drop. */
+const importBudget = computed(() => (props.session.tileset && !banked.value ? MAX_TILES - props.session.tileset.count : null))
 const importing = ref(false)
 /** One housekeeping action at a time: each reads the project before it asks. */
 const busy = ref(false)
@@ -60,24 +65,20 @@ const budget = computed(() => paintBudgetLabel(props.session))
   <div class="paint">
     <section>
       <h3>Colour</h3>
-      <div class="swatches">
-        <button
-          v-for="(color, index) in rgb"
-          :key="index"
-          type="button"
-          class="swatch"
-          :class="{ current: session.paintColor === index, transparent: index === 0 }"
-          :style="{ background: toHex(color) }"
-          :title="index === 0 ? '0 — transparent' : `Colour ${index}`"
-          @click="setPaintColor(session, index)"
-        >
-          <span>{{ index }}</span>
-        </button>
-      </div>
+      <InkPaperSwatches
+        :rgb="rgb"
+        :ink="session.paintColor"
+        :paper="session.paintBgColor"
+        transparent-zero
+        :label="(index: number) => (index === 0 ? '0 — transparent' : `Colour ${index}`)"
+        @ink="setPaintColor(session, $event)"
+        @paper="setPaintBgColor(session, $event)"
+        @swap="swapPaintColors(session)"
+      />
       <p class="hint">
-        <strong>Left</strong> button paints the ink of the row it touches, <strong>right</strong> its
-        paper — the mode's two-colours-per-row rule, so a third colour replaces one of them rather than
-        being refused.
+        <strong>Left</strong> button paints the ink of the row it touches in the front colour,
+        <strong>right</strong> its paper in the background colour — the mode's two-colours-per-row rule,
+        so a third colour replaces one of them rather than being refused.
       </p>
     </section>
 
@@ -212,6 +213,10 @@ const budget = computed(() => paintBudgetLabel(props.session))
       :prefer-current="session.tileset.palette !== null"
       use-label="Place this image"
       banking="screen"
+      :tile-budget="importBudget"
+      budget-label="free in this tileset"
+      :budget-blocks="false"
+      :count-only="banked"
       @close="importing = false"
       @imported="onImported"
     />

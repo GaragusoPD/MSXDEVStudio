@@ -264,7 +264,10 @@ export interface MapSession {
    */
   mode: 'tiles' | 'paint'
   paintTool: TileTool
+  /** The left button's colour: a row's ink. */
   paintColor: number
+  /** The right button's colour: a row's paper. */
+  paintBgColor: number
   /** Per stroke, because neither is a safe default: see the spec's write-mode table. */
   paintWrite: 'fork' | 'edit'
   /** Spray radius in dots, and its Bayer threshold (0–16) — `sprayPoints`' own units. */
@@ -344,6 +347,7 @@ export function mapSession(path: string): MapSession {
     // is black on black — a first stroke that shows nothing and still mints a
     // tile. The meta editor defaults to 15 for the same reason.
     paintColor: 15,
+    paintBgColor: 1,
     paintWrite: 'fork',
     brushRadius: 2,
     brushDensity: 8,
@@ -1213,6 +1217,16 @@ export function setPaintColor(session: MapSession, color: number): void {
   session.paintColor = color
 }
 
+/** The right button's colour: a row's paper. */
+export function setPaintBgColor(session: MapSession, color: number): void {
+  session.paintBgColor = color
+}
+
+/** Front and background change places. */
+export function swapPaintColors(session: MapSession): void {
+  ;[session.paintColor, session.paintBgColor] = [session.paintBgColor, session.paintColor]
+}
+
 export function setPaintWrite(session: MapSession, write: 'fork' | 'edit'): void {
   session.paintWrite = write
 }
@@ -1402,7 +1416,7 @@ export function endPaint(session: MapSession): void {
     { width: current.width, height: current.height, tiles: layer.data },
     tileset,
     points,
-    session.paintColor,
+    session.paintRole === 'bg' ? session.paintBgColor : session.paintColor,
     session.paintRole,
     { write: session.paintWrite, bankOf: paintBankOf(session) ?? undefined }
   )

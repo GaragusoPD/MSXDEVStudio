@@ -7,6 +7,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import Icon from '../../components/Icon.vue'
+import InkPaperSwatches from '../../components/InkPaperSwatches.vue'
 import { MODES, TILE_MODES, type TileMode } from '../../../../shared/msx/modes'
 import {
   fromHex,
@@ -42,10 +43,12 @@ import {
   focusCell,
   nameSelection,
   selectBlock,
+  setBgColor,
   setBlockWide,
   setColor,
   setPalette,
   setRow,
+  swapColors,
   swapRow,
   tileColorByte,
   toggleFlag,
@@ -202,20 +205,20 @@ function patchExport(patch: Partial<NonNullable<typeof doc.value.export>>): void
       <p class="mode">
         {{ MODES[doc.mode].label }}
       </p>
-      <div class="swatches">
-        <button
-          v-for="(color, index) in rgb"
-          :key="index"
-          type="button"
-          class="swatch"
-          :class="{ current: session.color === index, transparent: index === 0 }"
-          :style="{ background: toHex(color) }"
-          :title="`${index} — ${grbLabel(index)}`"
-          @click="setColor(session, index)"
-        >
-          <span>{{ index }}</span>
-        </button>
-      </div>
+      <InkPaperSwatches
+        :rgb="rgb"
+        :ink="session.color"
+        :paper="session.bgColor"
+        transparent-zero
+        :label="(index: number) => `${index} — ${grbLabel(index)}`"
+        @ink="setColor(session, $event)"
+        @paper="setBgColor(session, $event)"
+        @swap="swapColors(session)"
+      />
+      <p class="hint">
+        <strong>Left</strong> button paints a row's ink in the front colour, <strong>right</strong> its
+        paper in the background colour.
+      </p>
 
       <template v-if="programmable">
         <label class="inline">

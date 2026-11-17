@@ -12,11 +12,14 @@
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { beginStroke, doc, endStroke, moveFloat, onionDots, ownedMeta, paint, posePixels, toggleHole, type AnimSession } from './session'
+import { beginStroke, doc, endStroke, moveFloat, onionDots, ownedMeta, paint, posePixels, setZoom, toggleHole, type AnimSession } from './session'
+import { useWheelZoom } from '../../composables/useWheelZoom'
 
 const props = defineProps<{ session: AnimSession }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+const pane = ref<HTMLElement | null>(null)
+useWheelZoom(pane, { get: () => props.session.zoom, set: (zoom) => setZoom(props.session, zoom), min: 4, max: 64, quantum: 4 })
 const preview = ref<Point[]>([])
 let origin: Point | null = null
 let painting = false
@@ -46,6 +49,8 @@ function pointsFor(from: Point, to: Point): Point[] {
 }
 
 function onDown(event: PointerEvent): void {
+  // The middle button pans the pane (`useWheelZoom`); it never draws.
+  if (event.button === 1) return
   const point = pointAt(event)
   const float = props.session.float
   if (float) {
@@ -201,7 +206,10 @@ watchEffect(() => {
 </script>
 
 <template>
-  <div class="anim-canvas">
+  <div
+    ref="pane"
+    class="anim-canvas"
+  >
     <canvas
       ref="canvas"
       :class="{ holes: session.holeMode, floating: session.float }"

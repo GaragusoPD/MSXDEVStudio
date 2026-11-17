@@ -12,7 +12,7 @@ import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import type { TileTool, TileTransform } from '../../../../shared/tile-editor'
 import type { ScreenMode } from '../../../../shared/msx/modes'
-import type { BankChoice } from '../../../../shared/msx/tile'
+import { MAX_TILES, type BankChoice } from '../../../../shared/msx/tile'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import TileCanvas from './TileCanvas.vue'
@@ -42,6 +42,16 @@ const resourcesStore = useResourcesStore()
 const importVisible = ref(false)
 const importMode = ref<'replace' | 'merge'>('replace')
 const importDedup = ref(true)
+/**
+ * What the dialog may hand over: Replace rebuilds the common set (less the
+ * reserved tile 0 and a banked set's shared region); Merge appends after what
+ * is there. Anything more used to be cut off at the 256th tile, silently.
+ */
+const importBudget = computed(() => {
+  const doc = session.value.doc
+  const ceiling = MAX_TILES - doc.sharedTiles
+  return importMode.value === 'merge' ? Math.max(0, ceiling - doc.count) : ceiling - (doc.reserveTile0 ? 1 : 0)
+})
 
 const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed(() => tileSession(path.value))
@@ -258,7 +268,10 @@ watch(
       v-if="importVisible"
       :mode="session.doc.mode"
       :standalone="false"
-      banking="picture"
+      :banking="importMode === 'merge' ? null : 'picture'"
+      :tile-budget="importBudget"
+      :dedup="importDedup"
+      :budget-label="importMode === 'merge' ? 'free in this tileset' : 'tiles this tileset holds'"
       @close="importVisible = false"
       @imported="onImported"
     />

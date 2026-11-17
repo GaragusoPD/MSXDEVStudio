@@ -56,7 +56,11 @@ Exported headers are a separate thing and still go where the resource's
 **Tiles** — draw with pencil, line, rectangle and fill. Shift, mirror and
 rotate the current tile; `+tile` and `−tile` grow and shrink the bank.
 Colors depend on the mode: SCREEN 2/4 give you two colors per 8-pixel row,
-SCREEN 1 gives one pair per group of 8 tiles. SCREEN 4 adds an editable
+SCREEN 1 gives one pair per group of 8 tiles. The left button paints a row's
+ink in the **front** colour and the right button its paper in the
+**background** colour; click a palette swatch to pick the front colour and
+right-click one to pick the background (the pose editor and the map's paint
+mode work the same way). SCREEN 4 adds an editable
 16-colour palette. The **Mode** dropdown converts between them, warning first
 when the target can't hold what you have — going to SCREEN 1 keeps one pair
 per group of eight and drops the rest. **Import image…** converts a PNG into a
@@ -187,6 +191,32 @@ into a tileset that needs a picture at most 192 dots tall, and replaces the whol
 set). Banks follow the screen's thirds — rows 0–7, 8–15, 16–23 — so a shorter
 picture fills fewer of them, and its map is padded with blank rows to the 24 a
 banked map must have.
+
+In SCREEN 1/2/4 the conversion picks, for every 8-pixel row of the picture, the
+**two colours that best reproduce that row**, matching colours the way the eye
+does (OKLab, with a wrong hue costing more than a wrong lightness). So a dull
+green stays green and a gold stays yellow, a little lighter or darker, rather
+than turning into the blue or red closest in brightness; and a gray stays black,
+gray or white. **Dither: Floyd–Steinberg** or **Bayer 4×4** then mixes those two
+colours only, which is how a mid gray becomes black and white dots. Dithering
+costs tiles: almost every dithered cell is a tile of its own.
+
+The dialog always takes the whole picture in, and is where you fit it to the
+hardware before anything reaches the tileset:
+
+- **Drag on the original** to convert only part of it: a box with handles on
+  its corners and edges, snapped to the 8-dot tile grid. Drag inside the box to
+  move it; **Whole image** goes back to all of it.
+- **Tiles** counts what the converted picture needs: different 8×8 tiles,
+  duplicates counted once (as every import stores them), and per screen third
+  for SCREEN 2/4.
+- When that is more than the target can take — 256 for a new or replaced set,
+  what is left for a merge or a map — the dialog says by how much. **Reduce to
+  fit** then merges the tiles that look most alike, the rarest first, until it
+  fits: whole tiles are swapped for their nearest neighbour, never blended, so
+  the colours stay what the conversion chose. A tileset import is refused until
+  the picture fits, rather than cut off at the 256th tile; a map import only
+  warns, since tiles the tileset already has are reused.
 
 In a **bitmap mode** a layered map needs to know which cell means "nothing",
 because a cell index is an atlas position and 0 is a picture like any other. So

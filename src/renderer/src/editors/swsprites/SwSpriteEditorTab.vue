@@ -13,6 +13,7 @@
  * being true.
  */
 import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
+import { useWheelZoom } from '../../composables/useWheelZoom'
 import Icon from '../../components/Icon.vue'
 import { MODES } from '../../../../shared/msx/modes'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -68,6 +69,14 @@ import {
 const tabs = useTabsStore()
 const path = computed(() => tabs.activeTab?.filePath ?? '')
 const session = computed(() => swSpriteSession(path.value))
+const pane = ref<HTMLElement | null>(null)
+useWheelZoom(pane, {
+  get: () => session.value.zoom,
+  set: (zoom) => (session.value.zoom = Math.max(2, Math.min(24, zoom))),
+  min: 2,
+  max: 24,
+  quantum: 1
+})
 const resourcesStore = useResourcesStore()
 const sheet = computed(() => doc(session.value))
 const open = computed(() => character(session.value))
@@ -115,6 +124,8 @@ function pointAt(event: PointerEvent): Point {
 let drawing = false
 
 function onDown(event: PointerEvent): void {
+  // The middle button pans the pane (`useWheelZoom`); it never draws.
+  if (event.button === 1) return
   const point = pointAt(event)
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
   if (session.value.tool === 'pick') {
@@ -365,7 +376,10 @@ const familyNote = computed(() => {
       </aside>
 
       <section class="stage">
-        <div class="scroller">
+        <div
+          ref="pane"
+          class="scroller"
+        >
           <canvas
             v-if="open"
             ref="canvas"
@@ -476,7 +490,8 @@ const familyNote = computed(() => {
           <h3>Size and frames</h3>
           <p class="hint">
             {{ open.width }}×{{ open.height }} {{ unit }}<template v-if="dots > 1">
-              ({{ open.width * dots }}×{{ open.height * dots }} dots)</template>. Multiples of
+              ({{ open.width * dots }}×{{ open.height * dots }} dots)
+            </template>. Multiples of
             {{ step.x }}×{{ step.y }} — the blitter cannot see inside one. Resizing crops.
           </p>
           <div class="field">

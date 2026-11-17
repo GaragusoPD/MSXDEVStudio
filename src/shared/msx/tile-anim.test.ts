@@ -11,6 +11,7 @@ import {
   tileAnimHelperC,
   tileAnimTables,
   tilesetAnimConstants,
+  tilesetAnimTables,
   validateTileAnim,
   withAnimFrame,
   withFrameTiles,
@@ -272,6 +273,7 @@ describe('the generated C', () => {
     const doc = attachAnimation(tileset(), PATH, coin(), { slot: 6, bank: null, name: 'g_X' })
     expect(tilesetAnimConstants(doc, 'g_Tiles')).toEqual([
       '#define G_TILES_ANIMS 1',
+      '#define G_TILES_ANIM_INFO_BYTES 5',
       '#define G_TILES_ANIM_COIN 0',
       '#define G_TILES_ANIM_COIN_SLOT 6',
       '#define G_TILES_ANIM_COIN_FRAMES 4',
@@ -284,6 +286,16 @@ describe('the generated C', () => {
     expect(text).toContain('void g_Tiles_AnimSetActive(u8 anim, bool on)')
     // A garbage frame index from uncleared RAM is clamped, not followed.
     expect(text).toContain('if(f > last) f = 0;')
+  })
+
+  it('states every animation by index too, in _AnimInfo: slot, tiles, poses, loop, bank', () => {
+    const flag = normalizeTileAnim({ mode: 'sc2', width: 3, height: 2, frames: [{}, {}], loop: 'once', export: { name: 'g_Flag', format: 'c', out: 'x.h' } })
+    let doc = attachAnimation(tileset(), PATH, coin(), { slot: 6, bank: null, name: 'g_X' })
+    doc = attachAnimation(doc, 'res/flag.anim-tiles.json', flag, { slot: 8, bank: 1, name: 'g_X' })
+    const [info] = tilesetAnimTables(doc)
+    expect(info.suffix).toBe('_AnimInfo')
+    expect([...info.bytes]).toEqual([6, 1, 4, 0, 0xff, 8, 6, 2, 2, 1])
+    expect(tilesetAnimTables(tileset())).toEqual([])
   })
 
   it('states how many tiles each window holds — width × height, not either side', () => {

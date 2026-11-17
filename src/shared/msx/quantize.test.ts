@@ -138,6 +138,15 @@ describe('sc2 constraint fit', () => {
     expect(rowColorViolations(result.indices, result.width, result.height)).toEqual([])
   })
 
+  it('keeps every span to two colors with each dither, transparency included', () => {
+    const holed = referenceImage(64, 64)
+    for (let i = 0; i < 64 * 64; i += 5) holed.data[i * 4 + 3] = 0
+    for (const dither of ['none', 'bayer4', 'floyd'] as const) {
+      const result = quantize(holed, { mode: 'sc2', dither })
+      expect(rowColorViolations(result.indices, result.width, result.height)).toEqual([])
+      for (let i = 0; i < 64 * 64; i += 5) expect(result.indices[i]).toBe(0)
+    }
+  })
   it('produces a tileset that passes the tile validators and re-decodes unchanged', () => {
     const result = quantize(image, { mode: 'sc2', dither: 'none' })
     const { doc } = packTiles(result.indices, result.width, result.height, 'sc2')
@@ -181,6 +190,71 @@ describe('sc2 constraint fit', () => {
     const report = fitRowConstraint(indices, 8, 1, MSX1_PALETTE_RGB)
     expect(report).toEqual({ rowsAltered: 1, pixelsChanged: 2 })
     expect([...indices]).toEqual([1, 1, 1, 15, 15, 15, 15, 1])
+  })
+})
+
+/**
+ * What a picture looks like after the conversion, by the MSX1 colours it ends
+ * up in. These pin the bugs the span fit replaced: a gray, a dark green or an
+ * olive went to whichever entry had the nearest *lightness* (a blue or a red),
+ * and whole pictures came out blue.
+ */
+describe('sc2 colours', () => {
+  const NEUTRAL = new Set([1, 14, 15])
+  const GREENS = new Set([2, 3, 12])
+  const YELLOWS = new Set([10, 11])
+  const used = (image: RgbaImage, dither: 'none' | 'bayer4' | 'floyd'): Set<number> =>
+    new Set(quantize(image, { mode: 'sc2', dither }).indices)
+
+  /** A horizontal gray ramp, black to white. */
+  const ramp = (() => {
+    const width = 64
+    const height = 8
+    const data = new Uint8Array(width * height * 4)
+    for (let i = 0; i < width * height; i++) {
+      const value = Math.round(((i % width) * 255) / (width - 1))
+      data.set([value, value, value, 255], i * 4)
+    }
+    return { width, height, data }
+  })()
+
+  it('keeps grays gray: black, gray and white only, with or without dithering', () => {
+    for (const dither of ['none', 'bayer4', 'floyd'] as const) {
+      for (const index of used(ramp, dither)) expect(NEUTRAL.has(index), `${dither}: colour ${index}`).toBe(true)
+    }
+  })
+
+  it('takes a mid gray to the gray entry, not a blue or a red of similar lightness', () => {
+    expect([...used(solid(16, 8, [110, 110, 110]), 'none')]).toEqual([14])
+    expect([...used(solid(16, 8, [90, 90, 90]), 'none')]).toEqual([14])
+  })
+
+  it('keeps an olive or tentacle green green', () => {
+    for (const color of [[70, 90, 40], [64, 80, 16], [80, 140, 50]] as [number, number, number][]) {
+      const indices = used(solid(16, 8, color), 'none')
+      expect([...indices].every((index) => GREENS.has(index)), `${color}: ${[...indices]}`).toBe(true)
+    }
+  })
+
+  it('keeps a gold yellow', () => {
+    for (const color of [[200, 160, 70], [150, 115, 50], [212, 193, 84]] as [number, number, number][]) {
+      const indices = used(solid(16, 8, color), 'none')
+      expect([...indices].every((index) => YELLOWS.has(index)), `${color}: ${[...indices]}`).toBe(true)
+    }
+  })
+
+  it('dithers a mid gray from black and white, about half of each', () => {
+    const indices = quantize(solid(32, 32, [128, 128, 128]), { mode: 'sc2', dither: 'floyd' }).indices
+    const white = [...indices].filter((index) => index === 15 || index === 14).length / indices.length
+    expect([...new Set(indices)].every((index) => NEUTRAL.has(index))).toBe(true)
+    expect(white).toBeGreaterThan(0.3)
+    expect(white).toBeLessThan(0.8)
+  })
+
+  it('picks each span its own pair: a span half red and half green keeps both', () => {
+    const data = new Uint8Array(8 * 4)
+    for (let x = 0; x < 8; x++) data.set(x < 4 ? [252, 85, 84, 255] : [33, 200, 66, 255], x * 4)
+    expect([...quantize({ width: 8, height: 1, data }, { mode: 'sc2' }).indices]).toEqual([8, 8, 8, 8, 2, 2, 2, 2])
   })
 })
 

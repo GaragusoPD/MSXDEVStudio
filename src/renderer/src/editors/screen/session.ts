@@ -182,6 +182,11 @@ export function screenSession(path: string): ScreenSession {
 }
 
 /** Drops sessions for tabs that were closed. Called by the tab component when the tab set changes. */
+/** The canvas's zoom, on the toolbar slider's 1-8. A session function because `ScreenCanvas` gets the session as a prop. */
+export function setZoom(session: ScreenSession, zoom: number): void {
+  session.zoom = Math.max(1, Math.min(8, Math.round(zoom) || session.zoom))
+}
+
 export function pruneScreenSessions(openPaths: Set<string>): void {
   for (const path of [...sessions.keys()]) {
     if (openPaths.has(path)) continue

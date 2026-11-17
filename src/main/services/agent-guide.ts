@@ -737,7 +737,15 @@ it pages in — plays the poses itself, from data that is all in the headers:
 - for a meta-tile, \`_MovingCells\`: tile \`k\` of a pose is the meta's cell
   \`_MovingCells[k]\` (cell = row × \`_W\` + column). A game that draws a meta's
   cells at slots of its own picking rewrites exactly those cells, without
-  diffing the poses.
+  diffing the poses;
+- by index rather than by name, for a game that draws its metas by index
+  (\`_MetaInfo\`): the tileset's \`_MetaAnim\` holds each attached meta's
+  animation index, or \`_META_STILL\` (0xFF) for one that holds still, and
+  \`_AnimInfo\` holds, per animation index, its first slot, tiles, poses, loop
+  and bank (0-2, or 0xFF for every bank) — \`_ANIM_INFO_BYTES\` (5) bytes each.
+  Both are data, there with or without ready-made C; \`_MetaAnim\` only once an
+  attached meta animates. The poses themselves are still in each meta's own
+  header, under the name its export gives them.
 
 \`\`\`c
 // SCREEN 2. The torch's cells were drawn at VRAM slots TORCH_SLOT + cell, in

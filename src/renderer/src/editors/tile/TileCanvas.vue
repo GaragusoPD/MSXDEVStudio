@@ -11,6 +11,7 @@ import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { blockTileAt, splitColorByte, TILE_SIZE } from '../../../../shared/msx/tile'
 import { toolPoints, type Point } from '../../../../shared/tile-editor'
+import { useWheelZoom } from '../../composables/useWheelZoom'
 import {
   activeBlock,
   activeExtent,
@@ -20,6 +21,7 @@ import {
   endStroke,
   paint,
   resolveConflict,
+  setZoom,
   tileColorByte,
   type TileSession
 } from './session'
@@ -27,6 +29,8 @@ import {
 const props = defineProps<{ session: TileSession }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+const pane = ref<HTMLElement | null>(null)
+useWheelZoom(pane, { get: () => props.session.zoom, set: (zoom) => setZoom(props.session, zoom), min: 8, max: 64, quantum: 4 })
 const preview = ref<Point[]>([])
 let origin: Point | null = null
 let last: Point | null = null
@@ -81,6 +85,8 @@ function pixelAt(event: PointerEvent): Point {
 }
 
 function onDown(event: PointerEvent): void {
+  // The middle button pans the pane (`useWheelZoom`); it never draws.
+  if (event.button === 1) return
   if (props.session.conflict) return
   role = event.button === 2 ? 'bg' : 'fg'
   const point = pixelAt(event)
@@ -198,7 +204,10 @@ watchEffect(() => {
 </script>
 
 <template>
-  <div class="canvas-pane">
+  <div
+    ref="pane"
+    class="canvas-pane"
+  >
     <div
       class="stage"
       :style="{ width: `${width}px` }"

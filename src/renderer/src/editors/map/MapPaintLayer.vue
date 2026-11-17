@@ -43,6 +43,8 @@ const preview = ref<HTMLCanvasElement | null>(null)
 let from: Point | null = null
 
 function onDown(event: PointerEvent): void {
+  // The middle button pans the pane (`useWheelZoom`); it never draws.
+  if (event.button === 1) return
   // Captured, so a drag that leaves the canvas keeps painting — `paintPointAt`
   // is unclamped for exactly this, and `paintGrid` drops what falls outside.
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
@@ -107,7 +109,7 @@ watchEffect(() => {
   if (!ctx) return
   ctx.clearRect(0, 0, width, height)
   const points = paintPreviewPoints(props.session)
-  const color = rgb.value?.[props.session.paintColor]
+  const color = rgb.value?.[props.session.paintRole === 'bg' ? props.session.paintBgColor : props.session.paintColor]
   if (!points.length || !color) return
   const size = paintDotSize(props.session)
   ctx.globalAlpha = 0.6

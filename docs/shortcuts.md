@@ -51,10 +51,14 @@ Each editor keeps its own undo history, and it survives switching tabs.
 
 | Gesture | Does |
 |---|---|
+| Wheel | Zoom in and out, keeping the dot under the pointer still — tile, map, screen, pose, bitmap tile, bitmap meta-tile, software sprite and world editors |
+| `Shift`+wheel / `Ctrl`+wheel | Scroll sideways / up and down — the same editors |
+| Middle-button drag | Pan — the same editors |
 | Left / right click | Draw / erase — sprite and screen editors |
 | Left drag / right drag | Draw a note / delete the notes it crosses — music editor |
 | `Ctrl`+wheel | Zoom the piano roll — music editor |
-| Left / right click | Paint foreground / background — tile editor |
+| Left / right click | Paint a row's ink in the front colour / its paper in the background colour — tile and pose editors, map editor's paint mode |
+| Click / right-click a palette swatch | Pick the front / the background colour — the same editors; the ⇄ button swaps them |
 | Drag a rectangle | Edit those tiles as one image — tile editor |
 | `Shift`+click | Extend the tile selection |
 | `Alt`+drag a tile onto another | Reorder the bank; maps and blocks follow |

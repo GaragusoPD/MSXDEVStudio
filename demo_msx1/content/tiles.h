@@ -12,6 +12,7 @@
 #pragma once
 
 #define G_TILES_ANIMS 1
+#define G_TILES_ANIM_INFO_BYTES 5
 #define G_TILES_ANIM_COIN 0
 #define G_TILES_ANIM_COIN_SLOT 6
 #define G_TILES_ANIM_COIN_FRAMES 4
@@ -46,6 +47,9 @@ extern const unsigned char g_Tiles_Flags[];
 
 #define G_TILES_BLOCKS_SIZE 15
 extern const unsigned char g_Tiles_Blocks[];
+
+#define G_TILES_ANIMINFO_SIZE 5
+extern const unsigned char g_Tiles_AnimInfo[];
 
 
 // Stamps one block of g_Tiles into the name table at tile column/row (x, y).

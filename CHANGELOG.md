@@ -7,6 +7,59 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **The mouse wheel zooms every drawing canvas**, centred on the pointer, one
+  step a notch: the tile, map, screen, pose, bitmap tile, bitmap meta-tile,
+  software sprite and world editors. `Shift`+wheel scrolls sideways,
+  `Ctrl`+wheel up and down, and a middle-button drag pans; the middle button no
+  longer paints.
+- **A front and a background colour in the tile, pose and map paint
+  editors.** The left button paints a row's ink in the front colour, the right
+  button its paper in the background colour; click a swatch for the front
+  colour, right-click one for the background, and ⇄ swaps them. One colour
+  used to serve both buttons, so drawing red on black meant re-picking the
+  colour at every switch between ink and paper.
+- **A tileset finds an attached meta's animation by the meta's index.** Once
+  an attached meta-tile animates, the tileset exports `_MetaAnim` (each meta's
+  animation index, or `_META_STILL`, 0xFF) and every tileset with animations
+  exports `_AnimInfo` (per animation: first slot, tiles, poses, loop, bank;
+  `_ANIM_INFO_BYTES` each). A game drawing metas by index with its own loader
+  no longer keeps that mapping by hand. Data, with or without ready-made C.
+- **Crop in the Import image dialog.** Drag on the original to convert only
+  part of it — a box with handles on its corners and edges, snapped to the
+  8-dot tile grid — so one figure from a sheet or one corner of a big picture
+  comes in without editing the file first.
+- **The Import image dialog counts tiles and fits the picture to the limit.**
+  It shows how many different tiles the converted picture needs (duplicates
+  once, and per screen third in SCREEN 2/4) against what the target can take,
+  and **Reduce to fit** merges the most alike tiles, the rarest first, until it
+  fits — whole tiles swapped, never blended.
+
+### Changed
+
+- **A picture that needs more tiles than the tileset can take is fitted in the
+  import dialog, not cut off or refused afterwards.** The whole picture always
+  comes into the dialog; a tileset import waits until it fits (crop it, or
+  Reduce to fit), where the 257th tile on used to be dropped silently. A map
+  import warns, since it reuses the tileset's own tiles and may still fit. A
+  tileset itself still holds at most 256 tiles per set.
+
+### Fixed
+
+- **A picture of exactly 256 tiles imports whole.** The packer stopped at the
+  256th new tile and dropped every cell after it, repeats of tiles already
+  placed included; now only a cell needing a 257th tile stops it.
+
+- **Pictures imported for SCREEN 1/2/4 keep their colours.** Greens came in
+  blue, yellows red, grays blue, and most pictures in four or five colours:
+  every pixel went to the MSX colour nearest in brightness, then each 8-pixel
+  row kept its two most frequent results. Now each row gets the two colours
+  that best reproduce it, matched the way the eye sees (OKLab, where a wrong
+  hue costs more than a wrong lightness, and colour added to a gray costs most).
+  Dithering mixes those two colours only, in gamma space, so Floyd–Steinberg no
+  longer leaves a rainbow speckle and a gray dithers from black, gray and white.
+
 ## [0.3.7] - 2026-11-17
 
 ### Added

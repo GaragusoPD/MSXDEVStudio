@@ -581,7 +581,14 @@ const unsigned char g_Tiles_Blocks[] =
 };
 // g_Tiles_Blocks size: 15 Bytes
 
-// Total size: 1103 Bytes
+// Attached animations: g_CoinAnim — slot, tiles, poses, loop, bank (0xFF: every bank)
+const unsigned char g_Tiles_AnimInfo[] =
+{
+	0x06, 0x01, 0x04, 0x00, 0xFF,
+};
+// g_Tiles_AnimInfo size: 5 Bytes
+
+// Total size: 1108 Bytes
 
 void g_Tiles_DrawBlock(u8 x, u8 y, u16 base, u8 w, u8 h)
 {
