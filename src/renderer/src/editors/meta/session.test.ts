@@ -10,14 +10,17 @@
  * `editors/anim/`; this session is the `.meta-btiles.json` editor only.)
  *
  * No DOM: `sheet()` is the only thing here that touches `document`, and it is
- * never called.
+ * never called. `frameRgba` is what the animation bar draws a bitmap meta from,
+ * and it is plain bytes for exactly that reason.
  */
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_BITMAP_TILES, normalizeBitmapTiles, tileImage } from '../../../../shared/msx/bitmap-tile'
 import { createMetaTileDoc, frameTileAt } from '../../../../shared/msx/meta-tile'
+import { paletteToRgb } from '../../../../shared/msx/palette'
 import { serializeResource } from '../../../../shared/msx/resource'
+import { encodeIndices } from '../../../../shared/msx/screen'
 import { useTilesetStore } from '../../stores/tilesetStore'
 import {
   beginStroke,
@@ -32,6 +35,8 @@ import {
   setColor,
   setDuration,
   frameDots,
+  framePixels,
+  frameRgba,
   setFrame,
   togglePlaying,
   addFrame,
@@ -56,6 +61,22 @@ function tilesFile(over: Record<string, unknown> = {}): string {
 }
 
 const count = (): number => useTilesetStore().bitmapDoc(TILES)!.count
+
+/** Sixteen distinct colours: sc5's default palette is all black, which would hide a wrong colour. */
+const PALETTE = Array.from({ length: 16 }, (_, i) => ((i & 7) << 8) | (((i + 3) & 7) << 4) | ((i + 5) & 7))
+
+const opaque = (index: number): number[] => {
+  const { r, g, b } = paletteToRgb(PALETTE)[index]
+  return [r, g, b, 255]
+}
+
+const rgbaAt = (image: { width: number; data: ArrayLike<number> }, x: number, y: number): number[] => {
+  const at = (y * image.width + x) * 4
+  return Array.from({ length: 4 }, (_, i) => image.data[at + i])
+}
+
+const cellPoints = (ox: number, oy: number, size: number): { x: number; y: number }[] =>
+  Array.from({ length: size }, (_, y) => Array.from({ length: size }, (_, x) => ({ x: ox + x, y: oy + y }))).flat()
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -300,6 +321,81 @@ describe('the animation bar state', () => {
     togglePlaying(session)
     expect(session.playing).toBe(false)
     expect(session.frame).toBe(1)
+  })
+
+  it('a frame is drawn the way the canvas draws it: colour 0 inside a tile shows the background', async () => {
+    files[TILES] = tilesFile({ palette: PALETTE })
+    const session = metaSession(META)
+    await settled()
+    // A whole painted tile, then one dot erased inside it: Erase paints index 0.
+    paint(session, cellPoints(0, 0, 8))
+    setColor(session, 0)
+    paint(session, [{ x: 3, y: 2 }])
+    expect(frameTileAt(doc(session), 0, 0, 0)).not.toBe(0)
+
+    const { width, height, indices } = framePixels(session, 0)
+    expect({ width, height }).toEqual({ width: 16, height: 16 })
+    expect(indices[2 * width + 3]).toBe(0)
+    expect(indices[2 * width + 4]).toBe(15)
+
+    const image = frameRgba(session, 0)
+    expect(image).toMatchObject({ width: 16, height: 16 })
+    expect(image.data).toHaveLength(16 * 16 * 4)
+    expect(rgbaAt(image, 4, 2)).toEqual(opaque(15))
+    expect(rgbaAt(image, 3, 2)[3]).toBe(0)
+    // The cells still holding tile 0 are see-through as a whole.
+    expect(rgbaAt(image, 12, 3)[3]).toBe(0)
+    expect(rgbaAt(image, 5, 12)[3]).toBe(0)
+  })
+
+  it('colour 0 is see-through whether or not the tileset nominates a transparent colour', async () => {
+    for (const transparent of [0, null]) {
+      pruneMetaSessions(new Set())
+      setActivePinia(createPinia())
+      files[TILES] = tilesFile({ palette: PALETTE, transparent })
+      const session = metaSession(META)
+      await settled()
+      expect(useTilesetStore().bitmapDoc(TILES)!.transparent).toBe(transparent)
+      paint(session, cellPoints(0, 0, 8))
+      setColor(session, 0)
+      paint(session, [{ x: 0, y: 0 }])
+      expect(rgbaAt(frameRgba(session, 0), 0, 0)[3]).toBe(0)
+      expect(rgbaAt(frameRgba(session, 0), 1, 0)).toEqual(opaque(15))
+    }
+  })
+
+  it('a cell holding tile 0 is a hole even when tile 0 has art, as the emitted C skips it', async () => {
+    files[TILES] = tilesFile({ palette: PALETTE, reserveTile0: false, count: 1, pixels: encodeIndices(new Uint8Array(64).fill(9)) })
+    const session = metaSession(META)
+    await settled()
+    expect(tileImage(useTilesetStore().bitmapDoc(TILES)!, 0)[0]).toBe(9)
+    expect(framePixels(session, 0).indices.every((index) => index === 0)).toBe(true)
+    expect(frameRgba(session, 0).data.every((byte) => byte === 0)).toBe(true)
+  })
+
+  it('shows a stroke still in progress, as the canvas does', async () => {
+    files[TILES] = tilesFile({ palette: PALETTE })
+    const session = metaSession(META)
+    await settled()
+    setColor(session, 6)
+    beginStroke(session, 'fg')
+    paint(session, [{ x: 9, y: 1 }], 'fg')
+    // Not committed yet: the canvas and the bar both draw the preview.
+    expect(frameTileAt(session.history.present, 0, 1, 0)).toBe(0)
+    expect(framePixels(session, 0).indices[1 * 16 + 9]).toBe(6)
+    expect(rgbaAt(frameRgba(session, 0), 9, 1)).toEqual(opaque(6))
+    endStroke(session)
+  })
+
+  it('a frame with no tileset is blank, at the size the canvas measures', async () => {
+    files[META] = serializeResource({ kind: 'metabtiles', doc: createMetaTileDoc('', 3, 2) })
+    const session = metaSession(META)
+    await settled()
+    const { width, height, indices } = framePixels(session, 0)
+    expect({ width, height }).toEqual({ width: 48, height: 32 })
+    expect(indices).toHaveLength(48 * 32)
+    expect(indices.every((index) => index === 0)).toBe(true)
+    expect(frameRgba(session, 0).data.every((byte) => byte === 0)).toBe(true)
   })
 
   it("frameDots uses the tileset's tile size, not the mirrored cell", async () => {

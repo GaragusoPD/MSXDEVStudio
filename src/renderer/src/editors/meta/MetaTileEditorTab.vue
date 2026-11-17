@@ -14,13 +14,12 @@
  */
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { isTypingTarget } from '../../commands'
-import { MAX_FRAMES, MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
+import { MAX_FRAMES, MAX_META_SIZE, type MetaFrame } from '../../../../shared/msx/meta-tile'
 import type { TileTool } from '../../../../shared/tile-editor'
 import type { MaterialSymbol } from '@material-symbols/font-400'
 import AnimationBar from '../../components/AnimationBar.vue'
 import Icon from '../../components/Icon.vue'
 import { metaThumbnail } from '../map/sheet'
-import type { Sheet } from '../map/sheet'
 import MetaCanvas from './MetaCanvas.vue'
 import MetaSidePanel from './MetaSidePanel.vue'
 import { useResourcesStore } from '../../stores/resourcesStore'
@@ -32,6 +31,7 @@ import {
   canUndo,
   doc,
   frameDots,
+  frameRgba,
   metaSession,
   pruneMetaSessions,
   redo,
@@ -80,42 +80,67 @@ const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
 
 const durations = computed(() => meta.value.frames.map((frame) => frame.duration))
 const frameSize = computed(() => frameDots(session.value))
-/** Every frame's art, and what draws it: the tileset's sheet changes under a frame that did not. */
+/** Every frame's art, and what draws it: the tileset (or the atlas) changes under a frame that did not. */
 const artKey = computed(() => [
   meta.value.frames,
   meta.value.width,
   meta.value.height,
   meta.value.cell,
-  sheet(session.value)
+  bitmapTiles(session.value),
+  session.value.atlas
 ])
 
 /**
- * One thumbnail canvas per frame, kept while neither that frame nor the sheet
- * changes. `metaThumbnail` builds a canvas on every call and the bar redraws on
- * every tick of its preview, so this is a plain Map: it must not be reactive,
- * because `drawFrame` runs inside the bar's effects.
+ * One 1:1 image per frame, kept while neither that frame nor what it is drawn
+ * from changes: the bar redraws its preview on every frame of playback, and a
+ * meta may have 255 frames to thumbnail. A plain Map, not reactive, because
+ * `drawFrame` runs inside the bar's effects.
  */
-let thumbCache = new Map<number, { frame: unknown; base: Sheet; canvas: HTMLCanvasElement }>()
-let thumbCacheMeta: unknown = null
+let frameImages = new Map<number, { frame: MetaFrame; source: object; canvas: HTMLCanvasElement }>()
+let frameImagesShape = ''
 
-function drawFrame(ctx: CanvasRenderingContext2D, index: number, scale: number): void {
-  const base = sheet(session.value)
+/**
+ * A bitmap tileset's frame is drawn from `frameRgba`, the composition the
+ * canvas paints, so colour 0 and tile-0 cells stay clear and the bar's
+ * background shows through them as the canvas's checkerboard does. An atlas
+ * (which the canvas does not draw) keeps its copy out of the picture's sheet.
+ */
+function frameImage(index: number): HTMLCanvasElement | null {
   const current = meta.value
   const frame = current.frames[index]
-  if (!base || !frame) return
-  // width/height (and the meta object's cell) shape every thumbnail.
+  const bitmap = bitmapTiles(session.value)
+  const atlas = bitmap ? null : sheet(session.value)
+  const source = bitmap ?? atlas
+  if (!frame || !source) return null
   const shape = `${current.width}x${current.height}`
-  if (thumbCacheMeta !== shape) {
-    thumbCache = new Map()
-    thumbCacheMeta = shape
+  if (frameImagesShape !== shape) {
+    frameImages = new Map()
+    frameImagesShape = shape
   }
-  let entry = thumbCache.get(index)
-  if (!entry || entry.frame !== frame || entry.base !== base) {
-    entry = { frame, base, canvas: metaThumbnail(base, current, index) }
-    thumbCache.set(index, entry)
-  }
+  const cached = frameImages.get(index)
+  if (cached && cached.frame === frame && cached.source === source) return cached.canvas
+  const canvas = atlas ? metaThumbnail(atlas, current, index) : rgbaCanvas(frameRgba(session.value, index))
+  frameImages.set(index, { frame, source, canvas })
+  return canvas
+}
+
+function rgbaCanvas(rgba: { width: number; height: number; data: Uint8ClampedArray }): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, rgba.width)
+  canvas.height = Math.max(1, rgba.height)
+  const ctx = canvas.getContext('2d')
+  if (!ctx || !rgba.width || !rgba.height) return canvas
+  const image = new ImageData(rgba.width, rgba.height)
+  image.data.set(rgba.data)
+  ctx.putImageData(image, 0, 0)
+  return canvas
+}
+
+function drawFrame(ctx: CanvasRenderingContext2D, index: number, scale: number): void {
+  const image = frameImage(index)
+  if (!image) return
   ctx.imageSmoothingEnabled = false
-  ctx.drawImage(entry.canvas, 0, 0, entry.canvas.width * scale, entry.canvas.height * scale)
+  ctx.drawImage(image, 0, 0, image.width * scale, image.height * scale)
 }
 
 /** A meta with no tileset yet has nothing to paint into. */
