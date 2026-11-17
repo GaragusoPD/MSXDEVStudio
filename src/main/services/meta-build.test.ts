@@ -14,12 +14,12 @@
  * fails with EXDEV across filesystems.
  */
 
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { addMetaRef, normalizeMap, placeMeta, setPlacementBaked } from '../../shared/msx/map'
 import { createBitmapTilesDoc, type BitmapTilesDoc } from '../../shared/msx/bitmap-tile'
-import { createMetaTileDoc, type MetaTileDoc } from '../../shared/msx/meta-tile'
+import { addFrame, createMetaTileDoc, setFrameDuration, type MetaTileDoc } from '../../shared/msx/meta-tile'
 import { paintBitmapMeta } from '../../shared/msx/meta-paint'
 import { defaultExport, type ResourceDoc } from '../../shared/msx/resource'
 import { mergeColorByte, normalizeTiles } from '../../shared/msx/tile'
@@ -64,6 +64,10 @@ function bitmapFixture(): Record<string, ResourceDoc> {
     meta = result.meta
     tiles = result.tiles
   }
+
+  // A second frame with its own duration, so `g_Rock_Durations` is emitted.
+  meta = setFrameDuration(addFrame(meta, 0), 1, 30)
+  meta = setFrameDuration(meta, 0, 5)
 
   let map = normalizeMap({
     tileset: 'res/tiles.btiles.json',
@@ -141,6 +145,12 @@ void main(void)
 \tg_Atlas_Draw(4, 80, 100, 212);
 \tg_Atlas_DrawBlock(block, 2, 2, 120, 100, 212);
 \tg_Rock_Draw(80, 140, 0, 212);
+\t// Referencing the durations table makes the linker resolve it. Read through
+\t// a volatile pointer so the compiler cannot drop the load.
+\t{
+\t\tvolatile const u8* durations = g_Rock_Durations;
+\t\tVDP_RegWrite(7, durations[1]);
+\t}
 \twhile(1) { Halt(); }
 }
 `
@@ -164,6 +174,9 @@ describe.runIf(runsBuilds)('the emitted bitmap placement C builds against real M
       const rom = join(root, 'out', 'bmetatest.rom')
       expect(existsSync(rom), `${rom} should exist`).toBe(true)
       expect(statSync(rom).size).toBeGreaterThan(1024)
+      // Two frames, so the durations table exists and has one byte per frame.
+      const header = readFileSync(join(root, 'content', 'rock.h'), 'utf8')
+      expect(header).toContain('#define G_ROCK_DURATIONS_SIZE 2')
     },
     BUILD_TIMEOUT
   )
