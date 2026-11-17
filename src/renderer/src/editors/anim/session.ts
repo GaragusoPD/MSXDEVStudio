@@ -626,6 +626,14 @@ export function setZoom(session: AnimSession, zoom: number): void {
   session.zoom = Math.max(4, Math.min(64, Math.round(zoom) || session.zoom))
 }
 
+/**
+ * The previous pose's dots that may show as onion skin: only where the current
+ * pose is empty (colour 0), so a painted dot is never tinted by what is under it.
+ */
+export function onionDots(current: Uint8Array, previous: Uint8Array): Uint8Array {
+  return previous.map((index, i) => (current[i] === 0 ? index : 0))
+}
+
 export function setOnionSkin(session: AnimSession, on: boolean): void {
   session.onionSkin = on
 }

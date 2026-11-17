@@ -12,7 +12,7 @@
 import { computed, ref, watchEffect } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { beginStroke, doc, endStroke, moveFloat, ownedMeta, paint, posePixels, toggleHole, type AnimSession } from './session'
+import { beginStroke, doc, endStroke, moveFloat, onionDots, ownedMeta, paint, posePixels, toggleHole, type AnimSession } from './session'
 
 const props = defineProps<{ session: AnimSession }>()
 
@@ -109,7 +109,7 @@ watchEffect(() => {
   const context = element.getContext('2d')
   if (!context) return
   const { indices } = posePixels(props.session, props.session.frame)
-  const onion = props.session.onionSkin && props.session.frame > 0 ? posePixels(props.session, props.session.frame - 1).indices : null
+  const onion = props.session.onionSkin && props.session.frame > 0 ? onionDots(indices, posePixels(props.session, props.session.frame - 1).indices) : null
   for (let y = 0; y < rows.value; y++) {
     for (let x = 0; x < cols.value; x++) {
       const index = indices[y * cols.value + x]
@@ -120,8 +120,9 @@ watchEffect(() => {
     }
   }
   if (onion) {
-    // The previous pose underneath, faint, so a cycle can be lined up against
-    // the pose it follows — beneath the hatching, the float and the stroke.
+    // The previous pose faint, only through the current pose's empty dots
+    // (`onionDots`), so a painted dot keeps its exact colour — beneath the
+    // hatching, the float and the stroke.
     context.globalAlpha = 0.3
     for (let y = 0; y < rows.value; y++) {
       for (let x = 0; x < cols.value; x++) {

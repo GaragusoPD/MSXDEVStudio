@@ -16,6 +16,7 @@ import {
   doc,
   endStroke,
   moveFrame,
+  onionDots,
   paint,
   patchExport,
   poseAtTick,
@@ -171,6 +172,12 @@ describe('the animation editor', () => {
     expect(session.history.past.length).toBe(before)
     setOnionSkin(session, false)
     expect(session.onionSkin).toBe(false)
+  })
+
+  it('shows onion skin only through the current pose’s empty dots', () => {
+    const current = Uint8Array.from([0, 5, 0, 7])
+    const previous = Uint8Array.from([3, 9, 0, 2])
+    expect(Array.from(onionDots(current, previous))).toEqual([3, 0, 0, 0])
   })
 
   it('resizes the window keeping cells from the top-left, and refuses past 16 tiles', async () => {
