@@ -553,7 +553,7 @@ export function cellsToBitmapMeta(
   if (made.cols > MAX_META_SIZE || made.rows > MAX_META_SIZE) {
     return `A ${made.cols}×${made.rows}-tile cell is too big for a meta-tile, which is at most ${MAX_META_SIZE}×${MAX_META_SIZE} tiles.`
   }
-  const meta: MetaTileDoc = { ...createMetaTileDoc(tileset, made.cols, made.rows), frames: made.cellTiles.map((placed) => ({ tiles: placed })) }
+  const meta: MetaTileDoc = { ...createMetaTileDoc(tileset, made.cols, made.rows), frames: made.cellTiles.map((placed) => ({ tiles: placed, duration: DEFAULT_ANIM_DURATION })) }
   return { meta, tiles: made.doc, added: made.added }
 }
 

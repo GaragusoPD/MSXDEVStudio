@@ -29,6 +29,8 @@ import {
   reserveBitmapTile0,
   saveSession,
   setColor,
+  setDuration,
+  addFrame,
   undo
 } from './session'
 
@@ -217,5 +219,50 @@ describe('reserving tile 0 on a tileset that already holds art', () => {
     reserveBitmapTile0(session)
     expect(useTilesetStore().bitmapDoc(TILES)!.reserveTile0).toBe(false)
     expect(session.status).toMatch(/full/)
+  })
+})
+
+describe('frame durations', () => {
+  it('setDuration is one undo step and marks the session dirty', async () => {
+    const session = metaSession(META)
+    await settled()
+    expect(doc(session).frames[0].duration).toBe(8)
+
+    setDuration(session, 0, 20)
+    expect(doc(session).frames[0].duration).toBe(20)
+    expect(session.dirty).toBe(true)
+
+    undo(session)
+    expect(doc(session).frames[0].duration).toBe(8)
+  })
+
+  it('an unchanged or out-of-range duration adds no step', async () => {
+    const session = metaSession(META)
+    await settled()
+    const before = session.history
+
+    setDuration(session, 0, 8)
+    setDuration(session, 9, 20)
+    expect(session.history).toBe(before)
+    expect(session.dirty).toBe(false)
+  })
+
+  it('a copied frame lands after its source and becomes the current one', async () => {
+    const session = metaSession(META)
+    await settled()
+    addFrame(session)
+    setDuration(session, 0, 20)
+    addFrame(session, 0)
+
+    expect(session.frame).toBe(1)
+    expect(doc(session).frames.map((f) => f.duration)).toEqual([20, 20, 8])
+  })
+
+  it('a blank frame is appended and becomes the current one', async () => {
+    const session = metaSession(META)
+    await settled()
+    addFrame(session)
+    addFrame(session)
+    expect(session.frame).toBe(2)
   })
 })

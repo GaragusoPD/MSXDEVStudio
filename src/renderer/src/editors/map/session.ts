@@ -81,7 +81,7 @@ import { sheetCols, type BitmapTilesDoc } from '../../../../shared/msx/bitmap-ti
 import type { TileBlock } from '../../../../shared/msx/tile'
 import { MAX_META_SIZE, normalizeMetaTile, type MetaTileDoc } from '../../../../shared/msx/meta-tile'
 import { isOwnedMeta, normalizeOwnedMeta, refreshMetas, resolveMeta, type LoadedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
-import { animModesCompatible } from '../../../../shared/msx/tile-anim'
+import { animModesCompatible, DEFAULT_ANIM_DURATION } from '../../../../shared/msx/tile-anim'
 import { onAnimSaved } from '../anim/events'
 import { onMetaRemoved, provideOpenMaps, removeMetaThroughStore } from '../meta-removal'
 import {
@@ -573,7 +573,7 @@ function rebuildMetaViews(session: MapSession): void {
       height: binding.height,
       cell: null,
       transparent: null,
-      frames: [{ tiles: binding.cells.slice() }],
+      frames: [{ tiles: binding.cells.slice(), duration: DEFAULT_ANIM_DURATION }],
       flags: binding.flags,
       export: meta.export
     })

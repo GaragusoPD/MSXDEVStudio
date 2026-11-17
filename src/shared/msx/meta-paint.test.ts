@@ -521,7 +521,7 @@ describe('sprayPoints', () => {
 
 describe('usedTiles', () => {
   it('collects every index across every frame', () => {
-    const doc = { ...createMetaTileDoc('t', 2, 1), frames: [{ tiles: [1, 2] }, { tiles: [2, 3] }] }
+    const doc = { ...createMetaTileDoc('t', 2, 1), frames: [{ tiles: [1, 2], duration: 8 }, { tiles: [2, 3], duration: 8 }] }
     expect([...usedTiles(doc)].sort((a, b) => a - b)).toEqual([1, 2, 3])
   })
 })

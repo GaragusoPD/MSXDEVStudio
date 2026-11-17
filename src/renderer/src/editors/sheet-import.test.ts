@@ -347,7 +347,7 @@ describe('MSX2: a bitmap meta-tile', () => {
     files['res/bank.btiles.json'] = tileset()
     files['res/rock.meta-btiles.json'] = serializeResource({
       kind: 'metabtiles',
-      doc: { ...createMetaTileDoc('res/bank.btiles.json', 2, 2), frames: [{ tiles: [0, 0, 0, 0] }, { tiles: [0, 0, 0, 0] }] }
+      doc: { ...createMetaTileDoc('res/bank.btiles.json', 2, 2), frames: [{ tiles: [0, 0, 0, 0], duration: 8 }, { tiles: [0, 0, 0, 0], duration: 8 }] }
     })
     expect(await describeTarget('metab', 'res/rock.meta-btiles.json')).toMatchObject({ tileset: 'res/bank.btiles.json', size: { width: 2, height: 2 } })
     const outcome = await applySheetImport(request({ destination: 'metab', target: 'res/rock.meta-btiles.json' }))

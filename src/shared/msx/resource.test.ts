@@ -782,6 +782,43 @@ describe('meta-tile resource', () => {
     expect(header).not.toContain('g_Tree_Draw')
   })
 
+  describe('bitmap meta durations', () => {
+    const meta = (frames: { tiles: number[]; duration?: number }[]): ResourceDoc => ({
+      kind: 'metabtiles',
+      doc: normalizeMetaTile({ tileset: 'res/canyon.btiles.json', width: 2, height: 1, frames })
+    })
+    const block = { name: 'g_Rock', format: 'c' as const, out: 'content/rock.h' }
+
+    it('puts _Durations after the frames table, one byte per frame', () => {
+      const resource = meta([
+        { tiles: [1, 2], duration: 3 },
+        { tiles: [3, 4], duration: 40 },
+        { tiles: [5, 6], duration: 255 }
+      ])
+      const tables = resourceTables(resource)
+      expect(tables.map((t) => t.suffix)).toEqual(['', '_Durations'])
+      expect([...tables[0].bytes]).toEqual([1, 2, 3, 4, 5, 6])
+      expect([...tables[1].bytes]).toEqual([3, 40, 255])
+      expect(tables[1].comment).toBe('Frames (VBlanks) each frame is held')
+      expect(rendered(resource, 'res/rock.meta-btiles.json', block)).toContain('g_Rock_Durations')
+    })
+
+    it('a one-frame meta exports no durations at all', () => {
+      const resource = meta([{ tiles: [1, 2], duration: 3 }])
+      expect(resourceTables(resource)).toHaveLength(1)
+      expect(rendered(resource, 'res/rock.meta-btiles.json', block)).not.toMatch(/durations/i)
+    })
+
+    it('a bin export keeps the frame bytes first and appends the durations', () => {
+      const resource = meta([
+        { tiles: [1, 2], duration: 3 },
+        { tiles: [3, 4], duration: 40 }
+      ])
+      const bytes = renderResourceBin(resource, { ...block, format: 'bin', out: 'content/rock.bin' })
+      expect([...bytes]).toEqual([1, 2, 3, 4, 3, 40])
+    })
+  })
+
   it('stamps a bitmap meta out of the atlas instead, one HMMM per cell', () => {
     const doc = normalizeMetaTile({
       tileset: 'res/canyon.btiles.json',

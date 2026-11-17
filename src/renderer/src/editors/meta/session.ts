@@ -32,6 +32,7 @@ import {
   removeFrame as removeFramePure,
   reorderFrames as reorderFramesPure,
   resizeMeta as resizeMetaPure,
+  setFrameDuration as setFrameDurationPure,
   META_FLAG_COUNT,
   type MetaTileDoc
 } from '../../../../shared/msx/meta-tile'
@@ -546,8 +547,15 @@ export function setFrame(session: MetaSession, index: number): void {
 export function addFrame(session: MetaSession, copyOf?: number): void {
   const next = addFramePure(doc(session), copyOf)
   if (next === doc(session)) return
+  // A copy lands right after its source; a blank one at the end.
+  const landed = copyOf !== undefined && doc(session).frames[copyOf] ? copyOf + 1 : next.frames.length - 1
   commit(session, next)
-  session.frame = next.frames.length - 1
+  session.frame = landed
+}
+
+export function setDuration(session: MetaSession, index: number, duration: number): void {
+  const next = setFrameDurationPure(doc(session), index, duration)
+  if (next !== doc(session)) commit(session, next)
 }
 
 export function removeFrame(session: MetaSession, index: number): void {

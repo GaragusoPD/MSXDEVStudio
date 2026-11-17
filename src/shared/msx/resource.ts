@@ -493,7 +493,7 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
       const { doc } = resource
       // One table, no suffix: a meta-tile is nothing but its frames, so
       // `g_Tree[]` reads better than `g_Tree_Frames[]`.
-      return [
+      const tables: EmitTable[] = [
         {
           suffix: '',
           bytes: metaBytes(doc),
@@ -503,6 +503,16 @@ export function resourceTables(resource: ResourceDoc, compress?: ExportBlock['co
             `tile indices row-major, ${metaCells(doc)} bytes per frame`
         }
       ]
+      // After the frames, so a one-frame meta is byte-for-byte what it was and
+      // a multi-frame one only grows at the end.
+      if (doc.frames.length > 1) {
+        tables.push({
+          suffix: '_Durations',
+          bytes: Uint8Array.from(doc.frames.map((frame) => frame.duration)),
+          comment: 'Frames (VBlanks) each frame is held'
+        })
+      }
+      return tables
     }
     case 'anim':
       return tileAnimTables(resource.doc)
