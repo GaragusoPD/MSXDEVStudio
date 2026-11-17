@@ -7,8 +7,34 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-11-17
+
 ### Added
 
+- **One animation bar in the sprite, pose and bitmap meta-tile editors.** All
+  three get the sprite editor's bottom bar: a live preview on a checkered or
+  solid background, a thumbnail per frame with its duration in VBlanks, add,
+  clone, delete, move and drag to reorder, play and pause, and onion skin. The
+  preview plays at the game's speed (50 Hz) and, in the pose editor, in the
+  file's loop, ping-pong or once order; the canvas stays on the frame being
+  edited. The pose editor gains onion skin, and its Preview moved from the
+  side panel into the bar.
+- **Bitmap meta-tile frames have durations.** Each frame stores how long it
+  shows (1–255 VBlanks, 8 by default; older files read as 8), and a meta with
+  more than one frame exports a `_Durations` table after its frames, so
+  nothing already exported moves. The fps box is gone.
+- **Sprite frames have durations, and every character gets defines.** Each
+  character exports `_BASE`, `_PLANES`, `_FRAMES`, `_ID` and `_PATTERN`, the
+  sheet `_CHARS` and `_PLANE_PATTERNS`; an animated sheet adds `_FRAME0` and a
+  `_Durations` table. With ready-made C on, `_SetFrame` and `_AnimStep` show
+  a frame and play an animation at its stored timing.
+- **More for a game that animates tiles itself.** A tileset header defines
+  each animation's `_ANIM_<NAME>_TILES`, animations and pattern meta-tiles
+  export their loop mode as `_LOOP`, and an animated meta-tile exports
+  `_MovingCells`, the cells that change between poses. The pose editor's side
+  panel has an Export section.
+- **Map editor: right-click menu on meta-tiles.** Attach, Open, and Remove
+  from the tileset; an unattached meta-tile attaches on a double-click.
 - **Claude can work in the IDE (MCP).** Preferences ▸ Claude (MCP) starts a
   local MCP server on `http://127.0.0.1:47811/mcp`; Claude Code connects with
   one `claude mcp add` command, or through the project's `.mcp.json`, which the
@@ -51,6 +77,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Each room exports its own C; placements and entities go to the room they are
   in; the last column and row are as big as what is left; empty rooms can be
   left out; nothing already there is overwritten.
+
+### Fixed
+
+- **A failed resource export is an error.** It shows in Problems and leads
+  the MCP build report; before, it was a line in the output, and the stale
+  header compiled cleanly.
+- **An animation or animated meta-tile with no export target fails its
+  tileset's export** with a message naming it, instead of producing a
+  tileset whose `_Animate()` cannot link. So does a raw-binary export under
+  `_Animate()`, which reads C symbols.
+- **Resources in dot folders** (`.scratch/` and the like) are no longer
+  exported.
+- **Two resources writing the same file both fail**, and neither is written.
+- **MCP `read_resource` and `write_resource` report what the export would**,
+  with a map's meta-tiles refreshed from their files. A read-then-write round
+  trip no longer drops a tileset's renumbering log or a map's reorder stamp,
+  and a new resource written without an `export` gets the default one.
+- **The map editor finds meta-tiles the Resources list has not listed yet**,
+  and "not attached" says which field is missing.
+- **Esc lets go of a picked or placed meta-tile** in the map editor; before,
+  every click kept placing it.
 
 ## [0.3.6] - 2026-10-25
 
