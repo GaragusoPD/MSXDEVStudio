@@ -22,6 +22,7 @@
  */
 
 import { shallowReactive } from 'vue'
+import type { AnimationBackground } from '../../../../shared/animation-playback'
 import {
   addFrame as addFramePure,
   createMetaTileDoc,
@@ -102,6 +103,8 @@ export interface MetaSession {
   density: number
   onionSkin: boolean
   playing: boolean
+  /** What the animation bar's preview shows through colour 0 / empty cells. */
+  background: AnimationBackground
   zoom: number
   gridVisible: boolean
   status: string
@@ -170,6 +173,7 @@ export function metaSession(path: string): MetaSession {
     density: 8,
     onionSkin: false,
     playing: false,
+    background: 'checkered',
     zoom: 16,
     gridVisible: true,
     status: '',
@@ -700,6 +704,10 @@ export function setZoom(session: MetaSession, zoom: number): void {
 
 export function togglePlaying(session: MetaSession): void {
   session.playing = !session.playing
+}
+
+export function setBackground(session: MetaSession, value: AnimationBackground): void {
+  session.background = value
 }
 
 export function setOnionSkin(session: MetaSession, on: boolean): void {

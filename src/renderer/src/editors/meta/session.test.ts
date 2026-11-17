@@ -28,8 +28,11 @@ import {
   pruneMetaSessions,
   reserveBitmapTile0,
   saveSession,
+  setBackground,
   setColor,
   setDuration,
+  setFrame,
+  togglePlaying,
   addFrame,
   undo
 } from './session'
@@ -264,5 +267,41 @@ describe('frame durations', () => {
     addFrame(session)
     addFrame(session)
     expect(session.frame).toBe(2)
+  })
+})
+
+describe('the animation bar state', () => {
+  it('the preview background defaults to checkered and changing it is not an edit', async () => {
+    const session = metaSession(META)
+    await settled()
+    expect(session.background).toBe('checkered')
+
+    const before = session.history
+    setBackground(session, 'solid')
+    expect(session.background).toBe('solid')
+    expect(session.dirty).toBe(false)
+    expect(session.history).toBe(before)
+  })
+
+  it('playing never moves the frame being edited', async () => {
+    const session = metaSession(META)
+    await settled()
+    vi.useFakeTimers()
+    try {
+      addFrame(session)
+      addFrame(session)
+      setFrame(session, 1)
+
+      togglePlaying(session)
+      expect(session.playing).toBe(true)
+      vi.advanceTimersByTime(5000)
+      expect(session.frame).toBe(1)
+
+      togglePlaying(session)
+      expect(session.playing).toBe(false)
+      expect(session.frame).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

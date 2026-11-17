@@ -14,16 +14,19 @@
  */
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { isTypingTarget } from '../../commands'
-import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
+import { MAX_FRAMES, MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
 import type { TileTool } from '../../../../shared/tile-editor'
 import type { MaterialSymbol } from '@material-symbols/font-400'
+import AnimationBar from '../../components/AnimationBar.vue'
 import Icon from '../../components/Icon.vue'
+import { metaThumbnail } from '../map/sheet'
+import type { Sheet } from '../map/sheet'
 import MetaCanvas from './MetaCanvas.vue'
-import MetaFrameBar from './MetaFrameBar.vue'
 import MetaSidePanel from './MetaSidePanel.vue'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import {
+  addFrame,
   bitmapTiles,
   canRedo,
   canUndo,
@@ -32,12 +35,21 @@ import {
   pruneMetaSessions,
   redo,
   reloadTileset,
+  removeFrame,
+  reorderFrames,
   saveSession,
+  setBackground,
   setBrush,
   setColor,
+  setDuration,
   setFilledRect,
+  setFrame,
+  setGridVisible,
+  setOnionSkin,
   setTool,
   setZoom,
+  sheet,
+  togglePlaying,
   undo,
   type MetaSession
 } from './session'
@@ -64,6 +76,52 @@ const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'fill', icon: 'format_color_fill', title: 'Fill' },
   { id: 'spray', icon: 'blur_on', title: 'Spray (ordered dither)' }
 ]
+
+const durations = computed(() => meta.value.frames.map((frame) => frame.duration))
+const frameSize = computed(() => {
+  const cell = meta.value.cell
+  return {
+    width: meta.value.width * (cell?.width ?? 8),
+    height: meta.value.height * (cell?.height ?? 8)
+  }
+})
+/** Every frame's art, and what draws it: the tileset's sheet changes under a frame that did not. */
+const artKey = computed(() => [
+  meta.value.frames,
+  meta.value.width,
+  meta.value.height,
+  meta.value.cell,
+  sheet(session.value)
+])
+
+/**
+ * One thumbnail canvas per frame, kept while neither that frame nor the sheet
+ * changes. `metaThumbnail` builds a canvas on every call and the bar redraws on
+ * every tick of its preview, so this is a plain Map: it must not be reactive,
+ * because `drawFrame` runs inside the bar's effects.
+ */
+let thumbCache = new Map<number, { frame: unknown; base: Sheet; canvas: HTMLCanvasElement }>()
+let thumbCacheMeta: unknown = null
+
+function drawFrame(ctx: CanvasRenderingContext2D, index: number, scale: number): void {
+  const base = sheet(session.value)
+  const current = meta.value
+  const frame = current.frames[index]
+  if (!base || !frame) return
+  // width/height (and the meta object's cell) shape every thumbnail.
+  const shape = `${current.width}x${current.height}`
+  if (thumbCacheMeta !== shape) {
+    thumbCache = new Map()
+    thumbCacheMeta = shape
+  }
+  let entry = thumbCache.get(index)
+  if (!entry || entry.frame !== frame || entry.base !== base) {
+    entry = { frame, base, canvas: metaThumbnail(base, current, index) }
+    thumbCache.set(index, entry)
+  }
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(entry.canvas, 0, 0, entry.canvas.width * scale, entry.canvas.height * scale)
+}
 
 /** A meta with no tileset yet has nothing to paint into. */
 const paintable = computed(() => Boolean(bitmapTiles(session.value)))
@@ -259,7 +317,39 @@ watch(
     <div class="body">
       <div class="centre">
         <MetaCanvas :session="session" />
-        <MetaFrameBar :session="session" />
+        <AnimationBar
+          :playing="session.playing"
+          :background="session.background"
+          :onion-skin="session.onionSkin"
+          :frame-count="meta.frames.length"
+          :selected="session.frame"
+          :durations="durations"
+          loop="loop"
+          :frame-size="frameSize"
+          :draw-frame="drawFrame"
+          :art-key="artKey"
+          :max-frames="MAX_FRAMES"
+          @update:playing="togglePlaying(session)"
+          @update:background="setBackground(session, $event)"
+          @update:onion-skin="setOnionSkin(session, $event)"
+          @select="setFrame(session, $event)"
+          @add="addFrame(session)"
+          @duplicate="addFrame(session, $event)"
+          @remove="removeFrame(session, $event)"
+          @move="(from, to) => reorderFrames(session, from, to)"
+          @duration="(index, value) => setDuration(session, index, value)"
+        >
+          <template #extra>
+            <label class="grid-toggle">
+              <input
+                type="checkbox"
+                :checked="session.gridVisible"
+                @change="setGridVisible(session, ($event.target as HTMLInputElement).checked)"
+              >
+              <span>Grid</span>
+            </label>
+          </template>
+        </AnimationBar>
       </div>
       <MetaSidePanel :session="session" />
     </div>
@@ -338,6 +428,12 @@ watch(
   flex: 1;
   flex-direction: column;
   min-width: 0;
+}
+
+.grid-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .banner {
