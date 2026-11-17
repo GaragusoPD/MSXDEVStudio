@@ -30,7 +30,9 @@ import {
   resolveConflict,
   select,
   setBank,
+  setBgColor,
   setColor,
+  swapColors,
   tileSession,
   canUndo,
   undo
@@ -338,16 +340,42 @@ describe('drawing', () => {
     expect(splitColorByte(colorByteAt(session.doc, session.active, 0)).fg).not.toBe(9)
   })
 
-  it('a right-button stroke sets the row background', async () => {
+  it('a right-button stroke sets the row background, in the background colour', async () => {
     const session = tileSession(PATH)
     await settled()
-    setColor(session, 6)
+    setColor(session, 9)
+    setBgColor(session, 6)
 
     beginStroke(session)
     paint(session, [{ x: 0, y: 0 }], 'bg')
     endStroke(session, 'paint')
 
     expect(splitColorByte(colorByteAt(session.doc, session.active, 0)).bg).toBe(6)
+  })
+
+  it('front and background are two colours: red on black with no trip to the palette in between', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    setColor(session, 8)
+    setBgColor(session, 1)
+
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    endStroke(session, 'paint')
+    beginStroke(session)
+    paint(session, [{ x: 1, y: 1 }], 'bg')
+    endStroke(session, 'paint')
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 1 }], 'fg')
+    endStroke(session, 'paint')
+
+    expect(splitColorByte(colorByteAt(session.doc, session.active, 0))).toEqual({ fg: 8, bg: expect.any(Number) })
+    expect(splitColorByte(colorByteAt(session.doc, session.active, 1))).toEqual({ fg: 8, bg: 1 })
+    expect(session.color).toBe(8)
+    expect(session.bgColor).toBe(1)
+
+    swapColors(session)
+    expect([session.color, session.bgColor]).toEqual([1, 8])
   })
 
   it('changing colour mid-drawing keeps working, as in the meta editor', async () => {

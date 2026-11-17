@@ -26,6 +26,7 @@ import {
   removeFrame,
   resize,
   saveSession,
+  setBgColor,
   setColor,
   setDuration,
   setBackground,
@@ -33,6 +34,7 @@ import {
   setOnionSkin,
   setupExport,
   stepBytes,
+  swapColors,
   undo
 } from './session'
 import { onAnimSaved, type AnimSavedEvent } from './events'
@@ -124,6 +126,19 @@ describe('the animation editor', () => {
     undo(session)
     expect(doc(session).frames[0].tiles[0].pattern[0]).toBe(0)
     expect(canUndo(session.history)).toBe(false)
+  })
+
+  it('paints the right button’s paper in the background colour, the left’s ink in the front one', async () => {
+    const session = await open()
+    setColor(session, 11)
+    setBgColor(session, 4)
+    beginStroke(session)
+    paint(session, [{ x: 0, y: 0 }], 'fg')
+    paint(session, [{ x: 1, y: 0 }], 'bg')
+    endStroke(session)
+    expect(doc(session).frames[0].tiles[0].color[0]).toBe(0xb4)
+    swapColors(session)
+    expect([session.color, session.bgColor]).toEqual([4, 11])
   })
 
   it('adds a pose as a copy of the current one, removes and reorders them', async () => {

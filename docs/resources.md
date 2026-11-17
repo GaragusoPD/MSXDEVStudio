@@ -56,7 +56,11 @@ Exported headers are a separate thing and still go where the resource's
 **Tiles** — draw with pencil, line, rectangle and fill. Shift, mirror and
 rotate the current tile; `+tile` and `−tile` grow and shrink the bank.
 Colors depend on the mode: SCREEN 2/4 give you two colors per 8-pixel row,
-SCREEN 1 gives one pair per group of 8 tiles. SCREEN 4 adds an editable
+SCREEN 1 gives one pair per group of 8 tiles. The left button paints a row's
+ink in the **front** colour and the right button its paper in the
+**background** colour; click a palette swatch to pick the front colour and
+right-click one to pick the background (the pose editor and the map's paint
+mode work the same way). SCREEN 4 adds an editable
 16-colour palette. The **Mode** dropdown converts between them, warning first
 when the target can't hold what you have — going to SCREEN 1 keeps one pair
 per group of eight and drops the rest. **Import image…** converts a PNG into a

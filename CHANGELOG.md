@@ -14,6 +14,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   software sprite and world editors. `Shift`+wheel scrolls sideways,
   `Ctrl`+wheel up and down, and a middle-button drag pans; the middle button no
   longer paints.
+- **A front and a background colour in the tile, pose and map paint
+  editors.** The left button paints a row's ink in the front colour, the right
+  button its paper in the background colour; click a swatch for the front
+  colour, right-click one for the background, and ⇄ swaps them. One colour
+  used to serve both buttons, so drawing red on black meant re-picking the
+  colour at every switch between ink and paper.
 
 ### Fixed
 

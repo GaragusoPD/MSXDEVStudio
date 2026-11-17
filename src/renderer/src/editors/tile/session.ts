@@ -143,8 +143,10 @@ export interface TileSession {
   blockWide: boolean
   tool: TileTool
   filledRect: boolean
-  /** Palette index the tools paint with. */
+  /** Palette index the left button paints with: a row's ink (foreground), or the colour the palette's own path paints. */
   color: number
+  /** Palette index the right button paints with: a row's paper (background). */
+  bgColor: number
   /** Canvas pixel size and tileset-grid tile size, both in screen px. */
   zoom: number
   gridZoom: number
@@ -178,6 +180,8 @@ export function tileSession(path: string): TileSession {
     tool: 'pencil',
     filledRect: false,
     color: 15,
+    // Black, the paper of a fresh tileset's rows (fg 15 on bg 1).
+    bgColor: 1,
     zoom: 32,
     gridZoom: 24,
     conflict: null,
@@ -664,8 +668,8 @@ export function paint(session: TileSession, points: Point[], role?: 'fg' | 'bg')
       // raising a popover the user has to answer per pixel.
       session.doc =
         bank !== null
-          ? editBankEntry(session.doc, bank, tile, (view) => applyRoleStroke(view, tile, tilePoints, session.color, role))
-          : applyRoleStroke(session.doc, tile, tilePoints, session.color, role)
+          ? editBankEntry(session.doc, bank, tile, (view) => applyRoleStroke(view, tile, tilePoints, roleColor(session, role), role))
+          : applyRoleStroke(session.doc, tile, tilePoints, roleColor(session, role), role)
       continue
     }
     const result =
@@ -1467,6 +1471,21 @@ export function toggleFlag(session: TileSession, bit: number): void {
 
 export function setColor(session: TileSession, index: number): void {
   session.color = index
+}
+
+/** The right button's colour: a row's paper. */
+export function setBgColor(session: TileSession, index: number): void {
+  session.bgColor = index
+}
+
+/** Front and background change places. */
+export function swapColors(session: TileSession): void {
+  ;[session.color, session.bgColor] = [session.bgColor, session.color]
+}
+
+/** The colour a button paints with: left the front colour (ink), right the background (paper). */
+export function roleColor(session: { color: number; bgColor: number }, role: 'fg' | 'bg'): number {
+  return role === 'bg' ? session.bgColor : session.color
 }
 
 /** The canvas's zoom, on the toolbar slider's 8-64 in steps of 4. A session function because `TileCanvas` gets the session as a prop. */

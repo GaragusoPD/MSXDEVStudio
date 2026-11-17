@@ -109,7 +109,7 @@ watchEffect(() => {
   if (!ctx) return
   ctx.clearRect(0, 0, width, height)
   const points = paintPreviewPoints(props.session)
-  const color = rgb.value?.[props.session.paintColor]
+  const color = rgb.value?.[props.session.paintRole === 'bg' ? props.session.paintBgColor : props.session.paintColor]
   if (!points.length || !color) return
   const size = paintDotSize(props.session)
   ctx.globalAlpha = 0.6

@@ -63,6 +63,7 @@ import {
   selectPlacementAt,
   setBaked,
   setMode,
+  setPaintBgColor,
   setPaintColor,
   setPaintTool,
   setPaintWrite,
@@ -725,6 +726,19 @@ describe('paint mode', () => {
     const { indices } = renderMapPixels(doc(session), session.tileset!, 0)
     expect(indices[0]).not.toBe(indices[1])
     expect(indices[0]).toBe(15)
+  })
+
+  it('the right button paints the paper in the background colour, the left the ink in the front one', async () => {
+    const session = await openMap()
+    setMode(session, 'paint')
+    setPaintColor(session, 8)
+    setPaintBgColor(session, 4)
+    dab(session, 0, 0, 'fg')
+    dab(session, 1, 0, 'bg')
+
+    const { indices } = renderMapPixels(doc(session), session.tileset!, 0)
+    expect(indices[0]).toBe(8)
+    expect(indices[1]).toBe(4)
   })
 
   it('a second stroke builds on the first: the session draws the tileset the stroke produced', async () => {
