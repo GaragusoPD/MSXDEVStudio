@@ -23,7 +23,7 @@
  */
 
 import { shallowReactive } from 'vue'
-import { frameAtTick } from '../../../../shared/animation-playback'
+import { frameAtTick, type AnimationBackground } from '../../../../shared/animation-playback'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
 import { isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import {
@@ -86,6 +86,10 @@ export interface AnimSession {
   filledRect: boolean
   /** Preview playback in the editor — UI state, never saved. */
   playing: boolean
+  /** View state, never saved or undoable: the previous pose drawn faintly under the current one. */
+  onionSkin: boolean
+  /** What the bar's preview and thumbnails show behind empty dots. */
+  background: AnimationBackground
   /** The document mid-stroke; `doc()` answers with it so the canvas follows the drag. */
   preview: PoseFile | null
   /** Meta-tiles only: clicks toggle a cell see-through instead of painting. */
@@ -119,6 +123,8 @@ export function animSession(path: string): AnimSession {
     zoom: 24,
     filledRect: false,
     playing: false,
+    onionSkin: false,
+    background: 'checkered',
     preview: null,
     holeMode: false,
     strokeActive: false,
@@ -618,6 +624,14 @@ export function setColor(session: AnimSession, color: number): void {
 
 export function setZoom(session: AnimSession, zoom: number): void {
   session.zoom = Math.max(4, Math.min(64, Math.round(zoom) || session.zoom))
+}
+
+export function setOnionSkin(session: AnimSession, on: boolean): void {
+  session.onionSkin = on
+}
+
+export function setBackground(session: AnimSession, value: AnimationBackground): void {
+  session.background = value
 }
 
 export function togglePlaying(session: AnimSession): void {

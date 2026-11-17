@@ -1,12 +1,12 @@
 <script setup lang="ts">
 /**
- * The pose editor's sidebar: colour, size, timing and loop, a playing preview,
+ * The pose editor's sidebar: colour, size, timing and loop,
  * what a step costs, where the file is attached, and its export target — plus,
  * for a meta-tile, its eight gameplay flags.
  * Readouts of session state and calls into it — every decision is in
  * `./session`, which is tested; this file is not.
  */
-import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
+import { computed } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { ANIM_LOOPS, type AnimLoop } from '../../../../shared/msx/tile'
 import { MAX_ANIM_CELLS } from '../../../../shared/msx/tile-anim'
@@ -20,8 +20,6 @@ import {
   ownedMeta,
   patchExport,
   removeFromTileset,
-  poseAtTick,
-  posePixels,
   resize,
   setColor,
   setDuration,
@@ -30,7 +28,6 @@ import {
   setPair,
   setupExport,
   stepBytes,
-  togglePlaying,
   type AnimSession
 } from './session'
 
@@ -43,42 +40,6 @@ const moving = computed(() => (meta.value ? movingCells(meta.value).length : 0))
 const maxSide = computed(() => (meta.value ? MAX_META_SIZE : MAX_ANIM_CELLS))
 const rgb = computed(() => paletteToRgb(null))
 const LOOP_LABELS: Record<AnimLoop, string> = { loop: 'Loop', pingpong: 'Ping-pong', once: 'Play once' }
-
-// The preview steps a tick every 20 ms — one PAL VBlank, the clock `_Animate()`
-// is called on — and asks the session which pose that tick shows.
-const tick = ref(0)
-let timer: ReturnType<typeof setInterval> | null = null
-watch(
-  () => props.session.playing,
-  (playing) => {
-    if (timer) clearInterval(timer)
-    timer = null
-    tick.value = 0
-    if (playing) timer = setInterval(() => tick.value++, 20)
-  },
-  { immediate: true }
-)
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
-})
-
-const previewCanvas = ref<HTMLCanvasElement | null>(null)
-watchEffect(() => {
-  const element = previewCanvas.value
-  if (!element) return
-  const pose = props.session.playing ? poseAtTick(anim.value, tick.value) : props.session.frame
-  const { width, height, indices } = posePixels(props.session, pose)
-  element.width = width
-  element.height = height
-  const context = element.getContext('2d')
-  if (!context) return
-  const image = context.createImageData(width, height)
-  indices.forEach((index, i) => {
-    const { r, g, b } = index === 0 ? { r: 64, g: 64, b: 64 } : rgb.value[index]
-    image.data.set([r, g, b, 255], i * 4)
-  })
-  context.putImageData(image, 0, 0)
-})
 
 const allDurations = computed(() => {
   const first = anim.value.frames[0]?.duration ?? 8
@@ -234,20 +195,6 @@ function openTileset(path: string): void {
       <p class="hint">
         Durations are in frames (VBlanks): 50 a second on a European MSX, 60 on a Japanese one.
       </p>
-    </section>
-
-    <section>
-      <h3>Preview</h3>
-      <canvas
-        ref="previewCanvas"
-        class="preview"
-      />
-      <button
-        type="button"
-        @click="togglePlaying(session)"
-      >
-        {{ session.playing ? 'Stop' : 'Play' }}
-      </button>
     </section>
 
     <section>
@@ -443,16 +390,6 @@ section {
   margin: 4px 0;
   font-size: 10px;
   color: var(--color-text-muted);
-}
-
-.preview {
-  display: block;
-  width: 96px;
-  height: 96px;
-  margin-bottom: 6px;
-  object-fit: contain;
-  image-rendering: pixelated;
-  background: #2a2a2a;
 }
 
 .attached {

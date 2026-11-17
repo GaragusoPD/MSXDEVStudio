@@ -27,7 +27,9 @@ import {
   saveSession,
   setColor,
   setDuration,
+  setBackground,
   setLoop,
+  setOnionSkin,
   setupExport,
   stepBytes,
   undo
@@ -144,6 +146,31 @@ describe('the animation editor', () => {
     expect(doc(session).frames[1].duration).toBe(255)
     setDuration(session, null, 3)
     expect(doc(session).frames.map((f) => f.duration)).toEqual([3, 3])
+  })
+
+  it('stores a bar duration of 999 as 255, in one undo step', async () => {
+    const session = await open()
+    const before = session.history.past.length
+    setDuration(session, 1, 999)
+    expect(doc(session).frames[1].duration).toBe(255)
+    expect(session.history.past.length).toBe(before + 1)
+    undo(session)
+    expect(doc(session).frames[1].duration).toBe(6)
+  })
+
+  it('keeps onion skin and the preview background as view state: off and checkered, never dirty, never undoable', async () => {
+    const session = await open()
+    expect(session.onionSkin).toBe(false)
+    expect(session.background).toBe('checkered')
+    const before = session.history.past.length
+    setOnionSkin(session, true)
+    setBackground(session, 'solid')
+    expect(session.onionSkin).toBe(true)
+    expect(session.background).toBe('solid')
+    expect(session.dirty).toBe(false)
+    expect(session.history.past.length).toBe(before)
+    setOnionSkin(session, false)
+    expect(session.onionSkin).toBe(false)
   })
 
   it('resizes the window keeping cells from the top-left, and refuses past 16 tiles', async () => {

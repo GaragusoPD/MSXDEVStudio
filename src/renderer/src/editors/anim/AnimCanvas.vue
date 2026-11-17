@@ -109,6 +109,7 @@ watchEffect(() => {
   const context = element.getContext('2d')
   if (!context) return
   const { indices } = posePixels(props.session, props.session.frame)
+  const onion = props.session.onionSkin && props.session.frame > 0 ? posePixels(props.session, props.session.frame - 1).indices : null
   for (let y = 0; y < rows.value; y++) {
     for (let x = 0; x < cols.value; x++) {
       const index = indices[y * cols.value + x]
@@ -117,6 +118,20 @@ watchEffect(() => {
       context.fillStyle = index === 0 ? ((x + y) % 2 ? '#3a3a3a' : '#4a4a4a') : toHex(rgb.value[index])
       context.fillRect(x * px, y * px, px, px)
     }
+  }
+  if (onion) {
+    // The previous pose underneath, faint, so a cycle can be lined up against
+    // the pose it follows — beneath the hatching, the float and the stroke.
+    context.globalAlpha = 0.3
+    for (let y = 0; y < rows.value; y++) {
+      for (let x = 0; x < cols.value; x++) {
+        const index = onion[y * cols.value + x]
+        if (index === 0) continue
+        context.fillStyle = toHex(rgb.value[index])
+        context.fillRect(x * px, y * px, px, px)
+      }
+    }
+    context.globalAlpha = 1
   }
   const holes = ownedMeta(props.session)?.holes ?? []
   holes.forEach((hole, cell) => {
