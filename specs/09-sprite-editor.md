@@ -65,8 +65,9 @@ each frame.
   duration (VBlanks) editable under it; plays by those durations at 20 ms a
   VBlank (`VBLANK_MS`, a European MSX — the pose editor's clock) against a
   checkered or solid background; onion-skin previous frame. Play animates the
-  preview only; Loop starts at the selected frame, Ping-pong and Play once at
-  frame 0.
+  preview only; it starts at the selected frame, and in the pose editor (the
+  only one with a loop setting) Ping-pong and Play once start at frame 0 —
+  sprites and bitmap metas always loop.
 - **Scanline budget hint:** static warning strip when >4 (mode 1) / >8 (mode 2)
   layers would share a scanline if placed at the same Y — informational only.
 

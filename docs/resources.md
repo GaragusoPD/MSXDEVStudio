@@ -118,8 +118,9 @@ VBlanks under it, editable. **+ Frame**, **Clone**, **Delete** and the move
 left/right buttons edit the strip, and a frame can be dragged to a new place.
 **Play/Pause** animates the *preview only* — the canvas stays on the frame you
 are editing — and **Onion skin** shows the previous frame faintly through the
-current one's empty dots. Loop plays from the selected frame; Ping-pong and
-Play once start from frame 0, as the game does. The clock is 50 Hz, 20 ms a
+current one's empty dots. Playback starts from the selected frame; in the
+pose editor, which alone has a loop setting, Ping-pong and Play once start from
+frame 0, as the game does (sprites and bitmap meta-tiles always loop). The clock is 50 Hz, 20 ms a
 VBlank, whichever editor you are in. The bitmap meta-tile editor also keeps
 its **Grid** toggle in the bar. In the pose editor the preview moved from the
 side panel into the bar; the side panel keeps the loop setting and the **All**
