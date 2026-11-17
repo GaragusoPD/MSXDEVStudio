@@ -1313,8 +1313,9 @@ Each frame of a bitmap meta carries a \`"duration"\` in VBlanks, 1–255 (defaul
 \`"frames": [{ "tiles": […], "duration": 8 }, …]\`. A file saved before frames
 had durations reads as 8 for every frame. They are exported as
 \`g_Rock_Durations\` — one byte per frame, after the frames table, and only when
-the meta has more than one frame — in the **meta's own header**, which the
-map's header does not include: include both.
+the meta has more than one frame — in the **meta's own header** (its export's
+\`out\`; below, the default names), which the map's header does not include:
+include both.
 **No helper is emitted that steps it**: you keep one tick byte per animated
 meta and advance \`frames[slot]\` when it runs out. Here the stage places one
 animated rock at slot 0 (\`G_ROCK_FRAMES\` is its frame count):
