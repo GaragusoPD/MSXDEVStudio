@@ -181,11 +181,10 @@ async function onDuration(index: number, event: Event): Promise<void> {
 let dragFrom: number | null = null
 const dropTarget = ref<number | null>(null)
 
+/** No `setData`: a text payload would let a frame dropped on a text field type its index into it. */
 function onDragStart(index: number, event: DragEvent): void {
   dragFrom = index
-  if (!event.dataTransfer) return
-  event.dataTransfer.effectAllowed = 'move'
-  event.dataTransfer.setData('text/plain', String(index))
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
 }
 
 function onDragOver(index: number, event: DragEvent): void {
