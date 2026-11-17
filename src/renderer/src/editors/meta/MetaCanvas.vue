@@ -16,11 +16,14 @@ import { computed, ref, watchEffect } from 'vue'
 import { toHex } from '../../../../shared/msx/palette'
 import { sprayPoints } from '../../../../shared/msx/meta-paint'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { beginStroke, cellSize, doc, endStroke, framePalette, framePixels as composeFrame, paint, type MetaSession } from './session'
+import { beginStroke, cellSize, doc, endStroke, framePalette, framePixels as composeFrame, paint, setZoom, type MetaSession } from './session'
+import { useWheelZoom } from '../../composables/useWheelZoom'
 
 const props = defineProps<{ session: MetaSession }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+const pane = ref<HTMLElement | null>(null)
+useWheelZoom(pane, { get: () => props.session.zoom, set: (zoom) => setZoom(props.session, zoom), min: 2, max: 48, quantum: 2 })
 const preview = ref<Point[]>([])
 let origin: Point | null = null
 let painting = false
@@ -71,6 +74,8 @@ function pointsFor(from: Point, to: Point): Point[] {
 }
 
 function onDown(event: PointerEvent): void {
+  // The middle button pans the pane (`useWheelZoom`); it never draws.
+  if (event.button === 1) return
   ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
   const point = pointAt(event)
   role = event.button === 2 ? 'bg' : 'fg'
@@ -179,7 +184,10 @@ watchEffect(() => {
 </script>
 
 <template>
-  <div class="meta-canvas">
+  <div
+    ref="pane"
+    class="meta-canvas"
+  >
     <canvas
       ref="canvas"
       @contextmenu.prevent

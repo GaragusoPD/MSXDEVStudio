@@ -51,6 +51,9 @@ Each editor keeps its own undo history, and it survives switching tabs.
 
 | Gesture | Does |
 |---|---|
+| Wheel | Zoom in and out, keeping the dot under the pointer still — tile, map, screen, pose, bitmap tile, bitmap meta-tile, software sprite and world editors |
+| `Shift`+wheel / `Ctrl`+wheel | Scroll sideways / up and down — the same editors |
+| Middle-button drag | Pan — the same editors |
 | Left / right click | Draw / erase — sprite and screen editors |
 | Left drag / right drag | Draw a note / delete the notes it crosses — music editor |
 | `Ctrl`+wheel | Zoom the piano roll — music editor |

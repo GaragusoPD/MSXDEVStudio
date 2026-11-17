@@ -1469,6 +1469,11 @@ export function setColor(session: TileSession, index: number): void {
   session.color = index
 }
 
+/** The canvas's zoom, on the toolbar slider's 8-64 in steps of 4. A session function because `TileCanvas` gets the session as a prop. */
+export function setZoom(session: TileSession, value: number): void {
+  session.zoom = Math.max(8, Math.min(64, Math.round(value / 4) * 4 || session.zoom))
+}
+
 /** The bank's zoom. A session function because `TileGrid` gets the session as a prop. */
 export function setGridZoom(session: TileSession, value: number): void {
   session.gridZoom = Math.max(8, Math.min(64, Math.round(value) || session.gridZoom))

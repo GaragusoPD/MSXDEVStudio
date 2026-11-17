@@ -7,6 +7,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **The mouse wheel zooms every drawing canvas**, centred on the pointer, one
+  step a notch: the tile, map, screen, pose, bitmap tile, bitmap meta-tile,
+  software sprite and world editors. `Shift`+wheel scrolls sideways,
+  `Ctrl`+wheel up and down, and a middle-button drag pans; the middle button no
+  longer paints.
+
 ### Fixed
 
 - **Pictures imported for SCREEN 1/2/4 keep their colours.** Greens came in

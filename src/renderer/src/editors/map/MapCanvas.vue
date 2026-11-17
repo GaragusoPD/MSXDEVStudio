@@ -52,13 +52,20 @@ import {
   updateSelectedEntity,
   setSelection,
   setViewOrigin,
+  setZoom,
   sheet,
+  MAX_ZOOM,
+  MIN_ZOOM,
   type MapSession
 } from './session'
+import { useWheelZoom } from '../../composables/useWheelZoom'
 
 const props = defineProps<{ session: MapSession }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+const pane = ref<HTMLElement | null>(null)
+// `setZoom` holds it to what this map's canvas can take (`maxZoom`), below MAX_ZOOM on a big map.
+useWheelZoom(pane, { get: () => props.session.zoom, set: (zoom) => setZoom(props.session, zoom), min: MIN_ZOOM, max: MAX_ZOOM, quantum: 2 })
 /** Set while a placed meta-tile is being dragged, with the grab offset inside it. */
 let draggingPlacement = false
 let grab: Point | null = null
@@ -113,6 +120,8 @@ function cellAt(event: PointerEvent): Point {
 }
 
 function onDown(event: PointerEvent): void {
+  // The middle button pans the pane (`useWheelZoom`); it never draws.
+  if (event.button === 1) return
   const cell = cellAt(event)
   const float = props.session.float
   // A float takes the press in either mode: inside it, a grab; outside, it
@@ -499,6 +508,7 @@ watchEffect(() => {
 
 <template>
   <div
+    ref="pane"
     class="canvas-pane"
     tabindex="0"
     @scroll="onScroll"

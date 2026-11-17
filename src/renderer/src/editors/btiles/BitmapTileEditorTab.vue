@@ -9,6 +9,7 @@
  * without being redrawn cell by cell.
  */
 import { computed, ref, watch } from 'vue'
+import { useWheelZoom } from '../../composables/useWheelZoom'
 import type { MaterialSymbol } from '@material-symbols/font-400'
 import Icon from '../../components/Icon.vue'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
@@ -35,6 +36,14 @@ import {
 const tabs = useTabsStore()
 const path = computed(() => tabs.activeTab?.filePath ?? '')
 const session = computed(() => bitmapTileSession(path.value))
+const pane = ref<HTMLElement | null>(null)
+useWheelZoom(pane, {
+  get: () => session.value.zoom,
+  set: (zoom) => (session.value.zoom = Math.max(4, Math.min(40, zoom))),
+  min: 4,
+  max: 40,
+  quantum: 1
+})
 const tileset = computed(() => doc(session.value))
 const importing = ref(false)
 const dedupe = ref(true)
@@ -204,7 +213,10 @@ function onImported(result: ImportResult): void {
           :session="session"
           @select="session.selected = $event"
         />
-        <div class="stage">
+        <div
+          ref="pane"
+          class="stage"
+        >
           <BitmapTileCanvas :session="session" />
         </div>
         <BitmapTileSidePanel
