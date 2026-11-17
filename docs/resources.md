@@ -110,6 +110,21 @@ meta-tile poses use), and its preview plays them at 50 Hz, 20 ms a VBlank. The
 durations are saved in the file and exported, so the game plays the timing you
 previewed.
 
+**The animation bar** is one component, the same in the sprite editor, the
+pose editor (`.meta-tiles.json` and `.anim-tiles.json`) and the bitmap
+meta-tile editor (`.meta-btiles.json`): a live preview on a checkered or solid
+background, then a strip of frame thumbnails with each frame's duration in
+VBlanks under it, editable. **+ Frame**, **Clone**, **Delete** and the move
+left/right buttons edit the strip, and a frame can be dragged to a new place.
+**Play/Pause** animates the *preview only* — the canvas stays on the frame you
+are editing — and **Onion skin** shows the previous frame faintly through the
+current one's empty dots. Loop plays from the selected frame; Ping-pong and
+Play once start from frame 0, as the game does. The clock is 50 Hz, 20 ms a
+VBlank, whichever editor you are in. The bitmap meta-tile editor also keeps
+its **Grid** toggle in the bar. In the pose editor the preview moved from the
+side panel into the bar; the side panel keeps the loop setting and the **All**
+durations box.
+
 ![The sprite editor in mode 2: the Character grid control, two stacked layers, and a per-line colour for every row](images/editor_msx2_sprite_editor.png)
 
 **Metasprites** — a character can span a grid of hardware sprites (the
@@ -333,8 +348,13 @@ redraws.
 works differently: it is drawn over one bitmap tileset (`.btiles.json`), holds
 that tileset's tile numbers, and painting it resolves each stroke into the
 tileset as you draw. Its frames are redrawn per copy, by the map's
-`_DrawPlacements(frames, …)`. **Compact unused tiles** in its side panel reclaims
-tiles its editing session created and no longer uses.
+`_DrawPlacements(frames, …)`. Each frame carries a **duration** in VBlanks
+(1–255, default 8; a file from before reads as 8), set in the shared animation
+bar. The export gains `<name>_Durations`, one byte per frame after the frames
+table, only when the meta has more than one frame. No helper steps it: the game
+decides when to advance `frames[slot]`, and `_Durations` is the pace you
+previewed. **Compact unused tiles** in its side panel reclaims tiles its
+editing session created and no longer uses.
 
 **Bitmap tiles** — the SCREEN 5/6/7/8 counterpart of a pattern tileset, and a
 different thing from a screen. A screen is one picture used as it is; a tileset

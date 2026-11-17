@@ -1308,6 +1308,32 @@ ROM target; the helper clamps an out-of-range index back to frame 0, so the
 worst case is a wrong pose rather than whatever byte followed in ROM, but a
 zeroed array is the actual fix.
 
+Each frame of a bitmap meta carries a duration (VBlanks, 1–255), exported as
+\`g_Rock_Durations\` — one byte per frame, after the frames table, and only when
+the meta has more than one frame. **No helper is emitted that steps it**: you
+keep one tick byte per animated meta and advance \`frames[slot]\` when it runs
+out. Here the stage places one animated rock at slot 0 (\`g_Rock_FRAMES\` is its
+frame count):
+
+\`\`\`c
+static u8 frames[G_STAGE_METAS];      // the frame each placed meta shows
+static u8 ticks;                      // VBlanks the rock has been on its frame
+
+Mem_Set(0, frames, sizeof(frames));   // a global is not zero at boot
+ticks = 0;
+g_Stage_DrawPlacements(frames, ATLAS_Y);
+while(1)
+{
+    Halt();
+    if(++ticks >= g_Rock_Durations[frames[0]])
+    {
+        ticks = 0;
+        frames[0] = (frames[0] + 1) % G_ROCK_FRAMES;
+        g_Stage_DrawPlacements(frames, ATLAS_Y);   // redraw with the new frame
+    }
+}
+\`\`\`
+
 Two kinds of transparency, and they compose. A cell holding tile 0 is not
 blitted at all. If the tileset nominates **colour 0** as transparent, the copy
 is \`VDP_CommandLMMM\` with \`VDP_OP_TIMP\` instead of \`VDP_CommandHMMM\`, so

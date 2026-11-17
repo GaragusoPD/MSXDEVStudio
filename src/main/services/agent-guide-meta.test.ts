@@ -125,6 +125,30 @@ describe('the guide teaches what the exporter emits', () => {
     expect(guide('2')).toContain('VDP_OP_TIMP')
   })
 
+  it('the frame-timing example names symbols a real two-frame meta and its map export', () => {
+    const one = bitmapMeta()
+    if (one.kind !== 'metabtiles') throw new Error('expected a bitmap meta')
+    const two: ResourceDoc = {
+      ...one,
+      doc: { ...one.doc, frames: [{ ...one.doc.frames[0], duration: 5 }, { ...one.doc.frames[0], duration: 9 }] }
+    }
+    const meta = render(two, 'res/rock.meta-btiles.json', 'g_Rock')
+    const map = render(bitmapMap(), 'res/stage.map.json', 'g_Stage')
+    expect(meta).toContain('#define G_ROCK_FRAMES 2')
+    expect(meta).toContain('extern const unsigned char g_Rock_Durations[];')
+    expect(meta).toMatch(/g_Rock_Durations\[\] =\s*\{\s*0x05, 0x09/)
+    expect(map).toContain('#define G_STAGE_METAS')
+    expect(map).toContain('void g_Stage_DrawPlacements(const u8* frames, UY atlasY)')
+    // A one-frame meta has no table to read.
+    expect(render(one, 'res/rock.meta-btiles.json', 'g_Rock')).not.toContain('g_Rock_Durations')
+    const taught = guide('2')
+    for (const symbol of ['g_Rock_Durations', 'G_ROCK_FRAMES', 'G_STAGE_METAS', 'g_Stage_DrawPlacements(frames, ATLAS_Y)', 'Mem_Set(0, frames']) {
+      expect(taught, `${symbol} is taught`).toContain(symbol)
+    }
+    expect(taught).toContain('No helper is emitted that steps it')
+    expect(guide('1')).not.toContain('g_Rock_Durations')
+  })
+
   it('the bitmap placement helper takes the atlas position', () => {
     const text = render(bitmapMap(), 'res/stage.map.json', 'g_Stage')
     expect(text).toContain('void g_Stage_DrawPlacements(const u8* frames, UY atlasY)')

@@ -58,10 +58,15 @@ each frame.
 - **Right panel:** per-layer color controls (single color picker for mode 1; 16-entry
   line-color strip for mode 2 with EC/CC bits), size toggle, mode toggle (warns on
   data loss when going 2→1).
-- **Animation bar** (bottom): frames as filmstrip, add/clone/reorder, each frame's
+- **Animation bar** (bottom): one shared component
+  (`renderer/src/components/AnimationBar.vue`, timing in
+  `shared/animation-playback.ts`), also used by the pose and bitmap meta-tile
+  editors. Frames as filmstrip, add/clone/delete/reorder (buttons and drag), each frame's
   duration (VBlanks) editable under it; plays by those durations at 20 ms a
   VBlank (`VBLANK_MS`, a European MSX — the pose editor's clock) against a
-  checkered or solid background; onion-skin previous frame.
+  checkered or solid background; onion-skin previous frame. Play animates the
+  preview only; Loop starts at the selected frame, Ping-pong and Play once at
+  frame 0.
 - **Scanline budget hint:** static warning strip when >4 (mode 1) / >8 (mode 2)
   layers would share a scanline if placed at the same Y — informational only.
 
