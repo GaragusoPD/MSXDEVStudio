@@ -216,6 +216,7 @@ const budget = computed(() => paintBudgetLabel(props.session))
       :tile-budget="importBudget"
       budget-label="free in this tileset"
       :budget-blocks="false"
+      :count-only="banked"
       @close="importing = false"
       @imported="onImported"
     />

@@ -793,8 +793,12 @@ export function packTiles(
   const layout: number[] = []
   const lossyTiles: number[] = []
   const seen = new Map<string, number>()
+  // Set by the first cell that needs a 257th tile: `layout` stops there. A cell
+  // that repeats a tile already placed still lands after the bank fills — a
+  // picture of exactly 256 tiles is placed whole.
+  let full = false
 
-  for (let ty = 0; ty < rows; ty++) {
+  for (let ty = 0; ty < rows && !full; ty++) {
     for (let tx = 0; tx < cols; tx++) {
       const pixels = new Uint8Array(TILE_SIZE * TILE_SIZE)
       for (let y = 0; y < TILE_SIZE; y++) {
@@ -809,14 +813,16 @@ export function packTiles(
         layout.push(existing)
         continue
       }
+      if (tiles.length >= MAX_TILES) {
+        full = true
+        break
+      }
       const index = tiles.length
       if (options.dedup) seen.set(key, index)
       tiles.push({ pattern, color })
       layout.push(index)
       if (lossyRows.length) lossyTiles.push(index)
-      if (tiles.length >= MAX_TILES) break
     }
-    if (tiles.length >= MAX_TILES) break
   }
 
   const doc = normalizeTiles({ mode, count: Math.max(1, tiles.length), tiles })

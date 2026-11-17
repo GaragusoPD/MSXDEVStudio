@@ -240,6 +240,33 @@ describe('pixels ↔ bytes', () => {
     expect(doc.count).toBe(1)
     expect(layout).toEqual([0, 0, 0, 0])
   })
+
+  /** A 32×N-cell picture whose first `distinct` cells are all different and the rest repeat cell 0. */
+  function cellsPicture(rows: number, distinct: number): Uint8Array {
+    const width = 256
+    const indices = new Uint8Array(width * rows * 8).fill(1)
+    for (let cell = 0; cell < distinct; cell++) {
+      const cx = cell % 32
+      const cy = Math.floor(cell / 32)
+      // Row 0 of each cell: its number's low byte, white on black; row 1 its ninth bit.
+      for (let x = 0; x < 8; x++) if (cell & (0x80 >> x)) indices[cy * 8 * width + cx * 8 + x] = 15
+      if (cell & 0x100) indices[(cy * 8 + 1) * width + cx * 8] = 15
+    }
+    return indices
+  }
+
+  it('places a picture of exactly 256 tiles whole, repeats after the 256th included', () => {
+    const { doc, layout } = packTiles(cellsPicture(10, 256), 256, 80, 'sc2', { dedup: true })
+    expect(doc.count).toBe(256)
+    expect(layout).toHaveLength(32 * 10)
+    expect(layout.slice(256).every((tile) => tile === layout[0])).toBe(true)
+  })
+
+  it('stops at the cell that would need a 257th tile', () => {
+    const { doc, layout } = packTiles(cellsPicture(10, 260), 256, 80, 'sc2', { dedup: true })
+    expect(doc.count).toBe(256)
+    expect(layout).toHaveLength(256)
+  })
 })
 
 describe('regroupAfterTile0Shift — fixing up group colors after a tile-0 shift', () => {

@@ -139,6 +139,38 @@ describe('importImage with banks', () => {
     expect(session.status).toMatch(/choose Replace/)
   })
 
+  /** 256 dots wide and 10 cells tall: the first `distinct` cells all different, the rest repeating cell 0. */
+  function cells(distinct: number): ImportResult {
+    const width = 256
+    const height = 80
+    const indices = new Uint8Array(width * height).fill(1)
+    for (let cell = 0; cell < distinct; cell++) {
+      const cx = cell % 32
+      const cy = Math.floor(cell / 32)
+      for (let x = 0; x < 8; x++) if (cell & (0x80 >> x)) indices[cy * 8 * width + cx * 8 + x] = 15
+      if (cell & 0x100) indices[(cy * 8 + 1) * width + cx * 8] = 15
+    }
+    return { width, height, indices, palette: null, rgb: [], report: { colorsUsed: 0, colorsMerged: 0, rowsAltered: 0, pixelsChanged: 0 } }
+  }
+
+  it('a picture of exactly 256 tiles is placed whole: every cell, the repeats after the 256th included', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, cells(256), 'replace', true, 'repeat')
+    expect(session.doc.count).toBe(256)
+    expect(session.status).not.toMatch(/could not be placed|could not be added/)
+    const map = parseResource('res/main.map.json', files['res/main.map.json']).doc as MapDoc
+    expect(map.layers[0].data.slice(256, 320).every((tile) => tile === map.layers[0].data[0])).toBe(true)
+  })
+
+  it('a picture of 257 tiles still says how many cells it could not place', async () => {
+    const session = tileSession(PATH)
+    await settled()
+    await importImage(session, cells(257), 'replace', true, 'repeat')
+    expect(session.doc.count).toBe(256)
+    expect(session.status).toMatch(/64 cells could not be placed/)
+  })
+
   it('a picture that cannot be banked is refused before anything changes', async () => {
     const session = tileSession(PATH)
     await settled()

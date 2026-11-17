@@ -47,6 +47,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **A picture of exactly 256 tiles imports whole.** The packer stopped at the
+  256th new tile and dropped every cell after it, repeats of tiles already
+  placed included; now only a cell needing a 257th tile stops it.
+
 - **Pictures imported for SCREEN 1/2/4 keep their colours.** Greens came in
   blue, yellows red, grays blue, and most pictures in four or five colours:
   every pixel went to the MSX colour nearest in brightness, then each 8-pixel

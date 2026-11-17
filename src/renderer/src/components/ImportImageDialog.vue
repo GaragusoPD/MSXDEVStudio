@@ -54,6 +54,10 @@ const props = withDefaults(
     tileBudget?: number | null
     budgetLabel?: string
     budgetBlocks?: boolean
+    /** False when the target stores every cell as a tile of its own (the tile editor's Dedup off): then cells, not different tiles, are what counts. */
+    dedup?: boolean
+    /** Show the tile count with no limit: a target that checks its own budget per bank (a map on a banked tileset). */
+    countOnly?: boolean
   }>(),
   {
     mode: 'sc2',
@@ -67,7 +71,9 @@ const props = withDefaults(
     banking: null,
     tileBudget: null,
     budgetLabel: 'tiles a pattern set holds',
-    budgetBlocks: true
+    budgetBlocks: true,
+    dedup: true,
+    countOnly: false
   }
 )
 /** `file`/`mode` are extra (Spec 10): the picked file itself, for a target that wants to keep the
@@ -148,19 +154,27 @@ const handed = computed(() => {
   const conversion = importer.result.value
   return tileMode.value && conversion ? countTiles(conversion.indices, conversion.width, conversion.height) : null
 })
-/** Banked, each screen third has its own 256 tiles: the picture is banked by a tileset import that asks for it, or by Auto when one set is too small. */
+/** Tiles one set needs: different tiles, or every cell when the target does not dedup. */
+const setTiles = (count: { distinct: number; cells: number }): number => (props.dedup ? count.distinct : count.cells)
+/**
+ * Banked, each screen third has its own 256 tiles. The same rule `packChosen`
+ * packs by: Banked always, Auto only when one set of 256 cannot hold the
+ * picture and it can be banked — not when it merely exceeds this target's own
+ * budget, which banking would not help.
+ */
 const banksPicture = computed(() => {
   const conversion = importer.converted.value
-  if (!bankable.value || !conversion || !(props.standalone || props.banking === 'picture')) return false
+  if (!bankable.value || !conversion || !needed.value || !(props.standalone || props.banking === 'picture')) return false
   if (banks.value === 'banked') return true
-  return banks.value === 'auto' && (needed.value?.distinct ?? 0) > budget.value && bankedPackBlocker(importer.options.mode as 'sc2' | 'sc4', conversion.height) === null
+  return banks.value === 'auto' && setTiles(needed.value) > MAX_TILES && bankedPackBlocker(importer.options.mode as 'sc2' | 'sc4', conversion.height) === null
 })
 const need = computed(() => {
   const count = handed.value
-  if (!count) return null
+  if (!count || props.countOnly) return null
+  // A banked pack always dedups within each third.
   return banksPicture.value
     ? { tiles: Math.max(0, ...count.bands), limit: MAX_TILES, label: 'tiles a screen third holds' }
-    : { tiles: count.distinct, limit: budget.value, label: props.budgetLabel }
+    : { tiles: setTiles(count), limit: budget.value, label: props.budgetLabel }
 })
 const over = computed(() => (need.value ? Math.max(0, need.value.tiles - need.value.limit) : 0))
 /** Over the limit and refused, rather than imported and cut off or refused later. */
@@ -589,8 +603,14 @@ function use(): void {
           Pick the part you need on the original, or reduce the tiles.
           {{ blocked ? 'Nothing is imported until it fits.' : 'Tiles the tileset already has are reused, so it may still fit.' }}
         </p>
+        <p
+          v-if="!dedup && !banksPicture"
+          class="hint"
+        >
+          Dedup is off, so every cell is a tile of its own: tick it to share the repeated ones.
+        </p>
         <label
-          v-if="!banksPicture"
+          v-if="!banksPicture && dedup"
           class="inline reduce"
           title="Merges the tiles that look most alike, the rarest first, until the picture needs no more than the limit. Whole tiles are swapped; nothing is blended."
         >
