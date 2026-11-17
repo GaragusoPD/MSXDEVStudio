@@ -201,6 +201,23 @@ gray or white. **Dither: Floyd–Steinberg** or **Bayer 4×4** then mixes those 
 colours only, which is how a mid gray becomes black and white dots. Dithering
 costs tiles: almost every dithered cell is a tile of its own.
 
+The dialog always takes the whole picture in, and is where you fit it to the
+hardware before anything reaches the tileset:
+
+- **Drag on the original** to convert only part of it: a box with handles on
+  its corners and edges, snapped to the 8-dot tile grid. Drag inside the box to
+  move it; **Whole image** goes back to all of it.
+- **Tiles** counts what the converted picture needs: different 8×8 tiles,
+  duplicates counted once (as every import stores them), and per screen third
+  for SCREEN 2/4.
+- When that is more than the target can take — 256 for a new or replaced set,
+  what is left for a merge or a map — the dialog says by how much. **Reduce to
+  fit** then merges the tiles that look most alike, the rarest first, until it
+  fits: whole tiles are swapped for their nearest neighbour, never blended, so
+  the colours stay what the conversion chose. A tileset import is refused until
+  the picture fits, rather than cut off at the 256th tile; a map import only
+  warns, since tiles the tileset already has are reused.
+
 In a **bitmap mode** a layered map needs to know which cell means "nothing",
 because a cell index is an atlas position and 0 is a picture like any other. So
 a layered bitmap map names its own **transparent cell** (the checkbox under

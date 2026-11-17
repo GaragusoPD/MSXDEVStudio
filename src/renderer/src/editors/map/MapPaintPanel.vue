@@ -9,7 +9,7 @@
  */
 import { computed, ref } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
-import { isBanked, TILE_SIZE, type BankChoice } from '../../../../shared/msx/tile'
+import { isBanked, MAX_TILES, TILE_SIZE, type BankChoice } from '../../../../shared/msx/tile'
 import type { ScreenMode } from '../../../../shared/msx/modes'
 import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import InkPaperSwatches from '../../components/InkPaperSwatches.vue'
@@ -35,6 +35,8 @@ const props = defineProps<{ session: MapSession }>()
 const resourcesStore = useResourcesStore()
 
 const banked = computed(() => (props.session.tileset ? isBanked(props.session.tileset) : false))
+/** Free tiles for a picture dropped on the map: a warning only, since cells the tileset already draws are reused. A banked tileset is checked bank by bank on the drop. */
+const importBudget = computed(() => (props.session.tileset && !banked.value ? MAX_TILES - props.session.tileset.count : null))
 const importing = ref(false)
 /** One housekeeping action at a time: each reads the project before it asks. */
 const busy = ref(false)
@@ -211,6 +213,9 @@ const budget = computed(() => paintBudgetLabel(props.session))
       :prefer-current="session.tileset.palette !== null"
       use-label="Place this image"
       banking="screen"
+      :tile-budget="importBudget"
+      budget-label="free in this tileset"
+      :budget-blocks="false"
       @close="importing = false"
       @imported="onImported"
     />

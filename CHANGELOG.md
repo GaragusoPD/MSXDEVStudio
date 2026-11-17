@@ -26,6 +26,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   exports `_AnimInfo` (per animation: first slot, tiles, poses, loop, bank;
   `_ANIM_INFO_BYTES` each). A game drawing metas by index with its own loader
   no longer keeps that mapping by hand. Data, with or without ready-made C.
+- **Crop in the Import image dialog.** Drag on the original to convert only
+  part of it — a box with handles on its corners and edges, snapped to the
+  8-dot tile grid — so one figure from a sheet or one corner of a big picture
+  comes in without editing the file first.
+- **The Import image dialog counts tiles and fits the picture to the limit.**
+  It shows how many different tiles the converted picture needs (duplicates
+  once, and per screen third in SCREEN 2/4) against what the target can take,
+  and **Reduce to fit** merges the most alike tiles, the rarest first, until it
+  fits — whole tiles swapped, never blended.
+
+### Changed
+
+- **A picture that needs more tiles than the tileset can take is fitted in the
+  import dialog, not cut off or refused afterwards.** The whole picture always
+  comes into the dialog; a tileset import waits until it fits (crop it, or
+  Reduce to fit), where the 257th tile on used to be dropped silently. A map
+  import warns, since it reuses the tileset's own tiles and may still fit. A
+  tileset itself still holds at most 256 tiles per set.
 
 ### Fixed
 

@@ -7,8 +7,9 @@
  * panel uses it standalone until they exist.
  */
 
-import { onUnmounted, reactive, ref, toRaw, watch, type Ref } from 'vue'
+import { onUnmounted, reactive, ref, shallowRef, toRaw, watch, type Ref } from 'vue'
 import type { LossReport, PaletteChoice, DitherMode } from '../../../shared/msx/quantize'
+import { reduceTiles } from '../../../shared/msx/tile-reduce'
 import { MODES, type ScreenMode } from '../../../shared/msx/modes'
 import type { Rgb } from '../../../shared/msx/palette'
 import type { QuantizeRequest, QuantizeResponse } from '../workers/quantize.worker'
@@ -22,6 +23,15 @@ export interface ImportOptions {
   fitHeight?: number
   /** With a locked palette: the entries the conversion may refill — see `QuantizeOptions.freeEntries`. */
   freeEntries?: number[]
+  /** The part of the picked image to convert, in its own pixels; null for all of it. */
+  crop?: CropRect | null
+}
+
+export interface CropRect {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 export interface ImportResult {
@@ -37,7 +47,14 @@ export interface ImageImport {
   fileName: Ref<string | null>
   source: Ref<ImageData | null>
   options: ImportOptions
+  /** What the dialog hands over: the conversion, brought down to `reduceTo` tiles when that is set. */
   result: Ref<ImportResult | null>
+  /** The conversion before any reduction — what the picture needs. */
+  converted: Ref<ImportResult | null>
+  /** "Reduce to fit": at most this many distinct tiles in `result`, merging the most alike. Null: as converted. */
+  reduceTo: Ref<number | null>
+  /** How many tiles the reduction merged away. */
+  merged: Ref<number>
   busy: Ref<boolean>
   error: Ref<string | null>
   loadFile(file: File): Promise<void>
@@ -96,7 +113,10 @@ export async function decode(file: Blob): Promise<ImageData> {
 export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImport {
   const fileName = ref<string | null>(null)
   const source = ref<ImageData | null>(null)
-  const result = ref<ImportResult | null>(null)
+  const converted = shallowRef<ImportResult | null>(null)
+  const result = shallowRef<ImportResult | null>(null)
+  const reduceTo = ref<number | null>(null)
+  const merged = ref(0)
   const busy = ref(false)
   const error = ref<string | null>(null)
   const options = reactive<ImportOptions>({
@@ -105,7 +125,8 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
     freeEntries: initial.freeEntries ? [...initial.freeEntries] : [],
     dither: initial.dither ?? 'none',
     fitWidth: initial.fitWidth,
-    fitHeight: initial.fitHeight
+    fitHeight: initial.fitHeight,
+    crop: initial.crop ?? null
   })
 
   const worker = new Worker(new URL('../workers/quantize.worker.ts', import.meta.url), { type: 'module' })
@@ -118,11 +139,11 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
     busy.value = false
     if (event.data.error) {
       error.value = event.data.error
-      result.value = null
+      converted.value = null
       return
     }
     error.value = null
-    result.value = {
+    converted.value = {
       width: event.data.width,
       height: event.data.height,
       indices: new Uint8Array(event.data.indices),
@@ -138,7 +159,7 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
     // Reduce before quantizing, not after: SCREEN 3's 64×48 is four times
     // smaller than the art it is usually made from, and averaging the colours
     // down is the conversion, not a step after it.
-    const image = fitToMode(picked, options.mode, options.fitWidth, options.fitHeight)
+    const image = fitToMode(cropImage(picked, options.crop ?? null), options.mode, options.fitWidth, options.fitHeight)
     busy.value = true
     pending = ++nextId
     // The worker consumes the buffer, so hand it a copy: the source stays live
@@ -161,26 +182,45 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
     worker.postMessage(request, [data])
   }
 
-  watch(() => [options.mode, options.palette, options.dither, options.fitWidth, options.fitHeight, options.freeEntries], convert)
+  watch(() => [options.mode, options.palette, options.dither, options.fitWidth, options.fitHeight, options.freeEntries, options.crop], convert)
+
+  // Whole tiles are swapped for their nearest kept neighbour, after the
+  // conversion and on the main thread: about 20 ms for a screen.
+  watch(
+    [converted, reduceTo],
+    ([conversion, budget]) => {
+      merged.value = 0
+      if (!conversion || budget === null) {
+        result.value = conversion
+        return
+      }
+      const reduced = reduceTiles(conversion.indices, conversion.width, conversion.height, conversion.rgb, budget)
+      merged.value = reduced.merged
+      result.value = reduced.merged ? { ...conversion, indices: reduced.indices } : conversion
+    },
+    { immediate: true }
+  )
 
   async function loadFile(file: File): Promise<void> {
     try {
       error.value = null
       fileName.value = file.name
+      options.crop = null
       source.value = await decode(file)
       convert()
     } catch (loadError) {
       error.value = loadError instanceof Error ? loadError.message : String(loadError)
       source.value = null
-      result.value = null
+      converted.value = null
     }
   }
 
   function reset(): void {
     fileName.value = null
     source.value = null
-    result.value = null
+    converted.value = null
     error.value = null
+    options.crop = null
   }
 
   function toImageData(converted: ImportResult): ImageData {
@@ -198,5 +238,21 @@ export function useImageImport(initial: Partial<ImportOptions> = {}): ImageImpor
 
   onUnmounted(() => worker.terminate())
 
-  return { fileName, source, options, result, busy, error, loadFile, reset, toImageData }
+  return { fileName, source, options, result, converted, reduceTo, merged, busy, error, loadFile, reset, toImageData }
+}
+
+/** The part of `image` inside `crop`, clamped to it; the image itself when there is no crop. */
+export function cropImage(image: ImageData, crop: CropRect | null): ImageData {
+  if (!crop) return image
+  const x = Math.max(0, Math.min(image.width - 1, Math.round(crop.x)))
+  const y = Math.max(0, Math.min(image.height - 1, Math.round(crop.y)))
+  const width = Math.max(1, Math.min(image.width - x, Math.round(crop.width)))
+  const height = Math.max(1, Math.min(image.height - y, Math.round(crop.height)))
+  if (x === 0 && y === 0 && width === image.width && height === image.height) return image
+  const out = new ImageData(width, height)
+  for (let row = 0; row < height; row++) {
+    const from = ((y + row) * image.width + x) * 4
+    out.data.set(image.data.subarray(from, from + width * 4), row * width * 4)
+  }
+  return out
 }
