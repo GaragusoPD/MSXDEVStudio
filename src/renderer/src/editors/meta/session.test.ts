@@ -302,9 +302,14 @@ describe('the animation bar state', () => {
     expect(session.frame).toBe(1)
   })
 
-  it('frameDots uses the tileset sheet cell, 8 when there is none', async () => {
+  it("frameDots uses the tileset's tile size, not the mirrored cell", async () => {
+    files[TILES] = tilesFile({ width: 16, height: 16 })
     const session = metaSession(META)
     await settled()
-    expect(frameDots(session)).toEqual({ width: 16, height: 16 })
+    // No mirrored cell at all, then a stale 8x8 one: both must read 2x2 tiles of 16.
+    expect(doc(session).cell).toBeFalsy()
+    expect(frameDots(session)).toEqual({ width: 32, height: 32 })
+    session.history = { ...session.history, present: { ...doc(session), cell: { width: 8, height: 8, cols: 8 } } }
+    expect(frameDots(session)).toEqual({ width: 32, height: 32 })
   })
 })
