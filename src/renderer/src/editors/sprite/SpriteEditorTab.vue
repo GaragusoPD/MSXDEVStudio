@@ -9,10 +9,23 @@ import type { MaterialSymbol } from '@material-symbols/font-400'
  * in Monaco.
  */
 import { computed, onMounted, onUnmounted, watch } from 'vue'
-import { mirrorLayer, scanlineBudget, shiftLayer, updateLayer, type SpriteTool } from '../../../../shared/sprite-editor'
+import { paletteToRgb } from '../../../../shared/msx/palette'
+import { compositeFrame, type SpritesDoc } from '../../../../shared/msx/sprite'
+import {
+  addFrame,
+  cloneFrame,
+  mirrorLayer,
+  removeFrame,
+  scanlineBudget,
+  setFrameDuration,
+  shiftLayer,
+  updateLayer,
+  type SpriteTool
+} from '../../../../shared/sprite-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
-import SpriteAnimationBar from './SpriteAnimationBar.vue'
+import AnimationBar from '../../components/AnimationBar.vue'
+import { drawIndices } from './draw'
 import SpriteCanvas from './SpriteCanvas.vue'
 import SpriteLayerPanel from './SpriteLayerPanel.vue'
 import SpriteList from './SpriteList.vue'
@@ -23,6 +36,7 @@ import {
   canUndo,
   commit,
   doc,
+  moveFrame,
   pruneSpriteSessions,
   redo,
   saveSession,
@@ -41,6 +55,37 @@ const resourcesStore = useResourcesStore()
 const path = computed(() => tabsStore.activeTab?.filePath ?? '')
 const session = computed(() => spriteSession(path.value))
 const budget = computed(() => scanlineBudget(doc(session.value)))
+
+// ── the animation bar ─────────────────────────────────────────────────────
+// Script-level so their identity only changes with what they read: a template
+// literal would be a new prop on every render and redraw the whole filmstrip.
+const sprite = computed(() => doc(session.value).sprites[session.value.selection.sprite])
+const frameCount = computed(() => sprite.value?.frames.length ?? 0)
+const durations = computed(() => sprite.value?.frames.map((frame) => frame.duration) ?? [])
+const frameSize = computed(() => {
+  const size = doc(session.value).size
+  return { width: (sprite.value?.cols ?? 1) * size, height: (sprite.value?.rows ?? 1) * size }
+})
+/** The frames alone would miss a palette-only change (an import, an external edit). */
+const artKey = computed(() => {
+  const { palette, mode, size } = doc(session.value)
+  return [sprite.value?.frames, palette, mode, size]
+})
+
+function drawFrame(ctx: CanvasRenderingContext2D, index: number, scale: number): void {
+  const current = doc(session.value)
+  const character = sprite.value
+  const frame = character?.frames[index]
+  if (!character || !frame) return
+  const indices = compositeFrame(frame.layers, current.mode, current.size, character.cols, character.rows)
+  drawIndices(ctx, indices, character.cols * current.size, scale, paletteToRgb(current.palette))
+}
+
+/** The bar's edits, each one undo step through `commit`, on the selected sprite. */
+function editFrames(edit: (sheet: SpritesDoc, sprite: number) => SpritesDoc): void {
+  const active = session.value
+  commit(active, edit(doc(active), active.selection.sprite))
+}
 
 const TOOLS: { id: SpriteTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'pencil', icon: 'edit', title: 'Pencil' },
@@ -243,14 +288,22 @@ watch(
         />
       </div>
 
-      <SpriteAnimationBar
+      <AnimationBar
         v-model:playing="session.playing"
         v-model:background="session.background"
         v-model:onion-skin="session.onionSkin"
-        :doc="doc(session)"
-        :target="session.selection"
-        @select-frame="selectFrame(session, $event)"
-        @mutate="commit(session, $event)"
+        :frame-count="frameCount"
+        :selected="session.selection.frame"
+        :durations="durations"
+        :frame-size="frameSize"
+        :draw-frame="drawFrame"
+        :art-key="artKey"
+        @select="selectFrame(session, $event)"
+        @add="editFrames((sheet, i) => addFrame(sheet, i))"
+        @duplicate="(index) => editFrames((sheet, i) => cloneFrame(sheet, i, index))"
+        @remove="(index) => editFrames((sheet, i) => removeFrame(sheet, i, index))"
+        @move="(from, to) => moveFrame(session, from, to)"
+        @duration="(index, value) => editFrames((sheet, i) => setFrameDuration(sheet, i, index, value))"
       />
 
       <p

@@ -1,8 +1,9 @@
 /**
  * Sprite editor (Spec 09) — the editor-side logic that isn't hardware
  * knowledge: undo history, tool strokes, frame/sprite/layer list operations,
- * size/mode conversion loss checks, the scanline budget hint, PNG-strip
- * import, and animation playback ticking.
+ * size/mode conversion loss checks, the scanline budget hint and PNG-strip
+ * import. Animation playback runs on `shared/animation-playback.ts`, the clock
+ * every editor's animation bar shares.
  *
  * Everything here is pure and DOM-free, so it lives in `shared/` where
  * Vitest already runs; `editors/sprite/*.vue` is a thin shell on top. All
@@ -11,7 +12,6 @@
  * here.
  */
 
-import { VBLANK_MS } from './animation-playback'
 import type { History } from './history'
 import { DEFAULT_ANIM_DURATION } from './msx/tile-anim'
 import {
@@ -511,31 +511,4 @@ export function stripToFrames(
     frames.push({ layers: layers.length ? layers : [createLayer(size)], duration: DEFAULT_ANIM_DURATION })
   }
   return frames
-}
-
-// ── animation playback ───────────────────────────────────────────────────
-
-export interface PlaybackState {
-  frameIndex: number
-  /** Leftover time (ms) not yet consumed by a frame advance. */
-  elapsedMs: number
-}
-
-export { VBLANK_MS }
-
-/**
- * Advances playback by `deltaMs`, holding each frame `durations[frame]`
- * VBlanks (at least one) and wrapping. One frame or none never advances.
- */
-export function tickPlayback(state: PlaybackState, deltaMs: number, durations: readonly number[]): PlaybackState {
-  const frameCount = durations.length
-  if (frameCount <= 1) return { frameIndex: 0, elapsedMs: 0 }
-  const held = (frame: number): number => Math.max(1, Number.isFinite(durations[frame]) ? durations[frame] : 1) * VBLANK_MS
-  let elapsedMs = state.elapsedMs + deltaMs
-  let frameIndex = state.frameIndex % frameCount
-  while (elapsedMs >= held(frameIndex)) {
-    elapsedMs -= held(frameIndex)
-    frameIndex = (frameIndex + 1) % frameCount
-  }
-  return { frameIndex, elapsedMs }
 }

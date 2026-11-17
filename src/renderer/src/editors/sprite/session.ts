@@ -10,12 +10,14 @@
  */
 
 import { shallowReactive } from 'vue'
+import type { AnimationBackground } from '../../../../shared/animation-playback'
 import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import { createSpritesDoc, type SpritesDoc } from '../../../../shared/msx/sprite'
 import {
   createHistory,
   pushHistory,
   redo as redoHistory,
+  reorderFrame,
   undo as undoHistory,
   type SpriteHistory,
   type SpriteTarget,
@@ -24,7 +26,7 @@ import {
 import { useTabsStore } from '../../stores/tabsStore'
 import { watchResourceFile } from '../external-changes'
 
-export type PlaybackBackground = 'checkered' | 'solid'
+export type PlaybackBackground = AnimationBackground
 
 export interface SpriteSession {
   path: string
@@ -177,6 +179,24 @@ export function selectFrame(session: SpriteSession, index: number): void {
   session.selection = { ...session.selection, frame: index }
   clampSelection(session)
   session.hiddenLayers = []
+}
+
+/**
+ * Moves frame `from` to `to` as one undo step, and the selection goes with the
+ * frame — so "Move later" twice moves the same frame twice, and a dragged frame
+ * is the one left selected, as in the pose and bitmap meta editors. Its hidden
+ * planes stay hidden when it was the frame being edited; a frame dragged from
+ * elsewhere is a different frame, so they are forgotten as `selectFrame` would.
+ */
+export function moveFrame(session: SpriteSession, from: number, to: number): void {
+  const before = session.selection
+  const next = reorderFrame(doc(session), before.sprite, from, to)
+  if (next === doc(session)) return
+  const hidden = from === before.frame ? session.hiddenLayers : []
+  commit(session, next)
+  session.selection = { ...before, frame: to }
+  clampSelection(session)
+  session.hiddenLayers = hidden
 }
 
 export function selectLayer(session: SpriteSession, index: number): void {

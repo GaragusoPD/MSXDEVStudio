@@ -43,10 +43,8 @@ import {
   shiftLayer,
   sizeConversionLossy,
   stripToFrames,
-  tickPlayback,
   undo,
   updateLayer,
-  VBLANK_MS,
   type SpriteTarget
 } from './sprite-editor'
 
@@ -526,40 +524,6 @@ describe('frame durations', () => {
     expect(durations(addSprite(timed()), 1)).toEqual([8])
     const frames = stripToFrames(new Uint8Array(16 * 8).fill(1), 16, 8, 8, () => 0)
     expect(frames.map((frame) => frame.duration)).toEqual([8, 8])
-  })
-})
-
-describe('animation playback tick', () => {
-  it('is a PAL VBlank, the clock a game steps its animation on', () => {
-    expect(VBLANK_MS).toBe(20)
-  })
-
-  it('holds each frame for its own duration in VBlanks, and wraps', () => {
-    const durations = [2, 5, 1] // 40, 100 and 20 ms
-    let state = { frameIndex: 0, elapsedMs: 0 }
-    state = tickPlayback(state, 39, durations)
-    expect(state).toEqual({ frameIndex: 0, elapsedMs: 39 })
-    state = tickPlayback(state, 1, durations)
-    expect(state).toEqual({ frameIndex: 1, elapsedMs: 0 })
-    state = tickPlayback(state, 100, durations)
-    expect(state).toEqual({ frameIndex: 2, elapsedMs: 0 })
-    // 20 ms ends frame 2, 40 ms frame 0, and 30 ms are spent on frame 1.
-    state = tickPlayback(state, 90, durations)
-    expect(state).toEqual({ frameIndex: 1, elapsedMs: 30 })
-  })
-
-  it('never advances with one frame or fewer', () => {
-    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 500, [8])).toEqual({ frameIndex: 0, elapsedMs: 0 })
-    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 500, [])).toEqual({ frameIndex: 0, elapsedMs: 0 })
-  })
-
-  it('holds a duration below one VBlank for one, so a long pause never spins', () => {
-    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 20, [0, 3])).toEqual({ frameIndex: 1, elapsedMs: 0 })
-    expect(tickPlayback({ frameIndex: 0, elapsedMs: 0 }, 20, [Number.NaN, 3])).toEqual({ frameIndex: 1, elapsedMs: 0 })
-  })
-
-  it('picks up from a frame index past the end — the character lost a frame mid-play', () => {
-    expect(tickPlayback({ frameIndex: 4, elapsedMs: 0 }, 0, [2, 2, 2])).toEqual({ frameIndex: 1, elapsedMs: 0 })
   })
 })
 

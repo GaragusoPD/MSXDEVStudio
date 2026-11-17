@@ -12,16 +12,23 @@ import type { Rgb } from '../../../../shared/msx/palette'
  * Fills each non-transparent (index ≠ 0) pixel as a `scale`×`scale` square.
  * `width` is the row stride; the height follows from the buffer length, so a
  * metasprite's taller composite draws without any extra argument.
+ *
+ * Edges snap to whole canvas pixels, so a fractional scale (a thumbnail fitted
+ * to its box) draws crisp dots rather than half-covered seams between them; at
+ * a whole scale the snapping changes nothing.
  */
 export function drawIndices(ctx: CanvasRenderingContext2D, indices: ArrayLike<number>, width: number, scale: number, rgb: readonly Rgb[]): void {
   const height = indices.length / width
   for (let y = 0; y < height; y++) {
+    const top = Math.round(y * scale)
+    const bottom = Math.round((y + 1) * scale)
     for (let x = 0; x < width; x++) {
       const index = indices[y * width + x]
       if (!index) continue
+      const left = Math.round(x * scale)
       const c = rgb[index] ?? { r: 255, g: 0, b: 255 }
       ctx.fillStyle = `rgb(${c.r}, ${c.g}, ${c.b})`
-      ctx.fillRect(x * scale, y * scale, scale, scale)
+      ctx.fillRect(left, top, Math.round((x + 1) * scale) - left, bottom - top)
     }
   }
 }
