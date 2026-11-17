@@ -7,6 +7,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pictures imported for SCREEN 1/2/4 keep their colours.** Greens came in
+  blue, yellows red, grays blue, and most pictures in four or five colours:
+  every pixel went to the MSX colour nearest in brightness, then each 8-pixel
+  row kept its two most frequent results. Now each row gets the two colours
+  that best reproduce it, matched the way the eye sees (OKLab, where a wrong
+  hue costs more than a wrong lightness, and colour added to a gray costs most).
+  Dithering mixes those two colours only, in gamma space, so Floyd–Steinberg no
+  longer leaves a rainbow speckle and a gray dithers from black, gray and white.
+
 ## [0.3.7] - 2026-11-17
 
 ### Added

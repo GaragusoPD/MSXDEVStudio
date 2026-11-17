@@ -247,6 +247,13 @@ export function quantize(image: RgbaImage, options: QuantizeOptions): QuantizeRe
   const { rgb, grb } = resolvePalette(image, settings)
   const skip = settings.reserveTransparent && rgb.length > 1 ? [0] : []
 
+  // Two colours per 8×1 span: the pair is chosen from the picture itself, not
+  // cut afterwards out of a free sixteen-colour result (see `fitSpans`).
+  if (info.colorModel === 'row2' || info.colorModel === 'group2') {
+    const fitted = fitSpans(image, rgb, skip, settings)
+    return { width: image.width, height: image.height, indices: fitted.indices, palette: grb, rgb, report: fitted.report }
+  }
+
   const { width, height } = image
   const indices = new Uint8Array(width * height)
   const error = settings.dither === 'floyd' ? new Float32Array(width * height * 3) : null
@@ -295,14 +302,343 @@ export function quantize(image: RgbaImage, options: QuantizeOptions): QuantizeRe
     pixelsChanged: 0
   }
 
-  if (info.colorModel === 'row2' || info.colorModel === 'group2') {
-    const fit = fitRowConstraint(indices, width, height, rgb)
-    report.rowsAltered = fit.rowsAltered
-    report.pixelsChanged = fit.pixelsChanged
-    report.colorsUsed = new Set(indices).size
+  return { width, height, indices, palette: grb, rgb, report }
+}
+
+// ── perceptual colour (OKLab) ───────────────────────────────────────────────
+
+export interface Lab {
+  L: number
+  a: number
+  b: number
+  /** Chroma, `hypot(a, b)`: how far from gray. Kept because `labDistance` needs it for every pair it compares. */
+  C: number
+}
+
+/** sRGB 0-255 → linear light 0-1, on the way to OKLab. */
+export function srgbToLinear(value: number): number {
+  const c = value / 255
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+}
+
+/** Linear light → OKLab (Björn Ottosson's), where equal distances look about equally different. */
+export function linearToOklab(r: number, g: number, b: number): Lab {
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s
+  const bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
+  return { L: 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, a, b: bb, C: Math.sqrt(a * a + bb * bb) }
+}
+
+export function rgbToOklab(color: Rgb): Lab {
+  return linearToOklab(srgbToLinear(color.r), srgbToLinear(color.g), srgbToLinear(color.b))
+}
+
+/**
+ * How much more a wrong hue costs than a wrong lightness. The MSX1 palette has
+ * nothing between black and a lightness of 0.54 (dark blue), and no mid gray,
+ * dark green, dark yellow or brown, so most of a picture falls between entries.
+ * Weighted 1 (plain OKLab, or the luma-weighted RGB this replaced), a dark
+ * green or a mid gray goes to whichever entry has the closest *lightness*,
+ * which is a blue or a red, and the whole picture turns blue.
+ */
+export const HUE_WEIGHT = 4
+
+/**
+ * And what colour costs on top when the source is a **gray**: a gray that comes
+ * out red or blue is the most visible error there is. It fades out by
+ * `GRAY_CHROMA`, so a dull colour (an olive tentacle, a worn gold) still picks
+ * its own hue rather than whichever entry is least saturated. Together with
+ * `HUE_WEIGHT`: grays stay black, gray or white, browns warm, olives green.
+ */
+export const GRAY_KEEP = 4
+/** The OKLab chroma below which a source counts as gray, more so the closer to 0. */
+const GRAY_CHROMA = 0.04
+
+/** `p` the source colour, `q` a palette entry: not symmetric, see `GRAY_KEEP`. */
+export function labDistance(p: Lab, q: Lab): number {
+  const dL = p.L - q.L
+  const da = p.a - q.a
+  const db = p.b - q.b
+  const distance = dL * dL + HUE_WEIGHT * (da * da + db * db)
+  if (p.C >= GRAY_CHROMA) return distance
+  const gray = 1 - p.C / GRAY_CHROMA
+  return distance + GRAY_KEEP * gray * q.C * q.C
+}
+
+/** Gamma-encoded 0-1 → linear, tabulated: the pair search converts every candidate mix of every span. */
+const LINEAR_STEPS = 4096
+const LINEAR_TABLE = Float32Array.from({ length: LINEAR_STEPS + 1 }, (_, i) => srgbToLinear((i * 255) / LINEAR_STEPS))
+
+/** Gamma-encoded 0-1 → OKLab. Dithering mixes in this space: see `fitSpans`. */
+function gammaToOklab(r: number, g: number, b: number): Lab {
+  return linearToOklab(
+    LINEAR_TABLE[Math.round(r * LINEAR_STEPS)],
+    LINEAR_TABLE[Math.round(g * LINEAR_STEPS)],
+    LINEAR_TABLE[Math.round(b * LINEAR_STEPS)]
+  )
+}
+
+/**
+ * What a dithered mix of two colours costs beyond its error: a pattern of two
+ * far-apart colours (red dots on green for a brown) reads as noise, not as the
+ * colour between them, so a pair is charged for how far apart it is, most at an
+ * even mix. Small enough that black and white still make a mid gray.
+ */
+const MIX_NOISE = 0.15
+
+// ── the two-colours-per-span fit (SCREEN 1/2/4) ─────────────────────────────
+
+interface Pair {
+  a: number
+  b: number
+}
+
+/**
+ * Converts a picture for a pattern mode, where every 8×1 span shows at most two
+ * colours: each span gets the **pair of palette entries that best reproduces
+ * its own source pixels**, and each pixel then takes one of the two.
+ *
+ * The old way matched every pixel to its nearest of all sixteen first and only
+ * then cut each span down to its two most frequent results (`fitRowConstraint`).
+ * That lost twice: the nearest entry was often a wrong hue, and the cut kept
+ * whichever wrong hue was most common, so a picture came out in four or five
+ * colours. Dithering made it worse: the error spread over all sixteen colours,
+ * and the cut left a rainbow speckle.
+ *
+ * - `none`: the pair that minimises each pixel's distance to the nearer of the two.
+ * - `floyd`: the pair whose *mixes* come closest (a pixel between black and
+ *   white is a mid gray, not an error), then Floyd–Steinberg between those two
+ *   only, so the dither survives the constraint.
+ * - `bayer4`: the same pair, then an ordered pattern placing each pixel by how
+ *   far along the pair it falls.
+ *
+ * Mixes and dither error are in gamma-encoded RGB, not linear light. Linear
+ * light is the physically right average, but on pixels this big it reads as a
+ * few bright dots on black: a mid gold became sparse yellow specks. Mixing in
+ * gamma gives the even, bright patterns pixel art uses.
+ *
+ * A span with transparent pixels keeps index 0 as one of its two colours.
+ * Deterministic: ties break on palette order.
+ */
+export function fitSpans(
+  image: RgbaImage,
+  rgb: readonly Rgb[],
+  skip: readonly number[],
+  options: { dither: DitherMode; reserveTransparent: boolean }
+): { indices: Uint8Array; report: LossReport } {
+  const { width, height, data } = image
+  const count = width * height
+  const indices = new Uint8Array(count)
+  const candidates = rgb.map((_, index) => index).filter((index) => !skip.includes(index))
+  const pairs: Pair[] = []
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i; j < candidates.length; j++) pairs.push({ a: candidates[i], b: candidates[j] })
+  }
+  const gamma = rgb.map((color) => [color.r / 255, color.g / 255, color.b / 255])
+  const lab = rgb.map(rgbToOklab)
+  const dither = options.dither
+
+  // The source, gamma-encoded 0-1; Floyd–Steinberg adds its error into it.
+  const work = new Float32Array(count * 3)
+  const transparent = new Uint8Array(count)
+  for (let i = 0; i < count; i++) {
+    work[i * 3] = data[i * 4] / 255
+    work[i * 3 + 1] = data[i * 4 + 1] / 255
+    work[i * 3 + 2] = data[i * 4 + 2] / 255
+    transparent[i] = options.reserveTransparent && data[i * 4 + 3] < 128 ? 1 : 0
+  }
+  const unit = (value: number): number => (value < 0 ? 0 : value > 1 ? 1 : value)
+  const nearest = (p: Lab): number => {
+    let best = candidates[0] ?? 0
+    let bestDistance = Infinity
+    for (const index of candidates) {
+      const distance = labDistance(p, lab[index])
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = index
+      }
+    }
+    return best
   }
 
-  return { width, height, indices, palette: grb, rgb, report }
+  const sources = new Map<number, Set<number>>()
+  let rowsAltered = 0
+  let pixelsChanged = 0
+  const spanGamma: number[][] = []
+  const spanLab: Lab[] = []
+  const spanNearest: number[] = []
+
+  for (let y = 0; y < height; y++) {
+    for (let x0 = 0; x0 < width; x0 += 8) {
+      const span = Math.min(8, width - x0)
+      let opaque = 0
+      const wanted = new Set<number>()
+      for (let i = 0; i < span; i++) {
+        const at = y * width + x0 + i
+        if (transparent[at]) {
+          wanted.add(0)
+          continue
+        }
+        spanGamma[i] = [unit(work[at * 3]), unit(work[at * 3 + 1]), unit(work[at * 3 + 2])]
+        spanLab[i] = gammaToOklab(spanGamma[i][0], spanGamma[i][1], spanGamma[i][2])
+        spanNearest[i] = nearest(spanLab[i])
+        wanted.add(spanNearest[i])
+        opaque++
+      }
+      // A span that would have shown more than two colours on its own: what
+      // the dialog reports as "rows constrained".
+      if (wanted.size > 2) rowsAltered++
+      if (opaque === 0) continue // indices are already 0
+
+      let pair: Pair
+      if (opaque < span) {
+        // Index 0 is one of the two; the other is the one colour that best
+        // stands for every opaque pixel.
+        let best = candidates[0] ?? 0
+        let bestCost = Infinity
+        for (const index of candidates) {
+          let cost = 0
+          for (let i = 0; i < span; i++) if (!transparent[y * width + x0 + i]) cost += labDistance(spanLab[i], lab[index])
+          if (cost < bestCost) {
+            bestCost = cost
+            best = index
+          }
+        }
+        pair = { a: best, b: best }
+      } else {
+        pair = pairs[0]
+        let bestCost = Infinity
+        for (const candidate of pairs) {
+          const cost =
+            dither === 'none'
+              ? splitCost(spanLab, span, lab[candidate.a], lab[candidate.b])
+              : mixCost(spanLab, spanGamma, span, gamma[candidate.a], gamma[candidate.b], lab[candidate.a], lab[candidate.b])
+          if (cost < bestCost) {
+            bestCost = cost
+            pair = candidate
+          }
+        }
+      }
+
+      for (let i = 0; i < span; i++) {
+        const x = x0 + i
+        const at = y * width + x
+        if (transparent[at]) continue
+        let chosen: number
+        if (pair.a === pair.b) {
+          chosen = pair.a
+        } else if (dither === 'floyd') {
+          // The pair was chosen on the error carried into the span; each pixel
+          // also sees what its left neighbours in the span pushed on since.
+          const here = gammaToOklab(unit(work[at * 3]), unit(work[at * 3 + 1]), unit(work[at * 3 + 2]))
+          chosen = labDistance(here, lab[pair.a]) <= labDistance(here, lab[pair.b]) ? pair.a : pair.b
+        } else if (dither === 'bayer4') {
+          const t = mixFraction(spanGamma[i], gamma[pair.a], gamma[pair.b])
+          chosen = t > (BAYER4[y & 3][x & 3] + 0.5) / 16 ? pair.b : pair.a
+        } else {
+          chosen = labDistance(spanLab[i], lab[pair.a]) <= labDistance(spanLab[i], lab[pair.b]) ? pair.a : pair.b
+        }
+        indices[at] = chosen
+        if (chosen !== spanNearest[i]) pixelsChanged++
+
+        const pixel = at * 4
+        const key = (data[pixel] << 16) | (data[pixel + 1] << 8) | data[pixel + 2]
+        const set = sources.get(chosen) ?? new Set<number>()
+        set.add(key)
+        sources.set(chosen, set)
+
+        if (dither === 'floyd') diffuse01(work, transparent, width, height, x, y, gamma[chosen])
+      }
+    }
+  }
+
+  return {
+    indices,
+    report: {
+      colorsUsed: new Set(indices).size,
+      colorsMerged: [...sources.values()].reduce((sum, set) => sum + Math.max(0, set.size - 1), 0),
+      rowsAltered,
+      pixelsChanged
+    }
+  }
+}
+
+/** Each pixel to the nearer of the two: what a pair costs with no dithering. */
+function splitCost(spanLab: Lab[], span: number, a: Lab, b: Lab): number {
+  let cost = 0
+  for (let i = 0; i < span; i++) cost += Math.min(labDistance(spanLab[i], a), labDistance(spanLab[i], b))
+  return cost
+}
+
+/** Where `p` falls between `a` (0) and `b` (1), all gamma-encoded: the share of `b` a dither pattern should show. */
+function mixFraction(p: readonly number[], a: readonly number[], b: readonly number[]): number {
+  const ab0 = b[0] - a[0]
+  const ab1 = b[1] - a[1]
+  const ab2 = b[2] - a[2]
+  const length = ab0 * ab0 + ab1 * ab1 + ab2 * ab2
+  if (length === 0) return 0
+  const t = ((p[0] - a[0]) * ab0 + (p[1] - a[1]) * ab1 + (p[2] - a[2]) * ab2) / length
+  return t < 0 ? 0 : t > 1 ? 1 : t
+}
+
+/** Each pixel to the closest *mix* of the two, plus the noise that mix costs: what a pair costs when dithering. */
+function mixCost(
+  spanLab: Lab[],
+  spanGamma: number[][],
+  span: number,
+  a: readonly number[],
+  b: readonly number[],
+  labA: Lab,
+  labB: Lab
+): number {
+  const apart = labDistance(labA, labB)
+  let cost = 0
+  for (let i = 0; i < span; i++) {
+    const p = spanLab[i]
+    const t = mixFraction(spanGamma[i], a, b)
+    const mix = gammaToOklab(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
+    cost += labDistance(p, mix) + MIX_NOISE * t * (1 - t) * apart
+    // Red and cyan dots average to a gray, but the eye sees red and cyan dots:
+    // over a gray source, the colour of each dot costs, by how many there are.
+    if (p.C < GRAY_CHROMA) cost += GRAY_KEEP * (1 - p.C / GRAY_CHROMA) * ((1 - t) * labA.C * labA.C + t * labB.C * labB.C)
+  }
+  return cost
+}
+
+/**
+ * Floyd–Steinberg over gamma-encoded 0-1 values (7/16 right, 3/16 down-left, 5/16 down,
+ * 1/16 down-right), damped a little so flat areas do not crawl, and never into
+ * a transparent pixel.
+ */
+function diffuse01(
+  work: Float32Array,
+  transparent: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  got: readonly number[]
+): void {
+  const at = (y * width + x) * 3
+  const damp = 0.85
+  const dr = (Math.min(1, Math.max(0, work[at])) - got[0]) * damp
+  const dg = (Math.min(1, Math.max(0, work[at + 1])) - got[1]) * damp
+  const db = (Math.min(1, Math.max(0, work[at + 2])) - got[2]) * damp
+  const spread = (dx: number, dy: number, weight: number): void => {
+    const nx = x + dx
+    const ny = y + dy
+    if (nx < 0 || ny < 0 || nx >= width || ny >= height || transparent[ny * width + nx]) return
+    const to = (ny * width + nx) * 3
+    work[to] += dr * weight
+    work[to + 1] += dg * weight
+    work[to + 2] += db * weight
+  }
+  spread(1, 0, 7 / 16)
+  spread(-1, 1, 3 / 16)
+  spread(0, 1, 5 / 16)
+  spread(1, 1, 1 / 16)
 }
 
 function clamp(value: number): number {

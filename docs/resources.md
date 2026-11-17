@@ -188,6 +188,15 @@ set). Banks follow the screen's thirds — rows 0–7, 8–15, 16–23 — so a 
 picture fills fewer of them, and its map is padded with blank rows to the 24 a
 banked map must have.
 
+In SCREEN 1/2/4 the conversion picks, for every 8-pixel row of the picture, the
+**two colours that best reproduce that row**, matching colours the way the eye
+does (OKLab, with a wrong hue costing more than a wrong lightness). So a dull
+green stays green and a gold stays yellow, a little lighter or darker, rather
+than turning into the blue or red closest in brightness; and a gray stays black,
+gray or white. **Dither: Floyd–Steinberg** or **Bayer 4×4** then mixes those two
+colours only, which is how a mid gray becomes black and white dots. Dithering
+costs tiles: almost every dithered cell is a tile of its own.
+
 In a **bitmap mode** a layered map needs to know which cell means "nothing",
 because a cell index is an atlas position and 0 is a picture like any other. So
 a layered bitmap map names its own **transparent cell** (the checkbox under
