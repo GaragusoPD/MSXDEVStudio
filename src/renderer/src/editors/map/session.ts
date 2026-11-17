@@ -62,6 +62,7 @@ import type { ScreenDoc } from '../../../../shared/msx/screen'
 import {
   BANK_COUNT,
   bankTilePixels,
+  blackIndex,
   fillBank,
   blankTileEntry,
   isBanked,
@@ -1702,7 +1703,7 @@ export function switchToRepeat(session: MapSession): void {
   const current = doc(session)
   const layer = current.layers[session.activeLayer]
   const { width, height, indices } = renderMapPixels(current, tileset, session.activeLayer)
-  const packed = packTiles(indices, width, height, tileset.mode, { dedup: true })
+  const packed = packTiles(indices, width, height, tileset.mode, { dedup: true, black: blackIndex(tileset.palette) })
   const reserve = tileset.reserveTile0
   const needed = packed.doc.count + (reserve ? 1 : 0)
   if (packed.layout.length < current.width * current.height || needed > MAX_TILES) {
@@ -1841,7 +1842,7 @@ function repackBanked(session: MapSession, indices: ArrayLike<number>, width: nu
       for (let y = 0; y < TILE_SIZE; y++) visible.fill(0, (cy * TILE_SIZE + y) * width + cx * TILE_SIZE, (cy * TILE_SIZE + y) * width + cx * TILE_SIZE + TILE_SIZE)
     })
   }
-  const packed = packBankedTiles(visible, width, height, tileset.mode, { shared })
+  const packed = packBankedTiles(visible, width, height, tileset.mode, { shared, black: blackIndex(tileset.palette) })
 
   // An empty cell stays the see-through tile 0 rather than whatever blank the
   // packer numbered first in its band.

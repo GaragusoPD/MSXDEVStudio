@@ -7,6 +7,8 @@ import {
   bankPatternBytes,
   bankTileAt,
   bankTilePixels,
+  BLACK,
+  blackIndex,
   blankTileEntry,
   colorByteAt,
   createTilesDoc,
@@ -37,6 +39,16 @@ import {
   type TileEntry,
   type TilesDoc
 } from './tile'
+
+/** One tile entry's 64 dots, decoded the way the VDP draws them (sc2/sc4). */
+function decodeEntry(entry: TileEntry): Uint8Array {
+  const out = new Uint8Array(64)
+  for (let y = 0; y < 8; y++) {
+    const { fg, bg } = splitColorByte(entry.color[y])
+    for (let x = 0; x < 8; x++) out[y * 8 + x] = entry.pattern[y] & (0x80 >> x) ? fg : bg
+  }
+  return out
+}
 
 /** A one-tile sc2 document whose row 0 is `pattern` with the given FG/BG. */
 function sc2(pattern: number, fg: number, bg: number): TilesDoc {
@@ -210,10 +222,100 @@ describe('pixels ↔ bytes', () => {
 
   it('packs pixels back, reducing over-full rows to the two most used colors', () => {
     const pixels = new Uint8Array(64)
-    pixels.set([1, 1, 1, 1, 2, 2, 3, 4], 0) // 4 colors in row 0
+    pixels.set([6, 6, 6, 6, 2, 2, 3, 4], 0) // 4 colors in row 0
     const tile = tileFromPixels(pixels)
     expect(tile.lossyRows).toEqual([0])
-    expect(splitColorByte(tile.color[0])).toEqual({ fg: 1, bg: 2 })
+    expect(splitColorByte(tile.color[0])).toEqual({ fg: 6, bg: 2 })
+    // The dropped colours show the most used.
+    expect(Array.from(decodeEntry(tile).subarray(0, 8))).toEqual([6, 6, 6, 6, 2, 2, 6, 6])
+  })
+
+  describe('black is paper', () => {
+    const row = (values: number[], rest = 0): Uint8Array => {
+      const pixels = new Uint8Array(64).fill(rest)
+      pixels.set(values, 0)
+      return pixels
+    }
+
+    it('an all-black row is no ink on black paper, like a new row', () => {
+      const tile = tileFromPixels(new Uint8Array(64).fill(BLACK))
+      expect(tile.pattern).toEqual(new Array(8).fill(0))
+      expect(tile.color).toEqual(new Array(8).fill(0xf1))
+      expect(decodeEntry(tile).every((value) => value === BLACK)).toBe(true)
+    })
+
+    it('black is paper even when it is the most used colour, and the dots stay put', () => {
+      const pixels = row([1, 1, 1, 1, 1, 10, 10, 1])
+      const tile = tileFromPixels(pixels)
+      expect(splitColorByte(tile.color[0])).toEqual({ fg: 10, bg: BLACK })
+      expect(tile.pattern[0]).toBe(0b00000110)
+      expect(Array.from(decodeEntry(tile).subarray(0, 8))).toEqual(Array.from(pixels.subarray(0, 8)))
+    })
+
+    it('a row without black keeps the most used as ink', () => {
+      const tile = tileFromPixels(row([15, 15, 15, 15, 15, 4, 4, 4]))
+      expect(splitColorByte(tile.color[0])).toEqual({ fg: 15, bg: 4 })
+    })
+
+    it('a row that drops colours still shows them as the most used', () => {
+      const pixels = row([1, 1, 1, 1, 2, 2, 3, 4])
+      const tile = tileFromPixels(pixels)
+      expect(splitColorByte(tile.color[0])).toEqual({ fg: 2, bg: BLACK })
+      expect(Array.from(decodeEntry(tile).subarray(0, 8))).toEqual([1, 1, 1, 1, 2, 2, 1, 1])
+    })
+
+    it('black: null keeps the old rule, the most used as ink', () => {
+      const tile = tileFromPixels(new Uint8Array(64).fill(BLACK), { black: null })
+      expect(tile.pattern).toEqual(new Array(8).fill(0xff))
+      expect(splitColorByte(tile.color[0])).toEqual({ fg: BLACK, bg: 0 })
+    })
+
+    it('any row looks the same under either rule, and black is never ink when it is kept', () => {
+      let seed = 12345
+      const random = (n: number): number => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff
+        return seed % n
+      }
+      for (let n = 0; n < 2000; n++) {
+        const colours = Array.from({ length: 1 + random(4) }, () => (random(3) === 0 ? BLACK : random(16)))
+        const pixels = new Uint8Array(64)
+        for (let i = 0; i < 64; i++) pixels[i] = colours[random(colours.length)]
+        const tile = tileFromPixels(pixels)
+        const old = tileFromPixels(pixels, { black: null })
+        expect(decodeEntry(tile)).toEqual(decodeEntry(old))
+        expect(tile.lossyRows).toEqual(old.lossyRows)
+        for (let y = 0; y < 8; y++) {
+          const { fg, bg } = splitColorByte(tile.color[y])
+          const kept = new Set(decodeEntry(tile).subarray(y * 8, y * 8 + 8))
+          if (kept.has(BLACK)) {
+            expect(bg).toBe(BLACK)
+            expect(fg).not.toBe(BLACK)
+          }
+          if (!old.lossyRows.includes(y)) expect(decodeEntry(tile).subarray(y * 8, y * 8 + 8)).toEqual(pixels.subarray(y * 8, y * 8 + 8))
+        }
+      }
+    })
+
+    it('a SCREEN 4 palette names its own black', () => {
+      expect(blackIndex(null)).toBe(BLACK)
+      expect(blackIndex(new Array(16).fill(0))).toBe(BLACK)
+      const palette = Array.from({ length: 16 }, (_, i) => (i === 5 ? 0 : 0x49))
+      expect(blackIndex(palette)).toBe(5)
+      expect(blackIndex(new Array(16).fill(0x49))).toBeNull()
+      const tile = tileFromPixels(row([5, 5, 5, 5, 5, 5, 7, 7]), { black: 5 })
+      expect(splitColorByte(tile.color[0])).toEqual({ fg: 7, bg: 5 })
+    })
+
+    it('an import packs black as paper', () => {
+      const indices = new Uint8Array(16 * 8)
+      for (let i = 0; i < indices.length; i++) indices[i] = i % 16 < 8 ? BLACK : i % 16 === 12 ? 15 : BLACK
+      const packed = packTiles(indices, 16, 8, 'sc2', { dedup: true })
+      expect(packed.doc.tiles[0]).toEqual({ pattern: new Array(8).fill(0), color: new Array(8).fill(0xf1) })
+      expect(packed.doc.tiles[1].pattern).toEqual(new Array(8).fill(0b00001000))
+      expect(packed.doc.tiles[1].color).toEqual(new Array(8).fill(0xf1))
+      const banked = packBankedTiles(indices, 16, 8, 'sc2')
+      expect(banked.doc.bankTiles[0].some((tile) => tile.pattern.every((bits) => bits === 0b00001000))).toBe(true)
+    })
   })
 
   it('is deterministic when frequencies tie', () => {

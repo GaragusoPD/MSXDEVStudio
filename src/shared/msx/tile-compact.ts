@@ -31,7 +31,10 @@ import {
   animWindowSlotsIn,
   bankTilePixels,
   remapAnimBindings,
+  BLACK,
+  blackIndex,
   blankTileEntry,
+  inkAndPaper,
   isBanked,
   MAX_TILES,
   mergeColorByte,
@@ -220,23 +223,23 @@ export interface PictureCell {
  * rather than minting a near-duplicate of it. SCREEN 1 has one colour pair for
  * the whole tile (its group's), so the pair is the cell's two most common
  * colours and every other pixel goes to the nearer by count — the same rule
- * `tileFromPixels` applies per row in the other modes.
+ * `tileFromPixels` applies per row in the other modes. In both, `black` is the
+ * paper whenever it is kept (`inkAndPaper`).
  */
-export function cellEntry(pixels: Uint8Array, mode: TilesDoc['mode']): PictureCell {
+export function cellEntry(pixels: Uint8Array, mode: TilesDoc['mode'], black: number | null = BLACK): PictureCell {
   if (pixels.every((value) => value === 0)) return { entry: blankTileEntry(mode), pixels, lossy: false, ...(mode === 'sc1' ? { pair: 0 } : {}) }
   if (mode !== 'sc1') {
-    const { pattern, color, lossyRows } = tileFromPixels(pixels)
+    const { pattern, color, lossyRows } = tileFromPixels(pixels, { black })
     return { entry: { pattern, color }, pixels: decode(pattern, color), lossy: lossyRows.length > 0 }
   }
   const counts = new Map<number, number>()
   for (const value of pixels) counts.set(value & 0x0f, (counts.get(value & 0x0f) ?? 0) + 1)
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([value]) => value)
-  const fg = ranked[0] ?? 0
-  const bg = ranked[1] ?? (fg === 0 ? 1 : 0)
+  const { fg, bg, ink } = inkAndPaper(ranked, black)
   const pattern: number[] = []
   for (let y = 0; y < TILE_SIZE; y++) {
     let bits = 0
-    for (let x = 0; x < TILE_SIZE; x++) if ((pixels[y * TILE_SIZE + x] & 0x0f) !== bg) bits |= 0x80 >> x
+    for (let x = 0; x < TILE_SIZE; x++) if (ink(pixels[y * TILE_SIZE + x])) bits |= 0x80 >> x
     pattern.push(bits)
   }
   const pair = mergeColorByte(fg, bg)
@@ -352,6 +355,8 @@ export function placePicture(
   let added = 0
   let reused = 0
   let lossy = 0
+  // New art takes black as paper wherever a row keeps it, whatever the palette calls black.
+  const black = blackIndex(doc.palette)
 
   // What each bank (or the one common set) already draws, by pixels — the
   // match `findOrCreateTile` would miss when the bytes differ.
@@ -385,7 +390,7 @@ export function placePicture(
           cellPixels[y * TILE_SIZE + x] = (pixels[(cy * TILE_SIZE + y) * width + cx * TILE_SIZE + x] ?? 0) & 0x0f
         }
       }
-      const cell = cellEntry(cellPixels, doc.mode)
+      const cell = cellEntry(cellPixels, doc.mode, black)
       if (cell.lossy) lossy++
       const key = `${bank ?? '-'}|${pixelKey(cell.pixels)}`
       const match = known.get(key)

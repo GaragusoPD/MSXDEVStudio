@@ -734,12 +734,71 @@ export function blockTileAt(block: TileBlock, x: number, y: number): { tile: num
   return { tile: block.tiles[cy * block.width + cx] ?? 0, tx: x % TILE_SIZE, ty: y % TILE_SIZE }
 }
 
+/** Black in the MSX1's fixed palette (index 0 is transparent). */
+export const BLACK = 1
+
+/**
+ * The palette index that is black: 1 in the fixed MSX1 palette (`palette`
+ * null), else the first of entries 1-15 set to black (GRB 0) in a SCREEN 4
+ * palette, or null when none is.
+ */
+export function blackIndex(palette: readonly number[] | null | undefined): number | null {
+  if (!palette) return BLACK
+  if (palette[BLACK] === 0) return BLACK
+  for (let i = 2; i < Math.min(16, palette.length); i++) if (palette[i] === 0) return i
+  return null
+}
+
+/**
+ * Ink and paper for colours `ranked` most-used first: an sc2/sc4 row, or a
+ * whole SCREEN 1 tile. The two most used are kept; any other dot shows the
+ * most used, its nearest by count (the quantizer's span fit makes sure an
+ * import never has a third).
+ *
+ * `black` is the paper whenever it is kept, so black reads as background
+ * everywhere an import puts it: an all-black row is no ink on black paper
+ * (`0xF1`, like a new row), and code that recolours ink leaves black alone.
+ * Otherwise the most used is the ink. `black` null leaves every row to the
+ * most-used rule.
+ *
+ * `ink(value)` says whether a dot of that colour is drawn in ink — the pattern
+ * bit — so the dots show exactly the same colours whichever rule picked the
+ * roles.
+ */
+export function inkAndPaper(ranked: readonly number[], black: number | null): { fg: number; bg: number; ink: (value: number) => boolean } {
+  const first = ranked[0] ?? 0
+  const second = ranked[1]
+  let fg: number
+  let bg: number
+  if (black !== null && first === black) {
+    bg = black
+    fg = second ?? (black === 15 ? 0 : 15)
+  } else {
+    fg = first
+    bg = second ?? (first === 0 ? 1 : 0)
+  }
+  const ink = (value: number): boolean => {
+    const color = value & 0x0f
+    const shown = second !== undefined && color === second ? second : first
+    return shown === fg && fg !== bg
+  }
+  return { fg, bg, ink }
+}
+
 /**
  * Packs 64 palette indices into sc2/sc4 hardware bytes, reducing any row that
  * uses more than two colors to its two most frequent ones. `lossyRows` lists
  * the rows that had to be reduced — the import dialog reports them.
+ *
+ * `black` (default `BLACK`) is the index that is always paper when a row keeps
+ * it (`inkAndPaper`); null leaves the most-used colour as ink, the rule before
+ * for bytes that must not change (software sprite exports).
  */
-export function tileFromPixels(pixels: ArrayLike<number>): TileEntry & { lossyRows: number[] } {
+export function tileFromPixels(
+  pixels: ArrayLike<number>,
+  options: { black?: number | null } = {}
+): TileEntry & { lossyRows: number[] } {
+  const black = options.black === undefined ? BLACK : options.black
   const pattern = zeros(TILE_SIZE)
   const color = zeros(TILE_SIZE)
   const lossyRows: number[] = []
@@ -753,15 +812,10 @@ export function tileFromPixels(pixels: ArrayLike<number>): TileEntry & { lossyRo
     // Sort by frequency, then by index so identical input always yields identical bytes.
     const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([value]) => value)
     if (ranked.length > 2) lossyRows.push(y)
-    const fg = ranked[0] ?? 0
-    const bg = ranked[1] ?? (fg === 0 ? 1 : 0)
+    const { fg, bg, ink } = inkAndPaper(ranked, black)
     color[y] = mergeColorByte(fg, bg)
     let bits = 0
-    for (let x = 0; x < TILE_SIZE; x++) {
-      // Anything that isn't BG becomes FG — nearest of the two survivors would need
-      // RGB context this function doesn't have; the quantizer's fit pass does that.
-      if (((pixels[y * TILE_SIZE + x] ?? 0) & 0x0f) !== bg) bits |= 0x80 >> x
-    }
+    for (let x = 0; x < TILE_SIZE; x++) if (ink(pixels[y * TILE_SIZE + x] ?? 0)) bits |= 0x80 >> x
     pattern[y] = bits
   }
   return { pattern, color, lossyRows }
@@ -778,14 +832,15 @@ export interface PackResult {
 /**
  * Cuts an indexed image into 8×8 tiles for `mode`. `dedup` folds identical
  * tiles together (the import option in Spec 08) and the returned `layout` is
- * exactly the name table Spec 10's map editor wants.
+ * exactly the name table Spec 10's map editor wants. `black` is the palette's
+ * black (`blackIndex`), made paper wherever a row keeps it (`tileFromPixels`).
  */
 export function packTiles(
   indices: ArrayLike<number>,
   width: number,
   height: number,
   mode: TileMode,
-  options: { dedup?: boolean } = {}
+  options: { dedup?: boolean; black?: number | null } = {}
 ): PackResult {
   const cols = Math.floor(width / TILE_SIZE)
   const rows = Math.floor(height / TILE_SIZE)
@@ -806,7 +861,7 @@ export function packTiles(
           pixels[y * TILE_SIZE + x] = indices[(ty * TILE_SIZE + y) * width + tx * TILE_SIZE + x] ?? 0
         }
       }
-      const { pattern, color, lossyRows } = tileFromPixels(pixels)
+      const { pattern, color, lossyRows } = tileFromPixels(pixels, { black: options.black })
       const key = options.dedup ? `${pattern.join(',')}|${color.join(',')}` : ''
       const existing = options.dedup ? seen.get(key) : undefined
       if (existing !== undefined) {
@@ -906,7 +961,7 @@ export function packBankedTiles(
   width: number,
   height: number,
   mode: TileMode,
-  options: { shared?: TileEntry[] } = {}
+  options: { shared?: TileEntry[]; black?: number | null } = {}
 ): BankedPackResult {
   const cols = Math.floor(width / TILE_SIZE)
   const bandRows = 8
@@ -940,7 +995,7 @@ export function packBankedTiles(
             pixels[y * TILE_SIZE + x] = py < height ? (indices[py * width + tx * TILE_SIZE + x] ?? 0) : 0
           }
         }
-        const { pattern, color, lossyRows } = tileFromPixels(pixels)
+        const { pattern, color, lossyRows } = tileFromPixels(pixels, { black: options.black })
         const key = `${pattern.join(',')}|${color.join(',')}`
         const existing = seen.get(key)
         if (existing !== undefined) {
@@ -1052,11 +1107,11 @@ export function packChosen(
   height: number,
   mode: TileMode,
   banks: BankChoice,
-  options: { dedup?: boolean; shared?: TileEntry[] } = {}
+  options: { dedup?: boolean; shared?: TileEntry[]; black?: number | null } = {}
 ): ChosenPack | string {
-  const banked = (): ChosenPack => ({ banked: true, ...packBankedTiles(indices, width, height, mode, { shared: options.shared }) })
+  const banked = (): ChosenPack => ({ banked: true, ...packBankedTiles(indices, width, height, mode, { shared: options.shared, black: options.black }) })
   if (banks === 'banked') return bankedPackBlocker(mode, height) ?? banked()
-  const single = packTiles(indices, width, height, mode, { dedup: options.dedup })
+  const single = packTiles(indices, width, height, mode, { dedup: options.dedup, black: options.black })
   const short = Math.floor(width / TILE_SIZE) * Math.floor(height / TILE_SIZE) > single.layout.length
   if (banks === 'auto' && short && bankedPackBlocker(mode, height) === null) return banked()
   return { banked: false, ...single }

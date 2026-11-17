@@ -273,6 +273,15 @@ describe('transformTile', () => {
     expect(rotated.lossyRows.length).toBeGreaterThan(0)
   })
 
+  it('rotating keeps black as the paper', () => {
+    // White left edge on black, drawn white ink on black paper; turned, the black rows stay paper.
+    const edge = normalizeTiles({ mode: 'sc2', count: 1, tiles: [{ pattern: new Array(8).fill(0x80), color: new Array(8).fill(0xf1) }] })
+    const rotated = transformTile(edge, 0, 'rotateCW')
+    expect(rotated.doc.tiles[0].pattern[0]).toBe(0xff)
+    expect(rotated.doc.tiles[0].pattern.slice(1)).toEqual(new Array(7).fill(0))
+    expect(rotated.doc.tiles[0].color.slice(1)).toEqual(new Array(7).fill(0xf1))
+  })
+
   it('rotates sc1 exactly (one pair for the whole group)', () => {
     const group = normalizeTiles({
       mode: 'sc1',

@@ -7,6 +7,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Black is always the background in an imported picture.** In SCREEN 1/2/4
+  a row that keeps black now has black as its paper and the other colour as
+  its ink; it used to be ink whenever it was the most used colour, so most of
+  a picture on black came in as black ink, and game code recolouring ink
+  recoloured the black too. An all-black row is now no ink on black paper
+  (`0xF1`, like a new row). The picture looks exactly the same: on a test
+  logo, every dot and the tile count are unchanged, and black ink went from
+  1,725 of 2,048 rows to none. Tile imports, map imports, pose sheets,
+  switching a map between banked and repeated, and rotating a tile follow it;
+  in SCREEN 4 a tileset or map import takes the palette's black entry.
+  Software sprite exports keep their old bytes. Art imported before keeps
+  black as ink until it is imported again, so a new meta-tile may not share a
+  tile with older art that looks the same: that costs a tile, never a wrong
+  picture.
+
 ## [0.3.8] - 2026-11-17
 
 ### Added

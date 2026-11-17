@@ -176,6 +176,19 @@ describe('cellEntry', () => {
     expect(cell.pixels[0]).toBe(15)
     expect(cell.pixels[1]).toBe(4)
   })
+
+  it('makes black the paper in every mode, even as the most used colour', () => {
+    const input = new Uint8Array(64).fill(1)
+    input[0] = 15
+    const sc2 = cellEntry(input, 'sc2')
+    expect(sc2.entry.color[0]).toBe(0xf1)
+    expect(sc2.entry.pattern.slice(0, 2)).toEqual([0x80, 0])
+    const sc1 = cellEntry(input, 'sc1')
+    expect(sc1.pair).toBe(0xf1)
+    expect(sc1.entry.pattern.slice(0, 2)).toEqual([0x80, 0])
+    expect(Array.from(sc1.pixels)).toEqual(Array.from(input))
+    expect(cellEntry(input, 'sc1', null).pair).toBe(0x1f)
+  })
 })
 
 describe('pictures', () => {
@@ -240,6 +253,18 @@ describe('placePicture', () => {
     expect(result.grid.tiles.slice(0, 4)).toEqual([1, 0, 2, 2])
     expect(result.grid.tiles.slice(4)).toEqual([0, 0, 0, 0])
     expect(tilePixels(result.tiles, 2).every((v) => v === 5)).toBe(true)
+  })
+
+  it("takes the tileset palette's black as the paper", () => {
+    const palette = Array.from({ length: 16 }, (_, i) => (i === 4 ? 0 : 0x49))
+    const tiles = normalizeTiles({ mode: 'sc4', count: 1, palette })
+    const grid = { width: 1, height: 1, tiles: [0] }
+    const pic = solid(1, 1, () => 4)
+    pic[0] = 9
+    const result = placePicture(grid, tiles, pic, 1, 1)
+    const placed = result.tiles.tiles[result.grid.tiles[0]]
+    expect(placed.color[0]).toBe(0x94)
+    expect(placed.pattern.slice(0, 2)).toEqual([0x80, 0])
   })
 
   it('only touches the cells it was given', () => {

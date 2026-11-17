@@ -357,7 +357,9 @@ function tiledFrameBytes(pixels: Uint8Array, width: number, height: number): Uin
           cell[y * TILE_SIZE + x] = pixels[(cy * TILE_SIZE + y) * width + cx * TILE_SIZE + x] ?? 0
         }
       }
-      const entry = tileFromPixels(cell)
+      // `black: null`: an export re-encodes art nobody touched, so it keeps the
+      // most-used-is-ink rule its bytes always had; the dots are the same either way.
+      const entry = tileFromPixels(cell, { black: null })
       for (let y = 0; y < TILE_SIZE; y++) out[at + y] = entry.pattern[y]
       for (let y = 0; y < TILE_SIZE; y++) out[at + TILE_SIZE + y] = entry.color[y]
       at += TILE_SIZE * 2

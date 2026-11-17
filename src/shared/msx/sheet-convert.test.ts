@@ -118,6 +118,13 @@ describe('cells into poses', () => {
     expect(result.doc.frames.map((frame) => frame.tiles[0].pattern[0])).toEqual([0xe0, 0xf8])
   })
 
+  it('SCREEN 1 poses take black as the paper when black is one of the two', () => {
+    const result = cellsToTileAnim('sc1', [cell(8, 8, (x) => (x < 3 ? 11 : 1)), cell(8, 8, (x) => (x < 2 ? 11 : 1))])
+    if (typeof result === 'string') throw new Error(result)
+    expect(result.doc.pair).toBe(0xb1)
+    expect(result.doc.frames.map((frame) => frame.tiles[0].pattern[0])).toEqual([0xe0, 0xc0])
+  })
+
   it('a meta-tile: a tile transparent in every pose is see-through; one that moves into it is not', () => {
     // 2×2 tiles. Top-right empty in both poses; bottom-right empty in pose 0 only.
     const pose = (reach: boolean) => cell(16, 16, (x, y) => (x < 8 ? 6 : y >= 8 && reach ? 6 : 0))

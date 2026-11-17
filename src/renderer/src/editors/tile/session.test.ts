@@ -131,6 +131,20 @@ describe('importImage with banks', () => {
     expect(session.status).toMatch(/Imported into three banks — 2\/2\/2 tiles/)
   })
 
+  it('a black third is black paper, never the see-through tile 0', async () => {
+    files[PATH] = serializeResource({ kind: 'tiles', doc: normalizeTiles({ mode: 'sc2', count: 8, reserveTile0: true }) })
+    const session = tileSession(PATH)
+    await settled()
+    const black = screen()
+    black.indices.fill(1, 0, 256 * 64)
+    await importImage(session, black, 'replace', false, 'banked')
+
+    const written = useTilesetStore().patternDoc(PATH)!
+    const map = parseResource('res/main.map.json', files['res/main.map.json']).doc as MapDoc
+    expect(map.layers[0].data[0]).toBe(1)
+    expect(written.bankTiles[0][1]).toEqual({ pattern: new Array(8).fill(0), color: new Array(8).fill(0xf1) })
+  })
+
   it('a banked merge is refused: banks are rebuilt whole', async () => {
     const session = tileSession(PATH)
     await settled()

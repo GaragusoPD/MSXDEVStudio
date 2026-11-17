@@ -30,6 +30,7 @@ import { useResourcesStore } from '../../stores/resourcesStore'
 import {
   bankTileAt,
   BANK_COUNT,
+  blackIndex,
   blankTileEntry,
   blockPixels,
   colorByteAt,
@@ -314,7 +315,12 @@ export async function importImage(
   // Decided before anything is removed: a refusal must leave the tileset as it was.
   const sharedStart = MAX_TILES - session.doc.sharedTiles
   const shared = session.doc.tiles.slice(sharedStart, MAX_TILES).map((entry) => entry ?? blankTileEntry(session.doc.mode))
-  const chosen = packChosen(result.indices, result.width, result.height, session.doc.mode, mode === 'merge' ? 'repeat' : banks, { dedup, shared })
+  const chosen = packChosen(result.indices, result.width, result.height, session.doc.mode, mode === 'merge' ? 'repeat' : banks, {
+    dedup,
+    shared,
+    // The black of the palette the tileset ends up with: sc4 may adopt the converter's.
+    black: blackIndex(session.doc.mode === 'sc4' ? (result.palette ?? session.doc.palette) : null)
+  })
   if (typeof chosen === 'string') {
     session.status = chosen
     return

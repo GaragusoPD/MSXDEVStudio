@@ -31,7 +31,7 @@ import {
   type SpriteSize
 } from './sprite'
 import { createTileAnimDoc, DEFAULT_ANIM_DURATION, MAX_ANIM_CELLS, type TileAnimDoc, type TileAnimFrame } from './tile-anim'
-import { mergeColorByte, TILE_SIZE, type TileBlock, type TileEntry, type TilesDoc } from './tile'
+import { BLACK, mergeColorByte, TILE_SIZE, type TileBlock, type TileEntry, type TilesDoc } from './tile'
 import type { TileMode } from './modes'
 import { encodeIndices } from './screen'
 import { MAX_SW_FRAMES, MAX_SW_SIZE, snapSize, type SwMode, type SwSpriteChar } from './swsprite'
@@ -162,12 +162,15 @@ export function selectionPicture(cells: readonly SheetCell[], at: readonly { col
  * SCREEN 1 holds one ink/paper pair per group of eight tiles, so a pose
  * document holds one for all its poses: the two colours used most across every
  * cell. Each dot is then ink unless it is the paper colour.
+ *
+ * The paper is black when black is one of the two (as in every import,
+ * `inkAndPaper`), else transparent when any dot is, else the second most used.
  */
 function sc1Pair(cells: readonly SheetCell[]): { fg: number; bg: number } {
   const counts = new Map<number, number>()
   for (const cell of cells) for (const value of cell.indices) counts.set(value & 0x0f, (counts.get(value & 0x0f) ?? 0) + 1)
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([value]) => value)
-  const bg = ranked.includes(0) ? 0 : (ranked[1] ?? 0)
+  const bg = ranked.slice(0, 2).includes(BLACK) ? BLACK : ranked.includes(0) ? 0 : (ranked[1] ?? 0)
   const fg = ranked.find((value) => value !== bg) ?? 15
   return { fg, bg }
 }

@@ -13,6 +13,7 @@
 import type { TileMode } from './msx/modes'
 import { MSX1_PALETTE_GRB } from './msx/palette'
 import {
+  blackIndex,
   blockTileAt,
   MAX_BLOCK,
   MAX_TILES,
@@ -292,7 +293,7 @@ export function transformTile(
         for (let y = 0; y < TILE_SIZE; y++) {
           for (let x = 0; x < TILE_SIZE; x++) rotated[y * TILE_SIZE + x] = source[(7 - x) * TILE_SIZE + y]
         }
-        const fitted = tileFromPixels(rotated)
+        const fitted = tileFromPixels(rotated, { black: blackIndex(doc.palette) })
         pattern.splice(0, TILE_SIZE, ...fitted.pattern)
         color.splice(0, TILE_SIZE, ...fitted.color)
         lossyRows = fitted.lossyRows

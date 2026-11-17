@@ -201,6 +201,15 @@ gray or white. **Dither: Floyd–Steinberg** or **Bayer 4×4** then mixes those 
 colours only, which is how a mid gray becomes black and white dots. Dithering
 costs tiles: almost every dithered cell is a tile of its own.
 
+**Black is always the background.** Whenever a row keeps black, black is its
+paper and the other colour its ink, even where black is most of the row; an
+all-black row is no ink on black paper, exactly like a new tile's row. So
+game code that recolours a tile's ink (a highlight, a coloured box) leaves the
+black around it alone. In SCREEN 4, a tileset or map import takes whichever
+palette entry is set to black (a pose sheet takes entry 1). The same holds for
+maps, pose sheets, switching a map's banks and rotating a tile; only the
+software sprite export keeps the bytes it always had.
+
 The dialog always takes the whole picture in, and is where you fit it to the
 hardware before anything reaches the tileset:
 
