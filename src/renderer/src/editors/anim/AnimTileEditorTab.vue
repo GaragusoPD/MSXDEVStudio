@@ -284,6 +284,7 @@ watch(
       <div class="centre">
         <AnimCanvas :session="session" />
         <AnimationBar
+          :key="path"
           :playing="session.playing"
           :background="session.background"
           :onion-skin="session.onionSkin"

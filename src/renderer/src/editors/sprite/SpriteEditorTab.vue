@@ -289,6 +289,7 @@ watch(
       </div>
 
       <AnimationBar
+        :key="path"
         v-model:playing="session.playing"
         v-model:background="session.background"
         v-model:onion-skin="session.onionSkin"

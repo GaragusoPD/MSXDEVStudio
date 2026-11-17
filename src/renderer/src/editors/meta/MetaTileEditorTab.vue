@@ -338,6 +338,7 @@ watch(
       <div class="centre">
         <MetaCanvas :session="session" />
         <AnimationBar
+          :key="path"
           :playing="session.playing"
           :background="session.background"
           :onion-skin="session.onionSkin"
