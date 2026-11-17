@@ -436,6 +436,18 @@ export function cellSize(session: MetaSession): { width: number; height: number 
 }
 
 /**
+ * One frame's size in dots, as `metaThumbnail` draws it: the tileset's own cell
+ * times the meta's tiles — not the mirrored `doc.cell`, which can be stale or
+ * absent. 8×8 cells when there is no sheet yet.
+ */
+export function frameDots(session: MetaSession): { width: number; height: number } {
+  const meta = doc(session)
+  const bitmap = bitmapTiles(session)
+  const cell = bitmap ?? meta.cell
+  return { width: meta.width * (cell?.width ?? 8), height: meta.height * (cell?.height ?? 8) }
+}
+
+/**
  * Applies a stroke to the current frame, in the meta's own pixel space.
  *
  * Both documents move: the meta gets a repointed cell, the tileset gets any

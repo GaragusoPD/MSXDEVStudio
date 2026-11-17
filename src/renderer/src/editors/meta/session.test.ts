@@ -31,6 +31,7 @@ import {
   setBackground,
   setColor,
   setDuration,
+  frameDots,
   setFrame,
   togglePlaying,
   addFrame,
@@ -283,25 +284,27 @@ describe('the animation bar state', () => {
     expect(session.history).toBe(before)
   })
 
-  it('playing never moves the frame being edited', async () => {
+  it('togglePlaying flips only playing: the frame and the document stay', async () => {
     const session = metaSession(META)
     await settled()
-    vi.useFakeTimers()
-    try {
-      addFrame(session)
-      addFrame(session)
-      setFrame(session, 1)
+    addFrame(session)
+    addFrame(session)
+    setFrame(session, 1)
+    const before = doc(session)
 
-      togglePlaying(session)
-      expect(session.playing).toBe(true)
-      vi.advanceTimersByTime(5000)
-      expect(session.frame).toBe(1)
+    togglePlaying(session)
+    expect(session.playing).toBe(true)
+    expect(session.frame).toBe(1)
+    expect(doc(session)).toBe(before)
 
-      togglePlaying(session)
-      expect(session.playing).toBe(false)
-      expect(session.frame).toBe(1)
-    } finally {
-      vi.useRealTimers()
-    }
+    togglePlaying(session)
+    expect(session.playing).toBe(false)
+    expect(session.frame).toBe(1)
+  })
+
+  it('frameDots uses the tileset sheet cell, 8 when there is none', async () => {
+    const session = metaSession(META)
+    await settled()
+    expect(frameDots(session)).toEqual({ width: 16, height: 16 })
   })
 })

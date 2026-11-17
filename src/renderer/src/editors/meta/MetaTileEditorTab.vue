@@ -31,6 +31,7 @@ import {
   canRedo,
   canUndo,
   doc,
+  frameDots,
   metaSession,
   pruneMetaSessions,
   redo,
@@ -78,13 +79,7 @@ const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
 ]
 
 const durations = computed(() => meta.value.frames.map((frame) => frame.duration))
-const frameSize = computed(() => {
-  const cell = meta.value.cell
-  return {
-    width: meta.value.width * (cell?.width ?? 8),
-    height: meta.value.height * (cell?.height ?? 8)
-  }
-})
+const frameSize = computed(() => frameDots(session.value))
 /** Every frame's art, and what draws it: the tileset's sheet changes under a frame that did not. */
 const artKey = computed(() => [
   meta.value.frames,
