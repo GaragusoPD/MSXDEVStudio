@@ -14,6 +14,8 @@ import type { AnimationBackground } from '../../../../shared/animation-playback'
 import { parseResource, serializeResource } from '../../../../shared/msx/resource'
 import { createSpritesDoc, type SpritesDoc } from '../../../../shared/msx/sprite'
 import {
+  addFrame as addFramePure,
+  cloneFrame as cloneFramePure,
   createHistory,
   pushHistory,
   redo as redoHistory,
@@ -197,6 +199,29 @@ export function moveFrame(session: SpriteSession, from: number, to: number): voi
   session.selection = { ...before, frame: to }
   clampSelection(session)
   session.hiddenLayers = hidden
+}
+
+/**
+ * A blank frame at the end of the selected sprite, as one undo step, and the
+ * new frame selected — as the pose and bitmap meta editors do. A refused add
+ * (no such sprite) leaves the selection alone.
+ */
+export function addFrame(session: SpriteSession): void {
+  const before = doc(session)
+  const sprite = session.selection.sprite
+  const next = addFramePure(before, sprite)
+  if (next === before) return
+  commit(session, next)
+  selectFrame(session, before.sprites[sprite].frames.length)
+}
+
+/** A copy of frame `index` right after it, as one undo step, and the copy selected. */
+export function cloneFrame(session: SpriteSession, index: number): void {
+  const before = doc(session)
+  const next = cloneFramePure(before, session.selection.sprite, index)
+  if (next === before) return
+  commit(session, next)
+  selectFrame(session, index + 1)
 }
 
 export function selectLayer(session: SpriteSession, index: number): void {

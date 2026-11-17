@@ -12,8 +12,6 @@ import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { paletteToRgb } from '../../../../shared/msx/palette'
 import { compositeFrame, type SpritesDoc } from '../../../../shared/msx/sprite'
 import {
-  addFrame,
-  cloneFrame,
   mirrorLayer,
   removeFrame,
   scanlineBudget,
@@ -32,8 +30,10 @@ import SpriteList from './SpriteList.vue'
 import Icon from '../../components/Icon.vue'
 import { isTypingTarget } from '../../commands'
 import {
+  addFrame,
   canRedo,
   canUndo,
+  cloneFrame,
   commit,
   doc,
   moveFrame,
@@ -299,8 +299,8 @@ watch(
         :draw-frame="drawFrame"
         :art-key="artKey"
         @select="selectFrame(session, $event)"
-        @add="editFrames((sheet, i) => addFrame(sheet, i))"
-        @duplicate="(index) => editFrames((sheet, i) => cloneFrame(sheet, i, index))"
+        @add="addFrame(session)"
+        @duplicate="cloneFrame(session, $event)"
         @remove="(index) => editFrames((sheet, i) => removeFrame(sheet, i, index))"
         @move="(from, to) => moveFrame(session, from, to)"
         @duration="(index, value) => editFrames((sheet, i) => setFrameDuration(sheet, i, index, value))"
