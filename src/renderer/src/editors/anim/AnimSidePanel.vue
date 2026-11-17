@@ -6,7 +6,7 @@
  * Readouts of session state and calls into it — every decision is in
  * `./session`, which is tested; this file is not.
  */
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { ANIM_LOOPS, type AnimLoop } from '../../../../shared/msx/tile'
 import { MAX_ANIM_CELLS } from '../../../../shared/msx/tile-anim'
@@ -45,6 +45,19 @@ const allDurations = computed(() => {
   const first = anim.value.frames[0]?.duration ?? 8
   return anim.value.frames.every((frame) => frame.duration === first) ? first : null
 })
+
+/**
+ * `valueAsNumber`, not `Number(value)`: an emptied field is NaN, which the
+ * session ignores, where `Number('')` is 0 and would set every pose to 1. The
+ * field then shows what the poses hold — Vue leaves it alone when the bound
+ * value did not move, so a refused or clamped entry would otherwise stay typed.
+ */
+async function setAllDurations(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  setDuration(props.session, null, input.valueAsNumber)
+  await nextTick()
+  input.value = String(allDurations.value ?? '')
+}
 
 function openTileset(path: string): void {
   tabsStore.openFile(path, path.split('/').pop() ?? path)
@@ -189,7 +202,7 @@ function openTileset(path: string): void {
           max="255"
           :value="allDurations ?? ''"
           :placeholder="allDurations === null ? 'mixed' : ''"
-          @change="setDuration(session, null, Number(($event.target as HTMLInputElement).value))"
+          @change="setAllDurations"
         ></label>
       </div>
       <p class="hint">

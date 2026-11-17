@@ -149,6 +149,20 @@ describe('the animation editor', () => {
     expect(doc(session).frames.map((f) => f.duration)).toEqual([3, 3])
   })
 
+  it('an emptied "All" box (no number) changes no pose and adds no undo step', async () => {
+    const session = await open()
+    const before = session.history
+    // What the side panel's emptied field reads as: valueAsNumber is NaN.
+    setDuration(session, null, Number.NaN)
+    setDuration(session, 0, Number.NaN)
+    expect(doc(session).frames.map((f) => f.duration)).toEqual([4, 6])
+    expect(session.history).toBe(before)
+    expect(session.dirty).toBe(false)
+    // A real number is still clamped into a byte, 0 included.
+    setDuration(session, null, 0)
+    expect(doc(session).frames.map((f) => f.duration)).toEqual([1, 1])
+  })
+
   it('stores a bar duration of 999 as 255, in one undo step', async () => {
     const session = await open()
     const before = session.history.past.length

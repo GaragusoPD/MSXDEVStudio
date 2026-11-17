@@ -23,7 +23,7 @@
  */
 
 import { shallowReactive } from 'vue'
-import { frameAtTick, type AnimationBackground } from '../../../../shared/animation-playback'
+import { frameAtTick, parseDuration, type AnimationBackground } from '../../../../shared/animation-playback'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
 import { isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import {
@@ -33,7 +33,6 @@ import {
   DEFAULT_ANIM_DURATION,
   frameTiles,
   MAX_ANIM_CELLS,
-  MAX_ANIM_DURATION,
   MAX_ANIM_FRAMES,
   normalizeTileAnim,
   withFrameTiles,
@@ -414,9 +413,14 @@ export function moveFrame(session: AnimSession, from: number, to: number): void 
   session.frame = to
 }
 
-/** How many frames (VBlanks) pose `index` is held, or every pose when `index` is null. */
+/**
+ * How many frames (VBlanks) pose `index` is held, or every pose when `index` is
+ * null — clamped to 1..255. Not a number (an emptied field) changes nothing:
+ * clamped, it would quietly set every pose to 1.
+ */
 export function setDuration(session: AnimSession, index: number | null, duration: number): void {
-  const value = Math.max(1, Math.min(MAX_ANIM_DURATION, Math.round(duration) || 1))
+  const value = parseDuration(duration)
+  if (value === null) return
   const current = doc(session)
   const frames = current.frames.map((frame, i) => (index === null || i === index ? { ...frame, duration: value } : frame))
   if (frames.every((frame, i) => frame.duration === current.frames[i].duration)) return
