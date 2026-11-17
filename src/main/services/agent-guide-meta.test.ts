@@ -16,9 +16,9 @@ import { normalizeProject } from '../../shared/msxproj'
 import { normalizeBitmapTiles, sheetCols } from '../../shared/msx/bitmap-tile'
 import { addMetaRef, metaRefFrom, normalizeMap, placeMeta, setLayerIndexed, setPlacementBaked } from '../../shared/msx/map'
 import { normalizeOwnedMeta, resolveMeta } from '../../shared/msx/meta-owned'
-import { createMetaTileDoc } from '../../shared/msx/meta-tile'
+import { createMetaTileDoc, normalizeMetaTile } from '../../shared/msx/meta-tile'
 import { paintBitmapMeta } from '../../shared/msx/meta-paint'
-import { defaultExport, renderResourceFiles, type ResourceDoc } from '../../shared/msx/resource'
+import { defaultExport, renderResourceFiles, serializeResource, type ResourceDoc } from '../../shared/msx/resource'
 import { createLayer, normalizeSprites } from '../../shared/msx/sprite'
 import { normalizeTiles } from '../../shared/msx/tile'
 import { LOOP_CODE } from '../../shared/msx/tile-anim'
@@ -147,6 +147,31 @@ describe('the guide teaches what the exporter emits', () => {
     }
     expect(taught).toContain('No helper is emitted that steps it')
     expect(guide('1')).not.toContain('g_Rock_Durations')
+  })
+
+  it("the frame-timing example includes the meta's own header, which the map's does not", () => {
+    const meta = defaultExport('res/rock.meta-btiles.json').out
+    const map = defaultExport('res/stage.map.json').out
+    const taught = guide('2')
+    expect(taught).toContain(`#include "${meta}"`)
+    expect(taught).toContain(`#include "${map}"`)
+    // The map mirrors what it needs from each meta rather than including it.
+    const mapExport = render(bitmapMap(), 'res/stage.map.json', 'g_Stage')
+    expect(mapExport).not.toMatch(/#include "[^"]*rock/)
+    expect(mapExport).not.toContain('g_Rock_Durations')
+    // The restore-beneath advice names a helper a bitmap map really has.
+    expect(mapExport).toContain('void g_Stage_DrawRow(const u8* layer, u8 row, UY atlasY, UY destY)')
+    expect(taught).toContain('with the map\'s `_DrawRow` (above), then `_DrawPlacements`')
+  })
+
+  it('the bitmap meta JSON the guide shows is what the editor writes, and an old file reads as 8', () => {
+    const old = normalizeMetaTile({ tileset: 'res/canyon.btiles.json', width: 1, height: 1, frames: [{ tiles: [1] }] })
+    expect(old.frames[0].duration).toBe(8)
+    expect(serializeResource({ kind: 'metabtiles', doc: old })).toMatch(/"duration": 8/)
+    const taught = guide('2')
+    expect(taught).toContain('`"frames": [{ "tiles": […], "duration": 8 }, …]`')
+    expect(taught).toContain('reads as 8 for every frame')
+    expect(guide('1')).not.toContain('"tiles": […], "duration"')
   })
 
   it('the bitmap placement helper takes the atlas position', () => {

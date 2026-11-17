@@ -1308,14 +1308,22 @@ ROM target; the helper clamps an out-of-range index back to frame 0, so the
 worst case is a wrong pose rather than whatever byte followed in ROM, but a
 zeroed array is the actual fix.
 
-Each frame of a bitmap meta carries a duration (VBlanks, 1–255), exported as
+Each frame of a bitmap meta carries a \`"duration"\` in VBlanks, 1–255 (default
+8), set under each frame in the editor's animation bar:
+\`"frames": [{ "tiles": […], "duration": 8 }, …]\`. A file saved before frames
+had durations reads as 8 for every frame. They are exported as
 \`g_Rock_Durations\` — one byte per frame, after the frames table, and only when
-the meta has more than one frame. **No helper is emitted that steps it**: you
-keep one tick byte per animated meta and advance \`frames[slot]\` when it runs
-out. Here the stage places one animated rock at slot 0 (\`G_ROCK_FRAMES\` is its
-frame count):
+the meta has more than one frame — in the **meta's own header**, which the
+map's header does not include: include both.
+**No helper is emitted that steps it**: you keep one tick byte per animated
+meta and advance \`frames[slot]\` when it runs out. Here the stage places one
+animated rock at slot 0 (\`G_ROCK_FRAMES\` is its frame count):
 
 \`\`\`c
+#include "msxgl.h"
+#include "content/rock_metabtiles.h"  // the meta's: g_Rock_Durations, G_ROCK_FRAMES
+#include "content/stage_map.h"        // the map's: G_STAGE_METAS, g_Stage_DrawPlacements
+
 static u8 frames[G_STAGE_METAS];      // the frame each placed meta shows
 static u8 ticks;                      // VBlanks the rock has been on its frame
 
@@ -1330,10 +1338,16 @@ while(1)
     {
         ticks = 0;
         frames[0] = (frames[0] + 1) % G_ROCK_FRAMES;
-        g_Stage_DrawPlacements(frames, ATLAS_Y);   // redraw with the new frame
+        g_Stage_DrawPlacements(frames, ATLAS_Y);   // over the old frame: an opaque rock only
     }
 }
 \`\`\`
+
+That draws the new frame over the old one, which is right only for an opaque
+meta. A see-through one — cells holding tile 0, which are not blitted, or
+colour 0 copied with TIMP — keeps the old frame's dots wherever the new frame
+is clear, so put back what is beneath it first: redraw the map rows it covers
+with the map's \`_DrawRow\` (above), then \`_DrawPlacements\`.
 
 Two kinds of transparency, and they compose. A cell holding tile 0 is not
 blitted at all. If the tileset nominates **colour 0** as transparent, the copy
