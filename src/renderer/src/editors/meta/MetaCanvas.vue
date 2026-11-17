@@ -13,12 +13,10 @@
  * solid colour would make transparency invisible until the game ran.
  */
 import { computed, ref, watchEffect } from 'vue'
-import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
-import { tileImage } from '../../../../shared/msx/bitmap-tile'
-import { frameTileAt } from '../../../../shared/msx/meta-tile'
+import { toHex } from '../../../../shared/msx/palette'
 import { sprayPoints } from '../../../../shared/msx/meta-paint'
 import { fillPoints, linePoints, rectPoints, type Point } from '../../../../shared/tile-editor'
-import { beginStroke, bitmapTiles, cellSize, doc, endStroke, paint, type MetaSession } from './session'
+import { beginStroke, cellSize, doc, endStroke, framePalette, framePixels as composeFrame, paint, type MetaSession } from './session'
 
 const props = defineProps<{ session: MetaSession }>()
 
@@ -39,34 +37,14 @@ const rows = computed(() => meta.value.height * cellPx.value.height)
 const step = computed(() => Math.max(2, props.session.zoom))
 const width = computed(() => cols.value * step.value)
 const height = computed(() => rows.value * step.value)
-const rgb = computed(() =>
-  paletteToRgb(bitmapTiles(props.session)?.palette ?? null)
-)
+const rgb = computed(() => framePalette(props.session))
 
 /**
- * One frame composed into palette indices, with transparent cells left at 0.
- *
- * Index 0 is ambiguous on its own — it is both "the transparent tile" and "the
- * transparent colour" — but they render the same way, so the canvas does not
- * need to tell them apart.
+ * One frame composed into palette indices, see-through dots at 0 — the same
+ * composition the animation bar previews, from `./session`.
  */
 function framePixels(frame: number): Uint8Array {
-  const out = new Uint8Array(cols.value * rows.value)
-  const bitmap = bitmapTiles(props.session)
-  if (!bitmap) return out
-  const { width: cw, height: ch } = cellPx.value
-  for (let cy = 0; cy < meta.value.height; cy++) {
-    for (let cx = 0; cx < meta.value.width; cx++) {
-      const tile = frameTileAt(meta.value, frame, cx, cy)
-      // Tile 0 is the hole: left at index 0 so the checkerboard shows through.
-      if (tile === 0) continue
-      const pixels = tileImage(bitmap, tile)
-      for (let y = 0; y < ch; y++) {
-        out.set(pixels.subarray(y * cw, y * cw + cw), (cy * ch + y) * cols.value + cx * cw)
-      }
-    }
-  }
-  return out
+  return composeFrame(props.session, frame).indices
 }
 
 function pointAt(event: PointerEvent): Point {

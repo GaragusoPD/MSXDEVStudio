@@ -6,6 +6,8 @@ import { normalizeProject } from '../../shared/msxproj'
 import { normalizeMap } from '../../shared/msx/map'
 import { normalizeWorld, worldHelperC } from '../../shared/msx/world'
 import { agentGuideFiles } from './agent-guide'
+import { buildReport } from './mcp'
+import { conversionProblems } from './resources'
 
 const guide = (machine: string): string =>
   agentGuideFiles(normalizeProject({ name: 'mygame', machine, target: 'ROM_32K' }, 'mygame'), '/home/me/MSXgl')[0]
@@ -118,6 +120,45 @@ describe('agentGuideFiles', () => {
   it('warns a dual-machine project that mode 2 is not everywhere', () => {
     expect(guide('12')).toContain('which includes MSX1')
     expect(guide('2')).not.toContain('which includes MSX1')
+  })
+
+  it('says which files are resources, that two may not share an output, and that a failed export is a Problem', () => {
+    for (const machine of ['1', '2']) {
+      const text = guide(machine)
+      expect(text).toContain('Anything whose name starts with a dot is not a resource')
+      expect(text).toContain('`.scratch/old.tiles.json`')
+      expect(text).toContain('No two resources may write the same file')
+      expect(text).toContain('A failed export is an error in the Problems panel')
+      // ./build.sh is MSXgl's own script: it never runs the exporter.
+      expect(text).toContain('`./build.sh` exports nothing')
+    }
+  })
+
+  it('tells an agent that animated metas and animations need an export target of their own', () => {
+    for (const machine of ['1', '2']) {
+      const text = guide(machine)
+      expect(text).toContain('An animated meta-tile needs an export target of its own')
+      expect(text).toContain('an attached animation needs an export target of its own')
+      expect(text).toContain('(`"format": "c"`)')
+    }
+  })
+
+  it('describes the MCP resource tools as they now behave', () => {
+    const text = guide('2')
+    // A failed export does not fail MSXgl: the build result's first line says
+    // so, and the guide quotes that line as buildReport writes it.
+    const failed = conversionProblems([{ kind: 'resource', input: 'res/a.tiles.json', out: 'content/a.h', status: 'failed', message: 'x' }])
+    const verdict = buildReport({ ok: true, code: 0, artifacts: [], problems: failed, message: null }, []).split('\n')[0]
+    expect(text).toContain(`"${verdict.split(' — ')[0]}`)
+    expect(text).toContain('comes back as an error')
+    // A clash of output files is one of the problems read_resource reports, not only an export's.
+    expect(text).not.toContain('show up only')
+    expect(text).toContain('any other\n  resource writing its `out`) by the same code `export_resources` runs')
+    // Mirrors refreshed, sibling keys kept, a new file's default export.
+    expect(text).toContain("a\n  map's `metas` entries are rebuilt from each meta-tile and its attachment")
+    expect(text).toContain("`tilesetReorderSeen` and a tileset's `reorderLog` come back")
+    expect(text).toContain('`"export": null` means none')
+    expect(text).toContain('Rewriting an existing map through\n`write_resource` keeps the stamp the file already has')
   })
 
   it('only offers screen compression where screens exist', () => {

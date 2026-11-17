@@ -14,30 +14,43 @@
  */
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { isTypingTarget } from '../../commands'
-import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
+import { MAX_FRAMES, MAX_META_SIZE, type MetaFrame } from '../../../../shared/msx/meta-tile'
 import type { TileTool } from '../../../../shared/tile-editor'
 import type { MaterialSymbol } from '@material-symbols/font-400'
+import AnimationBar from '../../components/AnimationBar.vue'
 import Icon from '../../components/Icon.vue'
+import { metaThumbnail } from '../map/sheet'
 import MetaCanvas from './MetaCanvas.vue'
-import MetaFrameBar from './MetaFrameBar.vue'
 import MetaSidePanel from './MetaSidePanel.vue'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
 import {
+  addFrame,
   bitmapTiles,
   canRedo,
   canUndo,
   doc,
+  frameDots,
+  frameRgba,
   metaSession,
   pruneMetaSessions,
   redo,
   reloadTileset,
+  removeFrame,
+  reorderFrames,
   saveSession,
+  setBackground,
   setBrush,
   setColor,
+  setDuration,
   setFilledRect,
+  setFrame,
+  setGridVisible,
+  setOnionSkin,
   setTool,
   setZoom,
+  sheet,
+  togglePlaying,
   undo,
   type MetaSession
 } from './session'
@@ -64,6 +77,71 @@ const TOOLS: { id: TileTool; icon: MaterialSymbol; title: string }[] = [
   { id: 'fill', icon: 'format_color_fill', title: 'Fill' },
   { id: 'spray', icon: 'blur_on', title: 'Spray (ordered dither)' }
 ]
+
+const durations = computed(() => meta.value.frames.map((frame) => frame.duration))
+const frameSize = computed(() => frameDots(session.value))
+/** Every frame's art, and what draws it: the tileset (or the atlas) changes under a frame that did not. */
+const artKey = computed(() => [
+  meta.value.frames,
+  meta.value.width,
+  meta.value.height,
+  meta.value.cell,
+  bitmapTiles(session.value),
+  session.value.atlas
+])
+
+/**
+ * One 1:1 image per frame, kept while neither that frame nor what it is drawn
+ * from changes: the bar redraws its preview on every frame of playback, and a
+ * meta may have 255 frames to thumbnail. A plain Map, not reactive, because
+ * `drawFrame` runs inside the bar's effects.
+ */
+let frameImages = new Map<number, { frame: MetaFrame; source: object; canvas: HTMLCanvasElement }>()
+let frameImagesShape = ''
+
+/**
+ * A bitmap tileset's frame is drawn from `frameRgba`, the composition the
+ * canvas paints, so colour 0 and tile-0 cells stay clear and the bar's
+ * background shows through them as the canvas's checkerboard does. An atlas
+ * (which the canvas does not draw) keeps its copy out of the picture's sheet.
+ */
+function frameImage(index: number): HTMLCanvasElement | null {
+  const current = meta.value
+  const frame = current.frames[index]
+  const bitmap = bitmapTiles(session.value)
+  const atlas = bitmap ? null : sheet(session.value)
+  const source = bitmap ?? atlas
+  if (!frame || !source) return null
+  const shape = `${current.width}x${current.height}`
+  if (frameImagesShape !== shape) {
+    frameImages = new Map()
+    frameImagesShape = shape
+  }
+  const cached = frameImages.get(index)
+  if (cached && cached.frame === frame && cached.source === source) return cached.canvas
+  const canvas = atlas ? metaThumbnail(atlas, current, index) : rgbaCanvas(frameRgba(session.value, index))
+  frameImages.set(index, { frame, source, canvas })
+  return canvas
+}
+
+function rgbaCanvas(rgba: { width: number; height: number; data: Uint8ClampedArray }): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, rgba.width)
+  canvas.height = Math.max(1, rgba.height)
+  const ctx = canvas.getContext('2d')
+  if (!ctx || !rgba.width || !rgba.height) return canvas
+  const image = new ImageData(rgba.width, rgba.height)
+  image.data.set(rgba.data)
+  ctx.putImageData(image, 0, 0)
+  return canvas
+}
+
+function drawFrame(ctx: CanvasRenderingContext2D, index: number, scale: number): void {
+  const image = frameImage(index)
+  if (!image) return
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(image, 0, 0, image.width * scale, image.height * scale)
+}
 
 /** A meta with no tileset yet has nothing to paint into. */
 const paintable = computed(() => Boolean(bitmapTiles(session.value)))
@@ -259,7 +337,40 @@ watch(
     <div class="body">
       <div class="centre">
         <MetaCanvas :session="session" />
-        <MetaFrameBar :session="session" />
+        <AnimationBar
+          :key="path"
+          :playing="session.playing"
+          :background="session.background"
+          :onion-skin="session.onionSkin"
+          :frame-count="meta.frames.length"
+          :selected="session.frame"
+          :durations="durations"
+          loop="loop"
+          :frame-size="frameSize"
+          :draw-frame="drawFrame"
+          :art-key="artKey"
+          :max-frames="MAX_FRAMES"
+          @update:playing="togglePlaying(session)"
+          @update:background="setBackground(session, $event)"
+          @update:onion-skin="setOnionSkin(session, $event)"
+          @select="setFrame(session, $event)"
+          @add="addFrame(session)"
+          @duplicate="addFrame(session, $event)"
+          @remove="removeFrame(session, $event)"
+          @move="(from, to) => reorderFrames(session, from, to)"
+          @duration="(index, value) => setDuration(session, index, value)"
+        >
+          <template #extra>
+            <label class="grid-toggle">
+              <input
+                type="checkbox"
+                :checked="session.gridVisible"
+                @change="setGridVisible(session, ($event.target as HTMLInputElement).checked)"
+              >
+              <span>Grid</span>
+            </label>
+          </template>
+        </AnimationBar>
       </div>
       <MetaSidePanel :session="session" />
     </div>
@@ -338,6 +449,12 @@ watch(
   flex: 1;
   flex-direction: column;
   min-width: 0;
+}
+
+.grid-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .banner {

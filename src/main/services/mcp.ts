@@ -23,13 +23,14 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
-import type { BuildCommand, BuildFinished, ConversionResult, FsEntry, OpenProject, ResourceEntry } from '../../shared/ipc'
+import type { BuildCommand, BuildFinished, BuildProblem, ConversionResult, FsEntry, OpenProject, ResourceEntry } from '../../shared/ipc'
 import {
+  defaultExport,
   parseResource,
   RESOURCE_SUFFIXES,
   resourceKindOf,
   serializeResource,
-  validateResource,
+  type ResourceDoc,
   type ResourceKind
 } from '../../shared/msx/resource'
 import { tclNumbers, peekCommand, matrixKey, MATRIX_KEYS, type EmulatorStatus } from './emulator'
@@ -68,6 +69,12 @@ export interface McpDeps {
   readFile(path: string): Promise<string>
   writeFile(path: string, content: string): Promise<void>
   exists(path: string): Promise<boolean>
+  /**
+   * A resource as its export sees it (`inspectResource` in `resources.ts`): the
+   * problems the export would report, judged with every other file it reads, and
+   * the document with its mirrors of those files refreshed — not renumbered.
+   */
+  inspectResource(path: string, text: string): { resource: ResourceDoc; problems: string[] }
   renderer<M extends RendererMethod>(method: M, params: RendererCalls[M]['params']): Promise<RendererCalls[M]['result']>
   emulatorStart(options: { artifact?: string }): Promise<EmulatorStatus>
   emulatorCommand(tcl: string, timeoutMs?: number): Promise<string>
@@ -106,11 +113,42 @@ export function projectPath(path: string): string {
   return normalized
 }
 
+/**
+ * A resource that failed to export, among a build's problems: `conversionProblems`
+ * (`resources.ts`) numbers them `r<n>`, and MSXgl's own are `p<n>`. The id is
+ * the only thing in a `BuildFinished` that tells them apart.
+ */
+const isExportFailure = (problem: BuildProblem): boolean => /^r\d+$/.test(problem.id)
+
+/** How many resources failed to export before this build ran. */
+function exportFailures(result: BuildFinished): number {
+  return result.problems.filter(isExportFailure).length
+}
+
+/**
+ * The first line of a build report: MSXgl's verdict, and whether resources
+ * failed to export first. `ok` is MSXgl's alone, and a failed export does not
+ * stop the build — MSXgl compiles whatever header an earlier export left — so
+ * "Build succeeded." over a failed export reads as a success that is not
+ * running the new art (bug report item 4). Said without naming the cause: an
+ * `r<n>` is also an imgRule that failed, or a tileset that exported fine but
+ * that software sprites will overwrite (`swSpriteOverlapProblems`). A clean
+ * builds nothing, so it says nothing about what was built.
+ */
+function buildVerdict(result: BuildFinished, command: BuildCommand): string {
+  const failed = exportFailures(result)
+  if (!failed) return result.ok ? 'Build succeeded.' : `Build failed${result.message ? `: ${result.message}` : '.'}`
+  const exports = `${failed} resource export${failed === 1 ? '' : 's'} failed`
+  if (!result.ok) return `Build failed${result.message ? `: ${result.message}` : ''}; ${exports} before it.`
+  if (command === 'clean') return `Build succeeded, but ${exports}.`
+  return `Build succeeded, but ${exports} — the ROM may not match res/ (see the problems below).`
+}
+
 /** The BuildFinished an agent wants to read: the problems first, the output's tail after. */
-export function buildReport(result: BuildFinished, output: readonly string[], tail = 40): string {
+export function buildReport(result: BuildFinished, output: readonly string[], tail = 40, command: BuildCommand = 'build'): string {
   const errors = result.problems.filter((problem) => problem.severity === 'error')
   const lines = [
-    result.ok ? 'Build succeeded.' : `Build failed${result.message ? `: ${result.message}` : '.'}`,
+    buildVerdict(result, command),
     ...(result.artifacts.length ? [`Artifacts: ${result.artifacts.map((a) => `${a.path} (${a.size} bytes)`).join(', ')}`] : []),
     `Problems: ${result.problems.length} (${errors.length} error${errors.length === 1 ? '' : 's'})`,
     ...result.problems.map((p) => `  ${p.severity}: ${p.file ? `${p.file}${p.line ? `:${p.line}` : ''}: ` : ''}${p.message}`),
@@ -119,6 +157,33 @@ export function buildReport(result: BuildFinished, output: readonly string[], ta
     ...output.slice(-tail)
   ]
   return lines.join('\n')
+}
+
+/**
+ * Keys an editor writes *beside* a resource's document, which its normalizer
+ * drops: which tileset renumberings a map or a bitmap meta has seen, and a
+ * tileset's log of them (`editors/map/session.ts`, `editors/meta/session.ts`,
+ * `stores/tilesetStore.ts`). Lose the stamp and the build replays nothing; lose
+ * the log and no closed map follows the tileset's renumbering again.
+ */
+const SIBLING_KEYS: Partial<Record<ResourceKind, readonly string[]>> = {
+  map: ['tilesetReorderSeen'],
+  metabtiles: ['tilesetReorderSeen'],
+  tiles: ['reorderLog'],
+  btiles: ['reorderLog']
+}
+
+/** The sibling keys `raw` holds, exactly as it holds them. */
+function siblingKeys(kind: ResourceKind, raw: unknown): Record<string, unknown> {
+  const found: Record<string, unknown> = {}
+  if (typeof raw !== 'object' || raw === null) return found
+  for (const key of SIBLING_KEYS[kind] ?? []) if (key in raw) found[key] = (raw as Record<string, unknown>)[key]
+  return found
+}
+
+/** A serialized resource with its sibling keys after the document's own, where the editors put them. */
+function withSiblingKeys(serialized: string, siblings: Record<string, unknown>): string {
+  return Object.keys(siblings).length ? `${JSON.stringify({ ...JSON.parse(serialized), ...siblings }, null, 2)}\n` : serialized
 }
 
 /** Refuses when an editor holds unsaved changes to `path`. */
@@ -227,7 +292,10 @@ export function createMcpServer(deps: McpDeps, version: string): McpServer {
       title: 'Build',
       description:
         'Runs what the toolbar runs — export resources, then MSXgl: build, rebuild, clean, or run (build and launch the emulator the project prefers). ' +
-        'Waits for it to finish and returns the result, the problems and the tail of the output. The user sees it all in the IDE.',
+        'Waits for it to finish and returns the result, the problems and the tail of the output. The user sees it all in the IDE. ' +
+        'A resource that fails to export does not stop the build, and MSXgl then compiles the header its last good export left: ' +
+        'the first line says so ("Build succeeded, but 1 resource export failed — …"), the failures lead the problems, ' +
+        'and the result is an error even though MSXgl succeeded.',
       inputSchema: { command: z.enum(['build', 'rebuild', 'clean', 'run']).default('build') }
     },
     ({ command }) =>
@@ -235,7 +303,8 @@ export function createMcpServer(deps: McpDeps, version: string): McpServer {
         requireProject()
         if (deps.buildRunning()) throw new Error('A build is already running — wait for it, then ask again.')
         const result = await deps.build(command)
-        return { content: [{ type: 'text', text: buildReport(result, deps.buildOutput()) }], ...(result.ok ? {} : { isError: true }) }
+        const report = buildReport(result, deps.buildOutput(), 40, command)
+        return { content: [{ type: 'text', text: report }], ...(result.ok && !exportFailures(result) ? {} : { isError: true }) }
       })
   )
 
@@ -321,7 +390,11 @@ export function createMcpServer(deps: McpDeps, version: string): McpServer {
     {
       title: 'Read resource',
       description:
-        'A resource as the IDE reads it: normalized JSON (every field present, old files upgraded), its kind, and what its export would refuse.',
+        'A resource as the IDE reads it: normalized JSON (every field present, old files upgraded, and what it copies from other files — ' +
+        'a map\'s entries for the meta-tiles it places — refreshed from them), its kind, and what its export would refuse, ' +
+        'checked against the other files it uses, exactly as export_resources checks it. ' +
+        'The keys the IDE keeps beside a document — a map\'s tilesetReorderSeen, a tileset\'s reorderLog — come back as the file has them; ' +
+        'pass them back to write_resource unchanged.',
       inputSchema: { path: z.string().describe('e.g. res/level.map.json') },
       annotations: { readOnlyHint: true }
     },
@@ -329,14 +402,9 @@ export function createMcpServer(deps: McpDeps, version: string): McpServer {
       guarded(async () => {
         requireProject()
         const target = projectPath(path)
-        const resource = parseResource(target, await deps.readFile(target))
-        // A world's problems need its rooms, which only the export reads — say so rather than report them all missing.
-        const problems = resource.kind === 'world' ? null : validateResource(resource)
-        return text({
-          kind: resource.kind,
-          problems: problems ?? 'run export_resources on it to check the rooms',
-          doc: JSON.parse(serializeResource(resource))
-        })
+        const raw = await deps.readFile(target)
+        const { resource, problems } = deps.inspectResource(target, raw)
+        return text({ kind: resource.kind, problems, doc: JSON.parse(withSiblingKeys(serializeResource(resource), siblingKeys(resource.kind, JSON.parse(raw)))) })
       })
   )
 
@@ -346,7 +414,11 @@ export function createMcpServer(deps: McpDeps, version: string): McpServer {
       title: 'Write resource',
       description:
         'Writes a resource file through the IDE\'s own parser: the JSON is normalized (missing fields filled in, junk dropped) before it is saved, ' +
-        'and what its export would refuse comes back. Creates the file when it does not exist; the kind comes from the name (*.map.json, *.tiles.json, …). ' +
+        'what it copies from other files (a map\'s entries for the meta-tiles it places) is refreshed from them, ' +
+        'and what its export would refuse comes back. Creates the file when it does not exist; the kind comes from the name (*.map.json, *.tiles.json, …), ' +
+        'and a new file with no "export" key gets the export block create_resource would give it — send "export": null for none. ' +
+        'A map\'s tilesetReorderSeen and a tileset\'s reorderLog are kept: yours when the doc has one, the file\'s otherwise. ' +
+        'If you rebuild a map\'s grid from scratch in the tileset\'s current numbering, send tilesetReorderSeen set to the last reorderLog entry\'s at (or 0 when the log is empty), or the file\'s older stamp is kept and newer renumberings are replayed over your grid. ' +
         'An open editor reloads it. Refused when it is open with unsaved changes. Read it first with read_resource and change what you need.',
       inputSchema: {
         path: z.string().describe('e.g. res/level.map.json'),
@@ -360,10 +432,30 @@ export function createMcpServer(deps: McpDeps, version: string): McpServer {
         const kind = resourceKindOf(target)
         if (!kind) throw new Error(`${target} is not a resource name — it must end in one of ${Object.values(RESOURCE_SUFFIXES).join(', ')}`)
         await assertNotDirty(deps, target)
-        const resource = parseResource(target, JSON.stringify(doc))
-        await deps.writeFile(target, serializeResource(resource))
-        const problems = resource.kind === 'world' ? [] : validateResource(resource)
-        return text({ wrote: target, kind, problems })
+        const incoming = parseResource(target, JSON.stringify(doc))
+        const existing = await deps.exists(target)
+        // What every other way of making a resource does (`create_resource`, the
+        // Resources panel, a sheet import). Only when the key is absent: an
+        // explicit null is a choice. Without it, an animated meta-tile written
+        // here had nowhere to export its poses to.
+        if (!('export' in doc) && !existing) incoming.doc.export = defaultExport(target)
+        // Each one the agent sent, else the file's: an agent that rebuilt the doc
+        // from scratch must not wipe a log every closed map still has to replay.
+        let onDisk: Record<string, unknown> = {}
+        if (existing) {
+          try {
+            onDisk = siblingKeys(kind, JSON.parse(await deps.readFile(target)))
+          } catch {
+            // Unreadable: there is nothing of its to keep.
+          }
+        }
+        const siblings = { ...onDisk, ...siblingKeys(kind, doc) }
+        // The stamp is in the text the problems are judged on, since that is
+        // where the replay reads it: these are the problems of the file as saved.
+        const refreshed = deps.inspectResource(target, withSiblingKeys(serializeResource(incoming), siblings)).resource
+        const content = withSiblingKeys(serializeResource(refreshed), siblings)
+        await deps.writeFile(target, content)
+        return text({ wrote: target, kind, problems: deps.inspectResource(target, content).problems })
       })
   )
 

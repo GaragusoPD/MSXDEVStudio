@@ -7,11 +7,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { BuildFinished, OpenProject } from '../../shared/ipc'
+import type { BuildFinished, BuildProblem, ConversionResult, OpenProject } from '../../shared/ipc'
 import { normalizeMap } from '../../shared/msx/map'
-import { serializeResource } from '../../shared/msx/resource'
+import { defaultExport, parseResource, serializeResource } from '../../shared/msx/resource'
 import { defaultProject } from '../../shared/msxproj'
 import { buildReport, createMcpServer, projectPath, type McpDeps, type TabInfo } from './mcp'
+import { conversionProblems, inspectResource } from './resources'
 
 let files: Record<string, string>
 let tabs: TabInfo[]
@@ -53,6 +54,8 @@ beforeEach(() => {
       files[path] = content
     },
     exists: async (path) => path in files,
+    // The real thing, over a root with nothing in it: these resources name no other file.
+    inspectResource: (path, text) => inspectResource(PROJECT.root, path, text),
     renderer: (async (method: string, params: unknown) => {
       calls.push(`renderer:${method}:${JSON.stringify(params ?? null)}`)
       if (method === 'tabs') return tabs
@@ -130,6 +133,79 @@ describe('the MSXDEVStudio MCP tools', () => {
     expect(JSON.parse(files['res/new.map.json'])).toMatchObject({ version: 1, width: 4, height: 2, layers: [{ name: 'background' }] })
   })
 
+  it('gives a new resource the export block create_resource would — unless its doc says export: null', async () => {
+    const write = async (path: string, doc: Record<string, unknown>): Promise<unknown> => {
+      const result = await call('write_resource', { path, doc })
+      expect(result.isError, textOf(result)).toBeFalsy()
+      return JSON.parse(files[path]).export
+    }
+    expect(await write('res/forest.map.json', { tileset: 'res/t.tiles.json' })).toEqual(defaultExport('res/forest.map.json'))
+    expect(await write('res/notes.map.json', { tileset: 'res/t.tiles.json', export: null })).toBeNull()
+    // A file that is already there keeps what the agent sends: here, none.
+    expect(JSON.parse(files['res/level.map.json']).export).toBeNull()
+    expect(await write('res/level.map.json', { tileset: 'res/t.tiles.json' })).toBeNull()
+  })
+
+  describe('keys the editors keep beside the document', () => {
+    const LOG = [{ path: 'res/t.tiles.json', mapping: [1, 0], at: 20 }]
+    const stamped = (seen: unknown): string => JSON.stringify({ ...JSON.parse(files['res/level.map.json']), tilesetReorderSeen: seen })
+    const onDisk = (path: string): Record<string, unknown> => JSON.parse(files[path])
+    const read = async (path: string): Promise<Record<string, unknown>> => JSON.parse(textOf(await call('read_resource', { path }))).doc
+    const write = async (path: string, doc: Record<string, unknown>): Promise<void> => {
+      const result = await call('write_resource', { path, doc })
+      expect(result.isError, textOf(result)).toBeFalsy()
+    }
+
+    it('a map read and written back keeps its reorder stamp', async () => {
+      files['res/level.map.json'] = stamped(20)
+      const doc = await read('res/level.map.json')
+      expect(doc.tilesetReorderSeen).toBe(20)
+      await write('res/level.map.json', doc)
+      expect(onDisk('res/level.map.json').tilesetReorderSeen).toBe(20)
+    })
+
+    it('a tileset read and written back keeps its reorder log', async () => {
+      files['res/t.tiles.json'] = JSON.stringify({ mode: 'sc2', count: 2, reorderLog: LOG })
+      const doc = await read('res/t.tiles.json')
+      expect(doc.reorderLog).toEqual(LOG)
+      await write('res/t.tiles.json', doc)
+      expect(onDisk('res/t.tiles.json').reorderLog).toEqual(LOG)
+    })
+
+    it('a doc without one keeps the file’s; a doc with one wins; none is ever made up', async () => {
+      files['res/level.map.json'] = stamped(20)
+      await write('res/level.map.json', { tileset: 'res/t.tiles.json' })
+      expect(onDisk('res/level.map.json').tilesetReorderSeen).toBe(20)
+      await write('res/level.map.json', { tileset: 'res/t.tiles.json', tilesetReorderSeen: 30 })
+      expect(onDisk('res/level.map.json').tilesetReorderSeen).toBe(30)
+      await write('res/fresh.map.json', { tileset: 'res/t.tiles.json' })
+      expect('tilesetReorderSeen' in onDisk('res/fresh.map.json')).toBe(false)
+      expect('tilesetReorderSeen' in (await read('res/fresh.map.json'))).toBe(false)
+    })
+
+    it('covers every kind that carries one: maps and bitmap metas their stamp, both tileset kinds their log', async () => {
+      const cases: [string, string, unknown, Record<string, unknown>][] = [
+        ['res/a.map.json', 'tilesetReorderSeen', 7, { tileset: 'res/t.tiles.json' }],
+        ['res/b.meta-btiles.json', 'tilesetReorderSeen', 7, { tileset: 'res/t.btiles.json' }],
+        ['res/c.tiles.json', 'reorderLog', LOG, { mode: 'sc2' }],
+        ['res/d.btiles.json', 'reorderLog', LOG, {}]
+      ]
+      for (const [path, key, value, doc] of cases) {
+        files[path] = JSON.stringify({ ...doc, [key]: value })
+        await write(path, doc)
+        expect(onDisk(path)[key], path).toEqual(value)
+      }
+    })
+
+    it('returns the problems of the text it wrote, stamp included', async () => {
+      files['res/level.map.json'] = stamped(20)
+      // Problems that say which text they were judged on.
+      deps.inspectResource = (path, text) => ({ resource: parseResource(path, text), problems: [text] })
+      const result = JSON.parse(textOf(await call('write_resource', { path: 'res/level.map.json', doc: { tileset: 'res/t.tiles.json' } })))
+      expect(result.problems).toEqual([files['res/level.map.json']])
+    })
+  })
+
   it('refuses to write over an editor holding unsaved changes', async () => {
     tabs[0].dirty = true
     const result = await call('write_resource', { path: 'res/level.map.json', doc: {} })
@@ -180,9 +256,66 @@ describe('the MSXDEVStudio MCP tools', () => {
   })
 })
 
+/** Resources whose export failed, as the build reports them: through the real `conversionProblems`, so its ids are the ones `buildReport` sees. */
+const exportFailures = (...inputs: string[]): BuildProblem[] =>
+  conversionProblems(
+    inputs.map((input): ConversionResult => ({ kind: 'resource', input, out: 'content/x.h', status: 'failed', message: `${input}: no export target` }))
+  )
+const WARNING: BuildProblem = { id: 'p0', severity: 'warning', message: 'unreferenced function', file: 'main.c', line: 3 }
+/** A build MSXgl calls a success, with `problems` before its own warning. */
+const succeeded = (problems: BuildProblem[]): BuildFinished => ({
+  ok: true,
+  code: 0,
+  artifacts: [{ path: 'emul/rom/game.rom', size: 32768 }],
+  problems: [...problems, { ...WARNING, id: `p${problems.length}` }],
+  message: null
+})
+const firstLine = (report: string): string => report.split('\n')[0]
+
 describe('the build report', () => {
   it('leads with the verdict and the problems, and ends with the output’s tail', () => {
     const report = buildReport({ ...BUILT, ok: true, problems: [], artifacts: [{ path: 'out/game.rom', size: 32768 }], message: null }, ['a', 'b', 'c'], 2)
     expect(report.split('\n')).toEqual(['Build succeeded.', 'Artifacts: out/game.rom (32768 bytes)', 'Problems: 0 (0 errors)', '', 'Last 2 lines of output:', 'b', 'c'])
+  })
+
+  it('a success with failed resource exports says so in its first line, not only in the list below', () => {
+    expect(firstLine(buildReport(succeeded(exportFailures('res/a.tiles.json')), []))).toBe(
+      'Build succeeded, but 1 resource export failed — the ROM may not match res/ (see the problems below).'
+    )
+    const two = buildReport(succeeded(exportFailures('res/a.tiles.json', 'res/b.map.json')), [])
+    expect(firstLine(two)).toBe('Build succeeded, but 2 resource exports failed — the ROM may not match res/ (see the problems below).')
+    // ...and the problems follow, each against its resource.
+    expect(two).toContain('  error: res/b.map.json: res/b.map.json: no export target')
+    // A clean builds nothing, so it claims nothing about what was built.
+    expect(firstLine(buildReport(succeeded(exportFailures('res/a.tiles.json')), [], 40, 'clean'))).toBe(
+      'Build succeeded, but 1 resource export failed.'
+    )
+  })
+
+  it('a failure with failed resource exports says both', () => {
+    const problems = [...exportFailures('res/a.tiles.json', 'res/b.map.json'), { ...BUILT.problems[0], id: 'p0' }]
+    expect(firstLine(buildReport({ ...BUILT, problems }, []))).toBe('Build failed: Compile error; 2 resource exports failed before it.')
+    expect(firstLine(buildReport({ ...BUILT, problems, message: null }, []))).toBe('Build failed; 2 resource exports failed before it.')
+  })
+
+  it("MSXgl's own problems, errors included, leave the verdict as MSXgl gave it", () => {
+    const own: BuildProblem[] = [{ ...BUILT.problems[0], id: 'p1', severity: 'error' }]
+    expect(firstLine(buildReport(succeeded(own), []))).toBe('Build succeeded.')
+    expect(firstLine(buildReport(BUILT, []))).toBe('Build failed: Compile error')
+  })
+
+  it('the build tool is an error when an export failed, though MSXgl succeeded — and only then', async () => {
+    let result = succeeded(exportFailures('res/a.tiles.json'))
+    deps.build = async () => result
+    const failed = await call('build')
+    expect(failed.isError).toBe(true)
+    expect(firstLine(textOf(failed))).toBe('Build succeeded, but 1 resource export failed — the ROM may not match res/ (see the problems below).')
+    result = succeeded([])
+    const clean = await call('build')
+    expect(clean.isError).toBeFalsy()
+    expect(firstLine(textOf(clean))).toBe('Build succeeded.')
+    // The command reaches the report: a clean claims nothing about what was built.
+    result = succeeded(exportFailures('res/a.tiles.json'))
+    expect(firstLine(textOf(await call('build', { command: 'clean' })))).toBe('Build succeeded, but 1 resource export failed.')
   })
 })

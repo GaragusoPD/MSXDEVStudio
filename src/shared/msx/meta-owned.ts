@@ -52,6 +52,7 @@ import {
   animRefFrom,
   decodeTileEntry,
   DEFAULT_ANIM_DURATION,
+  LOOP_CODE,
   MAX_ANIM_CELLS,
   MAX_ANIM_DURATION,
   MAX_ANIM_FRAMES,
@@ -496,8 +497,10 @@ export function refreshMetas(
 /**
  * What a meta-tile's own header holds: its size and flags, and — when it
  * animates — its window's poses, which the `_Animate()` of every tileset it is
- * attached to copies from. Its tile numbers are not here: they belong to each
- * tileset it is attached to, and are in that tileset's `_MetaCells`.
+ * attached to copies from, and which cells those poses are (`_MovingCells`), so
+ * a game that draws the meta with its own code can animate it without diffing
+ * the poses. Its tile numbers are not here: they belong to each tileset it is
+ * attached to, and are in that tileset's `_MetaCells`.
  */
 export function ownedMetaTables(doc: OwnedMetaDoc): EmitTable[] {
   const tables: EmitTable[] = [
@@ -517,6 +520,15 @@ export function ownedMetaTables(doc: OwnedMetaDoc): EmitTable[] {
           : table
       )
     )
+    // After the pose tables, so a `bin` export keeps every offset it had.
+    tables.push({
+      suffix: '_MovingCells',
+      bytes: Uint8Array.from(movingCells(doc)),
+      perLine: 16,
+      comment:
+        `The cells that change between poses, in reading order (cell = row * ${doc.width} + column). ` +
+        'Tile k of each pose in _Patterns is cell [k]; an attached tileset shows it at its _ANIM_<NAME>_SLOT + k'
+    })
   }
   return tables
 }
@@ -530,7 +542,9 @@ export function ownedMetaConstants(doc: OwnedMetaDoc, name: string): string[] {
     `#define ${prefix}_FRAMES ${doc.frames.length}`,
     `#define ${prefix}_FLAGS 0x${doc.flags.toString(16).padStart(2, '0')}`,
     // The window a tileset gives it: what one pose change rewrites.
-    `#define ${prefix}_MOVING ${movingCells(doc).length}`
+    `#define ${prefix}_MOVING ${movingCells(doc).length}`,
+    // As its window's _AnimLoop entry has it, for a game playing it itself.
+    `#define ${prefix}_LOOP ${LOOP_CODE[doc.loop]}`
   ]
 }
 

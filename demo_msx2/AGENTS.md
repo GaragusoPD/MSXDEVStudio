@@ -42,7 +42,7 @@ Or open `canyon.msxproj` in MSXDEVStudio and press Run.
 |---|---|---|
 | `res/canyon.btiles.json` | `data/atlas.bin` | 48 cells of 16×16 — the canyon's tileset, in a mode that has no tileset |
 | `res/stage.map.json` | `g_Stage_Terrain` + `g_Stage_DrawRow()` | 16 × 160 cells of canyon, drawn a row at a time |
-| `res/fleet.sprites.json` | `g_Fleet_Patterns/_Colors/_Palette/_Layout` + `g_Fleet_SetMeta()` | Ship (two planes, sprite mode 2), shots, drones |
+| `res/fleet.sprites.json` | `g_Fleet_Patterns/_Colors/_Palette/_Layout/_Durations`, `G_FLEET_<CHARACTER>_BASE/_PLANES/_FRAMES/_ID/_PATTERN` + `g_Fleet_SetMeta()` (and `_SetFrame()`/`_AnimStep()`, which nothing calls) | Ship (two planes, sprite mode 2), shots, drones, explosion — every frame placed through `_BASE + frame * _PLANES`, timed in C (`BOOM_HOLD`, `g_Frame >> 3`) |
 | `res/mist.screen.json` | `g_Mist_Strip/_Rects` + `_Upload/_Restore/_Draw` | Three wisps of mist — the parallax layer, as software sprites |
 | `res/boss.screen.json` | `g_Boss_Strip/_Rects` + `_Upload/_Restore/_Draw` | A 68×40 boss, too wide to be sprites |
 | `res/hud.screen.json` | `g_Hud_Strip/_Rects` | The status band's artwork |
@@ -161,6 +161,9 @@ each picture's bitmap starts exactly on an 8 KB segment boundary (a SCREEN 5 lin
 is 128 bytes = 64 lines per segment, so no line straddles two). Paging uses
 **bank 3** (0xA000), which holds only padding — bank 2 would be a gamble on the
 linker's layout. Derive segments from `canyon_rawdef.h`, never a magic number.
+After adding code (or ticking a resource's ready-made C), check where
+`_GSFINAL` starts in `out/canyon.map`: everything below it is live code and
+constants, and it must stay under 0xA000.
 
 ## Scope
 

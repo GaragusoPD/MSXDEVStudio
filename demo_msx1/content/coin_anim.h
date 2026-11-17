@@ -13,6 +13,7 @@
 #define G_COINANIM_H 1
 #define G_COINANIM_CELLS 1
 #define G_COINANIM_FRAMES 4
+#define G_COINANIM_LOOP 0
 
 #define G_COINANIM_PATTERNS_SIZE 32
 extern const unsigned char g_CoinAnim_Patterns[];

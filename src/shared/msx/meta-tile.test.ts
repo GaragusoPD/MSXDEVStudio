@@ -10,6 +10,7 @@ import {
   removeFrame,
   reorderFrames,
   resizeMeta,
+  setFrameDuration,
   setFrameTile,
   validateMetaTile
 } from './meta-tile'
@@ -145,5 +146,63 @@ describe('validateMetaTile', () => {
 
   it('reports a missing tileset', () => {
     expect(validateMetaTile(createMetaTileDoc('', 2, 2))).toContain('No tileset referenced')
+  })
+})
+
+describe('frame durations', () => {
+  const base = createMetaTileDoc('t.tiles.json', 2, 1)
+  const withDurations = (...durations: number[]) =>
+    durations.reduce((doc, d, i) => setFrameDuration(i < doc.frames.length ? doc : addFrame(doc), i, d), base)
+
+  it('a file without durations reads every frame as 8', () => {
+    const doc = normalizeMetaTile({ tileset: 't', width: 2, height: 1, frames: [{ tiles: [1, 2] }, { tiles: [3, 4] }] })
+    expect(doc.frames.map((f) => f.duration)).toEqual([8, 8])
+    expect(normalizeMetaTile({ tileset: 't' }).frames[0].duration).toBe(8)
+  })
+
+  it('clamps what a file holds: 0 to 1, 300 to 255, junk to 8', () => {
+    const doc = normalizeMetaTile({
+      tileset: 't',
+      width: 2,
+      height: 1,
+      frames: [{ duration: 0 }, { duration: 300 }, { duration: 'x' }]
+    })
+    expect(doc.frames.map((f) => f.duration)).toEqual([1, 255, 8])
+  })
+
+  it('survives a JSON round trip', () => {
+    const doc = withDurations(3, 40, 255)
+    expect(normalizeMetaTile(JSON.parse(JSON.stringify(doc))).frames.map((f) => f.duration)).toEqual([3, 40, 255])
+  })
+
+  it('a copy lands right after its source and keeps its duration', () => {
+    let doc = withDurations(3, 40, 7)
+    doc = setFrameTile(doc, 0, 0, 0, 9)
+    doc = addFrame(doc, 0)
+    expect(doc.frames).toHaveLength(4)
+    expect(doc.frames[1].tiles).toEqual([9, 0])
+    expect(doc.frames.map((f) => f.duration)).toEqual([3, 3, 40, 7])
+  })
+
+  it('a blank frame is appended with the last frame duration', () => {
+    const doc = addFrame(withDurations(3, 40))
+    expect(doc.frames.map((f) => f.duration)).toEqual([3, 40, 40])
+    expect(doc.frames[2].tiles).toEqual([0, 0])
+  })
+
+  it('resize, remap and a tile edit keep durations', () => {
+    const doc = withDurations(3, 40)
+    expect(resizeMeta(doc, 3, 2).frames.map((f) => f.duration)).toEqual([3, 40])
+    expect(remapMetaTiles(doc, [0]).frames.map((f) => f.duration)).toEqual([3, 40])
+    expect(setFrameTile(doc, 1, 0, 0, 5).frames[1].duration).toBe(40)
+  })
+
+  it('setFrameDuration clamps, and returns the same doc when nothing changes', () => {
+    const doc = withDurations(3, 40)
+    expect(setFrameDuration(doc, 0, 0).frames[0].duration).toBe(1)
+    expect(setFrameDuration(doc, 0, 999).frames[0].duration).toBe(255)
+    expect(setFrameDuration(doc, 0, 3)).toBe(doc)
+    expect(setFrameDuration(doc, 5, 9)).toBe(doc)
+    expect(setFrameDuration(doc, 0, Number.NaN)).toBe(doc)
   })
 })

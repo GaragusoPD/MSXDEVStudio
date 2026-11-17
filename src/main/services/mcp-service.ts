@@ -30,6 +30,7 @@ import { launchArgs, OpenMsxSession, openmsxMachine } from './emulator'
 import type { FsService } from './fs-service'
 import { createMcpServer, type McpDeps, type RendererCalls, type RendererMethod } from './mcp'
 import type { ProjectService } from './project-service'
+import { inspectResource } from './resources'
 import type { ResourceService } from './resource-service'
 import type { StateService } from './state-service'
 import { openmsxSystemDataDir } from './toolchain'
@@ -269,6 +270,7 @@ export class McpService {
         await fs.write(path, content)
       },
       exists: async (path) => (await fs.stat(path)) !== null,
+      inspectResource: (path, text) => inspectResource(root(), path, text),
       renderer: (method, params) => this.callRenderer(method, params),
       emulatorStart: async ({ artifact }) => {
         const open = project.getOpen()

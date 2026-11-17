@@ -96,7 +96,8 @@ describe('the exported tables', () => {
       '#define G_TORCH_W 2',
       '#define G_TORCH_H 2',
       '#define G_TORCH_CELLS 4',
-      '#define G_TORCH_FRAMES 2'
+      '#define G_TORCH_FRAMES 2',
+      '#define G_TORCH_LOOP 0'
     ])
   })
 })
@@ -255,13 +256,26 @@ describe('the generated C', () => {
     expect(text).not.toContain('_GM2')
   })
 
+  it("states its loop mode as data, in the code the tileset's _Animate() plays it by", () => {
+    // A game with a loader of its own reads _LOOP; the generated player reads
+    // _AnimLoop. One mode, one number, whichever plays it.
+    for (const [loop, number] of [['loop', 0], ['pingpong', 1], ['once', 2]] as const) {
+      const anim = normalizeTileAnim({ ...coin(), loop })
+      const header = renderResourceFiles({ kind: 'anim', doc: anim }, PATH, anim.export!).header
+      expect(header).toContain(`#define G_COIN_LOOP ${number}\n`)
+      const doc = attachAnimation(tileset(), PATH, anim, { slot: 6, bank: null, name: 'g_X' })
+      expect(code(doc)).toContain(`static const u8 g_Tiles_AnimLoop[G_TILES_ANIMS] = { ${number} };`)
+    }
+  })
+
   it('states the binding indices and slots, and the tables the runtime reads', () => {
     const doc = attachAnimation(tileset(), PATH, coin(), { slot: 6, bank: null, name: 'g_X' })
     expect(tilesetAnimConstants(doc, 'g_Tiles')).toEqual([
       '#define G_TILES_ANIMS 1',
       '#define G_TILES_ANIM_COIN 0',
       '#define G_TILES_ANIM_COIN_SLOT 6',
-      '#define G_TILES_ANIM_COIN_FRAMES 4'
+      '#define G_TILES_ANIM_COIN_FRAMES 4',
+      '#define G_TILES_ANIM_COIN_TILES 1'
     ])
     const text = code(doc)
     expect(text).toContain('static const u8* const g_Tiles_AnimDurations[G_TILES_ANIMS] = { g_Coin_Durations };')
@@ -270,6 +284,26 @@ describe('the generated C', () => {
     expect(text).toContain('void g_Tiles_AnimSetActive(u8 anim, bool on)')
     // A garbage frame index from uncleared RAM is clamped, not followed.
     expect(text).toContain('if(f > last) f = 0;')
+  })
+
+  it('states how many tiles each window holds — width × height, not either side', () => {
+    // A 3×2 window over two poses: 6 tiles, so neither side alone and not the
+    // pose count can pass for it. A loader that puts the window somewhere else
+    // copies _TILES tiles per pose.
+    const flag = normalizeTileAnim({ mode: 'sc2', width: 3, height: 2, frames: [{}, {}], export: { name: 'g_Flag', format: 'c', out: 'x.h' } })
+    let doc = attachAnimation(tileset(), PATH, coin(), { slot: 6, bank: null, name: 'g_X' })
+    doc = attachAnimation(doc, 'res/flag.anim-tiles.json', flag, { slot: 8, bank: null, name: 'g_X' })
+    const defines = tilesetAnimConstants(doc, 'g_Tiles')
+    expect(defines).toContain('#define G_TILES_ANIM_FLAG_TILES 6')
+    expect(defines).toContain('#define G_TILES_ANIM_FLAG_FRAMES 2')
+    expect(defines).toContain('#define G_TILES_ANIM_COIN_TILES 1')
+    // Each binding's own block, in order: index, slot, frames, tiles.
+    expect(defines.slice(-4)).toEqual([
+      '#define G_TILES_ANIM_FLAG 1',
+      '#define G_TILES_ANIM_FLAG_SLOT 8',
+      '#define G_TILES_ANIM_FLAG_FRAMES 2',
+      '#define G_TILES_ANIM_FLAG_TILES 6'
+    ])
   })
 
   it('restarts one animation without touching the others, and reads a pose back', () => {
@@ -294,6 +328,7 @@ describe('the export path, from files alone', () => {
     const resource = parseResource('res/tiles.tiles.json', text)
     const files = renderResourceFiles(resource, 'res/tiles.tiles.json', resource.doc.export!)
     expect(files.header).toContain('#define G_TILES_ANIM_COIN_SLOT 6')
+    expect(files.header).toContain('#define G_TILES_ANIM_COIN_TILES 1')
     expect(files.header).toContain('void g_Tiles_Animate(void);')
     expect(files.source).toContain('VDP_LoadPattern_GM2(g_Coin_Patterns + (u16)frame * 8, 1, 6);')
     // Frame 0 is the window's static art in the pattern table.

@@ -23,6 +23,7 @@
  */
 
 import { shallowReactive } from 'vue'
+import { frameAtTick, parseDuration, type AnimationBackground } from '../../../../shared/animation-playback'
 import { MAX_META_SIZE } from '../../../../shared/msx/meta-tile'
 import { isOwnedMeta, metaWindowAnim, normalizeOwnedMeta, type OwnedMetaDoc } from '../../../../shared/msx/meta-owned'
 import {
@@ -32,7 +33,6 @@ import {
   DEFAULT_ANIM_DURATION,
   frameTiles,
   MAX_ANIM_CELLS,
-  MAX_ANIM_DURATION,
   MAX_ANIM_FRAMES,
   normalizeTileAnim,
   withFrameTiles,
@@ -45,7 +45,7 @@ import { pictureTiles } from '../../../../shared/msx/sheet-convert'
 import { pictureClipboard } from '../picture-clipboard'
 import { applyRoleStroke, splitBlockPoints, type Point, type TileTool } from '../../../../shared/tile-editor'
 import { canRedo, canUndo, createHistory, pushHistory, redo as redoHistory, undo as undoHistory, type History } from '../../../../shared/history'
-import { parseResource, resourceKindOf, serializeResource } from '../../../../shared/msx/resource'
+import { defaultExport, parseResource, resourceKindOf, serializeResource, type ExportBlock } from '../../../../shared/msx/resource'
 import { samePath } from '../../../../shared/map-editor'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
@@ -85,6 +85,10 @@ export interface AnimSession {
   filledRect: boolean
   /** Preview playback in the editor — UI state, never saved. */
   playing: boolean
+  /** View state, never saved or undoable: the previous pose drawn faintly under the current one. */
+  onionSkin: boolean
+  /** What the bar's preview and thumbnails show behind empty dots. */
+  background: AnimationBackground
   /** The document mid-stroke; `doc()` answers with it so the canvas follows the drag. */
   preview: PoseFile | null
   /** Meta-tiles only: clicks toggle a cell see-through instead of painting. */
@@ -118,6 +122,8 @@ export function animSession(path: string): AnimSession {
     zoom: 24,
     filledRect: false,
     playing: false,
+    onionSkin: false,
+    background: 'checkered',
     preview: null,
     holeMode: false,
     strokeActive: false,
@@ -271,6 +277,40 @@ export function redo(session: AnimSession): void {
 
 export { canRedo, canUndo }
 
+// ── export ──────────────────────────────────────────────────────────────────
+
+/**
+ * Gives the file an export target, named after it like every other kind
+ * (`defaultExport`). It is where the poses are written: the `_Animate()` of
+ * every tileset the file is attached to copies from that header, and the build
+ * refuses an animated meta-tile that has none. One that is already set is kept.
+ */
+export function setupExport(session: AnimSession): void {
+  if (session.history.present.export) return
+  commitExport(session, defaultExport(session.path))
+}
+
+/** Changes the export's name, output or format; a no-op before `setupExport`, or when nothing differs. */
+export function patchExport(session: AnimSession, patch: Partial<ExportBlock>): void {
+  const current = session.history.present.export
+  if (!current) return
+  const next = { ...current, ...patch }
+  if ((Object.keys(next) as (keyof ExportBlock)[]).every((key) => next[key] === current[key])) return
+  commitExport(session, next)
+}
+
+/**
+ * One undo step on the saved document, never on a stroke's preview — and the
+ * block carried into a stroke still open, or its end would commit the old one
+ * back. That is not hypothetical: the side panel's fields commit on `change`,
+ * which fires when they lose focus, and a press on the canvas takes the focus
+ * only after its pointerdown has begun the stroke.
+ */
+function commitExport(session: AnimSession, block: ExportBlock): void {
+  commit(session, { ...session.history.present, export: block })
+  if (session.preview) session.preview = { ...session.preview, export: block }
+}
+
 // ── painting ─────────────────────────────────────────────────────────────────
 
 /** The pose's cells as one block over its scratch tileset — tile i is cell i. */
@@ -373,9 +413,14 @@ export function moveFrame(session: AnimSession, from: number, to: number): void 
   session.frame = to
 }
 
-/** How many frames (VBlanks) pose `index` is held, or every pose when `index` is null. */
+/**
+ * How many frames (VBlanks) pose `index` is held, or every pose when `index` is
+ * null — clamped to 1..255. Not a number (an emptied field) changes nothing:
+ * clamped, it would quietly set every pose to 1.
+ */
 export function setDuration(session: AnimSession, index: number | null, duration: number): void {
-  const value = Math.max(1, Math.min(MAX_ANIM_DURATION, Math.round(duration) || 1))
+  const value = parseDuration(duration)
+  if (value === null) return
   const current = doc(session)
   const frames = current.frames.map((frame, i) => (index === null || i === index ? { ...frame, duration: value } : frame))
   if (frames.every((frame, i) => frame.duration === current.frames[i].duration)) return
@@ -585,6 +630,22 @@ export function setZoom(session: AnimSession, zoom: number): void {
   session.zoom = Math.max(4, Math.min(64, Math.round(zoom) || session.zoom))
 }
 
+/**
+ * The previous pose's dots that may show as onion skin: only where the current
+ * pose is empty (colour 0), so a painted dot is never tinted by what is under it.
+ */
+export function onionDots(current: Uint8Array, previous: Uint8Array): Uint8Array {
+  return previous.map((index, i) => (current[i] === 0 ? index : 0))
+}
+
+export function setOnionSkin(session: AnimSession, on: boolean): void {
+  session.onionSkin = on
+}
+
+export function setBackground(session: AnimSession, value: AnimationBackground): void {
+  session.background = value
+}
+
 export function togglePlaying(session: AnimSession): void {
   session.playing = !session.playing
 }
@@ -612,20 +673,5 @@ export function stepBytes(file: PoseFile): number {
  * about timing, ping-pong and play-once.
  */
 export function poseAtTick(anim: Pick<PoseDoc, 'frames' | 'loop'>, ticks: number): number {
-  const order: number[] = []
-  const count = anim.frames.length
-  if (anim.loop === 'pingpong' && count > 1) {
-    for (let f = 0; f < count; f++) order.push(f)
-    for (let f = count - 2; f > 0; f--) order.push(f)
-  } else {
-    for (let f = 0; f < count; f++) order.push(f)
-  }
-  const total = order.reduce((sum, f) => sum + anim.frames[f].duration, 0)
-  if (anim.loop === 'once' && ticks >= total - anim.frames[count - 1].duration) return count - 1
-  let t = total > 0 ? ticks % total : 0
-  for (const f of order) {
-    if (t < anim.frames[f].duration) return f
-    t -= anim.frames[f].duration
-  }
-  return order[order.length - 1]
+  return frameAtTick(anim.frames.map((f) => f.duration), anim.loop, ticks)
 }

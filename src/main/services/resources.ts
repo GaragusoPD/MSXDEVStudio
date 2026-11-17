@@ -12,9 +12,10 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, type Dirent } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { isIgnoredName, resolveRelativePath } from '../../shared/fs-safety'
+import type { BuildProblem } from '../../shared/ipc'
 import type { ImgRule, MsxProject } from '../../shared/msxproj'
 import { defaultExport, parseResource, renderResourceFiles,
-  sourcePathFor, resourceKindOf, validateResource, type ResourceDoc } from '../../shared/msx/resource'
+  sourcePathFor, resourceKindOf, validateResource, type ExportBlock, type ResourceDoc } from '../../shared/msx/resource'
 import { metaRefFrom, remapTiles, validateMap, type MapDoc } from '../../shared/msx/map'
 import { remapMetaTiles } from '../../shared/msx/meta-tile'
 import { pendingReorders } from '../../shared/map-editor'
@@ -54,6 +55,11 @@ export interface ExportOptions {
   msxglPath?: string | null
   /** Extra mtime every output must beat — the `.msxproj`, so editing a rule's args re-runs it. */
   configMtimeMs?: number
+  /**
+   * Which resources write each output file (`exportClaims`). `exportAll`
+   * builds it once for the whole pass; a single export builds its own.
+   */
+  claims?: ExportClaims
 }
 
 function safeEntries(dir: string): Dirent[] {
@@ -64,12 +70,22 @@ function safeEntries(dir: string): Dirent[] {
   }
 }
 
-/** Every `*.tiles|sprites|map|screen.json` under `root`, project-relative, sorted for deterministic order. */
+/**
+ * Every `*.tiles|sprites|map|screen.json` under `root`, project-relative, sorted for deterministic order.
+ *
+ * Nothing whose name starts with a dot, file or folder, at any depth below the
+ * root: that is where scratch copies live (`.scratch/`, an editor's backup), and
+ * a copy is a resource with the same `out` as the real one — exported at every
+ * build, it silently replaced the real header whenever it was the newer file.
+ * Here and not in `IGNORED_DIR_NAMES`, which would also hide those folders from
+ * the explorer. The root's own name is never looked at, so a project kept
+ * inside a dot folder is walked as usual.
+ */
 export function findResourceFiles(root: string): string[] {
   const found: string[] = []
   const walk = (dir: string, prefix: string): void => {
     for (const entry of safeEntries(dir).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (isIgnoredName(entry.name)) continue
+      if (entry.name.startsWith('.') || isIgnoredName(entry.name)) continue
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name
       if (entry.isDirectory()) walk(join(dir, entry.name), relative)
       else if (resourceKindOf(entry.name)) found.push(relative)
@@ -77,6 +93,76 @@ export function findResourceFiles(root: string): string[] {
   }
   walk(root, '')
   return found
+}
+
+/** Output file (`outputKey`) → the resources that write it, project-relative. */
+export type ExportClaims = Map<string, string[]>
+
+/**
+ * The form two output paths are compared in: normalized (`./`, doubled or back
+ * slashes), and without case on Windows, where `Content/A.h` is `content/a.h`.
+ * Null for a path that escapes the project — its export fails on that anyway.
+ */
+export function outputKey(path: string, platform: NodeJS.Platform = process.platform): string | null {
+  const safe = resolveRelativePath(path)
+  if (!safe) return null
+  return platform === 'win32' ? safe.toLowerCase() : safe
+}
+
+/** Every file an export block writes: its `out`, and for C the `.c` beside it. */
+function exportOutputs(block: ExportBlock): string[] {
+  return block.format === 'bin' ? [block.out] : [block.out, sourcePathFor(block.out)]
+}
+
+/**
+ * Which resources write each output file. A resource that will not parse, or
+ * has no export target, claims nothing — its own export says why.
+ */
+export function exportClaims(root: string, relatives: readonly string[] = findResourceFiles(root)): ExportClaims {
+  const claims: ExportClaims = new Map()
+  for (const relative of relatives) {
+    const abs = insideRoot(root, relative)
+    if (!abs) continue
+    let block: ExportBlock | null
+    try {
+      block = parseResource(relative, readFileSync(abs, 'utf-8')).doc.export
+    } catch {
+      continue
+    }
+    if (!block?.out) continue
+    for (const key of new Set(exportOutputs(block).map((path) => outputKey(path)))) {
+      if (key === null) continue
+      claims.set(key, [...(claims.get(key) ?? []), relative])
+    }
+  }
+  return claims
+}
+
+/**
+ * Why `relative` may not write `block`'s files, or null when it may: some
+ * other resource writes one of them too. Whichever ran second would overwrite
+ * the first, and the build would compile whichever header happened to be
+ * newer — so none of them is exported, and each says who the others are.
+ * `relative` itself need not be among the claimants: a copy in a dot folder,
+ * exported by name, still collides with the resource it was copied from.
+ */
+function claimConflict(relative: string, block: ExportBlock, claims: ExportClaims): string | null {
+  const self = outputKey(relative)
+  const clashes: string[] = []
+  const claimants = new Set<string>([relative])
+  for (const path of exportOutputs(block)) {
+    const key = outputKey(path)
+    const rivals = (key === null ? [] : (claims.get(key) ?? [])).filter((claimant) => outputKey(claimant) !== self)
+    if (!rivals.length) continue
+    clashes.push(path)
+    for (const rival of rivals) claimants.add(rival)
+  }
+  if (!clashes.length) return null
+  const names = [...claimants].sort()
+  return (
+    `${names.join(', ')} all export to ${clashes.join(' and ')}, so each would overwrite the others — ` +
+    'none of them is exported until each has its own "out"'
+  )
 }
 
 function mtime(path: string): number {
@@ -242,7 +328,6 @@ export function generatedSourceModules(root: string): string[] {
   return [...new Set(out)].sort()
 }
 
-/** Converts one editor resource into the file its `export` block names. */
 /**
  * Re-reads a map's meta-tile mirror from the meta files themselves.
  *
@@ -268,8 +353,9 @@ function refreshMapMetas(root: string, resource: ResourceDoc): void {
   let tileset: TilesDoc | null | undefined
   const refreshedTileset = (): TilesDoc | null => {
     if (tileset !== undefined) return tileset
-    const read = readTileset(root, (resource.doc as MapDoc).tileset)
-    tileset = read ? refreshTileset(root, read).doc : null
+    const path = (resource.doc as MapDoc).tileset
+    const read = readTileset(root, path)
+    tileset = read ? refreshTileset(root, read, path).doc : null
     return tileset
   }
   resource.doc = {
@@ -292,6 +378,49 @@ function refreshMapMetas(root: string, resource: ResourceDoc): void {
   }
 }
 
+/** Whether a tileset's export emits `_Animate()`, which names every attached window's pose tables. */
+function emitsAnimate(doc: TilesDoc): boolean {
+  return doc.export?.format === 'c' && doc.export.helpers === true
+}
+
+/**
+ * Why the poses of something attached to a tileset — an animation, or a
+ * meta-tile that animates — cannot go out with the tileset's export, or null.
+ *
+ * The poses are only ever written to the attached file's *own* export: the
+ * tileset carries the window, never a copy of the pose bytes (one per tileset
+ * the file is attached to would cost ROM for nothing). So no export target
+ * means the poses reach no header at all — `_Animate()` cannot link, and with
+ * no ready-made C a custom loader has nothing to read. And `_Animate()` reads
+ * them as C symbols (`<name>_Patterns`, …), which a raw binary never defines;
+ * without it a binary is fine, a custom loader can read one.
+ */
+function posesProblem(
+  path: string,
+  poses: number,
+  block: ExportBlock | null,
+  tileset: TilesDoc,
+  tilesetPath: string,
+  editor: string
+): string | null {
+  const animate = emitsAnimate(tileset)
+  const fix = `(Export in the ${editor}'s side panel, or "export": {…} in the file)`
+  if (!block?.out) {
+    const lost = animate ? `${tilesetPath}'s _Animate() cannot link` : 'the game has nothing to play them from'
+    return (
+      `${path} has ${poses} pose${poses === 1 ? '' : 's'} but no export target, so its poses are not exported and ` +
+      `${lost} — give it an export target ${fix}`
+    )
+  }
+  if (animate && block.format !== 'c') {
+    return (
+      `${path} exports its poses as raw binary, but ${tilesetPath}'s _Animate() reads them from a C header — ` +
+      `export it as C ${fix}, or turn off ready-made C for ${tilesetPath} and play them from your own code`
+    )
+  }
+  return null
+}
+
 /**
  * Re-reads every meta-tile attached to a tileset and re-resolves its tiles —
  * the build's half of the rule the tile editor follows on load. Through the
@@ -302,9 +431,10 @@ function refreshMapMetas(root: string, resource: ResourceDoc): void {
  * would be whatever the tileset file last recorded, and a map drawn with them
  * would show the old art with no sign anything was wrong.
  */
-function refreshTileMetas(root: string, doc: TilesDoc): { doc: TilesDoc; problems: string[] } {
+function refreshTileMetas(root: string, doc: TilesDoc, tilesetPath: string): { doc: TilesDoc; problems: string[] } {
   if (!doc.metas.length) return { doc, problems: [] }
   const loaded = new Map<string, LoadedMeta>()
+  const problems: string[] = []
   for (const binding of doc.metas) {
     const abs = insideRoot(root, binding.path)
     if (!abs || !existsSync(abs)) {
@@ -317,25 +447,31 @@ function refreshTileMetas(root: string, doc: TilesDoc): { doc: TilesDoc; problem
         loaded.set(binding.path, `${binding.path} is attached as a meta-tile but is not one`)
         continue
       }
-      // The window's poses are emitted in the meta's own header, and this
-      // tileset's _Animate() names them: no header, no link.
-      if (movingCells(parsed.doc).length && !parsed.doc.export?.out) {
-        loaded.set(binding.path, `${binding.path} animates, and its poses are written to its own header — give it an export target`)
+      // Only a meta that animates has a window, and so poses to lose. Without
+      // an export target it is not resolved at all, as before; one that only
+      // exports the wrong format still resolves, so a map drawn with this
+      // tileset keeps agreeing with it.
+      const poses = movingCells(parsed.doc).length
+        ? posesProblem(binding.path, parsed.doc.frames.length, parsed.doc.export, doc, tilesetPath, 'meta-tile editor')
+        : null
+      if (poses && !parsed.doc.export?.out) {
+        loaded.set(binding.path, poses)
         continue
       }
+      if (poses) problems.push(poses)
       loaded.set(binding.path, { meta: parsed.doc, name: parsed.doc.export?.name || defaultExport(binding.path).name })
     } catch (error) {
       loaded.set(binding.path, `Couldn't read meta-tile ${binding.path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  const { doc: refreshed, problems } = refreshMetas(doc, loaded)
-  return { doc: refreshed, problems }
+  const refreshed = refreshMetas(doc, loaded)
+  return { doc: refreshed.doc, problems: [...refreshed.problems, ...problems] }
 }
 
 /** Everything attached to a tileset, re-read: its metas first (they may move windows), then its animations. */
-function refreshTileset(root: string, doc: TilesDoc): { doc: TilesDoc; problems: string[] } {
-  const metas = refreshTileMetas(root, doc)
-  const anims = refreshAnimBindings(root, metas.doc)
+function refreshTileset(root: string, doc: TilesDoc, tilesetPath: string): { doc: TilesDoc; problems: string[] } {
+  const metas = refreshTileMetas(root, doc, tilesetPath)
+  const anims = refreshAnimBindings(root, metas.doc, tilesetPath)
   return { doc: anims.doc, problems: [...metas.problems, ...anims.problems] }
 }
 
@@ -351,7 +487,7 @@ function refreshTileset(root: string, doc: TilesDoc): { doc: TilesDoc; problems:
  * generated C names the animation's tables, and a stale mirror would export
  * cleanly and then fail to link.
  */
-function refreshAnimBindings(root: string, tiles: TilesDoc): { doc: TilesDoc; problems: string[] } {
+function refreshAnimBindings(root: string, tiles: TilesDoc, tilesetPath: string): { doc: TilesDoc; problems: string[] } {
   if (!tiles.animations.length) return { doc: tiles, problems: [] }
   const problems: string[] = []
   const loaded = new Map<string, TileAnimDoc>()
@@ -374,6 +510,12 @@ function refreshAnimBindings(root: string, tiles: TilesDoc): { doc: TilesDoc; pr
         problems.push(`${binding.path} holds ${parsed.doc.mode} poses, which a ${doc.mode} tileset cannot show`)
         return binding
       }
+      // Every animation is a window `_Animate()` names, one pose or many; with
+      // no _Animate(), a single pose loses nothing — it is the window's art.
+      const poses = parsed.doc.frames.length > 1 || emitsAnimate(doc)
+        ? posesProblem(binding.path, parsed.doc.frames.length, parsed.doc.export, doc, tilesetPath, 'animated-tile editor')
+        : null
+      if (poses) problems.push(poses)
       loaded.set(binding.path, parsed.doc)
       return animRefFrom(binding.path, parsed.doc, defaultExport(binding.path).name, binding)
     } catch (error) {
@@ -485,6 +627,71 @@ export function swSpriteOverlapProblems(root: string): ConversionResult[] {
   return problems
 }
 
+/**
+ * Makes a parsed resource ready to export, and says what its export would
+ * refuse — the one path every caller takes, so a check and an export cannot
+ * disagree about the same file (bug report items 7 and 9: an agent was told
+ * "not attached" about a map whose forced export drew the meta fine, because
+ * the check validated the file as written and the export did not).
+ *
+ * In order: a world's rooms (unless the caller already loaded them), the
+ * tileset's renumberings this file has not seen (`text` is where its stamp is
+ * read from), the mirrors of other files it keeps, and validation. Before
+ * validation, not just before rendering: a stale mirror also means stale
+ * sizes, and "this placement hangs off the map" must be judged against the
+ * meta as it is now.
+ *
+ * Changes `resource` in place and returns it. It is replayed: never write it
+ * back over the file without moving the stamp too (`inspectResource`).
+ */
+export function prepareResource(
+  root: string,
+  relative: string,
+  resource: ResourceDoc,
+  text: string
+): { resource: ResourceDoc; problems: string[] } {
+  if (resource.kind === 'world' && !resource.rooms) resource.rooms = loadWorldRooms(root, resource.doc)
+  replayTilesetLog(root, resource, text)
+  refreshMapMetas(root, resource)
+  let attachedProblems: string[] = []
+  if (resource.kind === 'tiles') {
+    const refreshed = refreshTileset(root, resource.doc, relative)
+    resource.doc = refreshed.doc
+    attachedProblems = refreshed.problems
+  }
+  const problems =
+    resource.kind === 'map'
+      ? validateMap(resource.doc, mapValidateOptions(root, resource.doc))
+      : [...attachedProblems, ...validateResource(resource)]
+  return { resource, problems }
+}
+
+/**
+ * A resource as an agent should see it (MCP `read_resource`/`write_resource`):
+ * the problems its export would report, and the document with the mirrors it
+ * keeps of other files brought up to date — so a map's `metas` entry written by
+ * hand comes back, and is saved, resolved from the meta and its attachment.
+ *
+ * The problems include another resource writing the same file
+ * (`claimConflict`), which `exportResourceFile` checks before it gets as far as
+ * `prepareResource`: judged on `text`'s export block, against what the other
+ * files on disk claim — so `write_resource` hears about the clash it is about to
+ * save, and `read_resource` about the one `export_resources` would refuse.
+ *
+ * The document is **not** replayed into the tileset's current numbering, unlike
+ * the one the problems were judged on: its stamp is not part of it, and a grid
+ * renumbered under an old stamp would be renumbered again by the next replay.
+ */
+export function inspectResource(root: string, relative: string, text: string): { resource: ResourceDoc; problems: string[] } {
+  const resource = parseResource(relative, text)
+  const block = resource.doc.export
+  const conflict = block?.out ? claimConflict(relative, block, exportClaims(root)) : null
+  const { problems } = prepareResource(root, relative, parseResource(relative, text), text)
+  refreshMapMetas(root, resource)
+  return { resource, problems: conflict ? [conflict, ...problems] : problems }
+}
+
+/** Converts one editor resource into the file its `export` block names. */
 export function exportResourceFile(root: string, relative: string, options: ExportOptions = {}): ConversionResult {
   const sourceAbs = insideRoot(root, relative)
   const base: ConversionResult = { kind: 'resource', input: relative, out: '', status: 'failed' }
@@ -500,6 +707,10 @@ export function exportResourceFile(root: string, relative: string, options: Expo
 
     const outAbs = insideRoot(root, block.out)
     if (!outAbs) return { ...base, out: block.out, message: 'Output path escapes the project folder.' }
+    // Before the up-to-date check too: a duplicate whose header is newer than
+    // both resources is still a duplicate, and the header may be the wrong one.
+    const conflict = claimConflict(relative, block, options.claims ?? exportClaims(root))
+    if (conflict) return { ...base, out: block.out, message: conflict }
     // Both halves must be newer than the resource, or a deleted .c would never
     // come back.
     const pairAbs = block.format === 'bin' ? null : insideRoot(root, sourcePathFor(block.out))
@@ -511,22 +722,7 @@ export function exportResourceFile(root: string, relative: string, options: Expo
       return { ...base, out: block.out, status: 'skipped' }
     }
 
-    // Before validation, not just before rendering: a stale mirror also means
-    // stale sizes, and "this placement hangs off the map" must be judged
-    // against the meta as it is now.
-    replayTilesetLog(root, resource, text)
-    refreshMapMetas(root, resource)
-    let attachedProblems: string[] = []
-    if (resource.kind === 'tiles') {
-      const refreshed = refreshTileset(root, resource.doc)
-      resource.doc = refreshed.doc
-      attachedProblems = refreshed.problems
-    }
-
-    const problems =
-      resource.kind === 'map'
-        ? validateMap(resource.doc, mapValidateOptions(root, resource.doc))
-        : [...attachedProblems, ...validateResource(resource)]
+    const { problems } = prepareResource(root, relative, resource, text)
     if (problems.length) return { ...base, out: block.out, message: problems.join('; ') }
 
     const files = renderResourceFiles(resource, relative, block)
@@ -613,7 +809,9 @@ export async function exportAll(
   project: MsxProject,
   options: ExportOptions = {}
 ): Promise<ConversionResult[]> {
-  const results = findResourceFiles(root).map((relative) => exportResourceFile(root, relative, options))
+  const relatives = findResourceFiles(root)
+  const claims = options.claims ?? exportClaims(root, relatives)
+  const results = relatives.map((relative) => exportResourceFile(root, relative, { ...options, claims }))
   results.push(...swSpriteOverlapProblems(root))
   const msxglPath = options.msxglPath
   for (const rule of project.resources.imgRules) {
@@ -630,6 +828,28 @@ export async function exportAll(
     results.push(await runImgRule(root, msxglPath, rule, options))
   }
   return results
+}
+
+/**
+ * Every failed conversion as an error for the Problems panel. The build goes on
+ * after one — MSXgl reports a header that is missing — but one that is merely
+ * stale compiles cleanly, so the output channel alone left the failure where
+ * nobody looks (bug report item 4). `r<n>`, so they never share an id with the
+ * build's own `p<n>`. `file` only when the input is inside the project, which is
+ * what lets the panel open it.
+ */
+export function conversionProblems(results: readonly ConversionResult[]): BuildProblem[] {
+  return results
+    .filter((result) => result.status === 'failed')
+    .map((result, index) => {
+      const file = resolveRelativePath(result.input)
+      return {
+        id: `r${index}`,
+        severity: 'error' as const,
+        ...(file ? { file } : {}),
+        message: result.message || 'Export failed.'
+      }
+    })
 }
 
 /** One-line summary for the Output panel. */

@@ -104,7 +104,27 @@ there — the panel warns when a block can't own its whole group.
 
 **Sprites** — mode 1 gives each sprite one colour; mode 2 gives a colour per
 line, plus the EC/CC/IC bits. Sprites are 8×8 or 16×16 and can stack up to 4
-layers for multicolour characters. The animation bar previews frames.
+layers for multicolour characters. The animation bar holds a character's
+frames, each with its own **duration** in VBlanks (1–255, default 8 — the unit
+meta-tile poses use), and its preview plays them at 50 Hz, 20 ms a VBlank. The
+durations are saved in the file and exported, so the game plays the timing you
+previewed.
+
+**The animation bar** is one component, the same in the sprite editor, the
+pose editor (`.meta-tiles.json` and `.anim-tiles.json`) and the bitmap
+meta-tile editor (`.meta-btiles.json`): a live preview on a checkered or solid
+background, then a strip of frame thumbnails with each frame's duration in
+VBlanks under it, editable. **+ Frame**, **Clone**, **Delete** and the move
+left/right buttons edit the strip, and a frame can be dragged to a new place.
+**Play/Pause** animates the *preview only* — the canvas stays on the frame you
+are editing — and **Onion skin** shows the previous frame faintly through the
+current one's empty dots. Playback starts from the selected frame; in the
+pose editor, which alone has a loop setting, Ping-pong and Play once start from
+frame 0, as the game does (sprites and bitmap meta-tiles always loop). The clock is 50 Hz, 20 ms a
+VBlank, whichever editor you are in. The bitmap meta-tile editor also keeps
+its **Grid** toggle in the bar. In the pose editor the preview moved from the
+side panel into the bar; the side panel keeps the loop setting and the **All**
+durations box.
 
 ![The sprite editor in mode 2: the Character grid control, two stacked layers, and a per-line colour for every row](images/editor_msx2_sprite_editor.png)
 
@@ -195,7 +215,11 @@ in the pose editor — the animation editor's canvas and pose strip, any size up
 to 16×16 tiles. The **see-through** tool (the hatched button) marks cells that
 are never written when the meta is drawn, in any pose, so whatever is under it
 shows: the only transparency a name table has. The flag squares are in the side
-panel. One pose is a still meta; add poses and it animates.
+panel. One pose is a still meta; add poses and it animates — and then it needs
+an **export target** of its own (the side panel's **Export** section, **Set up
+export**), because the poses of its moving tiles are written to its own header
+and nowhere else: a tileset with it attached will not export until it has one.
+An animated tile works the same way.
 
 **Attaching** a meta to a tileset gives it tile numbers there: in the tile
 editor's **Meta-tiles** panel, or simply by placing it on a map, which attaches
@@ -325,8 +349,13 @@ redraws.
 works differently: it is drawn over one bitmap tileset (`.btiles.json`), holds
 that tileset's tile numbers, and painting it resolves each stroke into the
 tileset as you draw. Its frames are redrawn per copy, by the map's
-`_DrawPlacements(frames, …)`. **Compact unused tiles** in its side panel reclaims
-tiles its editing session created and no longer uses.
+`_DrawPlacements(frames, …)`. Each frame carries a **duration** in VBlanks
+(1–255, default 8; a file from before reads as 8), set in the shared animation
+bar. The export gains `<name>_Durations`, one byte per frame after the frames
+table, only when the meta has more than one frame. No helper steps it: the game
+decides when to advance `frames[slot]`, and `_Durations` is the pace you
+previewed. **Compact unused tiles** in its side panel reclaims tiles its
+editing session created and no longer uses.
 
 **Bitmap tiles** — the SCREEN 5/6/7/8 counterpart of a pattern tileset, and a
 different thing from a screen. A screen is one picture used as it is; a tileset
@@ -522,6 +551,19 @@ Exports run automatically before every build, and skip anything already up to
 date. To export by hand, use the **Export** button in the editor toolbar, or
 **Export all** in the Resources panel.
 
+- **A resource whose export fails is an error in the Problems panel**, against
+  its own file — a meta-tile that animates with no export target, a map placing
+  a meta its tileset does not have. The build still runs, so the game is built
+  with the header the last good export left behind: fix the problem rather than
+  trusting a green build.
+- **Two resources may not export to the same file** (the same **out**, or the
+  `.c` beside it): each would overwrite the other, so both fail and neither is
+  written until each has its own.
+- **Files and folders whose name starts with a dot are skipped** — `.scratch/`,
+  an editor's backup: not listed in the Resources panel and not exported by a
+  build or **Export all**, so a copy kept there for comparison never lands over
+  the real one.
+
 A generated header defines one array per table, plus a size define:
 
 ```c
@@ -560,7 +602,29 @@ VDP_WriteVRAM(g_MyTiles_Colors, g_ScreenColorLow, g_ScreenColorHigh, 32);
 
 ### Sprites
 
-Exports `_Patterns`, `_Colors`, and `_Palette` in mode 2.
+Exports `_Patterns`, `_Colors`, and `_Palette` in mode 2 — every plane of every
+frame of every character, character after character — and says where each
+character is, so the game never counts frames by hand (add a frame to the first
+character and every one after it moves):
+
+```c
+#define G_MYHERO_CHARS          2   // characters in the sheet
+#define G_MYHERO_PLANE_PATTERNS 4   // VDP patterns per plane: 4 at 16×16, 1 at 8×8
+#define G_MYHERO_WALK_BASE      0   // its first plane
+#define G_MYHERO_WALK_PLANES    1   // hardware sprites per frame
+#define G_MYHERO_WALK_FRAMES    4
+#define G_MYHERO_WALK_ID        0   // its position: the `chr` the helpers take
+#define G_MYHERO_WALK_PATTERN   0   // VDP pattern number of its first plane
+#define G_MYHERO_WALK_FRAME0    0   // its first frame in _Durations
+#define G_MYHERO_COIN_BASE      4
+#define G_MYHERO_COIN_PATTERN   16  // …and so on for every character
+extern const unsigned char g_MyHero_Durations[];   // VBlanks each frame is held
+```
+
+Plane `n` of frame `f` is plane `_BASE + f * _PLANES + n`; its pattern number is
+that times `_PLANE_PATTERNS` (the sheet loaded at pattern 0), its colour is
+`_Colors[plane]` in mode 1 and the 16 bytes at `_Colors + plane * 16` in mode 2.
+`_Durations` and `_FRAME0` are there once a character has more than one frame.
 
 ```c
 #include "content/myhero.h"
@@ -616,8 +680,11 @@ extern const unsigned char g_MyTiles_MetaInfo[];   // per meta: w, h, flags, off
 extern const unsigned char g_MyTiles_MetaCells[];  // every meta's tiles; 0 is see-through
 ```
 
-The meta's own header has its size and flags (`_W`, `_H`, `_FLAGS`) and, when it
-animates, the poses of its moving tiles, which the tileset's `_Animate()` copies.
+The meta's own header has its size, flags, pose count and loop mode (`_W`,
+`_H`, `_FLAGS`, `_FRAMES`, and `_LOOP`: 0 loop, 1 ping-pong, 2 play-once) and,
+when it animates, the poses of its moving tiles (`_Patterns`, `_Colors`,
+`_Durations`, `_MOVING` of them per pose), which the tileset's `_Animate()`
+copies, and `_MovingCells`: which of its cells those tiles are, in reading order.
 
 A map that places meta-tiles carries the tiles each one shows in the map's
 tileset, so its export needs nothing else. An **indexed layer** exports as one
@@ -724,6 +791,7 @@ The animation exports its own tables:
 
 ```c
 #define G_COINANIM_FRAMES 4
+#define G_COINANIM_LOOP 0                           // 0 loop, 1 ping-pong, 2 play-once
 extern const unsigned char g_CoinAnim_Patterns[];   // poses end to end
 extern const unsigned char g_CoinAnim_Colors[];
 extern const unsigned char g_CoinAnim_Durations[];  // frames each pose is held
@@ -734,11 +802,25 @@ and the tileset it is attached to states where:
 ```c
 #define G_TILES_ANIMS 1
 #define G_TILES_ANIM_COIN 0
-#define G_TILES_ANIM_COIN_SLOT 6
+#define G_TILES_ANIM_COIN_SLOT 6     // the window's first tile
+#define G_TILES_ANIM_COIN_FRAMES 4
+#define G_TILES_ANIM_COIN_TILES 1    // the window's length: tiles one pose rewrites
 ```
 
 With **Export ready-made C** on the tileset, it plays them — see *Animated tiles*
-under the ready-made C below.
+under the ready-made C below. The poses are only ever in the animation's own
+header, so it needs an export target (the side panel's **Export** section) —
+and a C one while the tileset has ready-made C, which names its tables;
+otherwise the tileset's export fails and says so.
+
+A game with a loader of its own — tiles loaded at other slots, poses read from
+a MegaROM segment — can play the poses itself from these numbers: pose `p`,
+tile `k` is `_Patterns + (p * TILES + k) * 8`, held `_Durations[p]` VBlanks,
+shown at the tileset's `_SLOT + k` (for a meta-tile, at its cell
+`_MovingCells[k]`), and what follows the last pose is `_LOOP`'s: 0 back to the
+first, 1 ping-pong (turn round at either end), 2 play-once (hold the last pose)
+— the numbers the tileset's own `_Animate()` uses. A new project's `CLAUDE.md`
+has a worked example.
 
 Already animating by hand from a block of poses? Select the block in the tile
 editor and use **Make animation**: it writes the animation file from the block
@@ -956,6 +1038,26 @@ header defines where each character starts, and one call places the whole group:
 g_Actors_SetMeta(0, x, y, G_ACTORS_HERO_BASE + frame * G_ACTORS_HERO_PLANES,
                  G_ACTORS_HERO_PLANES);
 ```
+
+**Sprite animation** — a sheet with a character of more than one frame gets a
+player that follows the durations you set in the editor. `_AnimStep()` counts
+the VBlanks in two bytes you keep per sprite and says when the frame changes;
+`_SetFrame()` writes that frame's patterns and colours (not its position):
+
+```c
+u8 anim[2] = { 0, 0 };   // frame shown, VBlanks on it — zero it if it is a global
+g_Actors_SetFrame(0, G_ACTORS_COIN_ID, 0);          // hardware sprite 0 onward
+while(1)
+{
+    Halt();
+    if(g_Actors_AnimStep(G_ACTORS_COIN_ID, anim))
+        g_Actors_SetFrame(0, G_ACTORS_COIN_ID, anim[0]);
+}
+```
+
+A group is stepped the same way and drawn with `_SetMeta()`, passing
+`G_ACTORS_HERO_BASE + anim[0] * G_ACTORS_HERO_PLANES`. In sprite mode 2 the
+helpers need an MSX2.
 
 **Tile blocks** — stamps a block's tile indices into the name table. Needs
 `VDP_USE_MODE_G2` or `VDP_USE_MODE_G3`:

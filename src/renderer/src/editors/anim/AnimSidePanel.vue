@@ -1,12 +1,12 @@
 <script setup lang="ts">
 /**
- * The pose editor's sidebar: colour, size, timing and loop, a playing preview,
- * what a step costs, and where the file is attached — plus, for a meta-tile,
- * its eight gameplay flags.
+ * The pose editor's sidebar: colour, size, timing and loop,
+ * what a step costs, where the file is attached, and its export target — plus,
+ * for a meta-tile, its eight gameplay flags.
  * Readouts of session state and calls into it — every decision is in
  * `./session`, which is tested; this file is not.
  */
-import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
+import { computed, nextTick } from 'vue'
 import { paletteToRgb, toHex } from '../../../../shared/msx/palette'
 import { ANIM_LOOPS, type AnimLoop } from '../../../../shared/msx/tile'
 import { MAX_ANIM_CELLS } from '../../../../shared/msx/tile-anim'
@@ -18,17 +18,16 @@ import {
   doc,
   findAttachments,
   ownedMeta,
+  patchExport,
   removeFromTileset,
-  poseAtTick,
-  posePixels,
   resize,
   setColor,
   setDuration,
   setLoop,
   setFlag,
   setPair,
+  setupExport,
   stepBytes,
-  togglePlaying,
   type AnimSession
 } from './session'
 
@@ -42,46 +41,23 @@ const maxSide = computed(() => (meta.value ? MAX_META_SIZE : MAX_ANIM_CELLS))
 const rgb = computed(() => paletteToRgb(null))
 const LOOP_LABELS: Record<AnimLoop, string> = { loop: 'Loop', pingpong: 'Ping-pong', once: 'Play once' }
 
-// The preview steps a tick every 20 ms — one PAL VBlank, the clock `_Animate()`
-// is called on — and asks the session which pose that tick shows.
-const tick = ref(0)
-let timer: ReturnType<typeof setInterval> | null = null
-watch(
-  () => props.session.playing,
-  (playing) => {
-    if (timer) clearInterval(timer)
-    timer = null
-    tick.value = 0
-    if (playing) timer = setInterval(() => tick.value++, 20)
-  },
-  { immediate: true }
-)
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
-})
-
-const previewCanvas = ref<HTMLCanvasElement | null>(null)
-watchEffect(() => {
-  const element = previewCanvas.value
-  if (!element) return
-  const pose = props.session.playing ? poseAtTick(anim.value, tick.value) : props.session.frame
-  const { width, height, indices } = posePixels(props.session, pose)
-  element.width = width
-  element.height = height
-  const context = element.getContext('2d')
-  if (!context) return
-  const image = context.createImageData(width, height)
-  indices.forEach((index, i) => {
-    const { r, g, b } = index === 0 ? { r: 64, g: 64, b: 64 } : rgb.value[index]
-    image.data.set([r, g, b, 255], i * 4)
-  })
-  context.putImageData(image, 0, 0)
-})
-
 const allDurations = computed(() => {
   const first = anim.value.frames[0]?.duration ?? 8
   return anim.value.frames.every((frame) => frame.duration === first) ? first : null
 })
+
+/**
+ * `valueAsNumber`, not `Number(value)`: an emptied field is NaN, which the
+ * session ignores, where `Number('')` is 0 and would set every pose to 1. The
+ * field then shows what the poses hold — Vue leaves it alone when the bound
+ * value did not move, so a refused or clamped entry would otherwise stay typed.
+ */
+async function setAllDurations(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  setDuration(props.session, null, input.valueAsNumber)
+  await nextTick()
+  input.value = String(allDurations.value ?? '')
+}
 
 function openTileset(path: string): void {
   tabsStore.openFile(path, path.split('/').pop() ?? path)
@@ -226,26 +202,12 @@ function openTileset(path: string): void {
           max="255"
           :value="allDurations ?? ''"
           :placeholder="allDurations === null ? 'mixed' : ''"
-          @change="setDuration(session, null, Number(($event.target as HTMLInputElement).value))"
+          @change="setAllDurations"
         ></label>
       </div>
       <p class="hint">
         Durations are in frames (VBlanks): 50 a second on a European MSX, 60 on a Japanese one.
       </p>
-    </section>
-
-    <section>
-      <h3>Preview</h3>
-      <canvas
-        ref="previewCanvas"
-        class="preview"
-      />
-      <button
-        type="button"
-        @click="togglePlaying(session)"
-      >
-        {{ session.playing ? 'Stop' : 'Play' }}
-      </button>
     </section>
 
     <section>
@@ -302,6 +264,77 @@ function openTileset(path: string): void {
       >
         Refresh
       </button>
+    </section>
+
+    <section>
+      <h3>Export</h3>
+      <template v-if="anim.export">
+        <label class="field">
+          <span>Table name</span>
+          <input
+            type="text"
+            spellcheck="false"
+            :value="anim.export.name"
+            @change="patchExport(session, { name: ($event.target as HTMLInputElement).value })"
+          >
+        </label>
+        <label class="field">
+          <span>Output</span>
+          <input
+            type="text"
+            spellcheck="false"
+            :value="anim.export.out"
+            @change="patchExport(session, { out: ($event.target as HTMLInputElement).value })"
+          >
+        </label>
+        <label class="field">
+          <span>Format</span>
+          <select
+            :value="anim.export.format"
+            @change="patchExport(session, { format: ($event.target as HTMLSelectElement).value as 'c' | 'bin' })"
+          >
+            <option value="c">C header</option>
+            <option value="bin">Raw binary</option>
+          </select>
+        </label>
+        <p
+          v-if="anim.export.format === 'bin' && (!meta || moving)"
+          class="hint"
+        >
+          A raw binary has no C names, so a tileset's ready-made <code>_Animate()</code> cannot link
+          against it. Keep the C header unless your own code loads the poses.
+        </p>
+      </template>
+      <template v-else>
+        <p
+          v-if="meta && !moving"
+          class="hint"
+        >
+          Not exported. A still meta-tile can do without: each tileset draws it from its own tiles.
+          Its header would hold its size and flags.
+        </p>
+        <p
+          v-else-if="meta"
+          class="hint"
+        >
+          Not exported. The poses of its moving tiles go into its own header, which every tileset it is
+          attached to animates it from — those tilesets will not export until it has one.
+        </p>
+        <p
+          v-else
+          class="hint"
+        >
+          Not exported. Its poses go into its own header, which the <code>_Animate()</code> of every
+          tileset it is attached to copies from.
+        </p>
+        <button
+          type="button"
+          class="wide"
+          @click="setupExport(session)"
+        >
+          Set up export
+        </button>
+      </template>
     </section>
   </aside>
 </template>
@@ -372,16 +405,6 @@ section {
   color: var(--color-text-muted);
 }
 
-.preview {
-  display: block;
-  width: 96px;
-  height: 96px;
-  margin-bottom: 6px;
-  object-fit: contain;
-  image-rendering: pixelated;
-  background: #2a2a2a;
-}
-
 .attached {
   margin: 0 0 6px;
   padding: 0;
@@ -407,5 +430,28 @@ section {
   background: none;
   color: var(--color-accent);
   cursor: pointer;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.field > span {
+  color: var(--color-text-muted);
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.wide {
+  width: 100%;
+  margin-top: 4px;
 }
 </style>

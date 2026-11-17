@@ -1,9 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { REAL_MSXGL, emulatorConfigured, hasMsxgl, scratchRoot } from './__fixtures__/msxgl'
-import type { BuildFinished, IpcEvents, OpenProject } from '../../shared/ipc'
+import type { BuildFinished, ConversionResult, IpcEvents, OpenProject } from '../../shared/ipc'
+import { defaultProject } from '../../shared/msxproj'
 import { BuildService, type BuildDeps } from './build-service'
 import { createProject, resolveNodeBinary, saveProject } from './project'
 
@@ -179,6 +181,87 @@ describe('BuildService.start', () => {
     },
     BUILD_TIMEOUT
   )
+})
+
+/**
+ * A stand-in for MSXgl: `engine/script/js/build.js` that prints one SDCC-style
+ * error and exits with `code`, run by this test's own Node. What `BuildService`
+ * does around the build — the conversions and the event it ends with — needs no
+ * compiler, and must not touch the real checkout another suite may be building in.
+ */
+function fakeMsxgl(code: number): string {
+  const dir = mkdtempSync(join(tmpdir(), 'fake-msxgl-'))
+  tmpDirs.push(dir)
+  mkdirSync(join(dir, 'engine/script/js'), { recursive: true })
+  writeFileSync(
+    join(dir, 'engine/script/js/build.js'),
+    `console.log("main.c:12: error 20: Undefined identifier 'g_Foo'")\nprocess.exit(${code})\n`
+  )
+  return dir
+}
+
+function fakeProject(): OpenProject {
+  const root = mkdtempSync(join(tmpdir(), 'fake-project-'))
+  tmpDirs.push(root)
+  writeFileSync(join(root, 'main.c'), '', 'utf-8')
+  return { root, projectFile: 'game.msxproj', project: defaultProject('game'), imported: false } as OpenProject
+}
+
+describe('BuildService: resource exports that failed', () => {
+  const failed: ConversionResult[] = [
+    { kind: 'resource', input: 'res/items.tiles.json', out: 'content/items.h', status: 'failed', message: 'compass has 2 poses but no export target' },
+    { kind: 'resource', input: 'res/ok.tiles.json', out: 'content/ok.h', status: 'converted', message: '1 + 2 bytes' }
+  ]
+
+  /** A harness over the fake MSXgl that keeps a *copy* of each event, as the renderer receives it over IPC. */
+  function run(code: number, command: 'build' | 'clean' = 'build'): { result: Promise<BuildFinished>; sent: { channel: string; payload: unknown }[] } {
+    const sent: { channel: string; payload: unknown }[] = []
+    const test = harness(fakeProject(), {
+      msxglPath: () => fakeMsxgl(code),
+      nodeOverride: () => process.execPath,
+      exportResources: async () => failed,
+      emit: (channel, payload) => sent.push({ channel, payload: structuredClone(payload) })
+    })
+    return { result: test.service.start(command), sent }
+  }
+
+  it('are build problems, ahead of the compiler’s own, in the result and in the build:finished the Problems panel is filled from', async () => {
+    const { result, sent } = run(1)
+    const finished = await result
+    const expected = [
+      { id: 'r0', severity: 'error', file: 'res/items.tiles.json', message: 'compass has 2 poses but no export target' },
+      { id: 'p0', severity: 'error', file: 'main.c', line: 12, message: "error 20: Undefined identifier 'g_Foo'" }
+    ]
+    expect(finished.problems).toMatchObject(expected)
+    expect(finished.problems).toHaveLength(2)
+    const event = sent.filter((e) => e.channel === 'build:finished')
+    expect(event).toHaveLength(1)
+    expect((event[0].payload as BuildFinished).problems).toMatchObject(expected)
+    // Still written to the output too, where they always were.
+    expect(sent.some((e) => e.channel === 'build:output' && (e.payload as IpcEvents['build:output']).lines.some((line) => line.includes('Resource export failed: res/items.tiles.json')))).toBe(true)
+  })
+
+  it('leave ok to MSXgl: the build still runs and can succeed', async () => {
+    const finished = await run(0).result
+    expect(finished.ok).toBe(true)
+    expect(finished.problems.map((problem) => problem.id)).toEqual(['r0', 'p0'])
+  })
+
+  it('are reported for a clean too', async () => {
+    const finished = await run(0, 'clean').result
+    expect(finished.problems[0]).toMatchObject({ id: 'r0', file: 'res/items.tiles.json' })
+  })
+
+  it('are none of a sample’s business: "Try it" exports nothing', async () => {
+    const test = harness({} as OpenProject, {
+      getProject: () => null,
+      msxglPath: () => fakeMsxgl(0),
+      nodeOverride: () => process.execPath,
+      exportResources: async () => failed
+    })
+    const finished = await test.service.startExternal(fakeProject().root, ['projname=s_hello'])
+    expect(finished.problems.map((problem) => problem.id)).toEqual(['p0'])
+  })
 })
 
 describe('BuildService.kill', () => {

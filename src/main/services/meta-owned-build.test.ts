@@ -142,6 +142,13 @@ describe.runIf(runsBuilds)('an indexed level of meta-tiles builds against real M
         main: `#include "msxgl.h"
 #include "content/tiles.h"
 #include "content/level.h"
+#include "content/torch.h"
+
+// The torch's loop mode, as data for a loader of the game's own: ping-pong,
+// the number the tileset's _AnimLoop plays it by.
+#if !defined(G_TORCH_LOOP) || G_TORCH_LOOP != 1
+#error the torch's header does not state its loop mode as _AnimLoop numbers it
+#endif
 
 // Globals, so they are not on the stack; zeroed below, because RAM is not
 // cleared at boot on a ROM target.

@@ -362,7 +362,7 @@ const unsigned char g_Fleet_Patterns[] =
 };
 // g_Fleet_Patterns size: 352 Bytes
 
-// Sprite Colors Table
+// Sprite Colors Table — 16 line bytes per plane (EC|CC|IC|colour), in pattern order
 const unsigned char g_Fleet_Colors[] =
 {
 	0x0C, 0x0C, 0x04, 0x04, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x02, 0x09, 0x08, 0x07, 0x0A,
@@ -418,7 +418,14 @@ const unsigned char g_Fleet_Layout[] =
 };
 // g_Fleet_Layout size: 22 Bytes
 
-// Total size: 582 Bytes
+// Frame durations in VBlanks — one byte per frame, characters in order (a character starts at its _FRAME0)
+const unsigned char g_Fleet_Durations[] =
+{
+	0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+};
+// g_Fleet_Durations size: 9 Bytes
+
+// Total size: 591 Bytes
 
 void g_Fleet_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)
 {
@@ -431,4 +438,40 @@ void g_Fleet_SetMeta(u8 index, u8 x, u8 y, u8 base, u8 planes)
 		rec += 2;
 		VDP_SetSpriteExMultiColor(index + i, px, py, plane * 4, g_Fleet_Colors + ((u16)plane * 16));
 	}
+}
+
+// Per character: first plane, planes per frame, frames, first frame in g_Fleet_Durations.
+static const u8 g_Fleet_CharInfo[G_FLEET_CHARS * 4] = { 0, 2, 2, 0, 4, 1, 1, 2, 5, 1, 2, 3, 7, 1, 4, 5 };
+
+void g_Fleet_SetFrame(u8 index, u8 chr, u8 frame)
+{
+	if(chr >= G_FLEET_CHARS) return;
+	const u8* info = g_Fleet_CharInfo + ((u16)chr * 4);
+	if(frame >= info[2]) frame = 0;
+	u8 plane = info[0] + frame * info[1];
+	for(u8 i = 0; i < info[1]; ++i, ++plane)
+	{
+		VDP_SetSpritePattern(index + i, plane * 4);
+		VDP_SetSpriteMultiColor(index + i, g_Fleet_Colors + ((u16)plane * 16));
+	}
+}
+
+bool g_Fleet_AnimStep(u8 chr, u8* state)
+{
+	if(chr >= G_FLEET_CHARS) return FALSE;
+	const u8* info = g_Fleet_CharInfo + ((u16)chr * 4);
+	u8 f = state[0];
+	// Clamped: a frame past the last means nobody zeroed state.
+	if(f >= info[2])
+	{
+		state[0] = 0;
+		state[1] = 0;
+		return TRUE;
+	}
+	if(++state[1] < g_Fleet_Durations[info[3] + f]) return FALSE;
+	state[1] = 0;
+	if(++f >= info[2]) f = 0;
+	if(f == state[0]) return FALSE;
+	state[0] = f;
+	return TRUE;
 }

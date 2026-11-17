@@ -44,7 +44,7 @@ Any client that speaks MCP over Streamable HTTP connects to the same URL.
 | `project_info` | The open project — machine, target, modules — the build state, the open tabs |
 | `list_resources` | Every tileset, sprite bank, map, world, song… with the header it exports to |
 | `export_resources` | Exports one resource, or all, to C — as a build would |
-| `build` | Build, Rebuild, Clean or Run — exactly the toolbar's — and the result, the problems and the output's tail |
+| `build` | Build, Rebuild, Clean or Run — exactly the toolbar's — and the result, the problems and the output's tail. A resource that failed to export does not stop the build, so MSXgl compiles the header its last good export left: the result then starts "Build succeeded, but 1 resource export failed", lists each failure first among the problems, and counts as an error |
 | `get_build_output`, `get_problems` | The last build's output and its errors and warnings |
 | `list_files`, `read_file`, `write_file` | The project's files |
 
@@ -52,8 +52,8 @@ Any client that speaks MCP over Streamable HTTP connects to the same URL.
 
 | Tool | What it does |
 |---|---|
-| `read_resource` | A resource as the editors read it — every field present — and what its export would refuse |
-| `write_resource` | Writes one through the editors' own parser: filled in, cleaned up, then saved |
+| `read_resource` | A resource as the editors read it — every field present, and what it copies from other files (a map's entries for the meta-tiles it places) refreshed from them — and what its export would refuse, checked against those files by the same code `export_resources` runs — including another resource exporting to the same file |
+| `write_resource` | Writes one through the editors' own parser: filled in, cleaned up, its copies of other files refreshed, then saved. A new file with no `export` block gets the one `create_resource` would give it. A map's `tilesetReorderSeen` and a tileset's `reorderLog` are kept, from the file when Claude's version leaves them out |
 | `create_resource` | A new resource, as the Resources panel's New makes it, opened in a tab |
 | `preview_resource` | A picture of it, as the Resources panel draws it |
 

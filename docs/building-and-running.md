@@ -27,6 +27,10 @@ Before every build, two things happen automatically:
 2. **Resources are exported.** Every tile bank, sprite sheet, map, screen and
    sound bank writes its C header if the source is newer than the output, so an
    edit in a resource editor reaches the compiler without you exporting by hand.
+   A resource that cannot be exported is listed in **Problems** as an error
+   against its own file, and the build carries on with the header already in
+   `content/` — so a green build can still be running an older picture.
+   Anything in a folder (or file) whose name starts with a dot is skipped.
 
 ## Reading the output
 

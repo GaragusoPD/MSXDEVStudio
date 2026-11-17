@@ -409,7 +409,9 @@ runs of non-transparent cells, since a transparent cell is a skipped write. A ma
 emits its layers as before, plus `_Placements` (three bytes each) with `_METAS`,
 `_PLACEMENTS`, a `#define` per meta and its mirrored flags, and (helpers on)
 `_DrawPlacements(frames)`, which `extern`s each meta's symbol and skips the baked
-entries.
+entries. A bitmap meta's frames each carry a `duration` (VBlanks, 1–255,
+default 8), edited in the shared animation bar and exported as `_Durations`
+after the frames table when there is more than one frame; no helper steps it.
 
 **Meta-tiles own their pixels** (0.2.2; `meta-owned.ts`, design
 `docs/superpowers/specs/2026-10-13-indexed-meta-maps-design.md`). The

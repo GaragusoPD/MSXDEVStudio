@@ -1,8 +1,9 @@
 /**
  * Sprite editor (Spec 09) — the editor-side logic that isn't hardware
  * knowledge: undo history, tool strokes, frame/sprite/layer list operations,
- * size/mode conversion loss checks, the scanline budget hint, PNG-strip
- * import, and animation playback ticking.
+ * size/mode conversion loss checks, the scanline budget hint and PNG-strip
+ * import. Animation playback runs on `shared/animation-playback.ts`, the clock
+ * every editor's animation bar shares.
  *
  * Everything here is pure and DOM-free, so it lives in `shared/` where
  * Vitest already runs; `editors/sprite/*.vue` is a thin shell on top. All
@@ -12,8 +13,10 @@
  */
 
 import type { History } from './history'
+import { DEFAULT_ANIM_DURATION } from './msx/tile-anim'
 import {
   cellLayers,
+  clampSpriteDuration,
   createLayer,
   getSpritePixel,
   lockLeadingCc,
@@ -58,7 +61,7 @@ export function updateLayer(doc: SpritesDoc, target: SpriteTarget, fn: (layer: S
   const sprites = mapAt(doc.sprites, target.sprite, (s) => {
     const frames = mapAt(s.frames, target.frame, (f) => {
       const layers = mapAt(f.layers, target.layer, fn)
-      return lockLeadingCc(layers === f.layers ? f : { layers }, doc.mode)
+      return lockLeadingCc(layers === f.layers ? f : { ...f, layers }, doc.mode)
     })
     return frames === s.frames ? s : { ...s, frames }
   })
@@ -174,7 +177,11 @@ function cloneLayers(layers: readonly SpriteLayer[]): SpriteLayer[] {
   return layers.map((layer) => ({ ...layer, pattern: [...layer.pattern], lineColors: [...layer.lineColors] }))
 }
 
-/** A blank frame with the same layer count/cells/colors as frame 0, so the character stays visually consistent. */
+/**
+ * A blank frame with the same layer count/cells/colors as frame 0, so the
+ * character stays visually consistent — held as long as the last frame, which
+ * is the timing an animation being extended most likely wants.
+ */
 export function addFrame(doc: SpritesDoc, spriteIndex: number): SpritesDoc {
   return updateSprite(doc, spriteIndex, (sprite) => ({
     ...sprite,
@@ -186,7 +193,8 @@ export function addFrame(doc: SpritesDoc, spriteIndex: number): SpritesDoc {
           ec: source.ec,
           lineColors: source.lineColors.slice(),
           cc: source.cc
-        }))
+        })),
+        duration: sprite.frames[sprite.frames.length - 1]?.duration ?? DEFAULT_ANIM_DURATION
       }
     ]
   }))
@@ -197,9 +205,25 @@ export function cloneFrame(doc: SpritesDoc, spriteIndex: number, frameIndex: num
     const source = sprite.frames[frameIndex]
     if (!source) return sprite
     const frames = sprite.frames.slice()
-    frames.splice(frameIndex + 1, 0, { layers: cloneLayers(source.layers) })
+    frames.splice(frameIndex + 1, 0, { layers: cloneLayers(source.layers), duration: source.duration })
     return { ...sprite, frames }
   })
+}
+
+/**
+ * How many VBlanks one frame is held, kept to 1..255. A value that is not a
+ * number (an emptied input field) changes nothing rather than reaching the
+ * document — and neither does the value it already has, so no empty undo step.
+ */
+export function setFrameDuration(doc: SpritesDoc, spriteIndex: number, frameIndex: number, duration: number): SpritesDoc {
+  const current = doc.sprites[spriteIndex]?.frames[frameIndex]
+  if (!current) return doc
+  const next = clampSpriteDuration(duration, current.duration)
+  if (next === current.duration) return doc
+  return updateSprite(doc, spriteIndex, (sprite) => ({
+    ...sprite,
+    frames: sprite.frames.map((frame, i) => (i === frameIndex ? { ...frame, duration: next } : frame))
+  }))
 }
 
 export function removeFrame(doc: SpritesDoc, spriteIndex: number, frameIndex: number): SpritesDoc {
@@ -220,7 +244,10 @@ export function reorderFrame(doc: SpritesDoc, spriteIndex: number, from: number,
 
 export function addSprite(doc: SpritesDoc): SpritesDoc {
   const name = `sprite_${doc.sprites.length}`
-  return { ...doc, sprites: [...doc.sprites, { name, cols: 1, rows: 1, frames: [{ layers: [createLayer(doc.size)] }] }] }
+  return {
+    ...doc,
+    sprites: [...doc.sprites, { name, cols: 1, rows: 1, frames: [{ layers: [createLayer(doc.size)], duration: DEFAULT_ANIM_DURATION }] }]
+  }
 }
 
 export function duplicateSprite(doc: SpritesDoc, index: number): SpritesDoc {
@@ -229,7 +256,7 @@ export function duplicateSprite(doc: SpritesDoc, index: number): SpritesDoc {
   const copy: SpriteCharacter = {
     ...source,
     name: `${source.name}_copy`,
-    frames: source.frames.map((frame) => ({ layers: cloneLayers(frame.layers) }))
+    frames: source.frames.map((frame) => ({ ...frame, layers: cloneLayers(frame.layers) }))
   }
   const sprites = doc.sprites.slice()
   sprites.splice(index + 1, 0, copy)
@@ -254,7 +281,7 @@ export function addLayer(doc: SpritesDoc, spriteIndex: number, cx = 0, cy = 0): 
   return updateSprite(doc, spriteIndex, (sprite) => ({
     ...sprite,
     frames: sprite.frames.map((frame) =>
-      cellLayers(frame, cx, cy).length >= MAX_LAYERS ? frame : { layers: [...frame.layers, createLayer(doc.size, 15, cx, cy)] }
+      cellLayers(frame, cx, cy).length >= MAX_LAYERS ? frame : { ...frame, layers: [...frame.layers, createLayer(doc.size, 15, cx, cy)] }
     )
   }))
 }
@@ -268,7 +295,7 @@ export function removeLayer(doc: SpritesDoc, spriteIndex: number, layerIndex: nu
   return updateSprite(doc, spriteIndex, (sprite) =>
     sprite.frames.some((frame) => frame.layers.length <= 1)
       ? sprite
-      : { ...sprite, frames: sprite.frames.map((frame) => ({ layers: frame.layers.filter((_, i) => i !== layerIndex) })) }
+      : { ...sprite, frames: sprite.frames.map((frame) => ({ ...frame, layers: frame.layers.filter((_, i) => i !== layerIndex) })) }
   )
 }
 
@@ -286,7 +313,7 @@ export function reorderLayer(doc: SpritesDoc, spriteIndex: number, from: number,
       frames: sprite.frames.map((frame) => {
         const moved = frame.layers.slice()
         moved.splice(to, 0, ...moved.splice(from, 1))
-        return { layers: moved }
+        return { ...frame, layers: moved }
       })
     }
   })
@@ -318,6 +345,7 @@ export function setCharacterGrid(doc: SpritesDoc, spriteIndex: number, cols: num
       cols: nextCols,
       rows: nextRows,
       frames: sprite.frames.map((frame) => ({
+        ...frame,
         layers: [
           ...frame.layers.filter((layer) => layer.cx < nextCols && layer.cy < nextRows),
           ...added.map(({ cx, cy }) => createLayer(doc.size, 15, cx, cy))
@@ -365,6 +393,7 @@ export function convertSpriteSize(doc: SpritesDoc, size: SpriteSize): SpritesDoc
   const sprites = doc.sprites.map((sprite) => ({
     ...sprite,
     frames: sprite.frames.map((frame) => ({
+      ...frame,
       layers: frame.layers.map((layer) => {
         let out: SpriteLayer = {
           ...createLayer(size, layer.color, layer.cx, layer.cy),
@@ -479,28 +508,7 @@ export function stripToFrames(
       }
       return layer
     })
-    frames.push({ layers: layers.length ? layers : [createLayer(size)] })
+    frames.push({ layers: layers.length ? layers : [createLayer(size)], duration: DEFAULT_ANIM_DURATION })
   }
   return frames
-}
-
-// ── animation playback ───────────────────────────────────────────────────
-
-export interface PlaybackState {
-  frameIndex: number
-  /** Leftover time (ms) not yet consumed by a frame advance. */
-  elapsedMs: number
-}
-
-/** Advances playback by `deltaMs` at `fps`, wrapping the frame index. `frameCount <= 1` never advances. */
-export function tickPlayback(state: PlaybackState, deltaMs: number, fps: number, frameCount: number): PlaybackState {
-  if (frameCount <= 1) return { frameIndex: 0, elapsedMs: 0 }
-  const frameDuration = 1000 / Math.max(1, fps)
-  let elapsedMs = state.elapsedMs + deltaMs
-  let frameIndex = state.frameIndex % frameCount
-  while (elapsedMs >= frameDuration) {
-    elapsedMs -= frameDuration
-    frameIndex = (frameIndex + 1) % frameCount
-  }
-  return { frameIndex, elapsedMs }
 }

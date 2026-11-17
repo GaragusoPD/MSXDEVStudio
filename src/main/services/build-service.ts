@@ -23,7 +23,7 @@ import type {
 } from '../../shared/ipc'
 import type { MsxProject } from '../../shared/msxproj'
 import { resolveNodeBinary } from './project'
-import { summarize } from './resources'
+import { conversionProblems, summarize } from './resources'
 import { openmsxSystemDataDir } from './toolchain'
 import {
   ArtifactServer,
@@ -130,7 +130,8 @@ export class BuildService {
 
     const webmsx = command === 'run' && open.project.emulator.preferred === 'webmsx'
     this.deps.emit('build:started', { command })
-    this.reportConversions(await this.deps.exportResources())
+    const conversions = await this.deps.exportResources()
+    this.reportConversions(conversions)
 
     // After exportResources — converted resources land as headers and must count.
     const stamp = buildStamp(open.root, open.project)
@@ -145,7 +146,9 @@ export class BuildService {
     const args = buildArgs(msxglPath, open.project, command, !webmsx, forceFull)
     this.deps.emit('build:output', { channel: 'build', lines: [`> ${node} ${args.join(' ')}`] })
 
-    const result = await this.run(node, args, open.root, open.project)
+    // Into `run()`, not appended to its result: the `build:finished` it emits is
+    // the only thing the Problems panel is filled from.
+    const result = await this.run(node, args, open.root, open.project, conversionProblems(conversions))
     // After the build: a rebuild's clean step wipes out/ (stamp included), so a
     // stamp written before the spawn would force full rebuilds forever after.
     if (command !== 'clean') writeBuildStamp(open.root, stamp)
@@ -180,8 +183,9 @@ export class BuildService {
   /**
    * Logs the Spec 07 pre-build step. Nothing converted and nothing failed is
    * the common case and stays silent; failures are reported but do **not**
-   * abort — MSXgl reports the missing/stale header itself, with a file and
-   * line the Problems panel can link to.
+   * abort. MSXgl reports a *missing* header itself, but a stale one compiles
+   * cleanly, so each failure is also a problem of its own
+   * (`conversionProblems`, handed to `run()`).
    */
   private reportConversions(results: readonly ConversionResult[]): void {
     const converted = results.filter((result) => result.status === 'converted')
@@ -201,9 +205,11 @@ export class BuildService {
   }
 
   /** Spawns build.js, streams its output, and resolves once it has exited. `project` (absent for
-   *  Spec 12's "Try it") is only needed to resolve which artifacts were deployed. */
-  private run(node: string, args: string[], root: string, project?: MsxProject): Promise<BuildFinished> {
-    const problems: BuildProblem[] = []
+   *  Spec 12's "Try it") is only needed to resolve which artifacts were deployed. `before` are
+   *  problems found before the build (failed resource exports), listed ahead of its own. */
+  private run(node: string, args: string[], root: string, project?: MsxProject, before: readonly BuildProblem[] = []): Promise<BuildFinished> {
+    const problems: BuildProblem[] = [...before]
+    let parsed = 0
     const stderrTail: string[] = []
     this.killed = false
 
@@ -231,7 +237,7 @@ export class BuildService {
         for (const line of lines) {
           if (channel === 'build:err') stderrTail.push(line)
           const problem = parseProblem(line, root)
-          if (problem) problems.push({ ...problem, id: `p${problems.length}` })
+          if (problem) problems.push({ ...problem, id: `p${parsed++}` })
         }
         if (lines.length) this.deps.emit('build:output', { channel, lines })
       }

@@ -20,6 +20,7 @@
 import { defineName, type HelperC } from './emitC'
 import type { MapCell } from './map'
 import type { ExportBlock } from './resource'
+import { clampSpriteDuration } from './sprite'
 
 /**
  * Tiles per axis in a meta. Nothing in the hardware says so — the cap keeps a
@@ -35,6 +36,8 @@ export const MAX_FRAMES = 255
 /** One animation pose: the whole meta's tile indices, row-major. */
 export interface MetaFrame {
   tiles: number[]
+  /** VBlanks this pose is held — 1..255, the unit every other animation uses. Exported as `_Durations`. */
+  duration: number
 }
 
 export interface MetaTileDoc {
@@ -98,14 +101,15 @@ export function normalizeMetaTile(raw: unknown): MetaTileDoc {
   const legacy = Array.isArray(input.metas) ? (input.metas[0] as { tiles?: unknown } | undefined) : undefined
   const rawFrames =
     Array.isArray(input.frames) && input.frames.length
-      ? (input.frames as { tiles?: unknown }[])
+      ? (input.frames as { tiles?: unknown; duration?: unknown }[])
       : [{ tiles: legacy?.tiles }]
 
   const frames: MetaFrame[] = rawFrames.slice(0, MAX_FRAMES).map((frame) => ({
     // Resized to the document's own geometry rather than kept as authored:
     // the exported table is read at a fixed stride, so one odd frame would
     // shift every frame after it.
-    tiles: Array.from({ length: cells }, (_, i) => (Number((frame?.tiles as number[] | undefined)?.[i]) || 0) & 0xff)
+    tiles: Array.from({ length: cells }, (_, i) => (Number((frame?.tiles as number[] | undefined)?.[i]) || 0) & 0xff),
+    duration: clampSpriteDuration((frame as { duration?: unknown } | undefined)?.duration)
   }))
 
   return {
@@ -118,7 +122,7 @@ export function normalizeMetaTile(raw: unknown): MetaTileDoc {
       typeof input.transparent === 'number' && Number.isFinite(input.transparent)
         ? Math.max(0, Math.min(15, input.transparent as number))
         : null,
-    frames: frames.length ? frames : [{ tiles: new Array<number>(cells).fill(0) }],
+    frames: frames.length ? frames : [{ tiles: new Array<number>(cells).fill(0), duration: clampSpriteDuration(undefined) }],
     flags: (Number(input.flags) || 0) & 0xff,
     export: (input.export as ExportBlock | undefined) ?? null
   }
@@ -156,16 +160,38 @@ export function setFrameTile(doc: MetaTileDoc, frame: number, tx: number, ty: nu
   const tiles = current.tiles.slice()
   tiles[at] = tile & 0xff
   const frames = doc.frames.slice()
-  frames[frame] = { tiles }
+  frames[frame] = { ...current, tiles }
   return { ...doc, frames }
 }
 
-/** Appends a frame, copying `copyOf` when given — animation starts from a pose. */
+/**
+ * Adds a frame. A copy lands right after `copyOf` and keeps its duration;
+ * a blank one is appended and takes the last frame's duration.
+ */
 export function addFrame(doc: MetaTileDoc, copyOf?: number): MetaTileDoc {
   if (doc.frames.length >= MAX_FRAMES) return doc
   const source = copyOf === undefined ? undefined : doc.frames[copyOf]
-  const tiles = source ? source.tiles.slice() : new Array<number>(metaCells(doc)).fill(0)
-  return { ...doc, frames: [...doc.frames, { tiles }] }
+  if (source) {
+    const frames = doc.frames.slice()
+    frames.splice(copyOf! + 1, 0, { tiles: source.tiles.slice(), duration: source.duration })
+    return { ...doc, frames }
+  }
+  const last = doc.frames[doc.frames.length - 1]
+  return {
+    ...doc,
+    frames: [...doc.frames, { tiles: new Array<number>(metaCells(doc)).fill(0), duration: last?.duration ?? clampSpriteDuration(undefined) }]
+  }
+}
+
+/** Sets how long a frame is held, clamped to 1..255; `doc` itself when nothing changes. */
+export function setFrameDuration(doc: MetaTileDoc, index: number, duration: number): MetaTileDoc {
+  const current = doc.frames[index]
+  if (!current) return doc
+  const next = clampSpriteDuration(duration, current.duration)
+  if (next === current.duration) return doc
+  const frames = doc.frames.slice()
+  frames[index] = { ...current, duration: next }
+  return { ...doc, frames }
 }
 
 /** Removes a frame. The last one cannot go: a meta with no pose is not drawable. */
@@ -195,7 +221,7 @@ export function resizeMeta(doc: MetaTileDoc, width: number, height: number): Met
     for (let y = 0; y < Math.min(h, doc.height); y++) {
       for (let x = 0; x < Math.min(w, doc.width); x++) tiles[y * w + x] = frame.tiles[y * doc.width + x] ?? 0
     }
-    return { tiles }
+    return { ...frame, tiles }
   })
   return { ...doc, width: w, height: h, frames }
 }
@@ -206,7 +232,7 @@ export function resizeMeta(doc: MetaTileDoc, width: number, height: number): Met
  * does over its own cells.
  */
 export function remapMetaTiles(doc: MetaTileDoc, mapping: readonly number[]): MetaTileDoc {
-  return { ...doc, frames: doc.frames.map((frame) => ({ tiles: frame.tiles.map((tile) => mapping[tile] ?? 0) })) }
+  return { ...doc, frames: doc.frames.map((frame) => ({ ...frame, tiles: frame.tiles.map((tile) => mapping[tile] ?? 0) })) }
 }
 
 export function validateMetaTile(doc: MetaTileDoc): string[] {

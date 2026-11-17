@@ -10,6 +10,8 @@
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { movingCells } from '../../../../shared/msx/meta-owned'
+import { paletteToRgb } from '../../../../shared/msx/palette'
+import { MAX_ANIM_FRAMES } from '../../../../shared/msx/tile-anim'
 import type { MaterialSymbol } from '@material-symbols/font-400'
 import { isTypingTarget } from '../../commands'
 import type { TileTool } from '../../../../shared/tile-editor'
@@ -18,11 +20,13 @@ import ImportImageDialog from '../../components/ImportImageDialog.vue'
 import type { ImportResult } from '../../composables/useImageImport'
 import { useResourcesStore } from '../../stores/resourcesStore'
 import { useTabsStore } from '../../stores/tabsStore'
+import AnimationBar from '../../components/AnimationBar.vue'
+import { drawIndices } from '../sprite/draw'
 import AnimCanvas from './AnimCanvas.vue'
-import AnimFrameBar from './AnimFrameBar.vue'
 import AnimSidePanel from './AnimSidePanel.vue'
 import { pictureClipboard } from '../picture-clipboard'
 import {
+  addFrame,
   animSession,
   canRedo,
   canUndo,
@@ -32,14 +36,22 @@ import {
   dropFloat,
   floatImage,
   moveFloat,
+  moveFrame,
   placeFloat,
+  posePixels,
   ownedMeta,
   pruneAnimSessions,
   redo,
+  removeFrame,
   saveSession,
+  setBackground,
+  setDuration,
+  setFrame,
   setHoleMode,
+  setOnionSkin,
   setTool,
   setZoom,
+  togglePlaying,
   undo,
   type AnimSession
 } from './session'
@@ -54,6 +66,20 @@ const session = computed<AnimSession>(() => animSession(path.value))
 const anim = computed(() => doc(session.value))
 const meta = computed(() => ownedMeta(session.value))
 const importing = ref(false)
+
+const durations = computed(() => anim.value.frames.map((frame) => frame.duration))
+const frameSize = computed(() => ({ width: anim.value.width * 8, height: anim.value.height * 8 }))
+/** Every pose's art, plus what decodes it that is not in the frames (SCREEN 1's pair, the size). */
+const artKey = computed(() => {
+  const { frames, mode, width, height, pair } = anim.value
+  return [frames, mode, width, height, pair]
+})
+
+/** Reads the session, writes nothing: the bar runs it inside its effects. */
+function drawFrame(ctx: CanvasRenderingContext2D, index: number, scale: number): void {
+  const { width, indices } = posePixels(session.value, index)
+  drawIndices(ctx, indices, width, scale, paletteToRgb(null))
+}
 
 function onImported(result: ImportResult): void {
   floatImage(session.value, result)
@@ -246,7 +272,7 @@ watch(
         <button
           type="button"
           :disabled="!anim.export"
-          title="Save, then write the C header"
+          :title="anim.export ? 'Save, then write the C header' : 'No export target yet — set one up under Export in the side panel'"
           @click="exportNow"
         >
           Export
@@ -257,7 +283,29 @@ watch(
     <div class="body">
       <div class="centre">
         <AnimCanvas :session="session" />
-        <AnimFrameBar :session="session" />
+        <AnimationBar
+          :key="path"
+          :playing="session.playing"
+          :background="session.background"
+          :onion-skin="session.onionSkin"
+          :frame-count="anim.frames.length"
+          :selected="session.frame"
+          :durations="durations"
+          :loop="anim.loop"
+          :frame-size="frameSize"
+          :draw-frame="drawFrame"
+          :art-key="artKey"
+          :max-frames="MAX_ANIM_FRAMES"
+          @update:playing="togglePlaying(session)"
+          @update:background="setBackground(session, $event)"
+          @update:onion-skin="setOnionSkin(session, $event)"
+          @select="setFrame(session, $event)"
+          @add="addFrame(session, null)"
+          @duplicate="addFrame(session, $event)"
+          @remove="removeFrame(session, $event)"
+          @move="(from, to) => moveFrame(session, from, to)"
+          @duration="(index, value) => setDuration(session, index, value)"
+        />
       </div>
       <AnimSidePanel :session="session" />
     </div>

@@ -22,6 +22,7 @@
  */
 
 import { shallowReactive } from 'vue'
+import type { AnimationBackground } from '../../../../shared/animation-playback'
 import {
   addFrame as addFramePure,
   createMetaTileDoc,
@@ -32,6 +33,7 @@ import {
   removeFrame as removeFramePure,
   reorderFrames as reorderFramesPure,
   resizeMeta as resizeMetaPure,
+  setFrameDuration as setFrameDurationPure,
   META_FLAG_COUNT,
   type MetaTileDoc
 } from '../../../../shared/msx/meta-tile'
@@ -45,6 +47,7 @@ import {
   sheetCols,
   tilePixels as bitmapTilePixels
 } from '../../../../shared/msx/bitmap-tile'
+import { paletteToRgb, type Rgb } from '../../../../shared/msx/palette'
 import { encodeIndices } from '../../../../shared/msx/screen'
 import type { ScreenDoc } from '../../../../shared/msx/screen'
 import { screenPixels } from '../../../../shared/msx/screen'
@@ -101,6 +104,8 @@ export interface MetaSession {
   density: number
   onionSkin: boolean
   playing: boolean
+  /** What the animation bar's preview shows through colour 0 / empty cells. */
+  background: AnimationBackground
   zoom: number
   gridVisible: boolean
   status: string
@@ -169,6 +174,7 @@ export function metaSession(path: string): MetaSession {
     density: 8,
     onionSkin: false,
     playing: false,
+    background: 'checkered',
     zoom: 16,
     gridVisible: true,
     status: '',
@@ -431,6 +437,97 @@ export function cellSize(session: MetaSession): { width: number; height: number 
 }
 
 /**
+ * The bank decoded once per tileset document. `tileImage` decodes the whole
+ * base64 bank on every call, which composing a frame would do once per cell.
+ */
+const decodedBanks = new WeakMap<BitmapTilesDoc, Uint8Array>()
+
+function bankPixels(bitmap: BitmapTilesDoc): Uint8Array {
+  let pixels = decodedBanks.get(bitmap)
+  if (!pixels) {
+    pixels = bitmapTilePixels(bitmap)
+    decodedBanks.set(bitmap, pixels)
+  }
+  return pixels
+}
+
+/**
+ * One frame composed into palette indices, in the meta's own dot space: what
+ * the canvas paints, and what the animation bar previews, so the two cannot
+ * disagree about what shows through.
+ *
+ * Every see-through dot is 0 — a cell holding tile 0, and colour 0 inside any
+ * other tile. Index 0 is ambiguous on its own (the transparent tile, the
+ * transparent colour) but both show the background, so nothing here tells them
+ * apart, whatever the tileset's `transparent` says. A stroke in progress is
+ * included. Without a bitmap tileset the frame is blank but full size, because
+ * the fill tool reads it.
+ */
+export function framePixels(session: MetaSession, frame: number): { width: number; height: number; indices: Uint8Array } {
+  const meta = doc(session)
+  const { width: cw, height: ch } = cellSize(session)
+  const width = meta.width * cw
+  const height = meta.height * ch
+  const indices = new Uint8Array(width * height)
+  const bitmap = bitmapTiles(session)
+  if (!bitmap) return { width, height, indices }
+  const bank = bankPixels(bitmap)
+  const per = cw * ch
+  for (let cy = 0; cy < meta.height; cy++) {
+    for (let cx = 0; cx < meta.width; cx++) {
+      const tile = frameTileAt(meta, frame, cx, cy)
+      // Tile 0 is the hole: left at index 0 so the background shows through.
+      if (tile === 0) continue
+      const pixels = bank.subarray(tile * per, tile * per + per)
+      for (let y = 0; y < ch; y++) {
+        indices.set(pixels.subarray(y * cw, y * cw + cw), (cy * ch + y) * width + cx * cw)
+      }
+    }
+  }
+  return { width, height, indices }
+}
+
+/** What `framePixels`' indices mean: the bitmap tileset's own palette (MSX1's when it has none). */
+export function framePalette(session: MetaSession): Rgb[] {
+  return paletteToRgb(bitmapTiles(session)?.palette ?? null)
+}
+
+/**
+ * `framePixels` as RGBA bytes for an `ImageData`, with every index-0 dot left
+ * clear (alpha 0) — so the animation bar's Checkered or Solid background shows
+ * exactly where the canvas shows its checkerboard. An index past the palette
+ * draws black, as the tileset's sheet does.
+ */
+export function frameRgba(session: MetaSession, frame: number): { width: number; height: number; data: Uint8ClampedArray } {
+  const { width, height, indices } = framePixels(session, frame)
+  const rgb = framePalette(session)
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let i = 0; i < indices.length; i++) {
+    const index = indices[i]
+    if (index === 0) continue
+    const color = rgb[index] ?? { r: 0, g: 0, b: 0 }
+    data[i * 4] = color.r
+    data[i * 4 + 1] = color.g
+    data[i * 4 + 2] = color.b
+    data[i * 4 + 3] = 255
+  }
+  return { width, height, data }
+}
+
+/**
+ * One frame's size in dots, as the animation bar draws it (`framePixels`, or
+ * `metaThumbnail` for an atlas): the tileset's own cell times the meta's tiles —
+ * not the mirrored `doc.cell`, which can be stale or absent. 8×8 cells when
+ * there is no sheet yet.
+ */
+export function frameDots(session: MetaSession): { width: number; height: number } {
+  const meta = doc(session)
+  const bitmap = bitmapTiles(session)
+  const cell = bitmap ?? meta.cell
+  return { width: meta.width * (cell?.width ?? 8), height: meta.height * (cell?.height ?? 8) }
+}
+
+/**
  * Applies a stroke to the current frame, in the meta's own pixel space.
  *
  * Both documents move: the meta gets a repointed cell, the tileset gets any
@@ -546,8 +643,15 @@ export function setFrame(session: MetaSession, index: number): void {
 export function addFrame(session: MetaSession, copyOf?: number): void {
   const next = addFramePure(doc(session), copyOf)
   if (next === doc(session)) return
+  // A copy lands right after its source; a blank one at the end.
+  const landed = copyOf !== undefined && doc(session).frames[copyOf] ? copyOf + 1 : next.frames.length - 1
   commit(session, next)
-  session.frame = next.frames.length - 1
+  session.frame = landed
+}
+
+export function setDuration(session: MetaSession, index: number, duration: number): void {
+  const next = setFrameDurationPure(doc(session), index, duration)
+  if (next !== doc(session)) commit(session, next)
 }
 
 export function removeFrame(session: MetaSession, index: number): void {
@@ -692,6 +796,10 @@ export function setZoom(session: MetaSession, zoom: number): void {
 
 export function togglePlaying(session: MetaSession): void {
   session.playing = !session.playing
+}
+
+export function setBackground(session: MetaSession, value: AnimationBackground): void {
+  session.background = value
 }
 
 export function setOnionSkin(session: MetaSession, on: boolean): void {
